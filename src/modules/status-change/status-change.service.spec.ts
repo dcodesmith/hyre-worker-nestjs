@@ -74,7 +74,7 @@ describe("StatusChangeService", () => {
           gte: expect.any(Date),
           lte: expect.any(Date),
         },
-        car: { is: { status: Status.BOOKED } },
+        car: { status: Status.BOOKED },
       }),
       include: {
         car: { include: { owner: true } },

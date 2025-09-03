@@ -3,6 +3,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpCode,
   HttpException,
   HttpStatus,
   Logger,
@@ -13,14 +14,17 @@ import { HealthService } from "./health.service";
 
 @Controller("health")
 export class HealthController {
+  private readonly manualTriggersEnabled: boolean;
   constructor(
     private readonly healthService: HealthService,
     @InjectQueue("reminder-emails") private readonly reminderQueue: Queue,
     @InjectQueue("status-updates") private readonly statusUpdateQueue: Queue,
-  ) {}
+    // private readonly configService: ConfigService,
+  ) {
+    this.manualTriggersEnabled = true;
+  }
 
   private readonly logger = new Logger(HealthController.name);
-  private readonly manualTriggersEnabled = process.env.ENABLE_MANUAL_TRIGGERS === "true";
 
   @Get()
   async health() {
@@ -47,15 +51,24 @@ export class HealthController {
   }
 
   @Post("trigger/reminders")
+  @HttpCode(HttpStatus.ACCEPTED)
   async triggerReminders() {
-    if (!this.manualTriggersEnabled)
+    if (!this.manualTriggersEnabled) {
       throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+
+    const timestamp = new Date().toISOString();
+
     try {
-      await this.reminderQueue.add("send-reminders", {
-        type: "trip-start",
-        timestamp: new Date().toISOString(),
-      });
-      this.logger.log("Enqueued: send-reminders");
+      await this.reminderQueue.add(
+        "booking-leg-start-reminder",
+        {
+          type: "trip-start",
+          timestamp,
+        },
+        { jobId: `booking-leg-start-reminder:${timestamp.slice(0, 16)}`, removeOnComplete: true },
+      );
+      this.logger.log("Enqueued: booking-leg-start-reminder");
       return { success: true, message: "Reminder job triggered" };
     } catch (error) {
       throw new HttpException(
@@ -66,15 +79,23 @@ export class HealthController {
   }
 
   @Post("trigger/status-updates")
+  @HttpCode(HttpStatus.ACCEPTED)
   async triggerStatusUpdates() {
-    if (!this.manualTriggersEnabled)
+    if (!this.manualTriggersEnabled) {
       throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+
+    const timestamp = new Date().toISOString();
     try {
-      await this.statusUpdateQueue.add("update-status", {
-        type: "confirmed-to-active",
-        timestamp: new Date().toISOString(),
-      });
-      this.logger.log("Enqueued: update-status");
+      await this.statusUpdateQueue.add(
+        "confirmed-to-active",
+        {
+          type: "confirmed-to-active",
+          timestamp,
+        },
+        { jobId: `confirmed-to-active:${timestamp.slice(0, 16)}`, removeOnComplete: true },
+      );
+      this.logger.log("Enqueued: confirmed-to-active");
       return { success: true, message: "Status update job triggered" };
     } catch (error) {
       throw new HttpException(
@@ -85,15 +106,22 @@ export class HealthController {
   }
 
   @Post("trigger/end-reminders")
+  @HttpCode(HttpStatus.ACCEPTED)
   async triggerEndReminders() {
-    if (!this.manualTriggersEnabled)
+    if (!this.manualTriggersEnabled) {
       throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+    const timestamp = new Date().toISOString();
     try {
-      await this.reminderQueue.add("send-end-reminders", {
-        type: "trip-end",
-        timestamp: new Date().toISOString(),
-      });
-      this.logger.log("Enqueued: send-end-reminders");
+      await this.reminderQueue.add(
+        "booking-leg-end-reminder",
+        {
+          type: "trip-end",
+          timestamp,
+        },
+        { jobId: `booking-leg-end-reminder:${timestamp.slice(0, 16)}`, removeOnComplete: true },
+      );
+      this.logger.log("Enqueued: booking-leg-end-reminder");
       return { success: true, message: "End reminder job triggered" };
     } catch (error) {
       throw new HttpException(
@@ -103,16 +131,22 @@ export class HealthController {
     }
   }
 
+  @HttpCode(HttpStatus.ACCEPTED)
   @Post("trigger/complete-bookings")
   async triggerCompleteBookings() {
     if (!this.manualTriggersEnabled)
       throw new ForbiddenException("Manual trigger endpoints are disabled");
+    const timestamp = new Date().toISOString();
     try {
-      await this.statusUpdateQueue.add("complete-bookings", {
-        type: "active-to-completed",
-        timestamp: new Date().toISOString(),
-      });
-      this.logger.log("Enqueued: complete-bookings");
+      await this.statusUpdateQueue.add(
+        "active-to-completed",
+        {
+          type: "active-to-completed",
+          timestamp,
+        },
+        { jobId: `active-to-completed:${timestamp.slice(0, 16)}`, removeOnComplete: true },
+      );
+      this.logger.log("Enqueued: active-to-completed");
       return { success: true, message: "Complete bookings job triggered" };
     } catch (error) {
       throw new HttpException(

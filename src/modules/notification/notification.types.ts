@@ -38,7 +38,7 @@ export interface NotificationJobData {
       phoneNumber?: string;
     };
   };
-  templateData: Record<string, unknown>;
+  templateData: TemplateData;
   priority?: number;
 }
 

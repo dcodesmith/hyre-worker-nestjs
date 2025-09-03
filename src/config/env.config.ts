@@ -21,6 +21,8 @@ export const envSchema = z.object({
   FLUTTERWAVE_BASE_URL: z.url("FLUTTERWAVE_BASE_URL must be a valid URL"),
   FLUTTERWAVE_WEBHOOK_SECRET: z.string().min(1, "FLUTTERWAVE_WEBHOOK_SECRET is required"),
   FLUTTERWAVE_WEBHOOK_URL: z.url("FLUTTERWAVE_WEBHOOK_URL must be a valid URL"),
+
+  ENABLE_MANUAL_TRIGGERS: z.string().optional().default("false"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

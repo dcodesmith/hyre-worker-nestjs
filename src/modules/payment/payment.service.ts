@@ -79,9 +79,9 @@ export class PaymentService {
           });
         } catch (error: unknown) {
           // Handle unique constraint violation (concurrent creation)
-          if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
-            this.logger.log("Concurrent payout creation detected, fetching existing transaction", { 
-              bookingId: booking.id 
+          if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+            this.logger.log("Concurrent payout creation detected, fetching existing transaction", {
+              bookingId: booking.id,
             });
             // Fetch the transaction that was created by the concurrent request
             const concurrentTransaction = await tx.payoutTransaction.findFirst({
@@ -97,9 +97,9 @@ export class PaymentService {
 
       // If the transaction already exists and is not in a retriable state, return early
       if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
-        this.logger.log("Payout already processed or in progress for booking", { 
+        this.logger.log("Payout already processed or in progress for booking", {
           bookingId: booking.id,
-          status: payoutTransaction.status 
+          status: payoutTransaction.status,
         });
         return;
       }
@@ -111,14 +111,14 @@ export class PaymentService {
 
       // 2. Initiate the actual payout via Flutterwave
       const payoutResult = await this.flutterwaveService.initiatePayout({
-      bankDetails: {
-        bankCode: bankDetails.bankCode,
-        accountNumber: bankDetails.accountNumber,
-        bankName: bankDetails.bankName,
-      },
-      amount: payoutAmount,
-      reference,
-      bookingId: booking.id,
+        bankDetails: {
+          bankCode: bankDetails.bankCode,
+          accountNumber: bankDetails.accountNumber,
+          bankName: bankDetails.bankName,
+        },
+        amount: payoutAmount,
+        reference,
+        bookingId: booking.id,
       });
 
       // 3. Update the PayoutTransaction and Booking based on the result

@@ -57,10 +57,17 @@ describe("HealthController", () => {
         success: true,
         message: "Reminder job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("booking-leg-start-reminder", {
-        type: "trip-start",
-        timestamp: expect.any(String),
-      });
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        "booking-leg-start-reminder",
+        {
+          type: "trip-start",
+          timestamp: expect.any(String),
+        },
+        {
+          jobId: expect.stringMatching(/^booking-leg-start-reminder:/),
+          removeOnComplete: true,
+        },
+      );
     });
 
     it("should trigger end reminders", async () => {
@@ -72,10 +79,17 @@ describe("HealthController", () => {
         success: true,
         message: "End reminder job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("booking-leg-end-reminder", {
-        type: "trip-end",
-        timestamp: expect.any(String),
-      });
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        "booking-leg-end-reminder",
+        {
+          type: "trip-end",
+          timestamp: expect.any(String),
+        },
+        {
+          jobId: expect.stringMatching(/^booking-leg-end-reminder:/),
+          removeOnComplete: true,
+        },
+      );
     });
 
     it("should trigger confirmed to active status updates", async () => {
@@ -87,10 +101,17 @@ describe("HealthController", () => {
         success: true,
         message: "Status update job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("confirmed-to-active", {
-        type: "confirmed-to-active",
-        timestamp: expect.any(String),
-      });
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        "confirmed-to-active",
+        {
+          type: "confirmed-to-active",
+          timestamp: expect.any(String),
+        },
+        {
+          jobId: expect.stringMatching(/^confirmed-to-active:/),
+          removeOnComplete: true,
+        },
+      );
     });
 
     it("should trigger active to completed status updates", async () => {
@@ -102,10 +123,17 @@ describe("HealthController", () => {
         success: true,
         message: "Complete bookings job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("active-to-completed", {
-        type: "active-to-completed",
-        timestamp: expect.any(String),
-      });
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        "active-to-completed",
+        {
+          type: "active-to-completed",
+          timestamp: expect.any(String),
+        },
+        {
+          jobId: expect.stringMatching(/^active-to-completed:/),
+          removeOnComplete: true,
+        },
+      );
     });
   });
 });
