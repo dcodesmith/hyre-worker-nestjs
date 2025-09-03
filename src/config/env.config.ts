@@ -4,6 +4,7 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.url("REDIS_URL must be a valid URL"),
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
+  RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
   APP_NAME: z.string().min(1, "APP_NAME is required"),
   PORT: z.coerce.number().default(3000),
 

@@ -44,49 +44,34 @@ export class HealthService {
 
   async getQueueStats() {
     try {
-      const reminderStats = {
-        waiting: await this.reminderQueue.getWaiting(),
-        active: await this.reminderQueue.getActive(),
-        completed: await this.reminderQueue.getCompleted(),
-        failed: await this.reminderQueue.getFailed(),
-      };
-
-      const statusUpdateStats = {
-        waiting: await this.statusUpdateQueue.getWaiting(),
-        active: await this.statusUpdateQueue.getActive(),
-        completed: await this.statusUpdateQueue.getCompleted(),
-        failed: await this.statusUpdateQueue.getFailed(),
-      };
-
-      const notificationStats = {
-        waiting: await this.notificationQueue.getWaiting(),
-        active: await this.notificationQueue.getActive(),
-        completed: await this.notificationQueue.getCompleted(),
-        failed: await this.notificationQueue.getFailed(),
-      };
+      const [reminderCounts, statusUpdateCounts, notificationCounts] = await Promise.all([
+        this.reminderQueue.getJobCounts(),
+        this.statusUpdateQueue.getJobCounts(),
+        this.notificationQueue.getJobCounts(),
+      ]);
 
       return {
         timestamp: new Date().toISOString(),
         queues: {
           reminder: {
-            waiting: reminderStats.waiting.length,
-            active: reminderStats.active.length,
-            completed: reminderStats.completed.length,
-            failed: reminderStats.failed.length,
+            waiting: reminderCounts.waiting || 0,
+            active: reminderCounts.active || 0,
+            completed: reminderCounts.completed || 0,
+            failed: reminderCounts.failed || 0,
           },
           statusUpdate: {
-            waiting: statusUpdateStats.waiting.length,
-            active: statusUpdateStats.active.length,
-            completed: statusUpdateStats.completed.length,
-            failed: statusUpdateStats.failed.length,
+            waiting: statusUpdateCounts.waiting || 0,
+            active: statusUpdateCounts.active || 0,
+            completed: statusUpdateCounts.completed || 0,
+            failed: statusUpdateCounts.failed || 0,
           },
           notifications: {
-            waiting: notificationStats.waiting.length,
-            active: notificationStats.active.length,
-            completed: notificationStats.completed.length,
-            failed: notificationStats.failed.length,
+            waiting: notificationCounts.waiting || 0,
+            active: notificationCounts.active || 0,
+            completed: notificationCounts.completed || 0,
+            failed: notificationCounts.failed || 0,
             health:
-              notificationStats.failed.length < notificationStats.completed.length * 0.1
+              (notificationCounts.failed || 0) < (notificationCounts.completed || 0) * 0.1
                 ? "healthy"
                 : "degraded",
           },

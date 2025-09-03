@@ -11,9 +11,10 @@ export class EmailService {
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("RESEND_API_KEY");
     const appName = this.configService.get<string>("APP_NAME");
+    const fromEmail = this.configService.get<string>("RESEND_FROM_EMAIL");
 
     this.resend = new Resend(apiKey);
-    this.from = `Damola from ${appName} <no-reply@dcodesmith.com>`;
+    this.from = `Damola from ${appName} <${fromEmail}>`;
     this.logger.log("Email service initialized successfully");
   }
 

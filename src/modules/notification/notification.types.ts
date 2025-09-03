@@ -1,3 +1,5 @@
+import { TemplateData } from "./template-data.types";
+
 export enum NotificationChannel {
   EMAIL = "email",
   WHATSAPP = "whatsapp",

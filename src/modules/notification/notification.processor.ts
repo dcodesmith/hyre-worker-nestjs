@@ -139,7 +139,7 @@ export class NotificationProcessor {
             html = await renderBookingReminderEmail(
               templateData,
               recipientType,
-              type === NotificationType.BOOKING_REMINDER_END,
+              type === NotificationType.BOOKING_REMINDER_START,
             );
           } else {
             throw new Error("Invalid template data for booking reminder");

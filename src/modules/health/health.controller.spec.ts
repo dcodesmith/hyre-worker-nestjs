@@ -8,11 +8,6 @@ describe("HealthController", () => {
   let controller: HealthController;
   let healthService: HealthService;
 
-  const mockHealthService = {
-    checkHealth: vi.fn(),
-    getQueueStats: vi.fn(),
-  };
-
   const mockQueue = {
     add: vi.fn(),
   };
@@ -23,7 +18,10 @@ describe("HealthController", () => {
       providers: [
         {
           provide: HealthService,
-          useValue: mockHealthService,
+          useValue: {
+            checkHealth: vi.fn(),
+            getQueueStats: vi.fn(),
+          },
         },
         {
           provide: getQueueToken("reminder-emails"),
@@ -50,7 +48,7 @@ describe("HealthController", () => {
   });
 
   describe("trigger endpoints", () => {
-    it("should trigger reminders", async () => {
+    it("should trigger start reminders", async () => {
       mockQueue.add.mockResolvedValue({ id: "job-123" });
 
       const result = await controller.triggerReminders();
@@ -59,13 +57,28 @@ describe("HealthController", () => {
         success: true,
         message: "Reminder job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("send-reminders", {
+      expect(mockQueue.add).toHaveBeenCalledWith("booking-leg-start-reminder", {
         type: "trip-start",
         timestamp: expect.any(String),
       });
     });
 
-    it("should trigger status updates", async () => {
+    it("should trigger end reminders", async () => {
+      mockQueue.add.mockResolvedValue({ id: "job-124" });
+
+      const result = await controller.triggerEndReminders();
+
+      expect(result).toEqual({
+        success: true,
+        message: "End reminder job triggered",
+      });
+      expect(mockQueue.add).toHaveBeenCalledWith("booking-leg-end-reminder", {
+        type: "trip-end",
+        timestamp: expect.any(String),
+      });
+    });
+
+    it("should trigger confirmed to active status updates", async () => {
       mockQueue.add.mockResolvedValue({ id: "job-456" });
 
       const result = await controller.triggerStatusUpdates();
@@ -74,8 +87,23 @@ describe("HealthController", () => {
         success: true,
         message: "Status update job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith("update-status", {
+      expect(mockQueue.add).toHaveBeenCalledWith("confirmed-to-active", {
         type: "confirmed-to-active",
+        timestamp: expect.any(String),
+      });
+    });
+
+    it("should trigger active to completed status updates", async () => {
+      mockQueue.add.mockResolvedValue({ id: "job-789" });
+
+      const result = await controller.triggerCompleteBookings();
+
+      expect(result).toEqual({
+        success: true,
+        message: "Complete bookings job triggered",
+      });
+      expect(mockQueue.add).toHaveBeenCalledWith("active-to-completed", {
+        type: "active-to-completed",
         timestamp: expect.any(String),
       });
     });

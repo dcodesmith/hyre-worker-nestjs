@@ -78,15 +78,17 @@ export class ReminderService {
         return "No relevant booking legs today, so no start reminders to send.";
       }
 
+      let queuedCount = 0;
       for (const leg of legs) {
         this.logger.log(`Processing leg ${leg.id} legStartTime: ${leg.legStartTime}`);
 
         // Queue notification instead of sending directly
         await this.notificationService.queueBookingReminderNotifications(leg, "start");
+        queuedCount++;
       }
 
       this.logger.log("Email queue processing complete.");
-      return `Processed reminders for ${legs.length} legs.`;
+      return `Processed and queued start reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error in sendBookingStartReminderEmails: ${errorMessage}`, {
@@ -173,6 +175,7 @@ export class ReminderService {
 
       this.logger.log(`Processing ${legsEndingToday.length} legs ending today for end reminders.`);
 
+      let queuedCount = 0;
       for (const leg of legsEndingToday) {
         let effectiveEndTimeForLeg: Date;
         const latestActivePaidExtension = leg.extensions?.[0];
@@ -207,9 +210,10 @@ export class ReminderService {
 
         // Queue notification instead of sending directly
         await this.notificationService.queueBookingReminderNotifications(leg, "end");
+        queuedCount++;
       }
 
-      return `Processed end reminders for ${legsEndingToday.length} legs.`;
+      return `Processed and queued end reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error in sendBookingEndReminderEmails: ${errorMessage}`, {

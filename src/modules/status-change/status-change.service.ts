@@ -14,9 +14,41 @@ export class StatusChangeService {
     private readonly paymentService: PaymentService,
   ) {}
 
+  private getCurrentUtcHourWindow(): { gte: Date; lte: Date } {
+    const now = new Date();
+    const gte = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        now.getUTCHours(),
+        0,
+        0,
+        0,
+      ),
+    );
+    const lte = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        now.getUTCHours(),
+        59,
+        59,
+        999,
+      ),
+    );
+    return { gte, lte };
+  }
+
+  //  const now = new Date();
+  //   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0, 0));
+  //   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 59, 59, 999));
+  //   return { gte: start, lte: end };
+
   async updateBookingsFromConfirmedToActive() {
     try {
-      // const today = new Date();
+      // const today = new Date();.
 
       // const todayUtcYear = today.getUTCFullYear();
       // const todayUtcMonth = today.getUTCMonth();
@@ -33,10 +65,7 @@ export class StatusChangeService {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           chauffeurId: { not: null },
-          startDate: {
-            gte: new Date(new Date().setMinutes(0, 0, 0)),
-            lte: new Date(new Date().setMinutes(59, 59, 999)),
-          },
+          startDate: this.getCurrentUtcHourWindow(),
           car: {
             status: Status.BOOKED,
           },
@@ -92,10 +121,7 @@ export class StatusChangeService {
         where: {
           status: BookingStatus.ACTIVE,
           paymentStatus: PaymentStatus.PAID,
-          endDate: {
-            gte: new Date(new Date().setMinutes(0, 0, 0)),
-            lte: new Date(new Date().setMinutes(59, 59, 999)),
-          },
+          endDate: this.getCurrentUtcHourWindow(),
           car: {
             status: Status.BOOKED,
           },

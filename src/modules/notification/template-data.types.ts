@@ -19,6 +19,8 @@ export interface BaseTemplateData {
  */
 export interface BookingStatusTemplateData extends NormalisedBookingDetails {
   subject: string;
+  oldStatus: string;
+  newStatus: string;
 }
 
 /**
