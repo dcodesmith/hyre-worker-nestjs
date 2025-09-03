@@ -34,67 +34,95 @@ export class HealthController {
     }
   }
 
-  @Post("trigger/reminders")
-  async triggerReminders() {
-    try {
-      await this.reminderQueue.add("send-reminders", {
-        type: "trip-start",
-        timestamp: new Date().toISOString(),
-      });
-      return { success: true, message: "Reminder job triggered" };
-    } catch (error) {
-      throw new HttpException(
-        { error: error instanceof Error ? error.message : "Unknown error" },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+// src/modules/health/health.controller.ts
+import { Controller, Get, HttpException, HttpStatus, Post, ForbiddenException, Logger } from "@nestjs/common";
 
-  @Post("trigger/status-updates")
-  async triggerStatusUpdates() {
-    try {
-      await this.statusUpdateQueue.add("update-status", {
-        type: "confirmed-to-active",
-        timestamp: new Date().toISOString(),
-      });
-      return { success: true, message: "Status update job triggered" };
-    } catch (error) {
-      throw new HttpException(
-        { error: error instanceof Error ? error.message : "Unknown error" },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+ @Controller("health")
+ export class HealthController {
+  private readonly logger = new Logger(HealthController.name);
+  private readonly manualTriggersEnabled =
+    process.env.ENABLE_MANUAL_TRIGGERS === "true";
 
-  @Post("trigger/end-reminders")
-  async triggerEndReminders() {
-    try {
-      await this.reminderQueue.add("send-end-reminders", {
-        type: "trip-end",
-        timestamp: new Date().toISOString(),
-      });
-      return { success: true, message: "End reminder job triggered" };
-    } catch (error) {
-      throw new HttpException(
-        { error: error instanceof Error ? error.message : "Unknown error" },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+   constructor(
+     private readonly healthService: HealthService,
+     @InjectQueue("reminder-emails") private readonly reminderQueue: Queue,
+     @InjectQueue("status-updates") private readonly statusUpdateQueue: Queue,
+   ) {}
 
-  @Post("trigger/complete-bookings")
-  async triggerCompleteBookings() {
-    try {
-      await this.statusUpdateQueue.add("complete-bookings", {
-        type: "active-to-completed",
-        timestamp: new Date().toISOString(),
-      });
-      return { success: true, message: "Complete bookings job triggered" };
-    } catch (error) {
-      throw new HttpException(
-        { error: error instanceof Error ? error.message : "Unknown error" },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+   @Post("trigger/reminders")
+   async triggerReminders() {
+    if (!this.manualTriggersEnabled) {
+      throw new ForbiddenException("Manual trigger endpoints are disabled");
     }
-  }
+     try {
+       await this.reminderQueue.add("send-reminders", {
+         type: "trip-start",
+         timestamp: new Date().toISOString(),
+       });
+       return { success: true, message: "Reminder job triggered" };
+     } catch (error) {
+       throw new HttpException(
+         { error: error instanceof Error ? error.message : "Unknown error" },
+         HttpStatus.INTERNAL_SERVER_ERROR,
+       );
+     }
+   }
+
+   @Post("trigger/status-updates")
+   async triggerStatusUpdates() {
+    if (!this.manualTriggersEnabled) {
+      throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+     try {
+       await this.statusUpdateQueue.add("update-status", {
+         type: "confirmed-to-active",
+         timestamp: new Date().toISOString(),
+       });
+       return { success: true, message: "Status update job triggered" };
+     } catch (error) {
+       throw new HttpException(
+         { error: error instanceof Error ? error.message : "Unknown error" },
+         HttpStatus.INTERNAL_SERVER_ERROR,
+       );
+     }
+   }
+
+   @Post("trigger/end-reminders")
+   async triggerEndReminders() {
+    if (!this.manualTriggersEnabled) {
+      throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+     try {
+       await this.reminderQueue.add("send-end-reminders", {
+         type: "trip-end",
+         timestamp: new Date().toISOString(),
+       });
+       return { success: true, message: "End reminder job triggered" };
+     } catch (error) {
+       throw new HttpException(
+         { error: error instanceof Error ? error.message : "Unknown error" },
+         HttpStatus.INTERNAL_SERVER_ERROR,
+       );
+     }
+   }
+
+   @Post("trigger/complete-bookings")
+   async triggerCompleteBookings() {
+    if (!this.manualTriggersEnabled) {
+      throw new ForbiddenException("Manual trigger endpoints are disabled");
+    }
+     try {
+       await this.statusUpdateQueue.add("complete-bookings", {
+         type: "active-to-completed",
+         timestamp: new Date().toISOString(),
+       });
+       return { success: true, message: "Complete bookings job triggered" };
+     } catch (error) {
+       throw new HttpException(
+         { error: error instanceof Error ? error.message : "Unknown error" },
+         HttpStatus.INTERNAL_SERVER_ERROR,
+       );
+     }
+   }
+ }
 }

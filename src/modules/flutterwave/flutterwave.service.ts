@@ -167,7 +167,9 @@ export class FlutterwaveService {
    * Get the webhook URL for callbacks
    */
   getWebhookUrl(path: string = ""): string {
-    return `${this.config.webhookUrl}${path}`;
+    // Ensure path starts with '/' if not empty
+    const sanitizedPath = path ? (path.startsWith('/') ? path : `/${path}`) : '';
+    return `${this.config.webhookUrl}${sanitizedPath}`;
   }
 
   /**

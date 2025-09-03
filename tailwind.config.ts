@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 export default {
-  content: ["./src/emails/**/*.{js,ts,jsx,tsx}"],
+  content: ["./src/templates/**/*.{js,ts,jsx,tsx}", "./src/emails/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       fontFamily: {

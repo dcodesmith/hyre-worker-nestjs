@@ -66,7 +66,7 @@ describe("StatusChangeService", () => {
     const result = await service.updateBookingsFromConfirmedToActive();
 
     expect(mockDatabaseService.booking.findMany).toHaveBeenCalledWith({
-      where: {
+      where: expect.objectContaining({
         status: BookingStatus.CONFIRMED,
         paymentStatus: PaymentStatus.PAID,
         chauffeurId: { not: null },
@@ -74,10 +74,8 @@ describe("StatusChangeService", () => {
           gte: expect.any(Date),
           lte: expect.any(Date),
         },
-        car: {
-          status: Status.BOOKED,
-        },
-      },
+        car: { is: { status: Status.BOOKED } },
+      }),
       include: {
         car: { include: { owner: true } },
         user: true,

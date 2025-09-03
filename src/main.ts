@@ -12,13 +12,14 @@ async function bootstrap() {
 
     const app = await NestFactory.create(AppModule);
 
+    app.enableShutdownHooks();
     const configService = app.get(ConfigService);
-    const port = configService.get<number>("PORT");
+    const port = configService.get<number>("PORT", 3000);
+    const host = configService.get<string>("HOST", "0.0.0.0");
 
-    await app.listen(port);
+    await app.listen(port, host);
 
-    logger.log(`Application started successfully on port ${port}`);
-    logger.log(`Server URL: http://localhost:${port}`);
+    logger.log(`Application started successfully on ${host}:${port}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to start application: ${errorMessage}`);

@@ -16,15 +16,15 @@ export class StatusChangeService {
 
   async updateBookingsFromConfirmedToActive() {
     try {
-      const today = new Date();
+      // const today = new Date();
 
-      const todayUtcYear = today.getUTCFullYear();
-      const todayUtcMonth = today.getUTCMonth();
-      const todayUtcDay = today.getUTCDate();
+      // const todayUtcYear = today.getUTCFullYear();
+      // const todayUtcMonth = today.getUTCMonth();
+      // const todayUtcDay = today.getUTCDate();
 
       // Construct start and end of "today" in UTC
-      const start = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 0, 0, 0, 0));
-      const end = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 23, 59, 59, 999));
+      // const start = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 0, 0, 0, 0));
+      // const end = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 23, 59, 59, 999));
 
       // Find all confirmed bookings where start date is today
 

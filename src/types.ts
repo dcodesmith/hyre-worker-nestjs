@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
+import type { ReactNode } from "react";
 
 export interface EmailTemplateProps {
-  children: React.ReactNode;
+  children: ReactNode;
   previewText: string;
   pageTitle?: string;
 }
