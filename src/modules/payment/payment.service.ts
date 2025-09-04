@@ -110,7 +110,7 @@ export class PaymentService {
         });
       } else {
         const errorData = payoutResult.data as { message: string };
-        payoutTransaction = await this.databaseService.payoutTransaction.update({
+        await this.databaseService.payoutTransaction.update({
           where: { id: payoutTransaction.id },
           data: {
             status: "FAILED",

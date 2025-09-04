@@ -14,12 +14,15 @@ import {
   Text,
 } from "@react-email/components";
 import { render } from "@react-email/render";
+import { ReactNode } from "react";
 import tailwindConfig from "../email-tailwind.config";
-import {
-  EmailTemplateProps,
-  NormalisedBookingDetails,
-  NormalisedBookingLegDetails,
-} from "../types";
+import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
+
+export interface EmailTemplateProps {
+  readonly children: ReactNode;
+  readonly previewText: string;
+  readonly pageTitle?: string;
+}
 
 const COMPANY_NAME = process.env.APP_NAME || "Your Company Name";
 const COMPANY_LOGO_URL =
@@ -92,17 +95,19 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
   );
 }
 
+interface DetailListItemProps {
+  readonly label: string;
+  readonly value: string | number | undefined | null;
+  readonly isCurrency?: boolean;
+  readonly currencyCode?: string;
+}
+
 function DetailListItem({
   label,
   value,
   isCurrency = false,
   currencyCode = "NGN",
-}: {
-  label: string;
-  value: string | number | undefined | null;
-  isCurrency?: boolean;
-  currencyCode?: string;
-}) {
+}: DetailListItemProps) {
   if (value === undefined || value === null || value === "") {
     return null;
   }

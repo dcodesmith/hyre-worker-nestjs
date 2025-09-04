@@ -297,26 +297,9 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
   return {
     ...defaultBooking,
     ...overrides,
-    // Deep merge for nested objects, but respect null overrides
-    user: Object.hasOwn(overrides, "user")
-      ? overrides.user
-        ? { ...defaultBooking.user, ...overrides.user }
-        : overrides.user
-      : defaultBooking.user,
-    chauffeur: Object.hasOwn(overrides, "chauffeur")
-      ? overrides.chauffeur
-        ? { ...defaultBooking.chauffeur, ...overrides.chauffeur }
-        : overrides.chauffeur
-      : defaultBooking.chauffeur,
-    car: overrides.car
-      ? {
-          ...defaultBooking.car,
-          ...overrides.car,
-          owner: overrides.car?.owner
-            ? { ...defaultBooking.car.owner, ...overrides.car.owner }
-            : defaultBooking.car.owner,
-        }
-      : defaultBooking.car,
-    legs: overrides.legs || defaultBooking.legs,
-  } as BookingWithRelations;
+    user: { ...defaultBooking.user, ...overrides.user },
+    chauffeur: { ...defaultBooking.chauffeur, ...overrides.chauffeur },
+    car: { ...defaultBooking.car, ...overrides.car },
+    legs: { ...defaultBooking.legs, ...overrides.legs },
+  };
 }

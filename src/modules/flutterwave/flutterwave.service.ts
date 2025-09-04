@@ -168,7 +168,10 @@ export class FlutterwaveService {
    */
   getWebhookUrl(path: string = ""): string {
     // Ensure path starts with '/' if not empty
-    const sanitizedPath = path ? (path.startsWith('/') ? path : `/${path}`) : '';
+    let sanitizedPath = "";
+    if (path) {
+      sanitizedPath = path.startsWith("/") ? path : `/${path}`;
+    }
     return `${this.config.webhookUrl}${sanitizedPath}`;
   }
 
@@ -188,18 +191,16 @@ export class FlutterwaveService {
       },
       (error) => {
         this.logger.error(`Flutterwave request error: ${error.message}`);
-        return Promise.reject(error);
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
 
     // Response interceptor to log responses
     this.httpClient.interceptors.response.use(
-      (response) => {
-        return response;
-      },
+      (response) => response,
       (error) => {
         this.logger.error(`Flutterwave response error: ${error.message}`);
-        return Promise.reject(error);
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
   }

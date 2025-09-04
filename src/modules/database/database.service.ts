@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleDestroy {
@@ -31,7 +31,7 @@ export class DatabaseService extends PrismaClient implements OnModuleDestroy {
     });
 
     if (process.env.NODE_ENV === "development") {
-      this.$on("query" as never, (queryEvent: any) => {
+      this.$on("query", (queryEvent: Prisma.QueryEvent) => {
         if (queryEvent.duration > 1000) {
           this.logger.warn(
             `[Prisma] Slow Query (${queryEvent.duration}ms): ${queryEvent.query} -- Params: ${queryEvent.params}`,

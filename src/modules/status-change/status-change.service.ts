@@ -41,23 +41,8 @@ export class StatusChangeService {
     return { gte, lte };
   }
 
-  //  const now = new Date();
-  //   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0, 0));
-  //   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 59, 59, 999));
-  //   return { gte: start, lte: end };
-
   async updateBookingsFromConfirmedToActive() {
     try {
-      // const today = new Date();.
-
-      // const todayUtcYear = today.getUTCFullYear();
-      // const todayUtcMonth = today.getUTCMonth();
-      // const todayUtcDay = today.getUTCDate();
-
-      // Construct start and end of "today" in UTC
-      // const start = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 0, 0, 0, 0));
-      // const end = new Date(Date.UTC(todayUtcYear, todayUtcMonth, todayUtcDay, 23, 59, 59, 999));
-
       // Find all confirmed bookings where start date is today
 
       const bookingsToUpdate = await this.databaseService.booking.findMany({

@@ -34,11 +34,13 @@ export class HealthService {
       };
     } catch (error) {
       this.logger.error("Health check failed:", error);
-      throw {
+      const healthError = new Error("Health check failed");
+      (healthError as any).details = {
         status: "unhealthy",
         timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : "Unknown error",
       };
+      throw healthError;
     }
   }
 

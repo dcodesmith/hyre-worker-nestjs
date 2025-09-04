@@ -11,8 +11,8 @@ import {
 } from "./notification.types";
 import {
   type TemplateData,
-  isBookingStatusTemplateData,
   isBookingReminderTemplateData,
+  isBookingStatusTemplateData,
 } from "./template-data.types";
 import {
   BookingReminderEndMapper,
@@ -59,35 +59,51 @@ export class NotificationProcessor {
 
     // Process each channel
     for (const channel of channels) {
-      try {
-        if (channel === NotificationChannel.EMAIL) {
-          const emailResult = await this.sendEmailNotification(type, recipients, templateData);
-          if (emailResult) results.push(emailResult);
-        }
-
-        if (channel === NotificationChannel.WHATSAPP) {
-          const whatsAppResult = await this.sendWhatsAppNotification(
-            type,
-            recipients,
-            templateData,
-          );
-          if (whatsAppResult) results.push(whatsAppResult);
-        }
-      } catch (error) {
-        this.logger.error("Failed to process notification channel", {
-          notificationId: id,
-          channel,
-          error: String(error),
-        });
-
-        results.push({
-          channel,
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      const result = await this.processChannel(id, channel, type, recipients, templateData);
+      if (result) results.push(result);
     }
 
+    this.logProcessingComplete(id, channels, results);
+    return results;
+  }
+
+  private async processChannel(
+    notificationId: string,
+    channel: NotificationChannel,
+    type: NotificationType,
+    recipients: NotificationJobData["recipients"],
+    templateData: TemplateData,
+  ): Promise<NotificationResult | null> {
+    try {
+      if (channel === NotificationChannel.EMAIL) {
+        return await this.sendEmailNotification(type, recipients, templateData);
+      }
+
+      if (channel === NotificationChannel.WHATSAPP) {
+        return await this.sendWhatsAppNotification(type, recipients, templateData);
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.error("Failed to process notification channel", {
+        notificationId,
+        channel,
+        error: String(error),
+      });
+
+      return {
+        channel,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private logProcessingComplete(
+    notificationId: string,
+    channels: NotificationChannel[],
+    results: NotificationResult[],
+  ): void {
     const { success: successCount, failure: failureCount } = results.reduce(
       (acc, result) => ({
         success: acc.success + (result.success ? 1 : 0),
@@ -99,14 +115,12 @@ export class NotificationProcessor {
     const skipped = channels.length - results.length;
 
     this.logger.log("Notification processing complete", {
-      notificationId: id,
+      notificationId,
       totalChannels: channels.length,
       successful: successCount,
       failed: failureCount,
       skipped,
     });
-
-    return results;
   }
 
   private async sendEmailNotification(
@@ -123,8 +137,7 @@ export class NotificationProcessor {
 
     try {
       // Generate HTML content based on notification type
-      let html: string;
-      const subject: string = templateData.subject || "Booking Notification";
+      const subject = templateData.subject || "Booking Notification";
 
       const buildHtml = async (recipient: "client" | "chauffeur") => {
         switch (type) {
