@@ -1,4 +1,11 @@
-import { BookingStatus, PaymentStatus, Status, Prisma } from "@prisma/client";
+import {
+  BookingStatus,
+  PaymentStatus,
+  Status,
+  FleetOwnerStatus,
+  ChauffeurApprovalStatus,
+  Prisma,
+} from "@prisma/client";
 import { format } from "date-fns";
 import {
   BookingLegWithRelations,
@@ -223,6 +230,12 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
         email: "owner@example.com",
         username: "fleetowner",
         phoneNumber: "5555555555",
+        address: "123 Fleet St",
+        city: "Lagos",
+        hasOnboarded: true,
+        fleetOwnerId: null,
+        fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+        chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
         bankDetailsId: "bank-123",
         createdAt: new Date("2024-01-01T00:00:00Z"),
         updatedAt: new Date("2024-01-01T00:00:00Z"),
