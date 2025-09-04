@@ -1,5 +1,3 @@
-export const main = () => {
-  console.log("Hello World");
-};
-
-main();
+export function sum(a: number, b: number) {
+  return a + b;
+}

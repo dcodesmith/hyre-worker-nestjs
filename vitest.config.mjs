@@ -1,3 +1,5 @@
+/// <reference types="vitest" />
+
 import { resolve } from "node:path";
 import swc from "unplugin-swc";
 import tsconfigPaths from "vite-tsconfig-paths";

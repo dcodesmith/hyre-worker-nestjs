@@ -1,8 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { main } from "./main";
+import { expect, test } from "vitest";
+import { sum } from "./main";
 
-describe("main", () => {
-  it("should be defined", () => {
-    expect(main).toBeDefined();
-  });
+test("adds 1 + 2 to equal 3", () => {
+  expect(sum(1, 2)).toBe(3);
 });
