@@ -73,7 +73,7 @@ export function formatDate(date: string | Date) {
   return formatter
     .format(new Date(date))
     .replace(/,/g, " @")
-    .replace(/(\d+)(?=\s)/, replaceWithOrdinalSuffix);
+    .replace(/(\d{1,2})(?=\s)/g, replaceWithOrdinalSuffix);
 }
 
 export const formatCurrency = (amount: number) => {

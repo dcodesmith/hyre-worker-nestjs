@@ -31,14 +31,11 @@ export function validateEnvironment(config: Record<string, unknown>): EnvConfig 
   const result = envSchema.safeParse(config);
 
   if (!result.success) {
-    const errors = result.error.flatten().fieldErrors;
-    console.error("❌ Environment validation failed:");
+    const errors = result.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join(", ");
 
-    for (const [field, messages] of Object.entries(errors)) {
-      console.error(`  ${field}: ${messages?.join(", ")}`);
-    }
-
-    throw new Error("Invalid environment configuration. Please check your .env file.");
+    throw new Error(`Invalid environment configuration. Please check your .env file. ${errors}`);
   }
 
   console.log("✅ Environment variables validated successfully");
