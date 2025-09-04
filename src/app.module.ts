@@ -31,7 +31,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
             port: parseInt(url.port) || 6379,
             password: url.password || undefined,
             maxRetriesPerRequest: null, // Required by BullMQ
-            family: url.protocol === "rediss:" ? 6 : 4, // Force IPv6 for rediss://, IPv4 for redis://
+            // Let Redis client auto-detect IP version based on hostname resolution
           },
         };
       },
