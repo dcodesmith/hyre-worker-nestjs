@@ -8,9 +8,8 @@ describe("HealthController", () => {
   let controller: HealthController;
   let healthService: HealthService;
 
-  const mockQueue = {
-    add: vi.fn(),
-  };
+  const mockReminderQueue = { add: vi.fn() };
+  const mockStatusQueue = { add: vi.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -25,11 +24,11 @@ describe("HealthController", () => {
         },
         {
           provide: getQueueToken("reminder-emails"),
-          useValue: mockQueue,
+          useValue: mockReminderQueue,
         },
         {
           provide: getQueueToken("status-updates"),
-          useValue: mockQueue,
+          useValue: mockStatusQueue,
         },
       ],
     }).compile();
@@ -49,7 +48,7 @@ describe("HealthController", () => {
 
   describe("trigger endpoints", () => {
     it("should trigger start reminders", async () => {
-      mockQueue.add.mockResolvedValue({ id: "job-123" });
+      mockReminderQueue.add.mockResolvedValue({ id: "job-123" });
 
       const result = await controller.triggerReminders();
 
@@ -57,7 +56,7 @@ describe("HealthController", () => {
         success: true,
         message: "Reminder job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith(
+      expect(mockReminderQueue.add).toHaveBeenCalledWith(
         "booking-leg-start-reminder",
         {
           type: "trip-start",
@@ -66,12 +65,14 @@ describe("HealthController", () => {
         {
           jobId: expect.stringMatching(/^booking-leg-start-reminder:/),
           removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
         },
       );
     });
 
     it("should trigger end reminders", async () => {
-      mockQueue.add.mockResolvedValue({ id: "job-124" });
+      mockReminderQueue.add.mockResolvedValue({ id: "job-124" });
 
       const result = await controller.triggerEndReminders();
 
@@ -79,7 +80,7 @@ describe("HealthController", () => {
         success: true,
         message: "End reminder job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith(
+      expect(mockReminderQueue.add).toHaveBeenCalledWith(
         "booking-leg-end-reminder",
         {
           type: "trip-end",
@@ -88,12 +89,14 @@ describe("HealthController", () => {
         {
           jobId: expect.stringMatching(/^booking-leg-end-reminder:/),
           removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
         },
       );
     });
 
     it("should trigger confirmed to active status updates", async () => {
-      mockQueue.add.mockResolvedValue({ id: "job-456" });
+      mockStatusQueue.add.mockResolvedValue({ id: "job-456" });
 
       const result = await controller.triggerStatusUpdates();
 
@@ -101,7 +104,7 @@ describe("HealthController", () => {
         success: true,
         message: "Status update job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith(
+      expect(mockStatusQueue.add).toHaveBeenCalledWith(
         "confirmed-to-active",
         {
           type: "confirmed-to-active",
@@ -110,12 +113,14 @@ describe("HealthController", () => {
         {
           jobId: expect.stringMatching(/^confirmed-to-active:/),
           removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
         },
       );
     });
 
     it("should trigger active to completed status updates", async () => {
-      mockQueue.add.mockResolvedValue({ id: "job-789" });
+      mockStatusQueue.add.mockResolvedValue({ id: "job-789" });
 
       const result = await controller.triggerCompleteBookings();
 
@@ -123,7 +128,7 @@ describe("HealthController", () => {
         success: true,
         message: "Complete bookings job triggered",
       });
-      expect(mockQueue.add).toHaveBeenCalledWith(
+      expect(mockStatusQueue.add).toHaveBeenCalledWith(
         "active-to-completed",
         {
           type: "active-to-completed",
@@ -132,6 +137,8 @@ describe("HealthController", () => {
         {
           jobId: expect.stringMatching(/^active-to-completed:/),
           removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
         },
       );
     });

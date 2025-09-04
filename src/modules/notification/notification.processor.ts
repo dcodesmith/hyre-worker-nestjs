@@ -96,11 +96,14 @@ export class NotificationProcessor {
       { success: 0, failure: 0 },
     );
 
+    const skipped = channels.length - results.length;
+
     this.logger.log("Notification processing complete", {
       notificationId: id,
       totalChannels: channels.length,
       successful: successCount,
       failed: failureCount,
+      skipped,
     });
 
     return results;
@@ -123,38 +126,35 @@ export class NotificationProcessor {
       let html: string;
       const subject: string = templateData.subject || "Booking Notification";
 
-      switch (type) {
-        case NotificationType.BOOKING_STATUS_CHANGE:
-          if (isBookingStatusTemplateData(templateData)) {
-            html = await renderBookingStatusUpdateEmail(templateData);
-          } else {
+      const buildHtml = async (recipient: "client" | "chauffeur") => {
+        switch (type) {
+          case NotificationType.BOOKING_STATUS_CHANGE:
+            if (isBookingStatusTemplateData(templateData)) {
+              // Status email currently targets the client. If chauffeur delivery is desired,
+              // a recipient-specific template should be introduced.
+              return renderBookingStatusUpdateEmail(templateData);
+            }
             throw new Error("Invalid template data for booking status update");
-          }
-          break;
-        case NotificationType.BOOKING_REMINDER_START:
-        case NotificationType.BOOKING_REMINDER_END:
-          if (isBookingReminderTemplateData(templateData)) {
-            const recipientType =
-              templateData.recipientType === "chauffeur" ? "chauffeur" : "client";
-            html = await renderBookingReminderEmail(
-              templateData,
-              recipientType,
-              type === NotificationType.BOOKING_REMINDER_START,
-            );
-          } else {
+          case NotificationType.BOOKING_REMINDER_START:
+          case NotificationType.BOOKING_REMINDER_END:
+            if (isBookingReminderTemplateData(templateData)) {
+              return renderBookingReminderEmail(
+                templateData,
+                recipient,
+                type === NotificationType.BOOKING_REMINDER_START,
+              );
+            }
             throw new Error("Invalid template data for booking reminder");
-          }
-          break;
-        default:
-          throw new Error(`Unknown notification type: ${type}`);
-      }
-
+          default:
+            throw new Error(`Unknown notification type: ${type}`);
+        }
+      };
       // Send to customer if available
       if (customerEmail) {
         await this.emailService.sendEmail({
           to: customerEmail,
           subject,
-          html,
+          html: await buildHtml("client"),
         });
       }
 
@@ -163,7 +163,7 @@ export class NotificationProcessor {
         await this.emailService.sendEmail({
           to: chauffeurEmail,
           subject,
-          html,
+          html: await buildHtml("chauffeur"),
         });
       }
 

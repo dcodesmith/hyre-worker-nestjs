@@ -1,5 +1,7 @@
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../types";
 
+export type RecipientType = "client" | "chauffeur";
+
 /**
  * Base template data that all notification templates can use
  */
@@ -11,7 +13,7 @@ export interface BaseTemplateData {
   returnLocation?: string;
   bookingId?: string;
   subject?: string;
-  recipientType?: string;
+  recipientType?: RecipientType;
 }
 
 /**
@@ -28,7 +30,7 @@ export interface BookingStatusTemplateData extends NormalisedBookingDetails {
  */
 export interface BookingReminderTemplateData extends NormalisedBookingLegDetails {
   subject: string;
-  recipientType: string;
+  recipientType: RecipientType;
 }
 
 /**
@@ -52,5 +54,5 @@ export function isBookingStatusTemplateData(data: TemplateData): data is Booking
 export function isBookingReminderTemplateData(
   data: TemplateData,
 ): data is BookingReminderTemplateData {
-  return "legStartTime" in data && "legEndTime" in data;
+  return "legStartTime" in data && "legEndTime" in data && "bookingId" in data;
 }

@@ -23,17 +23,17 @@ export class PaymentService {
     }
 
     const fleetOwner = booking.car.owner;
-    if (!fleetOwner.bankDetailsId) {
+    const bankDetails = await this.databaseService.bankDetails.findUnique({
+      where: { userId: fleetOwner.id }, // userId is @unique
+    });
+
+    if (!bankDetails) {
       this.logger.warn("Fleet owner has no bank details. Cannot process payout for booking", {
         fleetOwnerId: fleetOwner.id,
         bookingId: booking.id,
       });
       return;
     }
-
-    const bankDetails = await this.databaseService.bankDetails.findUnique({
-      where: { id: fleetOwner.bankDetailsId },
-    });
 
     if (!bankDetails?.isVerified) {
       this.logger.warn(
@@ -52,49 +52,18 @@ export class PaymentService {
     const reference = `payout_${booking.id}_${Date.now()}`;
 
     try {
-      // Use transaction to handle concurrent requests with unique constraint violation handling
-      let payoutTransaction = await this.databaseService.$transaction(async (tx) => {
-        // First, try to find existing payout transaction
-        const existing = await tx.payoutTransaction.findFirst({
-          where: {
-            bookingId: booking.id,
-          },
-        });
-
-        if (existing) {
-          return existing;
-        }
-
-        // If no existing transaction, create a new one
-        try {
-          return await tx.payoutTransaction.create({
-            data: {
-              fleetOwnerId: fleetOwner.id,
-              bookingId: booking.id,
-              amountToPay: payoutAmount,
-              currency: "NGN",
-              status: "PENDING_DISBURSEMENT",
-              payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ****${bankDetails.accountNumber.slice(-4)}`,
-            },
-          });
-        } catch (error: unknown) {
-          // Handle unique constraint violation (concurrent creation)
-          if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
-            this.logger.log("Concurrent payout creation detected, fetching existing transaction", {
-              bookingId: booking.id,
-            });
-            // Fetch the transaction that was created by the concurrent request
-            const concurrentTransaction = await tx.payoutTransaction.findFirst({
-              where: { bookingId: booking.id },
-            });
-            if (concurrentTransaction) {
-              return concurrentTransaction;
-            }
-          }
-          throw error;
-        }
+      let payoutTransaction = await this.databaseService.payoutTransaction.upsert({
+        where: { bookingId: booking.id }, // unique
+        update: {},
+        create: {
+          fleetOwnerId: fleetOwner.id,
+          bookingId: booking.id,
+          amountToPay: payoutAmount,
+          currency: "NGN",
+          status: "PENDING_DISBURSEMENT",
+          payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ****${bankDetails.accountNumber.slice(-4)}`,
+        },
       });
-
       // If the transaction already exists and is not in a retriable state, return early
       if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
         this.logger.log("Payout already processed or in progress for booking", {
@@ -122,7 +91,7 @@ export class PaymentService {
       });
 
       // 3. Update the PayoutTransaction and Booking based on the result
-      if (payoutResult?.success) {
+      if (payoutResult.success) {
         const transferData = payoutResult.data as { id?: string | number }; // Type assertion for Flutterwave transfer data
         payoutTransaction = await this.databaseService.payoutTransaction.update({
           where: { id: payoutTransaction.id },
@@ -158,7 +127,11 @@ export class PaymentService {
         });
       }
     } catch (error) {
-      this.logger.error("Failed to initiate payout:", error);
+      if (error instanceof Error) {
+        this.logger.error(`Failed to initiate payout: ${error.message}`, error.stack);
+      } else {
+        this.logger.error(`Failed to initiate payout: ${String(error)}`);
+      }
       throw error;
     }
   }

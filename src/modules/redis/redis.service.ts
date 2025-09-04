@@ -18,12 +18,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       retryStrategy: (times) => Math.min(times * 200, 2000),
     });
 
-    this.redis.on("connect", () => {
-      this.logger.log("Redis connected successfully");
-    });
+    this.redis.on("connect", () => this.logger.log("Redis TCP connected"));
+    this.redis.on("ready", () => this.logger.log("Redis client ready"));
+    this.redis.on("reconnecting", () => this.logger.warn("Redis reconnecting..."));
 
-    this.redis.on("error", (error) => {
-      this.logger.error("Redis connection error:", error);
+    this.redis.on("error", (error: unknown) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Redis error: ${err.message}`, err.stack);
     });
   }
 
@@ -48,7 +49,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     this.logger.log("Disconnecting Redis client...");
     try {
-      await this.redis.quit();
+      if (this.redis.status !== "end") {
+        await this.redis.quit();
+      }
     } catch (error) {
       this.logger.warn("Redis quit failed, forcing disconnect", { error: String(error) });
       this.redis.disconnect(false);
