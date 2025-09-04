@@ -1,4 +1,4 @@
-import { BookingStatus, Prisma } from "@prisma/client";
+import { BookingStatus, PaymentStatus, Status, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import {
   BookingLegWithRelations,
@@ -174,7 +174,7 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     id: "booking-123",
     bookingReference: "REF-123",
     status: BookingStatus.CONFIRMED,
-    paymentStatus: "PAID",
+    paymentStatus: PaymentStatus.PAID,
     startDate: new Date("2024-01-01T08:00:00Z"),
     endDate: new Date("2024-01-01T18:00:00Z"),
     pickupLocation: "Airport",
@@ -213,7 +213,7 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
       make: "BMW",
       model: "X5",
       year: 2023,
-      status: "BOOKED",
+      status: Status.BOOKED,
       ownerId: "owner-123",
       createdAt: new Date("2024-01-01T00:00:00Z"),
       updatedAt: new Date("2024-01-01T00:00:00Z"),
