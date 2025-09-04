@@ -8,6 +8,7 @@ A NestJS-based worker service for handling booking reminders, status updates, an
 - **Status Updates**: Automatic booking status transitions (confirmed → active → completed)
 - **Payment Processing**: Fleet owner payout processing via Flutterwave
 - **Queue Management**: Bull queues for reliable job processing
+- **Notification System**: Event-driven notifications with Bull queues for high-volume messaging
 - **Health Monitoring**: Health checks and queue statistics endpoints
 
 ## Architecture
@@ -16,8 +17,8 @@ A NestJS-based worker service for handling booking reminders, status updates, an
 
 - **RedisModule**: Global Redis client management
 - **DatabaseModule**: Prisma database client (global)
-- **SharedModule**: Common utilities and helper services (global)
 - **FlutterwaveModule**: Flutterwave payment client (global)
+- **NotificationModule**: Queue-based notification system for emails and WhatsApp
 - **PaymentModule**: Payment processing and payout logic
 - **ReminderModule**: Email and WhatsApp reminder services
 - **StatusChangeModule**: Booking status transition logic
@@ -52,14 +53,18 @@ pnpm run start:debug        # Start with debugging
 pnpm run build              # Build the application
 pnpm run start:prod         # Start production build
 
+# Testing
+pnpm run test               # Run unit tests
+pnpm run test:watch         # Run tests in watch mode
+pnpm run test:coverage      # Run tests with coverage
+pnpm run test:ui            # Run tests with UI
+
 # Code Quality
 pnpm run lint               # Run Biome linting
 pnpm run lint:fix           # Fix linting issues
 pnpm run format             # Format code with Biome
 pnpm run check              # Run all Biome checks
 pnpm run check:fix          # Fix all Biome issues
-
-
 
 # Database
 pnpm run db:generate        # Generate Prisma client
@@ -114,9 +119,19 @@ PORT=3000
 3. Generate Prisma client: `pnpm run db:generate`
 4. Start development server: `pnpm run start:dev`
 
+## Testing
+
+This project uses **Vitest** for unit testing with NestJS testing utilities:
+
+- Unit tests for services using `createTestingModule`
+- Mocked dependencies for isolated testing
+- Coverage reporting with `@vitest/coverage-v8`
+- Test UI available with `@vitest/ui`
+
 ## Code Quality
 
 This project uses:
+- **Vitest** for unit testing
 - **Biome** for linting and formatting
 - **SonarQube** for code quality analysis (see `sonar-project.properties`)
 - **TypeScript** with strict configuration
