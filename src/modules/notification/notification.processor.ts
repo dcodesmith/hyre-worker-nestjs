@@ -8,12 +8,12 @@ import {
   NotificationJobData,
   NotificationResult,
   NotificationType,
-} from "./notification.types";
+} from "./notification.interface";
 import {
   type TemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
-} from "./template-data.types";
+} from "./template-data.interface";
 import {
   BookingReminderEndMapper,
   BookingReminderStartMapper,
@@ -22,8 +22,9 @@ import {
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 
-@Processor("notifications")
+@Processor(NOTIFICATIONS_QUEUE)
 export class NotificationProcessor {
   private readonly logger = new Logger(NotificationProcessor.name);
   private readonly templateMappers: TemplateVariableMapper[];

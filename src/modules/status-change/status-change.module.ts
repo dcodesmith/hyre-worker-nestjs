@@ -1,5 +1,6 @@
 import { BullModule } from "@nestjs/bull";
 import { Module } from "@nestjs/common";
+import { STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { DatabaseModule } from "../database/database.module";
 import { NotificationModule } from "../notification/notification.module";
 import { PaymentModule } from "../payment/payment.module";
@@ -12,7 +13,7 @@ import { StatusChangeService } from "./status-change.service";
     DatabaseModule,
     NotificationModule,
     PaymentModule,
-    BullModule.registerQueue({ name: "status-updates" }),
+    BullModule.registerQueue({ name: STATUS_UPDATES_QUEUE }),
   ],
   providers: [StatusChangeService, StatusChangeProcessor, StatusChangeScheduler],
   exports: [StatusChangeService],

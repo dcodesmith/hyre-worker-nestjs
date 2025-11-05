@@ -11,16 +11,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const redisUrl = this.configService.get<string>("REDIS_URL");
 
     this.redis = new Redis(redisUrl, {
-      family: 6, // Force IPv6
       maxRetriesPerRequest: null, // Required by BullMQ to prevent blocking operations
-      lazyConnect: true, // Connect only when needed
+      lazyConnect: false, // Connect immediately to avoid delays
       connectTimeout: 10000,
       retryStrategy: (times) => Math.min(times * 200, 2000),
+      enableReadyCheck: true,
+      enableOfflineQueue: true,
+      keepAlive: 30000, // Keep connection alive with 30s heartbeat
     });
 
     this.redis.on("connect", () => this.logger.log("Redis TCP connected"));
     this.redis.on("ready", () => this.logger.log("Redis client ready"));
     this.redis.on("reconnecting", () => this.logger.warn("Redis reconnecting..."));
+    this.redis.on("close", () => this.logger.warn("Redis connection closed"));
+    this.redis.on("end", () => this.logger.warn("Redis connection ended"));
 
     this.redis.on("error", (error: unknown) => {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -29,11 +33,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
+    // Connection already started in constructor due to lazyConnect: false
+    // Just verify it's ready
     try {
-      await this.redis.connect();
+      await this.redis.ping();
+      this.logger.log("Redis connection verified");
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error(`Failed to connect to Redis on startup: ${err.message}`, err.stack);
+      this.logger.error(`Failed to verify Redis connection: ${err.message}`, err.stack);
       throw err;
     }
   }
@@ -43,6 +50,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async ping(): Promise<string> {
+    const status = this.redis.status;
+    this.logger.debug(`Redis status before ping: ${status}`);
+
+    if (status === "end" || status === "close") {
+      this.logger.warn(`Redis connection is ${status}, attempting to reconnect...`);
+      await this.redis.connect();
+    }
+
     return this.redis.ping();
   }
 

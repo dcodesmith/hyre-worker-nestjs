@@ -7,6 +7,20 @@ export const envSchema = z.object({
   RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
   APP_NAME: z.string().min(1, "APP_NAME is required"),
   PORT: z.coerce.number().default(3000),
+  TZ: z
+    .string()
+    .default("Africa/Lagos")
+    .refine(
+      (tz) => {
+        try {
+          Intl.DateTimeFormat(undefined, { timeZone: tz });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: "TIMEZONE must be a valid IANA timezone (e.g., Africa/Lagos, America/New_York)" },
+    ),
 
   TWILIO_ACCOUNT_SID: z.string().min(1, "TWILIO_ACCOUNT_SID is required"),
   TWILIO_AUTH_TOKEN: z.string().min(1, "TWILIO_AUTH_TOKEN is required"),
@@ -36,6 +50,6 @@ export function validateEnvironment(config: Record<string, unknown>): EnvConfig 
     throw new Error(`Invalid environment configuration. Please check your .env file. ${errors}`);
   }
 
-  console.log("✅ Environment variables validated successfully");
+  console.log("Environment variables validated successfully");
   return result.data;
 }

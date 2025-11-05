@@ -16,10 +16,13 @@ async function bootstrap() {
     const configService = app.get(ConfigService);
     const port = configService.get<number>("PORT", 3000);
     const host = configService.get<string>("HOST", "0.0.0.0");
+    const timezone = configService.get<string>("TZ");
 
     await app.listen(port, host);
 
-    logger.log(`Application started successfully on ${host}:${port}`);
+    logger.log(
+      `Application started successfully on ${host}:${port} (Timezone: ${timezone}, Current time: ${new Date().toLocaleString("en-US", { timeZone: timezone })})`,
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to start application: ${errorMessage}`);

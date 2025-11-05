@@ -6,25 +6,9 @@ import {
   FlutterwaveError,
   FlutterwaveResponse,
   FlutterwaveTransferData,
-} from "./flutterwave.types";
-
-export interface BankDetails {
-  bankCode: string;
-  accountNumber: string;
-  bankName?: string;
-}
-
-export interface PayoutRequest {
-  bankDetails: BankDetails;
-  amount: number;
-  reference: string;
-  bookingId: string;
-}
-
-export interface PayoutResponse {
-  success: boolean;
-  data: FlutterwaveTransferData | { message: string };
-}
+  PayoutRequest,
+  PayoutResponse,
+} from "./flutterwave.interface";
 
 @Injectable()
 export class FlutterwaveService {

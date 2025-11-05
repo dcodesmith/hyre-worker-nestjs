@@ -1,5 +1,5 @@
-import { NotificationType } from "../notification.types";
-import { type TemplateData } from "../template-data.types";
+import { NotificationType } from "../notification.interface";
+import { type TemplateData } from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 

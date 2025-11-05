@@ -1,5 +1,6 @@
 import { BullModule } from "@nestjs/bull";
 import { Module } from "@nestjs/common";
+import { REMINDERS_QUEUE } from "../../config/constants";
 import { DatabaseModule } from "../database/database.module";
 import { NotificationModule } from "../notification/notification.module";
 import { ReminderProcessor } from "./reminder.processor";
@@ -10,7 +11,7 @@ import { ReminderService } from "./reminder.service";
   imports: [
     DatabaseModule,
     NotificationModule,
-    BullModule.registerQueue({ name: "reminder-emails" }),
+    BullModule.registerQueue({ name: REMINDERS_QUEUE }),
   ],
   providers: [ReminderService, ReminderProcessor, ReminderScheduler],
   exports: [ReminderService],

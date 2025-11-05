@@ -5,7 +5,12 @@ import { Queue } from "bull";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBooking } from "../../shared/helper";
 import { NotificationService } from "./notification.service";
-import { NotificationChannel, NotificationJobData, NotificationType } from "./notification.types";
+import {
+  NotificationChannel,
+  NotificationJobData,
+  NotificationType,
+} from "./notification.interface";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 
 describe("NotificationService", () => {
   let service: NotificationService;
@@ -24,7 +29,7 @@ describe("NotificationService", () => {
       providers: [
         NotificationService,
         {
-          provide: getQueueToken("notifications"),
+          provide: getQueueToken(NOTIFICATIONS_QUEUE),
           useValue: mockQueue,
         },
       ],

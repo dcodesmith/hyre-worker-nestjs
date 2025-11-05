@@ -1,4 +1,4 @@
-import { TemplateData } from "./template-data.types";
+import { TemplateData } from "./template-data.interface";
 
 export enum NotificationChannel {
   EMAIL = "email",

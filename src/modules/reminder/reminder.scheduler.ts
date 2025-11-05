@@ -2,52 +2,57 @@ import { InjectQueue } from "@nestjs/bull";
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Queue } from "bull";
-
-interface ReminderJobData {
-  type: "trip-start" | "trip-end";
-  timestamp: string;
-}
+import {
+  BOOKING_LEG_END_REMINDER,
+  BOOKING_LEG_START_REMINDER,
+  EVERY_HOUR,
+  REMINDERS_QUEUE,
+  TIMEZONE,
+  TRIP_END,
+  TRIP_START,
+} from "../../config/constants";
+import { ReminderJobData } from "./reminder.interface";
 
 @Injectable()
 export class ReminderScheduler {
   private readonly logger = new Logger(ReminderScheduler.name);
 
   constructor(
-    @InjectQueue("reminder-emails") private readonly reminderQueue: Queue<ReminderJobData>,
+    @InjectQueue(REMINDERS_QUEUE) private readonly reminderQueue: Queue<ReminderJobData>,
   ) {}
 
-  @Cron("0 6-11,22 * * *", { timeZone: "Africa/Lagos" }) // At minute 0 of 6–11 and 22 (10pm) every day
+  @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingStartReminders() {
     this.logger.log("Scheduling booking leg start reminder emails...");
 
     try {
       await this.reminderQueue.add(
-        "booking-leg-start-reminder",
-        { type: "trip-start", timestamp: new Date().toISOString() },
+        BOOKING_LEG_START_REMINDER,
+        { type: TRIP_START, timestamp: new Date().toISOString() },
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
       this.logger.error(
         "Failed to enqueue booking start reminders",
-        error instanceof Error ? error.stack : String(error),
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
 
-  @Cron("0 4,18-23 * * *", { timeZone: "Africa/Lagos" }) // At 04:00, then on the hour 18–23 every day
+  @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingEndReminders() {
     this.logger.log("Scheduling booking leg end reminder emails...");
 
     try {
       await this.reminderQueue.add(
-        "booking-leg-end-reminder",
-        { type: "trip-end", timestamp: new Date().toISOString() },
+        BOOKING_LEG_END_REMINDER,
+        { type: TRIP_END, timestamp: new Date().toISOString() },
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
       this.logger.error(
         "Failed to enqueue booking end reminders",
-        error instanceof Error ? error.stack : String(error),
+        error instanceof Error ? error.message : String(error),
       );
     }
   }

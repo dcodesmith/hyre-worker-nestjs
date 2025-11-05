@@ -1,20 +1,26 @@
 import { InjectQueue } from "@nestjs/bull";
 import { Injectable, Logger } from "@nestjs/common";
 import { Queue } from "bull";
+import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import {
   getCustomerDetails,
   normaliseBookingDetails,
   normaliseBookingLegDetails,
 } from "../../shared/helper";
 import { BookingLegWithRelations, BookingWithRelations } from "../../types";
-import { NotificationChannel, NotificationJobData, NotificationType } from "./notification.types";
+import {
+  NotificationChannel,
+  NotificationJobData,
+  NotificationType,
+} from "./notification.interface";
 
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
 
   constructor(
-    @InjectQueue("notifications") private readonly notificationQueue: Queue<NotificationJobData>,
+    @InjectQueue(NOTIFICATIONS_QUEUE)
+    private readonly notificationQueue: Queue<NotificationJobData>,
   ) {}
 
   /**

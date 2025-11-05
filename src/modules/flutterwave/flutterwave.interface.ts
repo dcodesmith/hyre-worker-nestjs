@@ -47,6 +47,24 @@ export interface FlutterwaveConfig {
   webhookUrl: string;
 }
 
+export interface BankDetails {
+  bankCode: string;
+  accountNumber: string;
+  bankName?: string;
+}
+
+export interface PayoutRequest {
+  bankDetails: BankDetails;
+  amount: number;
+  reference: string;
+  bookingId: string;
+}
+
+export interface PayoutResponse {
+  success: boolean;
+  data: FlutterwaveTransferData | { message: string };
+}
+
 export class FlutterwaveError extends Error {
   constructor(
     message: string,

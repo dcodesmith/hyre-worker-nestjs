@@ -1,5 +1,6 @@
 import { BullModule } from "@nestjs/bull";
 import { Module } from "@nestjs/common";
+import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { EmailService } from "./email.service";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
@@ -8,7 +9,7 @@ import { WhatsAppService } from "./whatsapp.service";
 @Module({
   imports: [
     BullModule.registerQueue({
-      name: "notifications",
+      name: NOTIFICATIONS_QUEUE,
       defaultJobOptions: {
         attempts: 3,
         backoff: {
