@@ -42,7 +42,7 @@ importers:
         specifier: ^6.4.0
         version: 6.4.0(@nestjs/common@11.1.8(reflect-metadata@0.1.14)(rxjs@7.8.2))(@nestjs/core@11.1.8)(reflect-metadata@0.1.14)
       '@prisma/client':
-        specifier: ^6.15.0
+        specifier: ^6.19.0
         version: 6.19.0(prisma@6.19.0(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
       '@react-email/components':
         specifier: ^0.3.3
@@ -118,7 +118,7 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(vitest@3.2.4)
       prisma:
-        specifier: ^6.15.0
+        specifier: ^6.19.0
         version: 6.19.0(magicast@0.3.5)(typescript@5.9.3)
       tailwindcss:
         specifier: ^4.1.12
