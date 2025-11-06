@@ -2,7 +2,6 @@ import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
-import { PaymentService } from "../payment/payment.service";
 
 @Injectable()
 export class StatusChangeService {
@@ -11,7 +10,6 @@ export class StatusChangeService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
-    private readonly paymentService: PaymentService,
   ) {}
 
   private getCurrentUtcHourWindow(): { gte: Date; lte: Date } {
@@ -142,24 +140,6 @@ export class StatusChangeService {
               legs: { include: { extensions: true } },
             },
           });
-
-          // Initiate payout to fleet owner
-          try {
-            await this.paymentService.initiatePayout(updatedBooking);
-          } catch (payoutError) {
-            this.logger.error(
-              `Error initiating payout for booking ${booking.id}: ${
-                payoutError instanceof Error ? payoutError.message : "Unknown error"
-              }`,
-            );
-            // Track payout failure for manual processing
-            await tx.booking.update({
-              where: { id: booking.id },
-              data: {
-                overallPayoutStatus: "FAILED",
-              },
-            });
-          }
 
           // Free up the car
           await tx.car.update({
