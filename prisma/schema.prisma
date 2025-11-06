@@ -255,7 +255,7 @@ model Payment {
 model PayoutTransaction {
   id                      String                  @id @default(cuid())
   fleetOwnerId            String
-  bookingId               String?
+  bookingId               String?                 @unique
   extensionId             String?
   amountToPay             Decimal                 @db.Decimal(10, 2)
   amountPaid              Decimal?                @db.Decimal(10, 2)

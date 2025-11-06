@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { PayoutTransaction } from "@prisma/client";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -52,13 +53,11 @@ export class PaymentService {
     const reference = `payout_${booking.id}_${Date.now()}`;
 
     try {
-      // Check if a payout transaction already exists for this booking
-      let payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
-        where: { bookingId: booking.id },
-      });
+      let payoutTransaction: PayoutTransaction;
 
-      if (!payoutTransaction) {
-        // Create new payout transaction if it doesn't exist
+      try {
+        // Attempt to create the payout transaction directly
+        // If it already exists, this will fail with P2002 (unique constraint violation)
         payoutTransaction = await this.databaseService.payoutTransaction.create({
           data: {
             fleetOwnerId: fleetOwner.id,
@@ -69,7 +68,27 @@ export class PaymentService {
             payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
           },
         });
+      } catch (error) {
+        // Check if it's a unique constraint violation (P2002)
+        if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+          // Record already exists, fetch it
+          this.logger.log("Payout transaction already exists for booking, fetching existing record", {
+            bookingId: booking.id,
+          });
+          payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
+            where: { bookingId: booking.id },
+          });
+
+          if (!payoutTransaction) {
+            // This should never happen, but handle gracefully
+            throw new Error("Failed to fetch existing payout transaction after constraint violation");
+          }
+        } else {
+          // Re-throw if it's not a constraint violation
+          throw error;
+        }
       }
+
       // If the transaction already exists and is not in a retriable state, return early
       if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
         this.logger.log("Payout already processed or in progress for booking", {
