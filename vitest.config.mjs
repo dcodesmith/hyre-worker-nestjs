@@ -45,6 +45,12 @@ export default defineConfig({
   plugins: [
     tsconfigPaths(),
     swc.vite({
+      jsc: {
+        parser: { syntax: "typescript", decorators: true },
+        transform: { legacyDecorator: true, decoratorMetadata: true },
+        target: "es2022",
+        keepClassNames: true,
+      },
       module: { type: "es6" },
     }),
   ],
