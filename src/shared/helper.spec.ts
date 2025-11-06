@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { formatCurrency, getCustomerDetails, getUserDisplayName } from "./helper";
 import {
   createBooking,
+  createBookingLeg,
   createCar,
   createChauffeur,
   createOwner,
@@ -22,14 +23,14 @@ describe("Helper Functions", () => {
 
   describe("getUserDisplayName", () => {
     it("should return user name when available", () => {
-      const booking = createBooking();
+      const booking = createBooking({ user: createUser() });
       const result = getUserDisplayName(booking, "user");
 
       expect(result).toBe("John Doe");
     });
 
     it("should fallback to username when name not available", () => {
-      const booking = createBooking({ user: createUser({ name: null }) });
+      const booking = createBooking({ user: createUser({ name: null, username: "johndoe" }) });
       const result = getUserDisplayName(booking, "user");
 
       expect(result).toBe("johndoe");
@@ -58,7 +59,7 @@ describe("Helper Functions", () => {
     });
 
     it("should return fleet owner name", () => {
-      const booking = createBooking();
+      const booking = createBooking({ car: createCar({ owner: createOwner() }) });
       const result = getUserDisplayName(booking, "owner");
 
       expect(result).toBe("Fleet Owner");
@@ -137,7 +138,12 @@ describe("Helper Functions", () => {
 
   describe("createBooking", () => {
     it("should create a booking with default values", () => {
-      const booking = createBooking();
+      const booking = createBooking({
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+        legs: [createBookingLeg()],
+      });
 
       expect(booking).toMatchObject({
         id: "booking-123",
@@ -179,6 +185,7 @@ describe("Helper Functions", () => {
         id: "custom-booking-456",
         pickupLocation: "Custom Location",
         status: BookingStatus.ACTIVE,
+        user: createUser(),
       });
 
       expect(booking.id).toBe("custom-booking-456");

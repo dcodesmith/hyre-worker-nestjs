@@ -4,7 +4,13 @@ import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
-import { createBooking } from "../../shared/helper.fixtures";
+import {
+  createBooking,
+  createCar,
+  createChauffeur,
+  createOwner,
+  createUser,
+} from "../../shared/helper.fixtures";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -46,6 +52,9 @@ describe("NotificationService", () => {
     it("should queue status change notification", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
       });
 
       await service.queueBookingStatusNotifications(
@@ -74,7 +83,11 @@ describe("NotificationService", () => {
 
   describe("queueBookingReminderNotifications", () => {
     it("should queue reminder notifications for both customer and chauffeur", async () => {
-      const booking = createBooking();
+      const booking = createBooking({
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
       const bookingLeg = {
         id: "leg-123",
         booking,
@@ -86,7 +99,7 @@ describe("NotificationService", () => {
 
       await service.queueBookingReminderNotifications(bookingLeg, "start");
 
-      expect(mockQueue.add).toHaveBeenCalledTimes(2); // Customer + Chauffeur
+      expect(mockQueue.add).toHaveBeenCalledTimes(2);
       expect(mockQueue.add).toHaveBeenCalledWith(
         "send-notification",
         expect.objectContaining({

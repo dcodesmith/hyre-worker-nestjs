@@ -27,6 +27,7 @@ describe("StatusChangeService", () => {
             car: {
               update: vi.fn(),
             },
+            $transaction: vi.fn(),
           },
         },
         {
@@ -87,29 +88,34 @@ describe("StatusChangeService", () => {
   });
 
   it("should update bookings from confirmed to active when bookings found", async () => {
-    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([
-      createBooking({
-        id: "1",
-        bookingReference: "1",
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-      }),
-    ]);
+    const mockBooking = createBooking({
+      id: "1",
+      bookingReference: "1",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+    });
+
+    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
+
+    // Mock $transaction to execute the callback with a mock transaction object
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
+      const mockTx = {
+        booking: {
+          update: vi.fn().mockResolvedValue({ ...mockBooking, status: BookingStatus.ACTIVE }),
+        },
+      } as unknown as DatabaseService;
+      return callback(mockTx);
+    });
 
     const result = await service.updateBookingsFromConfirmedToActive();
 
-    expect(mockDatabaseService.booking.update).toHaveBeenCalledTimes(1);
-    expect(mockDatabaseService.booking.update).toHaveBeenCalledWith({
-      where: { id: "1" },
-      data: { status: BookingStatus.ACTIVE },
-      include: {
-        car: { include: { owner: true } },
-        user: true,
-        chauffeur: true,
-        legs: { include: { extensions: true } },
-      },
-    });
+    expect(mockDatabaseService.$transaction).toHaveBeenCalledTimes(1);
     expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledTimes(1);
+    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
+      BookingStatus.CONFIRMED,
+      BookingStatus.ACTIVE,
+    );
     expect(result).toBe("Updated 1 bookings from confirmed to active");
   });
 
