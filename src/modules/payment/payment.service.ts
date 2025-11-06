@@ -80,15 +80,42 @@ export class PaymentService {
           );
           // Note: bookingId is nullable in the schema (PayoutTransaction can be for either a booking or extension),
           // but it has a unique constraint. Prisma query engine will use the unique index for optimal performance.
-          payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
+          const existingTransaction = await this.databaseService.payoutTransaction.findFirst({
             where: { bookingId: booking.id },
           });
 
-          if (!payoutTransaction) {
+          if (!existingTransaction) {
             // This should never happen, but handle gracefully
             throw new Error(
               "Failed to fetch existing payout transaction after constraint violation",
             );
+          }
+
+          // Refresh the existing transaction with latest computed values
+          try {
+            payoutTransaction = await this.databaseService.payoutTransaction.update({
+              where: { id: existingTransaction.id },
+              data: {
+                amountToPay: payoutAmount,
+                currency: "NGN",
+                payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
+              },
+            });
+            this.logger.log("Updated existing payout transaction with latest values", {
+              bookingId: booking.id,
+              transactionId: payoutTransaction.id,
+            });
+          } catch (updateError) {
+            this.logger.error(
+              "Failed to update existing payout transaction with latest values",
+              {
+                bookingId: booking.id,
+                transactionId: existingTransaction.id,
+                error: updateError instanceof Error ? updateError.message : String(updateError),
+              },
+            );
+            // Re-throw the update error
+            throw updateError;
           }
         } else {
           // Re-throw if it's not a constraint violation

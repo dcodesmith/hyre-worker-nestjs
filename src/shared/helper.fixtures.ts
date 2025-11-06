@@ -1,4 +1,5 @@
 import {
+  BookingReferralStatus,
   BookingStatus,
   BookingType,
   CarApprovalStatus,
@@ -173,7 +174,7 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     fuelUpgradeCost: null,
     referralReferrerUserId: null,
     referralDiscountAmount: new Decimal(0),
-    referralStatus: "NONE" as const,
+    referralStatus: BookingReferralStatus.NONE,
     referralCreditsUsed: new Decimal(0),
     referralCreditsReserved: new Decimal(0),
     carId: "car-123",
