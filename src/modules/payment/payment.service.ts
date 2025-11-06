@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { PayoutTransaction } from "@prisma/client";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -52,18 +53,76 @@ export class PaymentService {
     const reference = `payout_${booking.id}_${Date.now()}`;
 
     try {
-      let payoutTransaction = await this.databaseService.payoutTransaction.upsert({
-        where: { bookingId: booking.id }, // unique
-        update: {},
-        create: {
-          fleetOwnerId: fleetOwner.id,
-          bookingId: booking.id,
-          amountToPay: payoutAmount,
-          currency: "NGN",
-          status: "PENDING_DISBURSEMENT",
-          payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
-        },
-      });
+      let payoutTransaction: PayoutTransaction;
+
+      try {
+        // Attempt to create the payout transaction directly
+        // If it already exists, this will fail with P2002 (unique constraint violation)
+        payoutTransaction = await this.databaseService.payoutTransaction.create({
+          data: {
+            fleetOwnerId: fleetOwner.id,
+            bookingId: booking.id,
+            amountToPay: payoutAmount,
+            currency: "NGN",
+            status: "PENDING_DISBURSEMENT",
+            payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
+          },
+        });
+      } catch (error) {
+        // Check if it's a unique constraint violation (P2002)
+        if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+          // Record already exists, fetch it
+          this.logger.log(
+            "Payout transaction already exists for booking, fetching existing record",
+            {
+              bookingId: booking.id,
+            },
+          );
+          // Note: bookingId is nullable in the schema (PayoutTransaction can be for either a booking or extension),
+          // but it has a unique constraint. Prisma query engine will use the unique index for optimal performance.
+          const existingTransaction = await this.databaseService.payoutTransaction.findFirst({
+            where: { bookingId: booking.id },
+          });
+
+          if (!existingTransaction) {
+            // This should never happen, but handle gracefully
+            throw new Error(
+              "Failed to fetch existing payout transaction after constraint violation",
+            );
+          }
+
+          // Refresh the existing transaction with latest computed values
+          try {
+            payoutTransaction = await this.databaseService.payoutTransaction.update({
+              where: { id: existingTransaction.id },
+              data: {
+                amountToPay: payoutAmount,
+                currency: "NGN",
+                payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
+              },
+            });
+            this.logger.log("Updated existing payout transaction with latest values", {
+              bookingId: booking.id,
+              transactionId: payoutTransaction.id,
+            });
+          } catch (updateError) {
+            this.logger.error(
+              "Failed to update existing payout transaction with latest values",
+              {
+                bookingId: booking.id,
+                transactionId: existingTransaction.id,
+                error: updateError instanceof Error ? updateError.message : String(updateError),
+              },
+            );
+            // Re-throw the update error
+            throw updateError;
+          }
+        } else {
+          // Re-throw if it's not a constraint violation
+          throw error;
+        }
+      }
+
       // If the transaction already exists and is not in a retriable state, return early
       if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
         this.logger.log("Payout already processed or in progress for booking", {
