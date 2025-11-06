@@ -1,6 +1,6 @@
-import { InjectQueue } from "@nestjs/bull";
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { Queue } from "bull";
+import { Queue } from "bullmq";
 import { randomUUID } from "node:crypto";
 import {
   ACTIVE_TO_COMPLETED,
@@ -40,14 +40,15 @@ export class JobService {
 
   private async enqueue(queue: Queue, name: string, type: string) {
     const timestamp = new Date().toISOString();
-    const jobId = `${name}:${timestamp}:${randomUUID().slice(0, 8)}`;
+    const jobId = `${name}-${timestamp}-${randomUUID().slice(0, 8)}`;
 
     await queue.add(
       name,
       { type, timestamp },
       {
         jobId,
-        removeOnComplete: true,
+        removeOnComplete: 100,
+        removeOnFail: 50,
         attempts: 3,
         backoff: { type: "exponential", delay: 1000 },
       },

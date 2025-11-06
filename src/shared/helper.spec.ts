@@ -1,134 +1,116 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { createBooking, formatCurrency, getCustomerDetails, getUserDisplayName } from "./helper";
+import { formatCurrency, getCustomerDetails, getUserDisplayName } from "./helper";
+import {
+  createBooking,
+  createCar,
+  createChauffeur,
+  createOwner,
+  createUser,
+} from "./helper.fixtures";
 
 describe("Helper Functions", () => {
   describe("formatCurrency", () => {
-    it("should format currency correctly", () => {
-      const result = formatCurrency(10000);
-      expect(result).toContain("₦");
-      expect(result).toContain("10,000");
-    });
-
     it("should handle zero amount", () => {
-      const result = formatCurrency(0);
-      expect(result).toContain("₦0");
+      expect(formatCurrency(0)).toContain("₦0");
     });
 
     it("should handle decimal amounts", () => {
-      const result = formatCurrency(1500.5);
-      expect(result).toEqual("₦1,500.50");
+      expect(formatCurrency(1500.5)).toEqual("₦1,500.50");
     });
   });
 
   describe("getUserDisplayName", () => {
     it("should return user name when available", () => {
-      const mockBooking = {
-        user: { name: "John Doe", username: "johndoe", email: "john@example.com" },
-        guestUser: null,
-        car: { owner: { name: "Fleet Owner" } },
-        chauffeur: null,
-      } as any;
+      const booking = createBooking();
+      const result = getUserDisplayName(booking, "user");
 
-      const result = getUserDisplayName(mockBooking, "user");
       expect(result).toBe("John Doe");
     });
 
     it("should fallback to username when name not available", () => {
-      const mockBooking = {
-        user: { name: null, username: "johndoe", email: "john@example.com" },
-        guestUser: null,
-        car: { owner: { name: "Fleet Owner" } },
-        chauffeur: null,
-      } as any;
+      const booking = createBooking({ user: createUser({ name: null }) });
+      const result = getUserDisplayName(booking, "user");
 
-      const result = getUserDisplayName(mockBooking, "user");
       expect(result).toBe("johndoe");
     });
 
     it("should return Customer when no user details available", () => {
-      const mockBooking = {
-        user: null,
-        guestUser: null,
-        car: { owner: { name: "Fleet Owner" } },
-        chauffeur: null,
-      } as any;
+      const user = createUser({ name: null, username: null, email: null });
+      const booking = createBooking({ user });
+      const result = getUserDisplayName(booking, "user");
 
-      const result = getUserDisplayName(mockBooking, "user");
       expect(result).toBe("Customer");
     });
 
-    it("should return fleet owner name", () => {
-      const mockBooking = {
+    it("should return guest user name when user is null and guestUser exists", () => {
+      const booking = createBooking({
         user: null,
-        guestUser: null,
-        car: { owner: { name: "Fleet Owner", email: "owner@example.com" } },
-        chauffeur: null,
-      } as any;
+        guestUser: {
+          name: "Guest User",
+          email: "guest@example.com",
+          phoneNumber: "9999999999",
+        },
+      });
+      const result = getUserDisplayName(booking, "user");
 
-      const result = getUserDisplayName(mockBooking, "owner");
+      expect(result).toBe("Guest User");
+    });
+
+    it("should return fleet owner name", () => {
+      const booking = createBooking();
+      const result = getUserDisplayName(booking, "owner");
+
       expect(result).toBe("Fleet Owner");
     });
 
     it("should return chauffeur name", () => {
-      const mockBooking = {
-        user: null,
-        guestUser: null,
-        car: { owner: { name: "Fleet Owner" } },
-        chauffeur: { name: "Jane Smith", email: "jane@example.com" },
-      } as any;
+      const chauffeur = createChauffeur({ name: "Jane Smith", email: "jane@example.com" });
+      const booking = createBooking({ chauffeur });
+      const result = getUserDisplayName(booking, "chauffeur");
 
-      const result = getUserDisplayName(mockBooking, "chauffeur");
       expect(result).toBe("Jane Smith");
     });
   });
 
   describe("getCustomerDetails", () => {
     it("should extract user details correctly", () => {
-      const mockBooking = {
-        user: {
-          email: "user@example.com",
-          name: "John Doe",
-          phoneNumber: "1234567890",
-        },
-        guestUser: null,
-      } as any;
-
-      const result = getCustomerDetails(mockBooking);
+      const user = createUser({
+        email: "damola@example.com",
+        name: "Damola",
+        phoneNumber: "1234567890",
+      });
+      const booking = createBooking({ user });
+      const result = getCustomerDetails(booking);
 
       expect(result).toEqual({
-        email: "user@example.com",
-        name: "John Doe",
+        email: "damola@example.com",
+        name: "Damola",
         phone_number: "1234567890",
       });
     });
 
     it("should extract guest user details when no regular user", () => {
-      const mockBooking = {
+      const booking = createBooking({
         user: null,
         guestUser: {
-          email: "guest@example.com",
           name: "Guest User",
-          phoneNumber: "0987654321",
+          email: "guest@example.com",
+          phoneNumber: "9999999999",
         },
-      } as any;
-
-      const result = getCustomerDetails(mockBooking);
+      });
+      const result = getCustomerDetails(booking);
 
       expect(result).toEqual({
         email: "guest@example.com",
         name: "Guest User",
-        phone_number: "0987654321",
+        phone_number: "9999999999",
       });
     });
 
     it("should return empty strings when no user data available", () => {
-      const mockBooking = {
-        user: null,
-        guestUser: null,
-      } as any;
-
-      const result = getCustomerDetails(mockBooking);
+      const booking = createBooking({ user: null, guestUser: null });
+      const result = getCustomerDetails(booking);
 
       expect(result).toEqual({
         email: "",
@@ -138,19 +120,15 @@ describe("Helper Functions", () => {
     });
 
     it("should handle null user properties gracefully", () => {
-      const mockBooking = {
-        user: {
-          email: "user@example.com",
-          name: null,
-          phoneNumber: null,
-        },
+      const booking = createBooking({
+        user: createUser({ email: "john@example.com", name: null, phoneNumber: null }),
         guestUser: null,
-      } as any;
+      });
 
-      const result = getCustomerDetails(mockBooking);
+      const result = getCustomerDetails(booking);
 
       expect(result).toEqual({
-        email: "user@example.com",
+        email: "john@example.com",
         name: "",
         phone_number: "",
       });
@@ -171,7 +149,7 @@ describe("Helper Functions", () => {
 
       expect(booking.user).toMatchObject({
         id: "user-123",
-        email: "user@example.com",
+        email: "john@example.com",
         name: "John Doe",
         phoneNumber: "1234567890",
       });
@@ -207,96 +185,64 @@ describe("Helper Functions", () => {
       expect(booking.pickupLocation).toBe("Custom Location");
       expect(booking.status).toBe(BookingStatus.ACTIVE);
 
-      // Should keep default values for non-overridden properties
       expect(booking.returnLocation).toBe("Hotel");
       expect(booking.user?.name).toBe("John Doe");
     });
 
     it("should allow overriding nested user properties", () => {
       const booking = createBooking({
-        user: {
-          name: "Custom User",
-          email: "custom@example.com",
-        } as any,
+        user: createUser({ name: "Custom User", email: "custom@example.com" }),
       });
 
       expect(booking.user).toMatchObject({
-        id: "user-123", // Default preserved
-        name: "Custom User", // Override applied
-        email: "custom@example.com", // Override applied
-        phoneNumber: "1234567890", // Default preserved
+        id: "user-123",
+        name: "Custom User",
+        email: "custom@example.com",
+        phoneNumber: "1234567890",
       });
     });
 
     it("should allow overriding nested car and owner properties", () => {
       const booking = createBooking({
-        car: {
+        car: createCar({
           make: "Mercedes",
           model: "S-Class",
-          owner: {
-            name: "Custom Fleet Owner",
-          } as any,
-        } as any,
+          owner: createOwner({ name: "Custom Fleet Owner" }),
+        }),
       });
 
       expect(booking.car).toMatchObject({
-        id: "car-123", // Default preserved
-        make: "Mercedes", // Override applied
-        model: "S-Class", // Override applied
-        year: 2023, // Default preserved
+        id: "car-123",
+        make: "Mercedes",
+        model: "S-Class",
+        year: 2023,
       });
 
       expect(booking.car.owner).toMatchObject({
-        id: "owner-123", // Default preserved
-        name: "Custom Fleet Owner", // Override applied
-        email: "owner@example.com", // Default preserved
+        id: "owner-123",
+        name: "Custom Fleet Owner",
+        email: "owner@example.com",
       });
     });
 
-    it("should create booking suitable for testing user display names", () => {
-      const booking = createBooking();
-
-      const customerName = getUserDisplayName(booking, "user");
-      const ownerName = getUserDisplayName(booking, "owner");
-      const chauffeurName = getUserDisplayName(booking, "chauffeur");
-
-      expect(customerName).toBe("John Doe");
-      expect(ownerName).toBe("Fleet Owner");
-      expect(chauffeurName).toBe("Jane Smith");
-    });
-
-    it("should create booking suitable for testing customer details", () => {
-      const booking = createBooking();
-
-      const customerDetails = getCustomerDetails(booking);
-
-      expect(customerDetails).toEqual({
-        email: "user@example.com",
-        name: "John Doe",
-        phone_number: "1234567890",
-      });
-    });
-
-    it("should handle guest user scenario", () => {
-      const booking = createBooking({
-        user: null,
-        guestUser: {
-          name: "Guest User",
-          email: "guest@example.com",
-          phoneNumber: "9999999999",
-        },
-      });
-
-      const customerDetails = getCustomerDetails(booking);
-      const displayName = getUserDisplayName(booking, "user");
-
-      expect(customerDetails).toEqual({
-        email: "guest@example.com",
+    it("should create booking with guest user and null user when guestUser provided", () => {
+      const guestUser = {
         name: "Guest User",
-        phone_number: "9999999999",
-      });
+        email: "guest@example.com",
+        phoneNumber: "9999999999",
+      };
+      const booking = createBooking({ user: null, guestUser });
 
-      expect(displayName).toBe("Guest User");
+      expect(booking.user).toBeNull();
+      expect(booking.guestUser).toEqual(guestUser);
+    });
+
+    it("should set guestUser to null when user is provided", () => {
+      const user = createUser({ name: "Regular User" });
+      const booking = createBooking({ user });
+
+      expect(booking.user).toMatchObject({ name: "Regular User" });
+      expect(booking.guestUser).toBeNull();
     });
   });
 });

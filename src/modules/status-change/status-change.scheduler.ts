@@ -1,7 +1,7 @@
-import { InjectQueue } from "@nestjs/bull";
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
-import { Queue } from "bull";
+import { Queue } from "bullmq";
 import {
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,

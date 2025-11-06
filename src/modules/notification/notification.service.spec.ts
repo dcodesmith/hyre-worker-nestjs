@@ -1,16 +1,16 @@
-import { getQueueToken } from "@nestjs/bull";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
-import { Queue } from "bull";
+import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking } from "../../shared/helper";
-import { NotificationService } from "./notification.service";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import { createBooking } from "../../shared/helper.fixtures";
 import {
   NotificationChannel,
   NotificationJobData,
   NotificationType,
 } from "./notification.interface";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import { NotificationService } from "./notification.service";
 
 describe("NotificationService", () => {
   let service: NotificationService;
@@ -62,7 +62,7 @@ describe("NotificationService", () => {
           bookingId: booking.id,
           recipients: expect.objectContaining({
             customer: expect.objectContaining({
-              email: "user@example.com",
+              email: "john@example.com",
               phoneNumber: "1234567890",
             }),
           }),
@@ -93,7 +93,6 @@ describe("NotificationService", () => {
           type: NotificationType.BOOKING_REMINDER_START,
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
         }),
-        { priority: 2 },
       );
     });
   });

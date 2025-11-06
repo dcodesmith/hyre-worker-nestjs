@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking } from "../../shared/helper";
+import { createBooking } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";

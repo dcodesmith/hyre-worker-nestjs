@@ -1,6 +1,6 @@
-import { Process, Processor } from "@nestjs/bull";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
-import { Job } from "bull";
+import { Job } from "bullmq";
 import { renderBookingReminderEmail, renderBookingStatusUpdateEmail } from "../../templates/emails";
 import { EmailService } from "./email.service";
 import {
@@ -24,8 +24,10 @@ import {
 import { Template, WhatsAppService } from "./whatsapp.service";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 
-@Processor(NOTIFICATIONS_QUEUE)
-export class NotificationProcessor {
+@Processor(NOTIFICATIONS_QUEUE, {
+  concurrency: 5, // Process 5 notifications concurrently
+})
+export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
   private readonly templateMappers: TemplateVariableMapper[];
 
@@ -33,6 +35,7 @@ export class NotificationProcessor {
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
   ) {
+    super();
     // Initialize template mappers in order of specificity
     this.templateMappers = [
       new BookingStatusMapper(),
@@ -42,11 +45,7 @@ export class NotificationProcessor {
     ];
   }
 
-  @Process({
-    name: "send-notification",
-    concurrency: 5, // Process 5 notifications concurrently
-  })
-  async processNotification(job: Job<NotificationJobData>): Promise<NotificationResult[]> {
+  async process(job: Job<NotificationJobData, NotificationResult[], string>): Promise<NotificationResult[]> {
     const { id, type, channels, recipients, templateData } = job.data;
 
     this.logger.log("Processing notification", {
@@ -272,5 +271,42 @@ export class NotificationProcessor {
   ): Record<string, string | number> {
     const mapper = this.templateMappers.find((mapper) => mapper.canHandle(type));
     return mapper?.mapVariables(templateData, recipientType) || {};
+  }
+
+  @OnWorkerEvent("completed")
+  onCompleted(job: Job<NotificationJobData, NotificationResult[]>) {
+    const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
+    this.logger.log(`Notification job completed: ${job.data.type} [${job.id}] - Duration: ${duration}ms`);
+  }
+
+  @OnWorkerEvent("failed")
+  onFailed(job: Job<NotificationJobData, NotificationResult[]>, error: Error) {
+    this.logger.error(`Notification job failed: ${job.data.type} [${job.id}]`, {
+      notificationId: job.data.id,
+      bookingId: job.data.bookingId,
+      channels: job.data.channels,
+      error: error.message,
+      stack: error.stack,
+      attempts: job.attemptsMade,
+      maxAttempts: job.opts.attempts,
+    });
+  }
+
+  @OnWorkerEvent("active")
+  onActive(job: Job<NotificationJobData, NotificationResult[]>) {
+    this.logger.log(`Notification job started: ${job.data.type} [${job.id}] - Attempt ${job.attemptsMade + 1}`, {
+      notificationId: job.data.id,
+      channels: job.data.channels,
+    });
+  }
+
+  @OnWorkerEvent("stalled")
+  onStalled(jobId: string) {
+    this.logger.warn(`Notification job stalled: ${jobId}`);
+  }
+
+  @OnWorkerEvent("progress")
+  onProgress(job: Job<NotificationJobData, NotificationResult[]>, progress: number | object) {
+    this.logger.debug(`Notification job progress: ${job.data.type} [${job.id}]`, progress);
   }
 }

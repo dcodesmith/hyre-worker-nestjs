@@ -1,6 +1,6 @@
-import { InjectQueue } from "@nestjs/bull";
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { Queue } from "bull";
+import { Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import {
   getCustomerDetails,
@@ -51,7 +51,6 @@ export class NotificationService {
         newStatus,
         subject: this.getStatusChangeSubject(newStatus),
       },
-      priority: 1, // High priority for status changes
     };
 
     await this.notificationQueue.add("send-notification", jobData, {
@@ -97,12 +96,9 @@ export class NotificationService {
           recipientType: "client",
           subject: this.getReminderSubject(type),
         },
-        priority: 2, // Medium priority for reminders
       };
 
-      await this.notificationQueue.add("send-notification", customerJobData, {
-        priority: 2,
-      });
+      await this.notificationQueue.add("send-notification", customerJobData);
     }
 
     // Chauffeur notifications
@@ -129,12 +125,9 @@ export class NotificationService {
           recipientType: "chauffeur",
           subject: this.getChauffeurReminderSubject(type),
         },
-        priority: 2,
       };
 
-      await this.notificationQueue.add("send-notification", chauffeurJobData, {
-        priority: 2,
-      });
+      await this.notificationQueue.add("send-notification", chauffeurJobData);
     }
 
     this.logger.log("Queued booking reminder notifications", {

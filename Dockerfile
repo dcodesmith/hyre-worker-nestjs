@@ -18,6 +18,8 @@ RUN pnpm install --offline --frozen-lockfile
 # Generate Prisma client and build TypeScript
 RUN npx prisma generate
 RUN pnpm build
+# Prune to production deps for runtime image
+RUN pnpm prune --prod && cp -R node_modules /tmp/node_modules_prod
 
 # Stage 2: Production stage
 FROM node:20-alpine AS production

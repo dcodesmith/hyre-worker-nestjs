@@ -1,4 +1,6 @@
-import { BullModule } from "@nestjs/bull";
+import { BullModule } from "@nestjs/bullmq";
+import { BullBoardModule } from "@bull-board/nestjs";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { Module } from "@nestjs/common";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { EmailService } from "./email.service";
@@ -19,13 +21,13 @@ import { WhatsAppService } from "./whatsapp.service";
         removeOnComplete: 100, // Keep last 100 successful jobs
         removeOnFail: 50, // Keep last 50 failed jobs
       },
-      settings: {
-        stalledInterval: 30000,
-        maxStalledCount: 1,
-      },
+    }),
+    BullBoardModule.forFeature({
+      name: NOTIFICATIONS_QUEUE,
+      adapter: BullMQAdapter,
     }),
   ],
   providers: [NotificationService, NotificationProcessor, EmailService, WhatsAppService],
-  exports: [NotificationService, EmailService, WhatsAppService],
+  exports: [NotificationService, EmailService, WhatsAppService, BullModule],
 })
 export class NotificationModule {}

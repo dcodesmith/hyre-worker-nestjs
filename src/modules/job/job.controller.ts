@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Post,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Throttle } from "@nestjs/throttler";
 import { JobService } from "./job.service";
 
@@ -13,8 +14,11 @@ import { JobService } from "./job.service";
 export class JobController {
   private readonly manualTriggersEnabled: boolean;
 
-  constructor(private readonly jobService: JobService) {
-    this.manualTriggersEnabled = true;
+  constructor(
+    private readonly jobService: JobService,
+    private readonly configService: ConfigService,
+  ) {
+    this.manualTriggersEnabled = this.configService.get<boolean>("ENABLE_MANUAL_TRIGGERS") ?? false;
   }
 
   @HttpCode(HttpStatus.ACCEPTED)

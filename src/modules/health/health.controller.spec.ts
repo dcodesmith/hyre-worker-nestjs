@@ -36,9 +36,9 @@ describe("HealthController", () => {
   it("should call health service checkHealth method", async () => {
     const mockResult = {
       status: "ok",
-      info: { database: { status: "up" }, redis: { status: "up" } },
+      info: { database: { status: "up" } },
       error: {},
-      details: { database: { status: "up" }, redis: { status: "up" } },
+      details: { database: { status: "up" } },
     } satisfies HealthCheckResult;
     vi.mocked(healthService.checkHealth).mockResolvedValue(mockResult);
 
