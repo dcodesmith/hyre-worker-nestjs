@@ -273,7 +273,6 @@ model PayoutTransaction {
 
   @@index([fleetOwnerId])
   @@index([status])
-  @@index([bookingId])
   @@index([extensionId])
 }
 

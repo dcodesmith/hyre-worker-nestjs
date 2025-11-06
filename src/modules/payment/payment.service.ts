@@ -72,16 +72,23 @@ export class PaymentService {
         // Check if it's a unique constraint violation (P2002)
         if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
           // Record already exists, fetch it
-          this.logger.log("Payout transaction already exists for booking, fetching existing record", {
-            bookingId: booking.id,
-          });
+          this.logger.log(
+            "Payout transaction already exists for booking, fetching existing record",
+            {
+              bookingId: booking.id,
+            },
+          );
+          // Note: bookingId is nullable in the schema (PayoutTransaction can be for either a booking or extension),
+          // but it has a unique constraint. Prisma query engine will use the unique index for optimal performance.
           payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
             where: { bookingId: booking.id },
           });
 
           if (!payoutTransaction) {
             // This should never happen, but handle gracefully
-            throw new Error("Failed to fetch existing payout transaction after constraint violation");
+            throw new Error(
+              "Failed to fetch existing payout transaction after constraint violation",
+            );
           }
         } else {
           // Re-throw if it's not a constraint violation
