@@ -52,7 +52,6 @@ model User {
   fleetOwnerStatus        FleetOwnerStatus?        @default(PROCESSING)
   chauffeurApprovalStatus ChauffeurApprovalStatus? @default(PENDING)
   hasOnboarded            Boolean                  @default(false)
-  bankDetailsId           String?
   // Referral fields
   referralCode            String?                  @unique
   referredByUserId        String?
