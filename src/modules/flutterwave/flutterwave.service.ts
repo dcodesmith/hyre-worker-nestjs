@@ -60,7 +60,11 @@ export class FlutterwaveService {
 
       const response = await this.post<FlutterwaveTransferData>("/v3/transfers", payload);
 
-      this.logger.log("Flutterwave transfer initiation response", response);
+      this.logger.log("Flutterwave transfer initiation response", {
+        status: response.status,
+        message: response.message,
+        transferId: response.data?.id,
+      });
 
       if (response.status === "success") {
         return {

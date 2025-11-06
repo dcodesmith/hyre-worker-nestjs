@@ -1,6 +1,6 @@
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
-import { REMINDERS_QUEUE, STATUS_UPDATES_QUEUE } from "src/config/constants";
+import { REMINDERS_QUEUE, STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { JobController } from "./job.controller";
 import { JobService } from "./job.service";
 

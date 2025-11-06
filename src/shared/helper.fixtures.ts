@@ -126,6 +126,8 @@ export function createBookingLeg(
 }
 
 export function createBooking(overrides: Partial<BookingWithRelations> = {}): BookingWithRelations {
+  const { chauffeur, user, car, legs, ...restOverrides } = overrides;
+
   return {
     id: "booking-123",
     bookingReference: "REF-123",
@@ -157,11 +159,11 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     userId: "user-123",
     createdAt: new Date("2024-01-01T00:00:00Z"),
     updatedAt: new Date("2024-01-01T00:00:00Z"),
-    chauffeur: createChauffeur(overrides.chauffeur),
-    user: createUser(overrides.user),
     guestUser: null,
-    car: createCar(overrides.car),
-    legs: overrides.legs?.map(createBookingLeg) ?? [createBookingLeg()],
-    ...overrides,
+    ...restOverrides,
+    chauffeur: createChauffeur(chauffeur),
+    user: createUser(user),
+    car: createCar(car),
+    legs: legs?.map(createBookingLeg) ?? [createBookingLeg()],
   };
 }

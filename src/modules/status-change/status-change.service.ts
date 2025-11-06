@@ -43,7 +43,7 @@ export class StatusChangeService {
 
   async updateBookingsFromConfirmedToActive() {
     try {
-      // Find all confirmed bookings where start date is today
+      // Find all confirmed bookings where start date falls within the current UTC hour window
 
       const bookingsToUpdate = await this.databaseService.booking.findMany({
         where: {
@@ -68,27 +68,30 @@ export class StatusChangeService {
         return "No bookings to update";
       }
 
-      for (const booking of bookingsToUpdate) {
-        const oldStatus = booking.status;
+      // Perform all updates in a transaction for atomicity
+      await this.databaseService.$transaction(async (tx) => {
+        for (const booking of bookingsToUpdate) {
+          const oldStatus = booking.status;
 
-        const updatedBooking = await this.databaseService.booking.update({
-          where: { id: booking.id },
-          data: { status: BookingStatus.ACTIVE },
-          include: {
-            car: { include: { owner: true } },
-            user: true,
-            chauffeur: true,
-            legs: { include: { extensions: true } },
-          },
-        });
+          const updatedBooking = await tx.booking.update({
+            where: { id: booking.id },
+            data: { status: BookingStatus.ACTIVE },
+            include: {
+              car: { include: { owner: true } },
+              user: true,
+              chauffeur: true,
+              legs: { include: { extensions: true } },
+            },
+          });
 
-        // Queue notifications instead of sending directly
-        await this.notificationService.queueBookingStatusNotifications(
-          updatedBooking,
-          oldStatus,
-          BookingStatus.ACTIVE,
-        );
-      }
+          // Queue notifications instead of sending directly
+          await this.notificationService.queueBookingStatusNotifications(
+            updatedBooking,
+            oldStatus,
+            BookingStatus.ACTIVE,
+          );
+        }
+      });
 
       return `Updated ${bookingsToUpdate.length} bookings from confirmed to active`;
     } catch (error) {
@@ -101,7 +104,7 @@ export class StatusChangeService {
 
   async updateBookingsFromActiveToCompleted() {
     try {
-      // Find all confirmed bookings where start date is today
+      // Find all active bookings where end date falls within the current UTC hour window
       const bookingsToUpdate = await this.databaseService.booking.findMany({
         where: {
           status: BookingStatus.ACTIVE,
@@ -120,51 +123,57 @@ export class StatusChangeService {
       });
 
       if (bookingsToUpdate.length === 0) {
+        this.logger.log("No bookings to update from active to completed");
         return "No bookings to update";
       }
 
       for (const booking of bookingsToUpdate) {
-        const updatedBooking = await this.databaseService.booking.update({
-          where: { id: booking.id },
-          data: { status: BookingStatus.COMPLETED },
-          include: {
-            car: { include: { owner: { include: { bankDetails: true } } } },
-            user: true,
-            chauffeur: true,
-            legs: { include: { extensions: true } },
-          },
-        });
+        const oldStatus = booking.status;
 
-        // Initiate payout to fleet owner
-        try {
-          await this.paymentService.initiatePayout(updatedBooking);
-        } catch (payoutError) {
-          this.logger.error(
-            `Error initiating payout for booking ${booking.id}: ${
-              payoutError instanceof Error ? payoutError.message : "Unknown error"
-            }`,
-          );
-          // Track payout failure for manual processing
-          await this.databaseService.booking.update({
+        // Perform all operations in a transaction for atomicity
+        await this.databaseService.$transaction(async (tx) => {
+          const updatedBooking = await tx.booking.update({
             where: { id: booking.id },
-            data: {
-              overallPayoutStatus: "FAILED",
+            data: { status: BookingStatus.COMPLETED },
+            include: {
+              car: { include: { owner: { include: { bankDetails: true } } } },
+              user: true,
+              chauffeur: true,
+              legs: { include: { extensions: true } },
             },
           });
-        }
 
-        // Free up the car
-        await this.databaseService.car.update({
-          where: { id: booking.carId },
-          data: { status: Status.AVAILABLE },
+          // Initiate payout to fleet owner
+          try {
+            await this.paymentService.initiatePayout(updatedBooking);
+          } catch (payoutError) {
+            this.logger.error(
+              `Error initiating payout for booking ${booking.id}: ${
+                payoutError instanceof Error ? payoutError.message : "Unknown error"
+              }`,
+            );
+            // Track payout failure for manual processing
+            await tx.booking.update({
+              where: { id: booking.id },
+              data: {
+                overallPayoutStatus: "FAILED",
+              },
+            });
+          }
+
+          // Free up the car
+          await tx.car.update({
+            where: { id: booking.carId },
+            data: { status: Status.AVAILABLE },
+          });
+
+          // Queue notifications instead of sending directly (using fresh updatedBooking)
+          await this.notificationService.queueBookingStatusNotifications(
+            updatedBooking,
+            oldStatus,
+            BookingStatus.COMPLETED,
+          );
         });
-
-        // Queue notifications instead of sending directly
-        await this.notificationService.queueBookingStatusNotifications(
-          booking,
-          BookingStatus.ACTIVE,
-          BookingStatus.COMPLETED,
-        );
       }
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;

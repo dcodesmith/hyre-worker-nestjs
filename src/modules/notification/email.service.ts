@@ -12,9 +12,10 @@ export class EmailService {
     const apiKey = this.configService.get<string>("RESEND_API_KEY");
     const appName = this.configService.get<string>("APP_NAME");
     const fromEmail = this.configService.get<string>("RESEND_FROM_EMAIL");
+    const senderName = this.configService.get<string>("SENDER_NAME");
 
     this.resend = new Resend(apiKey);
-    this.from = `Damola from ${appName} <${fromEmail}>`;
+    this.from = `${senderName} from ${appName} <${fromEmail}>`;
     this.logger.log("Email service initialized successfully");
   }
 

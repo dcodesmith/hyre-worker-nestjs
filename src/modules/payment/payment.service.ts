@@ -35,7 +35,7 @@ export class PaymentService {
       return;
     }
 
-    if (!bankDetails?.isVerified) {
+    if (!bankDetails || !bankDetails.isVerified) {
       this.logger.warn(
         "Bank details for fleet owner not found or not verified. Cannot process payout for booking",
         {
@@ -61,7 +61,7 @@ export class PaymentService {
           amountToPay: payoutAmount,
           currency: "NGN",
           status: "PENDING_DISBURSEMENT",
-          payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ****${bankDetails.accountNumber.slice(-4)}`,
+          payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
         },
       });
       // If the transaction already exists and is not in a retriable state, return early
@@ -92,12 +92,17 @@ export class PaymentService {
 
       // 3. Update the PayoutTransaction and Booking based on the result
       if (payoutResult.success) {
-        const transferData = payoutResult.data as { id?: string | number }; // Type assertion for Flutterwave transfer data
+        const transferData = payoutResult.data as Record<string, unknown>;
+        const transferId =
+          transferData && typeof transferData === "object" && "id" in transferData
+            ? String(transferData.id)
+            : null;
+
         payoutTransaction = await this.databaseService.payoutTransaction.update({
           where: { id: payoutTransaction.id },
           data: {
             status: "PROCESSING",
-            payoutProviderReference: transferData.id?.toString() || "",
+            payoutProviderReference: transferId,
           },
         });
         await this.databaseService.booking.update({
@@ -109,12 +114,20 @@ export class PaymentService {
           transactionId: payoutTransaction.id,
         });
       } else {
-        const errorData = payoutResult.data as { message: string };
+        const errorData = payoutResult.data as Record<string, unknown>;
+        const errorMessage =
+          errorData &&
+          typeof errorData === "object" &&
+          "message" in errorData &&
+          typeof errorData.message === "string"
+            ? errorData.message
+            : "Unknown error from Flutterwave";
+
         await this.databaseService.payoutTransaction.update({
           where: { id: payoutTransaction.id },
           data: {
             status: "FAILED",
-            notes: `Flutterwave initiation failed: ${errorData.message}`,
+            notes: `Flutterwave initiation failed: ${errorMessage}`,
           },
         });
         await this.databaseService.booking.update({
