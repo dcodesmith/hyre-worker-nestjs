@@ -52,18 +52,24 @@ export class PaymentService {
     const reference = `payout_${booking.id}_${Date.now()}`;
 
     try {
-      let payoutTransaction = await this.databaseService.payoutTransaction.upsert({
-        where: { bookingId: booking.id }, // unique
-        update: {},
-        create: {
-          fleetOwnerId: fleetOwner.id,
-          bookingId: booking.id,
-          amountToPay: payoutAmount,
-          currency: "NGN",
-          status: "PENDING_DISBURSEMENT",
-          payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
-        },
+      // Check if a payout transaction already exists for this booking
+      let payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
+        where: { bookingId: booking.id },
       });
+
+      if (!payoutTransaction) {
+        // Create new payout transaction if it doesn't exist
+        payoutTransaction = await this.databaseService.payoutTransaction.create({
+          data: {
+            fleetOwnerId: fleetOwner.id,
+            bookingId: booking.id,
+            amountToPay: payoutAmount,
+            currency: "NGN",
+            status: "PENDING_DISBURSEMENT",
+            payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
+          },
+        });
+      }
       // If the transaction already exists and is not in a retriable state, return early
       if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
         this.logger.log("Payout already processed or in progress for booking", {
