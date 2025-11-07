@@ -4,14 +4,15 @@ A production-ready NestJS worker service for automated booking management, handl
 
 ## Features
 
-- **📧 Multi-Channel Notifications**: Automated email (Resend) and WhatsApp (Twilio) messaging
-- **⏰ Smart Reminders**: Time-based booking start/end reminders with 1-hour advance notice
-- **🔄 Status Automation**: Automatic booking lifecycle transitions (Confirmed → Active → Completed)
-- **💰 Automated Payouts**: Fleet owner settlement via Flutterwave after booking completion
-- **📊 Queue Monitoring**: Real-time Bull Board dashboard for queue inspection and management
-- **🏥 Health Checks**: Service health monitoring via Terminus
-- **🔁 Retry Logic**: Configurable exponential backoff for failed jobs
-- **📈 Event Tracking**: Comprehensive job lifecycle monitoring (active, completed, failed, stalled)
+- **Multi-Channel Notifications**: Automated email (Resend) and WhatsApp (Twilio) messaging
+- **Smart Reminders**: Time-based booking start/end reminders with 1-hour advance notice
+- **Status Automation**: Automatic booking lifecycle transitions (Confirmed → Active → Completed)
+- **Automated Payouts**: Fleet owner settlement via Flutterwave after booking completion
+- **Referral Rewards**: Automated referral reward processing on booking completion with configurable release conditions
+- **Queue Monitoring**: Real-time Bull Board dashboard for queue inspection and management
+- **Health Checks**: Service health monitoring via Terminus
+- **Retry Logic**: Configurable exponential backoff for failed jobs
+- **Event Tracking**: Comprehensive job lifecycle monitoring (active, completed, failed, stalled)
 
 ## Architecture
 
@@ -52,6 +53,7 @@ A production-ready NestJS worker service for automated booking management, handl
 │  • reminders-queue         (Booking reminders)          │
 │  • status-updates-queue    (Status transitions)         │
 │  • notifications-queue     (Email/WhatsApp delivery)    │
+│  • referral-queue          (Referral reward processing) │
 └──────────────────┬──────────────────────────────────────┘
                    │ Process Jobs
                    ▼
@@ -60,6 +62,7 @@ A production-ready NestJS worker service for automated booking management, handl
 │  • ReminderProcessor       (Fetch & queue reminders)    │
 │  • StatusChangeProcessor   (Update statuses + payouts)  │
 │  • NotificationProcessor   (Send emails/WhatsApp)       │
+│  • ReferralProcessor       (Process referral rewards)   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -115,6 +118,18 @@ A production-ready NestJS worker service for automated booking management, handl
 - Creates and tracks `PayoutTransaction` records
 - Handles Flutterwave transfer failures and retries
 
+**ReferralModule** (`src/modules/referral/`)
+- **Queue**: `referral-queue` (concurrency: 1)
+- **Job**: `process-referral-completion` - Triggered after booking completion
+- **Features**:
+  - Configurable release conditions (PAID or COMPLETED)
+  - Optional expiry window validation
+  - Idempotent reward release (prevents duplicate processing)
+  - Automatic referee discount marking
+  - Updates referrer stats (total rewards granted/pending)
+- **Integration**: Queued by StatusChangeModule when bookings transition to COMPLETED
+- **Configuration**: Driven by `ReferralProgramConfig` table (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION, REFERRAL_EXPIRY_DAYS)
+
 **HealthModule** (`src/modules/health/`)
 - NestJS Terminus-based health checks
 - Monitors: Database connectivity (Prisma ping)
@@ -161,6 +176,20 @@ A production-ready NestJS worker service for automated booking management, handl
 }
 ```
 
+**referral-queue**
+```typescript
+{
+  name: "referral-queue",
+  concurrency: 1,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: 100,  // Keep last 100 successful jobs
+    removeOnFail: 50        // Keep last 50 failed jobs
+  }
+}
+```
+
 ### Worker Event Listeners
 
 All processors include `@OnWorkerEvent` decorators for comprehensive monitoring:
@@ -204,6 +233,12 @@ All jobs run **hourly** using `@nestjs/schedule` cron decorators:
    - Create payout transaction
    - Call Flutterwave transfer API
    - Update transaction status
+
+4. **Referral Reward Processing** (Triggered by ACTIVE → COMPLETED)
+   - Queue referral completion job
+   - Validate release conditions and expiry
+   - Release pending rewards
+   - Update referrer stats
 
 ## API Endpoints
 
@@ -476,7 +511,17 @@ pnpm run start:prod
       - Update transaction status (PROCESSING or FAILED)
    c. Update car.status = AVAILABLE
    d. NotificationService.queueBookingStatusNotifications()
+   e. ReferralService.queueReferralProcessing()
+      - Queue "process-referral-completion" job
 5. NotificationProcessor → Send completion notifications
+6. ReferralProcessor → Process referral rewards
+   - Check ReferralProgramConfig (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION)
+   - Validate booking has referral applied (referralStatus = APPLIED)
+   - Optional: Validate expiry window (REFERRAL_EXPIRY_DAYS)
+   - Mark referee discount as used
+   - Release pending reward (PENDING → RELEASED)
+   - Update UserReferralStats (totalRewardsGranted, totalRewardsPending)
+   - Update booking.referralStatus = REWARDED
 ```
 
 ## Contributing
