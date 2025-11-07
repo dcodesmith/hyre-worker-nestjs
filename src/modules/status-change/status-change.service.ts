@@ -156,9 +156,16 @@ export class StatusChangeService {
           );
         });
 
-        // Queue referral processing OUTSIDE the transaction for better isolation
-        // This ensures booking status update is not blocked by referral processing
-        await this.referralService.queueReferralProcessing(booking.id);
+        try {
+          // Queue referral processing OUTSIDE the transaction for better isolation
+          // This ensures booking status update is not blocked by referral processing
+          await this.referralService.queueReferralProcessing(booking.id);
+        } catch (error) {
+          this.logger.error(
+            `Failed to queue referral processing for booking ${booking.id}: ${error}`,
+          );
+          // Continue without failing the entire operation
+        }
       }
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;

@@ -11,11 +11,9 @@ import { HealthModule } from "./modules/health/health.module";
 import { JobModule } from "./modules/job/job.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
+import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
-import { ReferralModule } from './referral/referral.module';
-import { ReferralModule } from './modules/referral/referral.module';
-import { ReferralModule } from './modules/referral/referral.module';
 
 @Module({
   imports: [

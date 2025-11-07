@@ -817,20 +817,10 @@ describe("ReferralService", () => {
 
       await service.queueReferralProcessing(bookingId);
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        PROCESS_REFERRAL_COMPLETION,
-        {
-          bookingId,
-          timestamp: expect.any(String),
-        },
-        {
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 2000,
-          },
-        },
-      );
+      expect(mockQueue.add).toHaveBeenCalledWith(PROCESS_REFERRAL_COMPLETION, {
+        bookingId,
+        timestamp: expect.any(String),
+      });
     });
 
     it("should throw error when queue fails", async () => {

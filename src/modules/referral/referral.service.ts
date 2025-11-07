@@ -21,20 +21,10 @@ export class ReferralService {
    */
   async queueReferralProcessing(bookingId: string): Promise<void> {
     try {
-      await this.referralQueue.add(
-        PROCESS_REFERRAL_COMPLETION,
-        {
-          bookingId,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 2000,
-          },
-        },
-      );
+      await this.referralQueue.add(PROCESS_REFERRAL_COMPLETION, {
+        bookingId,
+        timestamp: new Date().toISOString(),
+      });
 
       this.logger.log(`Queued referral processing for booking ${bookingId}`);
     } catch (error) {
@@ -66,6 +56,14 @@ export class ReferralService {
     const REFERRAL_RELEASE_CONDITION = (configMap.REFERRAL_RELEASE_CONDITION ?? "COMPLETED") as
       | "PAID"
       | "COMPLETED";
+
+    if (REFERRAL_RELEASE_CONDITION !== "PAID" && REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
+      this.logger.warn("Invalid REFERRAL_RELEASE_CONDITION value", {
+        value: REFERRAL_RELEASE_CONDITION,
+      });
+      return;
+    }
+
     const REFERRAL_EXPIRY_DAYS = Number(configMap.REFERRAL_EXPIRY_DAYS ?? 0);
 
     if (!REFERRAL_ENABLED || REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
@@ -141,7 +139,7 @@ export class ReferralService {
         }
 
         // Mark discount used if not already
-        if (referee && !referee.referralDiscountUsed && booking.userId) {
+        if (referee && !referee.referralDiscountUsed) {
           await tx.user.update({
             where: { id: booking.userId },
             data: { referralDiscountUsed: true },
