@@ -196,11 +196,12 @@ export class ReferralService {
           referrerId: pendingReward.referrerUserId,
         });
       });
-    } catch (e) {
+    } catch (error) {
       this.logger.error("Failed to process referral completion", {
         bookingId: booking.id,
-        error: e instanceof Error ? e.message : String(e),
+        error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
     }
   }
 }

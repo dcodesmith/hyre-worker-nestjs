@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
+import { EmailNotificationData } from "./notification.interface";
 
 @Injectable()
 export class EmailService {
@@ -23,11 +24,7 @@ export class EmailService {
     to,
     subject,
     html,
-  }: {
-    to: string;
-    subject: string;
-    html: string;
-  }): ReturnType<typeof this.resend.emails.send> {
+  }: EmailNotificationData): ReturnType<typeof this.resend.emails.send> {
     try {
       const result = await this.resend.emails.send({
         from: this.from,
@@ -39,7 +36,6 @@ export class EmailService {
       // Check if the API returned an error
       if (result.error) {
         this.logger.error("Email API returned error", {
-          to,
           subject,
           error: result.error,
         });
