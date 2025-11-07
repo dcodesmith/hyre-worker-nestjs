@@ -201,7 +201,7 @@ export class ReferralService {
         bookingId: booking.id,
         error: error instanceof Error ? error.message : String(error),
       });
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 }

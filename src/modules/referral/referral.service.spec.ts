@@ -443,6 +443,7 @@ describe("ReferralService", () => {
               referralSignupAt: new Date(),
               referralDiscountUsed: false,
             }),
+            update: vi.fn().mockResolvedValue({}),
           },
         };
         return callback(mockTx);
@@ -470,6 +471,7 @@ describe("ReferralService", () => {
               referralSignupAt: new Date(),
               referralDiscountUsed: false,
             }),
+            update: vi.fn().mockResolvedValue({}),
           },
         };
         return callback(mockTx);
@@ -568,6 +570,13 @@ describe("ReferralService", () => {
               referralSignupAt: new Date(),
               referralDiscountUsed: true, // Already used
             }),
+            update: mockUserUpdate,
+          },
+          booking: {
+            update: vi.fn().mockResolvedValue({}),
+          },
+          userReferralStats: {
+            upsert: vi.fn().mockResolvedValue({}),
           },
         };
         return callback(mockTx);
@@ -591,6 +600,16 @@ describe("ReferralService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
+            update: vi.fn().mockResolvedValue({}),
+          },
+          user: {
+            findUnique: vi.fn().mockResolvedValue(null),
+          },
+          booking: {
+            update: vi.fn().mockResolvedValue({}),
+          },
+          userReferralStats: {
+            upsert: vi.fn().mockResolvedValue({}),
           },
         };
         return callback(mockTx);
