@@ -113,10 +113,10 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
   let title: string;
   let status: string;
 
-  if (booking.status === BookingStatus.CONFIRMED) {
+  if (booking.status === BookingStatus.ACTIVE) {
     title = "started";
     status = "active";
-  } else if (booking.status === BookingStatus.ACTIVE) {
+  } else if (booking.status === BookingStatus.COMPLETED) {
     title = "ended";
     status = "completed";
   } else {

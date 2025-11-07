@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
+import { ReferralService } from "../referral/referral.service";
 
 @Injectable()
 export class StatusChangeService {
@@ -10,6 +11,7 @@ export class StatusChangeService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
+    private readonly referralService: ReferralService,
   ) {}
 
   private getCurrentUtcHourWindow(): { gte: Date; lte: Date } {
@@ -141,7 +143,6 @@ export class StatusChangeService {
             },
           });
 
-          // Free up the car
           await tx.car.update({
             where: { id: booking.carId },
             data: { status: Status.AVAILABLE },
@@ -154,6 +155,17 @@ export class StatusChangeService {
             BookingStatus.COMPLETED,
           );
         });
+
+        try {
+          // Queue referral processing OUTSIDE the transaction for better isolation
+          // This ensures booking status update is not blocked by referral processing
+          await this.referralService.queueReferralProcessing(booking.id);
+        } catch (error) {
+          this.logger.error(
+            `Failed to queue referral processing for booking ${booking.id}: ${error}`,
+          );
+          // Continue without failing the entire operation
+        }
       }
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;

@@ -25,10 +25,6 @@ describe("NotificationService", () => {
   beforeEach(async () => {
     mockQueue = {
       add: vi.fn().mockResolvedValue({ id: "job-123" }),
-      getWaiting: vi.fn().mockResolvedValue([]),
-      getActive: vi.fn().mockResolvedValue([]),
-      getCompleted: vi.fn().mockResolvedValue([]),
-      getFailed: vi.fn().mockResolvedValue([]),
     };
 
     const module: TestingModule = await Test.createTestingModule({

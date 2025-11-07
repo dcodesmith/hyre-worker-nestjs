@@ -5,6 +5,7 @@ import { createBooking } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
+import { ReferralService } from "../referral/referral.service";
 import { StatusChangeService } from "./status-change.service";
 
 describe("StatusChangeService", () => {
@@ -12,6 +13,7 @@ describe("StatusChangeService", () => {
   let mockDatabaseService: DatabaseService;
   let mockNotificationService: NotificationService;
   let mockPaymentService: PaymentService;
+  let mockReferralService: ReferralService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -37,6 +39,12 @@ describe("StatusChangeService", () => {
           },
         },
         {
+          provide: ReferralService,
+          useValue: {
+            queueReferralProcessing: vi.fn(),
+          },
+        },
+        {
           provide: PaymentService,
           useValue: {
             initiatePayout: vi.fn(),
@@ -49,6 +57,7 @@ describe("StatusChangeService", () => {
     mockDatabaseService = module.get<DatabaseService>(DatabaseService);
     mockNotificationService = module.get<NotificationService>(NotificationService);
     mockPaymentService = module.get<PaymentService>(PaymentService);
+    mockReferralService = module.get<ReferralService>(ReferralService);
   });
 
   it("should be defined", () => {
@@ -60,6 +69,7 @@ describe("StatusChangeService", () => {
     expect(mockDatabaseService).toBeDefined();
     expect(mockNotificationService).toBeDefined();
     expect(mockPaymentService).toBeDefined();
+    expect(mockReferralService).toBeDefined();
   });
 
   it("should not update bookings from confirmed to active when no bookings found", async () => {
@@ -90,14 +100,12 @@ describe("StatusChangeService", () => {
   it("should update bookings from confirmed to active when bookings found", async () => {
     const mockBooking = createBooking({
       id: "1",
-      bookingReference: "1",
       status: BookingStatus.CONFIRMED,
       paymentStatus: PaymentStatus.PAID,
     });
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
 
-    // Mock $transaction to execute the callback with a mock transaction object
     vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
       const mockTx = {
         booking: {
@@ -109,9 +117,8 @@ describe("StatusChangeService", () => {
 
     const result = await service.updateBookingsFromConfirmedToActive();
 
-    expect(mockDatabaseService.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledTimes(1);
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledWith(
+    expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
+    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
       BookingStatus.CONFIRMED,
       BookingStatus.ACTIVE,
@@ -125,5 +132,39 @@ describe("StatusChangeService", () => {
     const result = await service.updateBookingsFromActiveToCompleted();
 
     expect(result).toBe("No bookings to update");
+  });
+
+  it("should update bookings from active to completed and queue referral processing", async () => {
+    const mockBooking = createBooking({
+      id: "2",
+      status: BookingStatus.ACTIVE,
+      paymentStatus: PaymentStatus.PAID,
+      carId: "car-1",
+    });
+
+    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
+
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
+      const mockTx = {
+        booking: {
+          update: vi.fn().mockResolvedValue({ ...mockBooking, status: BookingStatus.COMPLETED }),
+        },
+        car: {
+          update: vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE }),
+        },
+      } as unknown as DatabaseService;
+      return callback(mockTx);
+    });
+
+    const result = await service.updateBookingsFromActiveToCompleted();
+
+    expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
+    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
+      BookingStatus.ACTIVE,
+      BookingStatus.COMPLETED,
+    );
+    expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
+    expect(result).toBe("Updated 1 bookings from active to completed");
   });
 });
