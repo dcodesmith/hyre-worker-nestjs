@@ -69,6 +69,7 @@ describe("StatusChangeService", () => {
     expect(mockDatabaseService).toBeDefined();
     expect(mockNotificationService).toBeDefined();
     expect(mockPaymentService).toBeDefined();
+    expect(mockReferralService).toBeDefined();
   });
 
   it("should not update bookings from confirmed to active when no bookings found", async () => {
