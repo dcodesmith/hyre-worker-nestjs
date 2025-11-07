@@ -158,7 +158,12 @@ describe("ReferralService", () => {
     });
 
     it("should skip processing when booking has no userId", async () => {
-      const booking = createBooking({ id: "booking-1231" });
+      const booking = createBooking({
+        id: "booking-1231",
+        referralStatus: BookingReferralStatus.APPLIED,
+        referralReferrerUserId: "referrer-123",
+        userId: undefined,
+      });
 
       vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
 
@@ -169,7 +174,11 @@ describe("ReferralService", () => {
     });
 
     it("should skip processing when booking has no referralReferrerUserId", async () => {
-      const booking = createBooking({ id: "booking-1231" });
+      const booking = createBooking({
+        id: "booking-1231",
+        referralStatus: BookingReferralStatus.APPLIED,
+        referralReferrerUserId: undefined,
+      });
 
       vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
 
