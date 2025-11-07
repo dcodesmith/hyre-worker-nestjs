@@ -36,6 +36,17 @@ export class EmailService {
         html,
       });
 
+      // Check if the API returned an error
+      if (result.error) {
+        this.logger.error("Email API returned error", {
+          to,
+          subject,
+          error: result.error,
+        });
+        throw new Error(`Resend API error: ${JSON.stringify(result.error)}`);
+      }
+
+      // Log success with message ID
       this.logger.log("Email sent successfully", {
         to,
         subject,

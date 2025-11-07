@@ -13,6 +13,9 @@ import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
+import { ReferralModule } from './referral/referral.module';
+import { ReferralModule } from './modules/referral/referral.module';
+import { ReferralModule } from './modules/referral/referral.module';
 
 @Module({
   imports: [
@@ -50,6 +53,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     StatusChangeModule,
     HealthModule,
     JobModule,
+    ReferralModule,
   ],
 })
 export class AppModule {}

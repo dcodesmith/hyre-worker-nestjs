@@ -6,8 +6,8 @@ import { ReminderService } from "./reminder.service";
 
 describe("ReminderService", () => {
   let service: ReminderService;
-  let mockDatabaseService: DatabaseService;
-  let mockNotificationService: NotificationService;
+  let databaseService: DatabaseService;
+  let notificationService: NotificationService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -31,8 +31,8 @@ describe("ReminderService", () => {
     }).compile();
 
     service = module.get<ReminderService>(ReminderService);
-    mockDatabaseService = module.get<DatabaseService>(DatabaseService);
-    mockNotificationService = module.get<NotificationService>(NotificationService);
+    databaseService = module.get<DatabaseService>(DatabaseService);
+    notificationService = module.get<NotificationService>(NotificationService);
   });
 
   it("should be defined", () => {
@@ -40,7 +40,7 @@ describe("ReminderService", () => {
   });
 
   it("should have all required services injected", () => {
-    expect(mockDatabaseService).toBeDefined();
-    expect(mockNotificationService).toBeDefined();
+    expect(databaseService).toBeDefined();
+    expect(notificationService).toBeDefined();
   });
 });
