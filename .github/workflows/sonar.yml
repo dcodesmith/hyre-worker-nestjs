@@ -1,9 +1,9 @@
 name: SonarCloud Analysis
 on:
   push:
-    branches: [ main, "feature/*", chore/* ]
+    branches: [ main, "feature/*", chore/*, bug/*, refactor/* ]
   pull_request:
-    branches: [ main, "feature/*", chore/* ]
+    branches: [ main, "feature/*", chore/*, bug/*, refactor/* ]
     types: [opened, synchronize, reopened]
 
 jobs:
