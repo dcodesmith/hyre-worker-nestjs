@@ -92,7 +92,10 @@ describe("NotificationService", () => {
       });
       const bookingLeg = { ...createBookingLeg(), booking };
 
-      await service.queueBookingReminderNotifications(bookingLeg, "start");
+      await service.queueBookingReminderNotifications(
+        bookingLeg,
+        NotificationType.BOOKING_REMINDER_START,
+      );
 
       expect(mockQueue.add).toHaveBeenCalledTimes(2);
       expect(mockQueue.add).toHaveBeenNthCalledWith(

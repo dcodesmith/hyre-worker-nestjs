@@ -1,8 +1,10 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { renderBookingReminderEmail, renderBookingStatusUpdateEmail } from "../../templates/emails";
 import { EmailService } from "./email.service";
+import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -10,6 +12,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import {
+  RecipientType,
   type TemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
@@ -22,12 +25,9 @@ import {
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
-import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
-import { RecipientType } from "./template-data.interface";
 
 @Processor(NOTIFICATIONS_QUEUE, {
-  concurrency: 5, // Process 5 notifications concurrently
+  concurrency: 5,
 })
 export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);

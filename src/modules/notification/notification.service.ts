@@ -61,15 +61,14 @@ export class NotificationService {
    */
   async queueBookingReminderNotifications(
     bookingLeg: BookingLegWithRelations,
-    type: "start" | "end",
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
-    const customerDetails = getCustomerDetails(bookingLeg.booking);
     const bookingLegDetails = normaliseBookingLegDetails(bookingLeg);
 
-    await this.queueCustomerReminder(bookingLeg, customerDetails, bookingLegDetails, type);
-    await this.queueChauffeurReminder(bookingLeg, bookingLegDetails, type);
+    await this.queueCustomerReminder(bookingLegDetails, type);
+    await this.queueChauffeurReminder(bookingLegDetails, type);
 
-    this.logReminderNotifications(bookingLeg, customerDetails, type);
+    this.logReminderNotifications(bookingLegDetails, type);
   }
 
   private createStatusChangeJobData({
@@ -106,19 +105,16 @@ export class NotificationService {
   }
 
   private async queueCustomerReminder(
-    bookingLeg: BookingLegWithRelations,
-    customerDetails: ReturnType<typeof getCustomerDetails>,
     bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
-    type: "start" | "end",
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
-    if (!customerDetails.email && !customerDetails.phone_number) return;
+    if (!bookingLegDetails.customerEmail && !bookingLegDetails.customerPhone) return;
 
     const customerJobData = this.createReminderJobData({
-      bookingLeg,
       bookingLegDetails,
       recipientType: CLIENT_RECIPIENT_TYPE,
-      email: customerDetails.email,
-      phoneNumber: customerDetails.phone_number,
+      email: bookingLegDetails.customerEmail,
+      phoneNumber: bookingLegDetails.customerPhone,
       type,
     });
 
@@ -140,57 +136,48 @@ export class NotificationService {
   }
 
   private createReminderJobData({
-    bookingLeg,
     bookingLegDetails,
     recipientType,
     email,
     phoneNumber,
     type,
   }: {
-    bookingLeg: BookingLegWithRelations;
     bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>;
     recipientType: RecipientType;
     email: string | undefined;
     phoneNumber: string | undefined;
-    type: "start" | "end";
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END;
   }): NotificationJobData {
+    const subject =
+      recipientType === CLIENT_RECIPIENT_TYPE
+        ? this.getReminderSubject(type)
+        : this.getChauffeurReminderSubject(type);
+
     return {
-      id: `reminder-${recipientType}-${bookingLeg.id}-${type}-${Date.now()}`,
-      type:
-        type === "start"
-          ? NotificationType.BOOKING_REMINDER_START
-          : NotificationType.BOOKING_REMINDER_END,
+      id: `reminder-${recipientType}-${bookingLegDetails.bookingLegId}-${type}-${Date.now()}`,
+      type,
       channels: this.determineChannels(email, phoneNumber),
-      bookingId: bookingLeg.booking.id,
+      bookingId: bookingLegDetails.bookingId,
       recipients: {
         [recipientType]: { email, phoneNumber },
       },
       templateData: {
         ...bookingLegDetails,
-        recipientType:
-          recipientType === CLIENT_RECIPIENT_TYPE
-            ? CLIENT_RECIPIENT_TYPE
-            : CHAUFFEUR_RECIPIENT_TYPE,
-        subject:
-          recipientType === CLIENT_RECIPIENT_TYPE
-            ? this.getReminderSubject(type)
-            : this.getChauffeurReminderSubject(type),
+        recipientType,
+        subject,
       },
     };
   }
 
   private async queueChauffeurReminder(
-    bookingLeg: BookingLegWithRelations,
     bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
-    type: "start" | "end",
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
-    const chauffeurEmail = bookingLeg.booking.chauffeur?.email;
-    const chauffeurPhone = bookingLeg.booking.chauffeur?.phoneNumber;
+    const { chauffeurEmail, chauffeurPhone } = bookingLegDetails;
 
     if (!chauffeurEmail && !chauffeurPhone) return;
 
     const chauffeurJobData = this.createReminderJobData({
-      bookingLeg,
       bookingLegDetails,
       recipientType: CHAUFFEUR_RECIPIENT_TYPE,
       email: chauffeurEmail,
@@ -223,19 +210,19 @@ export class NotificationService {
   }
 
   private logReminderNotifications(
-    bookingLeg: BookingLegWithRelations,
-    customerDetails: ReturnType<typeof getCustomerDetails>,
-    type: "start" | "end",
+    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): void {
-    const chauffeurEmail = bookingLeg.booking.chauffeur?.email;
-    const chauffeurPhone = bookingLeg.booking.chauffeur?.phoneNumber;
+    const chauffeurEmail = bookingLegDetails.chauffeurEmail;
+    const chauffeurPhone = bookingLegDetails.chauffeurPhone;
+    const customerEmail = bookingLegDetails.customerEmail;
+    const customerPhone = bookingLegDetails.customerPhone;
 
     this.logger.log("Queued booking reminder notifications", {
-      bookingLegId: bookingLeg.id,
+      bookingLegId: bookingLegDetails.bookingLegId,
       type,
-      customerChannels:
-        customerDetails.email || customerDetails.phone_number ? ["email", "whatsapp"] : [],
-      chauffeurChannels: chauffeurEmail || chauffeurPhone ? ["email", "whatsapp"] : [],
+      customerChannels: this.determineChannels(customerEmail, customerPhone),
+      chauffeurChannels: this.determineChannels(chauffeurEmail, chauffeurPhone),
     });
   }
 
@@ -252,14 +239,18 @@ export class NotificationService {
     }
   }
 
-  private getReminderSubject(type: "start" | "end"): string {
-    return type === "start"
+  private getReminderSubject(
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  ): string {
+    return type === NotificationType.BOOKING_REMINDER_START
       ? "Booking Reminder - Your service starts in approximately 1 hour"
       : "Booking Reminder - Your service ends in approximately 1 hour";
   }
 
-  private getChauffeurReminderSubject(type: "start" | "end"): string {
-    return type === "start"
+  private getChauffeurReminderSubject(
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  ): string {
+    return type === NotificationType.BOOKING_REMINDER_START
       ? "Booking Reminder - You have a service starting in approximately 1 hour"
       : "Booking Reminder - Your assigned booking for today ends in approximately 1 hour";
   }

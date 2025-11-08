@@ -25,13 +25,17 @@ export type NormalisedBookingDetails = {
 };
 
 export type NormalisedBookingLegDetails = {
+  bookingLegId: string;
   bookingId: string;
   customerName: string;
   chauffeurName: string;
+  customerPhone?: string;
+  customerEmail?: string;
   legDate: string;
   legStartTime: string;
   legEndTime: string;
-  chauffeurPhoneNumber: string;
+  chauffeurPhone?: string;
+  chauffeurEmail?: string;
   carName: string;
   pickupLocation: string;
   returnLocation: string;

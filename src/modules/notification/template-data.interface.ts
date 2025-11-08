@@ -1,6 +1,7 @@
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../types";
-import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 
+export const CLIENT_RECIPIENT_TYPE = "client" as const;
+export const CHAUFFEUR_RECIPIENT_TYPE = "chauffeur" as const;
 export type RecipientType = typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;
 
 /**

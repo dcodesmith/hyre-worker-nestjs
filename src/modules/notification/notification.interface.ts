@@ -1,5 +1,4 @@
-import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
-import { TemplateData } from "./template-data.interface";
+import { TemplateData, RecipientType } from "./template-data.interface";
 
 export enum NotificationChannel {
   EMAIL = "email",
@@ -49,4 +48,3 @@ export interface NotificationResult {
   error?: string;
 }
 
-export type RecipientType = typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;
