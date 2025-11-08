@@ -60,9 +60,11 @@ export class NotificationService {
    * Queue reminder notifications for a specific booking leg (for both customer and chauffeur).
    */
   async queueBookingReminderNotifications(
-    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
+    bookingLeg: BookingLegWithRelations,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
+    const bookingLegDetails = normaliseBookingLegDetails(bookingLeg);
+
     await this.queueCustomerReminder(bookingLegDetails, type);
     await this.queueChauffeurReminder(bookingLegDetails, type);
 
