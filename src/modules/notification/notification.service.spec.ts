@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { normaliseBookingLegDetails } from "src/shared/helper";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
@@ -50,6 +51,10 @@ describe("NotificationService", () => {
     expect(service).toBeDefined();
   });
 
+  it("should have queue injected", () => {
+    expect(service).toHaveProperty("notificationQueue");
+  });
+
   describe("queueBookingStatusNotifications", () => {
     it("should queue status change notification", async () => {
       const booking = createBooking({
@@ -90,10 +95,10 @@ describe("NotificationService", () => {
         chauffeur: createChauffeur(),
         user: createUser(),
       });
-      const bookingLeg = { ...createBookingLeg(), booking };
+      const bookingLeg = createBookingLeg();
 
       await service.queueBookingReminderNotifications(
-        bookingLeg,
+        normaliseBookingLegDetails({ ...bookingLeg, booking }),
         NotificationType.BOOKING_REMINDER_START,
       );
 
@@ -139,9 +144,5 @@ describe("NotificationService", () => {
         undefined,
       );
     });
-  });
-
-  it("should have queue injected", () => {
-    expect(service).toHaveProperty("notificationQueue");
   });
 });

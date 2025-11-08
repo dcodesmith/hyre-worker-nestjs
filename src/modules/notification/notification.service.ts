@@ -7,7 +7,11 @@ import {
   normaliseBookingDetails,
   normaliseBookingLegDetails,
 } from "../../shared/helper";
-import { BookingLegWithRelations, BookingWithRelations } from "../../types";
+import {
+  BookingWithRelations,
+  NormalisedBookingDetails,
+  NormalisedBookingLegDetails,
+} from "../../types";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
@@ -40,12 +44,9 @@ export class NotificationService {
     oldStatus: string,
     newStatus: string,
   ): Promise<void> {
-    const customerDetails = getCustomerDetails(booking);
     const bookingDetails = normaliseBookingDetails(booking);
 
     const jobData = this.createStatusChangeJobData({
-      booking,
-      customerDetails,
       bookingDetails,
       oldStatus,
       newStatus,
@@ -60,11 +61,9 @@ export class NotificationService {
    * Queue reminder notifications for a specific booking leg (for both customer and chauffeur).
    */
   async queueBookingReminderNotifications(
-    bookingLeg: BookingLegWithRelations,
+    bookingLegDetails: NormalisedBookingLegDetails,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
-    const bookingLegDetails = normaliseBookingLegDetails(bookingLeg);
-
     await this.queueCustomerReminder(bookingLegDetails, type);
     await this.queueChauffeurReminder(bookingLegDetails, type);
 
@@ -72,27 +71,23 @@ export class NotificationService {
   }
 
   private createStatusChangeJobData({
-    booking,
-    customerDetails,
     bookingDetails,
     oldStatus,
     newStatus,
   }: {
-    booking: BookingWithRelations;
-    customerDetails: ReturnType<typeof getCustomerDetails>;
-    bookingDetails: ReturnType<typeof normaliseBookingDetails>;
+    bookingDetails: NormalisedBookingDetails;
     oldStatus: string;
     newStatus: string;
   }): NotificationJobData {
     return {
-      id: `status-${booking.id}-${Date.now()}`,
+      id: `status-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_STATUS_CHANGE,
       channels: DEFAULT_CHANNELS,
-      bookingId: booking.id,
+      bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
-          email: customerDetails.email,
-          phoneNumber: customerDetails.phone_number,
+          email: bookingDetails.customerEmail,
+          phoneNumber: bookingDetails.customerPhone,
         },
       },
       templateData: {
@@ -105,7 +100,7 @@ export class NotificationService {
   }
 
   private async queueCustomerReminder(
-    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
+    bookingLegDetails: NormalisedBookingLegDetails,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
     if (!bookingLegDetails.customerEmail && !bookingLegDetails.customerPhone) return;
@@ -213,10 +208,7 @@ export class NotificationService {
     bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): void {
-    const chauffeurEmail = bookingLegDetails.chauffeurEmail;
-    const chauffeurPhone = bookingLegDetails.chauffeurPhone;
-    const customerEmail = bookingLegDetails.customerEmail;
-    const customerPhone = bookingLegDetails.customerPhone;
+    const { chauffeurEmail, chauffeurPhone, customerEmail, customerPhone } = bookingLegDetails;
 
     this.logger.log("Queued booking reminder notifications", {
       bookingLegId: bookingLegDetails.bookingLegId,

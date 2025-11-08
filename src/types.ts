@@ -7,6 +7,8 @@ export interface GuestUserDetails {
 }
 
 export type NormalisedBookingDetails = {
+  customerPhone?: string;
+  customerEmail?: string;
   bookingReference: string;
   id: string;
   customerName: string;

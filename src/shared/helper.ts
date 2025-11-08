@@ -108,6 +108,7 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
   const ownerName = getUserDisplayName(booking, "owner");
   const chauffeurName = getUserDisplayName(booking, "chauffeur");
   const carName = `${booking.car.make} ${booking.car.model} (${booking.car.year})`;
+  const customerDetails = getCustomerDetails(booking);
   const { pickupLocation, returnLocation, id, bookingReference } = booking;
 
   let title: string;
@@ -125,6 +126,8 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
   }
 
   return {
+    customerPhone: customerDetails.phone_number || undefined,
+    customerEmail: customerDetails.email || undefined,
     bookingReference,
     id,
     ownerName,
