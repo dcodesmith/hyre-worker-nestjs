@@ -2,11 +2,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
-import {
-  getCustomerDetails,
-  normaliseBookingDetails,
-  normaliseBookingLegDetails,
-} from "../../shared/helper";
+import { normaliseBookingDetails, normaliseBookingLegDetails } from "../../shared/helper";
 import {
   BookingWithRelations,
   NormalisedBookingDetails,
@@ -100,7 +96,7 @@ export class NotificationService {
   }
 
   private async queueCustomerReminder(
-    bookingLegDetails: NormalisedBookingLegDetails,
+    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
   ): Promise<void> {
     if (!bookingLegDetails.customerEmail && !bookingLegDetails.customerPhone) return;

@@ -51,10 +51,6 @@ describe("NotificationService", () => {
     expect(service).toBeDefined();
   });
 
-  it("should have queue injected", () => {
-    expect(service).toHaveProperty("notificationQueue");
-  });
-
   describe("queueBookingStatusNotifications", () => {
     it("should queue status change notification", async () => {
       const booking = createBooking({
@@ -95,10 +91,10 @@ describe("NotificationService", () => {
         chauffeur: createChauffeur(),
         user: createUser(),
       });
-      const bookingLeg = createBookingLeg();
+      const bookingLeg = { ...createBookingLeg(), booking };
 
       await service.queueBookingReminderNotifications(
-        normaliseBookingLegDetails({ ...bookingLeg, booking }),
+        normaliseBookingLegDetails(bookingLeg),
         NotificationType.BOOKING_REMINDER_START,
       );
 
@@ -144,5 +140,9 @@ describe("NotificationService", () => {
         undefined,
       );
     });
+  });
+
+  it("should have queue injected", () => {
+    expect(service).toHaveProperty("notificationQueue");
   });
 });
