@@ -107,6 +107,7 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
   const customerName = getUserDisplayName(booking, "user");
   const ownerName = getUserDisplayName(booking, "owner");
   const chauffeurName = getUserDisplayName(booking, "chauffeur");
+  const customerDetails = getCustomerDetails(booking);
   const carName = `${booking.car.make} ${booking.car.model} (${booking.car.year})`;
   const { pickupLocation, returnLocation, id, bookingReference } = booking;
 
@@ -127,6 +128,8 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
   return {
     bookingReference,
     id,
+    customerPhone: customerDetails.phone_number || undefined,
+    customerEmail: customerDetails.email || undefined,
     ownerName,
     customerName,
     chauffeurName,
@@ -150,15 +153,20 @@ export function normaliseBookingLegDetails(
   const customerName = getUserDisplayName(booking, "user");
   const chauffeurName = getUserDisplayName(booking, "chauffeur");
   const carName = `${booking.car.make} ${booking.car.model} (${booking.car.year})`;
+  const customerDetails = getCustomerDetails(booking);
 
   return {
+    bookingLegId: bookingLeg.id,
     bookingId: booking.id,
     customerName,
+    customerPhone: customerDetails.phone_number || undefined,
+    customerEmail: customerDetails.email || undefined,
     chauffeurName,
     legDate: format(bookingLeg.legDate, "PPPP"),
     legStartTime: format(bookingLeg.legStartTime, "p"),
     legEndTime: format(bookingLeg.legEndTime, "p"),
-    chauffeurPhoneNumber: booking.chauffeur?.phoneNumber ?? "",
+    chauffeurPhone: booking.chauffeur?.phoneNumber,
+    chauffeurEmail: booking.chauffeur?.email,
     pickupLocation: booking.pickupLocation,
     returnLocation: booking.returnLocation,
     carName,

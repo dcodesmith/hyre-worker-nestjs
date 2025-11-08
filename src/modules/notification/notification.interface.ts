@@ -1,4 +1,4 @@
-import { TemplateData } from "./template-data.interface";
+import { TemplateData, RecipientType } from "./template-data.interface";
 
 export enum NotificationChannel {
   EMAIL = "email",
@@ -28,16 +28,15 @@ export interface NotificationJobData {
   type: NotificationType;
   channels: NotificationChannel[];
   bookingId: string;
-  recipients: {
-    customer?: {
-      email?: string;
-      phoneNumber?: string;
-    };
-    chauffeur?: {
-      email?: string;
-      phoneNumber?: string;
-    };
-  };
+  recipients: Partial<
+    Record<
+      RecipientType,
+      {
+        email?: string;
+        phoneNumber?: string;
+      }
+    >
+  >;
   templateData: TemplateData;
   priority?: number;
 }
@@ -48,3 +47,4 @@ export interface NotificationResult {
   messageId?: string;
   error?: string;
 }
+

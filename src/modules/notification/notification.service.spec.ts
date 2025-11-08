@@ -2,15 +2,22 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { normaliseBookingLegDetails } from "src/shared/helper";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
   createBooking,
+  createBookingLeg,
   createCar,
   createChauffeur,
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  SEND_NOTIFICATION_JOB_NAME,
+} from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -60,13 +67,13 @@ describe("NotificationService", () => {
       );
 
       expect(mockQueue.add).toHaveBeenCalledWith(
-        "send-notification",
+        SEND_NOTIFICATION_JOB_NAME,
         expect.objectContaining({
           type: NotificationType.BOOKING_STATUS_CHANGE,
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
           bookingId: booking.id,
           recipients: expect.objectContaining({
-            customer: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
               email: "john@example.com",
               phoneNumber: "1234567890",
             }),
@@ -84,24 +91,53 @@ describe("NotificationService", () => {
         chauffeur: createChauffeur(),
         user: createUser(),
       });
-      const bookingLeg = {
-        id: "leg-123",
-        booking,
-        legDate: new Date("2024-01-01"),
-        legStartTime: new Date("2024-01-01T08:00:00Z"),
-        legEndTime: new Date("2024-01-01T18:00:00Z"),
-        extensions: [],
-      } as any;
+      const bookingLeg = { ...createBookingLeg(), booking };
 
-      await service.queueBookingReminderNotifications(bookingLeg, "start");
+      await service.queueBookingReminderNotifications(
+        normaliseBookingLegDetails(bookingLeg),
+        NotificationType.BOOKING_REMINDER_START,
+      );
 
       expect(mockQueue.add).toHaveBeenCalledTimes(2);
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        "send-notification",
+      expect(mockQueue.add).toHaveBeenNthCalledWith(
+        1,
+        SEND_NOTIFICATION_JOB_NAME,
         expect.objectContaining({
           type: NotificationType.BOOKING_REMINDER_START,
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+          bookingId: booking.id,
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              email: "john@example.com",
+              phoneNumber: "1234567890",
+            }),
+          }),
+          templateData: expect.objectContaining({
+            recipientType: CLIENT_RECIPIENT_TYPE,
+            subject: "Booking Reminder - Your service starts in approximately 1 hour",
+          }),
         }),
+        undefined,
+      );
+      expect(mockQueue.add).toHaveBeenNthCalledWith(
+        2,
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          type: NotificationType.BOOKING_REMINDER_START,
+          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+          bookingId: booking.id,
+          recipients: expect.objectContaining({
+            [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
+              email: "chauffeur@example.com",
+              phoneNumber: "0987654321",
+            }),
+          }),
+          templateData: expect.objectContaining({
+            recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+            subject: "Booking Reminder - You have a service starting in approximately 1 hour",
+          }),
+        }),
+        undefined,
       );
     });
   });

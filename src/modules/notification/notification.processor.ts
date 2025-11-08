@@ -1,8 +1,10 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { renderBookingReminderEmail, renderBookingStatusUpdateEmail } from "../../templates/emails";
 import { EmailService } from "./email.service";
+import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -10,6 +12,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import {
+  RecipientType,
   type TemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
@@ -22,10 +25,9 @@ import {
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 
 @Processor(NOTIFICATIONS_QUEUE, {
-  concurrency: 5, // Process 5 notifications concurrently
+  concurrency: 5,
 })
 export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
@@ -45,7 +47,9 @@ export class NotificationProcessor extends WorkerHost {
     ];
   }
 
-  async process(job: Job<NotificationJobData, NotificationResult[], string>): Promise<NotificationResult[]> {
+  async process(
+    job: Job<NotificationJobData, NotificationResult[], string>,
+  ): Promise<NotificationResult[]> {
     const { id, type, channels, recipients, templateData } = job.data;
 
     this.logger.log("Processing notification", {
@@ -128,10 +132,12 @@ export class NotificationProcessor extends WorkerHost {
     recipients: NotificationJobData["recipients"],
     templateData: TemplateData,
   ): Promise<NotificationResult | null> {
-    const customerEmail = recipients.customer?.email;
-    const chauffeurEmail = recipients.chauffeur?.email;
+    const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
+    const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
+    const clientEmail = clientRecipient?.email;
+    const chauffeurEmail = chauffeurRecipient?.email;
 
-    if (!customerEmail && !chauffeurEmail) {
+    if (!clientEmail && !chauffeurEmail) {
       return null;
     }
 
@@ -139,7 +145,7 @@ export class NotificationProcessor extends WorkerHost {
       // Generate HTML content based on notification type
       const subject = templateData.subject || "Booking Notification";
 
-      const buildHtml = async (recipient: "client" | "chauffeur") => {
+      const buildHtml = async (recipient: RecipientType) => {
         switch (type) {
           case NotificationType.BOOKING_STATUS_CHANGE:
             if (isBookingStatusTemplateData(templateData)) {
@@ -163,11 +169,11 @@ export class NotificationProcessor extends WorkerHost {
         }
       };
       // Send to customer if available
-      if (customerEmail) {
+      if (clientEmail) {
         await this.emailService.sendEmail({
-          to: customerEmail,
+          to: clientEmail,
           subject,
-          html: await buildHtml("client"),
+          html: await buildHtml(CLIENT_RECIPIENT_TYPE),
         });
       }
 
@@ -176,7 +182,7 @@ export class NotificationProcessor extends WorkerHost {
         await this.emailService.sendEmail({
           to: chauffeurEmail,
           subject,
-          html: await buildHtml("chauffeur"),
+          html: await buildHtml(CHAUFFEUR_RECIPIENT_TYPE),
         });
       }
 
@@ -204,10 +210,12 @@ export class NotificationProcessor extends WorkerHost {
     recipients: NotificationJobData["recipients"],
     templateData: TemplateData,
   ): Promise<NotificationResult | null> {
-    const customerPhone = recipients.customer?.phoneNumber;
-    const chauffeurPhone = recipients.chauffeur?.phoneNumber;
+    const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
+    const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
+    const clientPhone = clientRecipient?.phoneNumber;
+    const chauffeurPhone = chauffeurRecipient?.phoneNumber;
 
-    if (!customerPhone && !chauffeurPhone) {
+    if (!clientPhone && !chauffeurPhone) {
       return null;
     }
 
@@ -215,23 +223,31 @@ export class NotificationProcessor extends WorkerHost {
       // Variables will be built per recipient type below
 
       // Send to customer if available
-      if (customerPhone) {
-        const customerTemplateKey = this.getWhatsAppTemplateKey(type, "client");
-        if (customerTemplateKey) {
-          const customerVariables = this.buildWhatsAppVariables(templateData, type, "client");
+      if (clientPhone) {
+        const clientTemplateKey = this.getWhatsAppTemplateKey(type, CLIENT_RECIPIENT_TYPE);
+        if (clientTemplateKey) {
+          const clientVariables = this.buildWhatsAppVariables(
+            templateData,
+            type,
+            CLIENT_RECIPIENT_TYPE,
+          );
           await this.whatsAppService.sendMessage({
-            to: customerPhone,
-            variables: customerVariables,
-            templateKey: customerTemplateKey,
+            to: clientPhone,
+            variables: clientVariables,
+            templateKey: clientTemplateKey,
           });
         }
       }
 
       // Send to chauffeur if available
       if (chauffeurPhone) {
-        const chauffeurTemplateKey = this.getWhatsAppTemplateKey(type, "chauffeur");
+        const chauffeurTemplateKey = this.getWhatsAppTemplateKey(type, CHAUFFEUR_RECIPIENT_TYPE);
         if (chauffeurTemplateKey) {
-          const chauffeurVariables = this.buildWhatsAppVariables(templateData, type, "chauffeur");
+          const chauffeurVariables = this.buildWhatsAppVariables(
+            templateData,
+            type,
+            CHAUFFEUR_RECIPIENT_TYPE,
+          );
           await this.whatsAppService.sendMessage({
             to: chauffeurPhone,
             variables: chauffeurVariables,
@@ -276,7 +292,9 @@ export class NotificationProcessor extends WorkerHost {
   @OnWorkerEvent("completed")
   onCompleted(job: Job<NotificationJobData, NotificationResult[]>) {
     const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
-    this.logger.log(`Notification job completed: ${job.data.type} [${job.id}] - Duration: ${duration}ms`);
+    this.logger.log(
+      `Notification job completed: ${job.data.type} [${job.id}] - Duration: ${duration}ms`,
+    );
   }
 
   @OnWorkerEvent("failed")
@@ -294,10 +312,13 @@ export class NotificationProcessor extends WorkerHost {
 
   @OnWorkerEvent("active")
   onActive(job: Job<NotificationJobData, NotificationResult[]>) {
-    this.logger.log(`Notification job started: ${job.data.type} [${job.id}] - Attempt ${job.attemptsMade + 1}`, {
-      notificationId: job.data.id,
-      channels: job.data.channels,
-    });
+    this.logger.log(
+      `Notification job started: ${job.data.type} [${job.id}] - Attempt ${job.attemptsMade + 1}`,
+      {
+        notificationId: job.data.id,
+        channels: job.data.channels,
+      },
+    );
   }
 
   @OnWorkerEvent("stalled")
