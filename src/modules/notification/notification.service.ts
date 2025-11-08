@@ -1,6 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { Job, Queue } from "bullmq";
+import { Job, JobsOptions, Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import {
   getCustomerDetails,
@@ -193,7 +193,7 @@ export class NotificationService {
 
   private addJobToQueue(
     jobData: NotificationJobData,
-    options?: { priority: number },
+    options?: JobsOptions,
   ): Promise<Job<NotificationJobData, any, string>> {
     return this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, options);
   }
