@@ -14,7 +14,9 @@ import {
   startOfDay,
   subMilliseconds,
 } from "date-fns";
+import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
+import { NotificationType } from "../notification/notification.interface";
 import { NotificationService } from "../notification/notification.service";
 
 @Injectable()
@@ -83,7 +85,10 @@ export class ReminderService {
         this.logger.log(`Processing leg ${leg.id} legStartTime: ${leg.legStartTime}`);
 
         // Queue notification instead of sending directly
-        await this.notificationService.queueBookingReminderNotifications(leg, "start");
+        await this.notificationService.queueBookingReminderNotifications(
+          normaliseBookingLegDetails(leg),
+          NotificationType.BOOKING_REMINDER_START,
+        );
         queuedCount++;
       }
 
@@ -209,7 +214,10 @@ export class ReminderService {
         );
 
         // Queue notification instead of sending directly
-        await this.notificationService.queueBookingReminderNotifications(leg, "end");
+        await this.notificationService.queueBookingReminderNotifications(
+          normaliseBookingLegDetails(leg),
+          NotificationType.BOOKING_REMINDER_END,
+        );
         queuedCount++;
       }
 

@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { normaliseBookingLegDetails } from "src/shared/helper";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
@@ -90,10 +91,13 @@ describe("NotificationService", () => {
         chauffeur: createChauffeur(),
         user: createUser(),
       });
-      const bookingLeg = { ...createBookingLeg(), booking };
+
+      const bookingLeg = createBookingLeg();
+
+      const normalisedBookingLeg = normaliseBookingLegDetails({ ...bookingLeg, booking });
 
       await service.queueBookingReminderNotifications(
-        bookingLeg,
+        normalisedBookingLeg,
         NotificationType.BOOKING_REMINDER_START,
       );
 
