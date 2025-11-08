@@ -1,3 +1,4 @@
+import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 import { TemplateData } from "./template-data.interface";
 
 export enum NotificationChannel {
@@ -28,16 +29,15 @@ export interface NotificationJobData {
   type: NotificationType;
   channels: NotificationChannel[];
   bookingId: string;
-  recipients: {
-    customer?: {
-      email?: string;
-      phoneNumber?: string;
-    };
-    chauffeur?: {
-      email?: string;
-      phoneNumber?: string;
-    };
-  };
+  recipients: Partial<
+    Record<
+      RecipientType,
+      {
+        email?: string;
+        phoneNumber?: string;
+      }
+    >
+  >;
   templateData: TemplateData;
   priority?: number;
 }
@@ -48,3 +48,5 @@ export interface NotificationResult {
   messageId?: string;
   error?: string;
 }
+
+export type RecipientType = typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;

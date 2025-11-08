@@ -9,6 +9,8 @@ import {
 } from "../../shared/helper";
 import { BookingLegWithRelations, BookingWithRelations } from "../../types";
 import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
   DEFAULT_CHANNELS,
   SEND_NOTIFICATION_JOB_NAME,
   STATUS_CHANGE_JOB_OPTIONS,
@@ -16,8 +18,10 @@ import {
 import {
   NotificationChannel,
   NotificationJobData,
+  NotificationResult,
   NotificationType,
 } from "./notification.interface";
+import { RecipientType } from "./template-data.interface";
 
 @Injectable()
 export class NotificationService {
@@ -39,13 +43,13 @@ export class NotificationService {
     const customerDetails = getCustomerDetails(booking);
     const bookingDetails = normaliseBookingDetails(booking);
 
-    const jobData = this.createStatusChangeJobData(
+    const jobData = this.createStatusChangeJobData({
       booking,
       customerDetails,
       bookingDetails,
       oldStatus,
       newStatus,
-    );
+    });
 
     await this.addJobToQueue(jobData, STATUS_CHANGE_JOB_OPTIONS);
 
@@ -68,20 +72,26 @@ export class NotificationService {
     this.logReminderNotifications(bookingLeg, customerDetails, type);
   }
 
-  private createStatusChangeJobData(
-    booking: BookingWithRelations,
-    customerDetails: ReturnType<typeof getCustomerDetails>, // Inferred type for clarity
-    bookingDetails: ReturnType<typeof normaliseBookingDetails>, // Inferred type for clarity
-    oldStatus: string,
-    newStatus: string,
-  ): NotificationJobData {
+  private createStatusChangeJobData({
+    booking,
+    customerDetails,
+    bookingDetails,
+    oldStatus,
+    newStatus,
+  }: {
+    booking: BookingWithRelations;
+    customerDetails: ReturnType<typeof getCustomerDetails>;
+    bookingDetails: ReturnType<typeof normaliseBookingDetails>;
+    oldStatus: string;
+    newStatus: string;
+  }): NotificationJobData {
     return {
       id: `status-${booking.id}-${Date.now()}`,
       type: NotificationType.BOOKING_STATUS_CHANGE,
       channels: DEFAULT_CHANNELS,
       bookingId: booking.id,
       recipients: {
-        customer: {
+        [CLIENT_RECIPIENT_TYPE]: {
           email: customerDetails.email,
           phoneNumber: customerDetails.phone_number,
         },
@@ -103,40 +113,68 @@ export class NotificationService {
   ): Promise<void> {
     if (!customerDetails.email && !customerDetails.phone_number) return;
 
-    const customerJobData = this.createCustomerReminderJobData(
+    const customerJobData = this.createReminderJobData({
       bookingLeg,
-      customerDetails,
       bookingLegDetails,
+      recipientType: CLIENT_RECIPIENT_TYPE,
+      email: customerDetails.email,
+      phoneNumber: customerDetails.phone_number,
       type,
-    );
+    });
 
     await this.addJobToQueue(customerJobData);
   }
 
-  private createCustomerReminderJobData(
-    bookingLeg: BookingLegWithRelations,
-    customerDetails: ReturnType<typeof getCustomerDetails>,
-    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
-    type: "start" | "end",
-  ): NotificationJobData {
+  private determineChannels(email?: string, phoneNumber?: string): NotificationChannel[] {
+    const channels: NotificationChannel[] = [];
+
+    if (email) {
+      channels.push(NotificationChannel.EMAIL);
+    }
+
+    if (phoneNumber) {
+      channels.push(NotificationChannel.WHATSAPP);
+    }
+
+    return channels;
+  }
+
+  private createReminderJobData({
+    bookingLeg,
+    bookingLegDetails,
+    recipientType,
+    email,
+    phoneNumber,
+    type,
+  }: {
+    bookingLeg: BookingLegWithRelations;
+    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>;
+    recipientType: RecipientType;
+    email: string | undefined;
+    phoneNumber: string | undefined;
+    type: "start" | "end";
+  }): NotificationJobData {
     return {
-      id: `reminder-customer-${bookingLeg.id}-${type}-${Date.now()}`,
+      id: `reminder-${recipientType}-${bookingLeg.id}-${type}-${Date.now()}`,
       type:
         type === "start"
           ? NotificationType.BOOKING_REMINDER_START
           : NotificationType.BOOKING_REMINDER_END,
-      channels: DEFAULT_CHANNELS,
+      channels: this.determineChannels(email, phoneNumber),
       bookingId: bookingLeg.booking.id,
       recipients: {
-        customer: {
-          email: customerDetails.email,
-          phoneNumber: customerDetails.phone_number,
-        },
+        [recipientType]: { email, phoneNumber },
       },
       templateData: {
         ...bookingLegDetails,
-        recipientType: "client",
-        subject: this.getReminderSubject(type),
+        recipientType:
+          recipientType === CLIENT_RECIPIENT_TYPE
+            ? CLIENT_RECIPIENT_TYPE
+            : CHAUFFEUR_RECIPIENT_TYPE,
+        subject:
+          recipientType === CLIENT_RECIPIENT_TYPE
+            ? this.getReminderSubject(type)
+            : this.getChauffeurReminderSubject(type),
       },
     };
   }
@@ -151,50 +189,22 @@ export class NotificationService {
 
     if (!chauffeurEmail && !chauffeurPhone) return;
 
-    const chauffeurJobData = this.createChauffeurReminderJobData(
+    const chauffeurJobData = this.createReminderJobData({
       bookingLeg,
       bookingLegDetails,
-      chauffeurEmail,
-      chauffeurPhone,
+      recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+      email: chauffeurEmail,
+      phoneNumber: chauffeurPhone,
       type,
-    );
+    });
 
     await this.addJobToQueue(chauffeurJobData);
-  }
-
-  private createChauffeurReminderJobData(
-    bookingLeg: BookingLegWithRelations,
-    bookingLegDetails: ReturnType<typeof normaliseBookingLegDetails>,
-    chauffeurEmail: string | undefined,
-    chauffeurPhone: string | undefined,
-    type: "start" | "end",
-  ): NotificationJobData {
-    return {
-      id: `reminder-chauffeur-${bookingLeg.id}-${type}-${Date.now()}`,
-      type:
-        type === "start"
-          ? NotificationType.BOOKING_REMINDER_START
-          : NotificationType.BOOKING_REMINDER_END,
-      channels: DEFAULT_CHANNELS,
-      bookingId: bookingLeg.booking.id,
-      recipients: {
-        chauffeur: {
-          email: chauffeurEmail,
-          phoneNumber: chauffeurPhone,
-        },
-      },
-      templateData: {
-        ...bookingLegDetails,
-        recipientType: "chauffeur",
-        subject: this.getChauffeurReminderSubject(type),
-      },
-    };
   }
 
   private addJobToQueue(
     jobData: NotificationJobData,
     options?: JobsOptions,
-  ): Promise<Job<NotificationJobData, any, string>> {
+  ): Promise<Job<NotificationJobData, NotificationResult[] | null, string>> {
     return this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, options);
   }
 

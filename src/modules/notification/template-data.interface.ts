@@ -1,6 +1,7 @@
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../types";
+import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 
-export type RecipientType = "client" | "chauffeur";
+export type RecipientType = typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;
 
 /**
  * Base template data that all notification templates can use

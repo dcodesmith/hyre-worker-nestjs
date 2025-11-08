@@ -12,7 +12,11 @@ import {
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
-import { SEND_NOTIFICATION_JOB_NAME } from "./notification.const";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  SEND_NOTIFICATION_JOB_NAME,
+} from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -68,7 +72,7 @@ describe("NotificationService", () => {
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
           bookingId: booking.id,
           recipients: expect.objectContaining({
-            customer: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
               email: "john@example.com",
               phoneNumber: "1234567890",
             }),
@@ -99,13 +103,13 @@ describe("NotificationService", () => {
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
           bookingId: booking.id,
           recipients: expect.objectContaining({
-            customer: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
               email: "john@example.com",
               phoneNumber: "1234567890",
             }),
           }),
           templateData: expect.objectContaining({
-            recipientType: "client",
+            recipientType: CLIENT_RECIPIENT_TYPE,
             subject: "Booking Reminder - Your service starts in approximately 1 hour",
           }),
         }),
@@ -119,13 +123,13 @@ describe("NotificationService", () => {
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
           bookingId: booking.id,
           recipients: expect.objectContaining({
-            chauffeur: expect.objectContaining({
+            [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
               email: "chauffeur@example.com",
               phoneNumber: "0987654321",
             }),
           }),
           templateData: expect.objectContaining({
-            recipientType: "chauffeur",
+            recipientType: CHAUFFEUR_RECIPIENT_TYPE,
             subject: "Booking Reminder - You have a service starting in approximately 1 hour",
           }),
         }),
