@@ -1,4 +1,4 @@
-/** biome-ignore-all lint/complexity/useLiteralKeys: <explanation> */
+/** biome-ignore-all lint/complexity/useLiteralKeys: Bracket notation required to access private logger property for test spies */
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingReferralStatus, ReferralRewardStatus } from "@prisma/client";

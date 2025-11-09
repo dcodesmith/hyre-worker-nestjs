@@ -1,4 +1,4 @@
-/** biome-ignore-all lint/complexity/useLiteralKeys: <explanation> */
+/** biome-ignore-all lint/complexity/useLiteralKeys: Bracket notation required to access private logger property for test spies */
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
