@@ -43,7 +43,7 @@ export async function setup() {
       console.log("Prisma client generated successfully");
     } catch (error) {
       console.error("Prisma client generation failed:", error);
-      throw new Error("Failed to generate Prisma client for test database");
+      throw error;
     }
 
     console.log("Running Prisma migrations on test database...");
@@ -67,13 +67,13 @@ export async function setup() {
   } catch (error) {
     // Clean up any started containers on failure
     if (pgContainer) {
-      await pgContainer.stop().catch(() => {
+      await pgContainer.stop().catch((error) => {
         console.error("Failed to stop PostgreSQL container during cleanup:", error);
       });
     }
 
     if (redisContainer) {
-      await redisContainer.stop().catch(() => {
+      await redisContainer.stop().catch((error) => {
         console.error("Failed to stop Redis container during cleanup:", error);
       });
     }
