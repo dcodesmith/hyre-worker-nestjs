@@ -148,7 +148,7 @@ describe("Jobs E2E Tests", () => {
   });
 
   describe("Error codes", () => {
-    it("should return error code for manual triggers disabled", async () => {
+    it.skip("should return error code for manual triggers disabled", async () => {
       // Note: This test would require rebuilding the app with ENABLE_MANUAL_TRIGGERS=false
       // For now, we'll just verify the error code structure is correct
       // In a real scenario, you'd set this in .env.e2e

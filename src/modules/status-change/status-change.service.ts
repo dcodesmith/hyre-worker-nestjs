@@ -3,7 +3,6 @@ import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { ReferralService } from "../referral/referral.service";
-import { StatusChangeException } from "./errors";
 
 @Injectable()
 export class StatusChangeService {
@@ -97,7 +96,7 @@ export class StatusChangeService {
             this.logger.error(
               `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
             );
-            throw StatusChangeException.notificationQueueFailed(booking.id, errorMessage);
+            // Continue without failing the transaction
           }
         }
       });
@@ -169,7 +168,7 @@ export class StatusChangeService {
             this.logger.error(
               `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
             );
-            throw StatusChangeException.notificationQueueFailed(booking.id, errorMessage);
+            // Continue without failing the transaction
           }
         });
 

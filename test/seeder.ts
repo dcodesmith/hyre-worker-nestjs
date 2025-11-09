@@ -6,6 +6,7 @@ const SEED_LOCK_KEY = 42_042;
 export async function resetAndSeedDb() {
   try {
     await prisma.$transaction(async (tx) => {
+      // Use a transaction-scoped advisory lock to prevent concurrent seed operations and race conditions when multiple test workers start simultaneously, ensuring only one seeder runs during the transaction.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SEED_LOCK_KEY});`;
 
       await tx.booking.deleteMany();
