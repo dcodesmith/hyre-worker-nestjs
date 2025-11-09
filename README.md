@@ -140,7 +140,7 @@ A production-ready NestJS worker service for automated booking management, handl
 - Manual job triggering for testing/admin operations
 - **Endpoint**: `POST /job/trigger/:jobType` (accepts: `start-reminders`, `end-reminders`, `activate-bookings`, `complete-bookings`)
 - **Rate limiting**: 1 request per hour per job type (independent limits using custom JobThrottlerGuard)
-- **Error handling**: Structured errors with error codes (JOB.RATE_LIMIT.EXCEEDED, JOB.INVALID_TYPE, JOB.MANUAL_TRIGGERS_DISABLED)
+- **Error handling**: Structured errors with error codes (JOB.RATE_LIMIT.EXCEEDED, JOB.VALIDATION.INVALID_TYPE, JOB.AUTH.MANUAL_TRIGGERS_DISABLED)
 - Requires: `ENABLE_MANUAL_TRIGGERS=true` environment variable
 
 ## Queue System (BullMQ)
@@ -298,8 +298,8 @@ Manually trigger ACTIVE → COMPLETED status updates + payouts + referral proces
 - Response: `{ "success": true, "message": "Complete bookings job triggered" }`
 
 **Error Responses**:
-- `403` - Manual triggers disabled (JOB.MANUAL_TRIGGERS_DISABLED)
-- `400` - Invalid job type (JOB.INVALID_TYPE)
+- `403` - Manual triggers disabled (JOB.AUTH.MANUAL_TRIGGERS_DISABLED)
+- `400` - Invalid job type (JOB.VALIDATION.INVALID_TYPE)
 - `429` - Rate limit exceeded (JOB.RATE_LIMIT.EXCEEDED) - includes `retryAfter` timestamp
 
 ## Environment Variables
