@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/complexity/useLiteralKeys: Bracket notation required to access private logger property for test spies */
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +25,12 @@ describe("ReferralProcessor", () => {
 
     processor = module.get<ReferralProcessor>(ReferralProcessor);
     referralService = module.get<ReferralService>(ReferralService);
+
+    // Suppress logger output during tests by default
+    vi.spyOn(processor["logger"], "log").mockImplementation(() => undefined);
+    vi.spyOn(processor["logger"], "error").mockImplementation(() => undefined);
+    vi.spyOn(processor["logger"], "warn").mockImplementation(() => undefined);
+    vi.spyOn(processor["logger"], "debug").mockImplementation(() => undefined);
   });
 
   it("should be defined", () => {
@@ -87,15 +94,12 @@ describe("ReferralProcessor", () => {
     let loggerDebugSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-      // Mock all logger methods
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      loggerLogSpy = vi.spyOn(processor["logger"], "log");
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      loggerErrorSpy = vi.spyOn(processor["logger"], "error");
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      loggerWarnSpy = vi.spyOn(processor["logger"], "warn");
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      loggerDebugSpy = vi.spyOn(processor["logger"], "debug");
+      // Re-spy on logger methods to test the event handlers
+      // These will suppress output but allow us to verify they were called
+      loggerLogSpy = vi.spyOn(processor["logger"], "log").mockImplementation(() => undefined);
+      loggerErrorSpy = vi.spyOn(processor["logger"], "error").mockImplementation(() => undefined);
+      loggerWarnSpy = vi.spyOn(processor["logger"], "warn").mockImplementation(() => undefined);
+      loggerDebugSpy = vi.spyOn(processor["logger"], "debug").mockImplementation(() => undefined);
     });
 
     afterEach(() => {

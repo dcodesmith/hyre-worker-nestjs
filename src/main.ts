@@ -1,8 +1,9 @@
 import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { NestFactory } from "@nestjs/core";
+import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
+import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -11,6 +12,13 @@ async function bootstrap() {
     logger.log("Starting application...");
 
     const app = await NestFactory.create(AppModule);
+
+    // Get HttpAdapterHost for platform-agnostic exception filter
+    const httpAdapterHost = app.get(HttpAdapterHost);
+
+    // Register global exception filter
+    // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
+    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     app.enableShutdownHooks();
     const configService = app.get(ConfigService);

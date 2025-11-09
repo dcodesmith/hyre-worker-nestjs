@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/complexity/useLiteralKeys: Bracket notation required to access private logger property for test spies */
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingReferralStatus, ReferralRewardStatus } from "@prisma/client";
@@ -54,6 +55,12 @@ describe("ReferralService", () => {
 
     service = module.get<ReferralService>(ReferralService);
     databaseService = module.get<DatabaseService>(DatabaseService);
+
+    // Suppress logger output during tests
+    vi.spyOn(service["logger"], "log").mockImplementation(() => undefined);
+    vi.spyOn(service["logger"], "error").mockImplementation(() => undefined);
+    vi.spyOn(service["logger"], "warn").mockImplementation(() => undefined);
+    vi.spyOn(service["logger"], "debug").mockImplementation(() => undefined);
   });
 
   it("should be defined", () => {

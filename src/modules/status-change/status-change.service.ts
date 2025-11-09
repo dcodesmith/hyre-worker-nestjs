@@ -85,11 +85,19 @@ export class StatusChangeService {
           });
 
           // Queue notifications instead of sending directly
-          await this.notificationService.queueBookingStatusNotifications(
-            updatedBooking,
-            oldStatus,
-            BookingStatus.ACTIVE,
-          );
+          try {
+            await this.notificationService.queueBookingStatusNotifications(
+              updatedBooking,
+              oldStatus,
+              BookingStatus.ACTIVE,
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
+            );
+            // Continue without failing the transaction
+          }
         }
       });
 
@@ -149,11 +157,19 @@ export class StatusChangeService {
           });
 
           // Queue notifications instead of sending directly (using fresh updatedBooking)
-          await this.notificationService.queueBookingStatusNotifications(
-            updatedBooking,
-            oldStatus,
-            BookingStatus.COMPLETED,
-          );
+          try {
+            await this.notificationService.queueBookingStatusNotifications(
+              updatedBooking,
+              oldStatus,
+              BookingStatus.COMPLETED,
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
+            );
+            // Continue without failing the transaction
+          }
         });
 
         try {
