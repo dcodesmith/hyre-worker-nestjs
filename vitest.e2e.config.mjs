@@ -1,4 +1,3 @@
-// vitest.e2e.config.ts
 import swc from "unplugin-swc";
 import { defineConfig } from "vitest/config";
 

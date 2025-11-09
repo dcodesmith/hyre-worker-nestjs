@@ -34,7 +34,13 @@ export const envSchema = z.object({
   FLUTTERWAVE_WEBHOOK_SECRET: z.string().min(1, "FLUTTERWAVE_WEBHOOK_SECRET is required"),
   FLUTTERWAVE_WEBHOOK_URL: z.url("FLUTTERWAVE_WEBHOOK_URL must be a valid URL"),
 
-  ENABLE_MANUAL_TRIGGERS: z.coerce.boolean().default(false),
+  ENABLE_MANUAL_TRIGGERS: z
+    .union([z.boolean(), z.string()])
+    .transform((val) => {
+      if (typeof val === "boolean") return val;
+      return val.toLowerCase() === "true";
+    })
+    .default(false),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

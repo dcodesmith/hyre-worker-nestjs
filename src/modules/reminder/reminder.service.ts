@@ -94,14 +94,7 @@ export class ReminderService {
           queuedCount++;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger.error(
-            `Failed to queue start reminder for leg ${leg.id}: ${errorMessage}`,
-          );
-          throw ReminderException.notificationQueueFailed(
-            leg.id,
-            "start",
-            errorMessage,
-          );
+          this.logger.error(`Failed to queue start reminder for leg ${leg.id}: ${errorMessage}`);
         }
       }
 
@@ -235,14 +228,7 @@ export class ReminderService {
           queuedCount++;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger.error(
-            `Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`,
-          );
-          throw ReminderException.notificationQueueFailed(
-            leg.id,
-            "end",
-            errorMessage,
-          );
+          this.logger.error(`Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`);
         }
       }
 

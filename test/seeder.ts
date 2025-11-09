@@ -1,9 +1,10 @@
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
 const SEED_LOCK_KEY = 42_042;
 
 export async function resetAndSeedDb() {
+  const prisma = new PrismaClient();
+
   try {
     await prisma.$transaction(async (tx) => {
       // Use a transaction-scoped advisory lock to prevent concurrent seed operations and race conditions when multiple test workers start simultaneously, ensuring only one seeder runs during the transaction.

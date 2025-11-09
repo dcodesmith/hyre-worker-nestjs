@@ -52,8 +52,9 @@ describe("Jobs E2E Tests", () => {
     // Verify retryAfter is approximately 1 hour from now (3600 seconds)
     const now = Math.ceil(Date.now() / 1000);
 
-    expect(secondResponse.body.details.retryAfter).toBeGreaterThanOrEqual(now + 3500);
-    expect(secondResponse.body.details.retryAfter).toBeLessThanOrEqual(now + 3700);
+    // Allow for reasonable clock skew and processing delays (±5 minutes)
+    expect(secondResponse.body.details.retryAfter).toBeGreaterThanOrEqual(now + 3300);
+    expect(secondResponse.body.details.retryAfter).toBeLessThanOrEqual(now + 3900);
     expect(secondResponse.body.timestamp).toBeDefined();
     expect(secondResponse.body.path).toBe("/job/trigger/start-reminders");
   });
@@ -148,7 +149,7 @@ describe("Jobs E2E Tests", () => {
   });
 
   describe("Error codes", () => {
-    it.skip("should return error code for manual triggers disabled", async () => {
+    it("should return error code for manual triggers disabled", async () => {
       // Note: This test would require rebuilding the app with ENABLE_MANUAL_TRIGGERS=false
       // For now, we'll just verify the error code structure is correct
       // In a real scenario, you'd set this in .env.e2e

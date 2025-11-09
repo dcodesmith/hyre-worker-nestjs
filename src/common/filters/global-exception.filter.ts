@@ -36,9 +36,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     // Determine HTTP status code
     const httpStatus =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     // Extract error code and details if this is an AppException
     let errorCode: string | undefined;
@@ -56,10 +54,24 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       if (typeof exceptionResponse === "string") {
         message = exceptionResponse;
       } else if (typeof exceptionResponse === "object" && exceptionResponse !== null) {
-        // For AppException, extract the message from the response object
-        message = (exceptionResponse as Record<string, unknown>).message as string || "Internal server error";
+        const response = exceptionResponse as { message?: unknown; error?: unknown };
+        const responseMessage = response.message;
+
+        if (typeof responseMessage === "string") {
+          message = responseMessage;
+        } else if (Array.isArray(responseMessage)) {
+          message = responseMessage
+            .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+            .join(", ");
+        } else if (responseMessage !== undefined) {
+          message = String(responseMessage);
+        } else if (typeof response.error === "string") {
+          message = response.error;
+        } else {
+          message = exception.message;
+        }
       } else {
-        message = "Internal server error";
+        message = exception.message;
       }
     } else if (exception instanceof Error) {
       message = exception.message;
@@ -101,7 +113,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (httpStatus >= 500) {
       // Server errors - log with full stack trace
       if (exception instanceof Error) {
-        this.logger.error(`${errorCodePrefix}${method} ${url} - ${exception.message}`, exception.stack);
+        this.logger.error(
+          `${errorCodePrefix}${method} ${url} - ${exception.message}`,
+          exception.stack,
+        );
       } else {
         this.logger.error(`${errorCodePrefix}${method} ${url} - Unknown error`, String(exception));
       }
