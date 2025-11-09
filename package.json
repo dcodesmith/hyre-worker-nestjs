@@ -1,7 +1,7 @@
 {
   "name": "hyre-worker",
   "version": "1.0.0",
-  "packageManager": "pnpm@10.13.1",
+  "packageManager": "pnpm@10.20.0",
   "scripts": {
     "build": "npx prisma generate && nest build",
     "format": "biome format --write src",
@@ -74,6 +74,6 @@
     "vitest": "^3.2.4"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": "22.11.0"
   }
 }
