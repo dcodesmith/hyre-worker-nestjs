@@ -18,6 +18,7 @@ import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationService } from "../notification/notification.service";
+import { ReminderException } from "./errors";
 
 @Injectable()
 export class ReminderService {
@@ -84,12 +85,24 @@ export class ReminderService {
       for (const leg of legs) {
         this.logger.log(`Processing leg ${leg.id} legStartTime: ${leg.legStartTime}`);
 
-        // Queue notification instead of sending directly
-        await this.notificationService.queueBookingReminderNotifications(
-          normaliseBookingLegDetails(leg),
-          NotificationType.BOOKING_REMINDER_START,
-        );
-        queuedCount++;
+        try {
+          // Queue notification instead of sending directly
+          await this.notificationService.queueBookingReminderNotifications(
+            normaliseBookingLegDetails(leg),
+            NotificationType.BOOKING_REMINDER_START,
+          );
+          queuedCount++;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `Failed to queue start reminder for leg ${leg.id}: ${errorMessage}`,
+          );
+          throw ReminderException.notificationQueueFailed(
+            leg.id,
+            "start",
+            errorMessage,
+          );
+        }
       }
 
       this.logger.log("Email queue processing complete.");
@@ -213,12 +226,24 @@ export class ReminderService {
           `Processing end reminder for leg ${leg.id} with effective end time: ${effectiveEndTimeForLeg.toISOString()}`,
         );
 
-        // Queue notification instead of sending directly
-        await this.notificationService.queueBookingReminderNotifications(
-          normaliseBookingLegDetails(leg),
-          NotificationType.BOOKING_REMINDER_END,
-        );
-        queuedCount++;
+        try {
+          // Queue notification instead of sending directly
+          await this.notificationService.queueBookingReminderNotifications(
+            normaliseBookingLegDetails(leg),
+            NotificationType.BOOKING_REMINDER_END,
+          );
+          queuedCount++;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`,
+          );
+          throw ReminderException.notificationQueueFailed(
+            leg.id,
+            "end",
+            errorMessage,
+          );
+        }
       }
 
       return `Processed and queued end reminders for ${queuedCount} legs.`;

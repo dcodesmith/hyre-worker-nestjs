@@ -1,19 +1,31 @@
-// import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { ReminderModule } from "../reminder/reminder.module";
 import { StatusChangeModule } from "../status-change/status-change.module";
-// import { REMINDERS_QUEUE, STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { JobController } from "./job.controller";
 import { JobService } from "./job.service";
+import { JobThrottlerGuard } from "./job-throttler.guard";
 
 @Module({
   imports: [
-    // BullModule.registerQueue({ name: REMINDERS_QUEUE }),
-    // BullModule.registerQueue({ name: STATUS_UPDATES_QUEUE }),
+    ThrottlerModule.forRoot([
+      {
+        name: "manual-triggers",
+        ttl: 3600,
+        limit: 1,
+      },
+    ]),
     ReminderModule,
     StatusChangeModule,
   ],
   controllers: [JobController],
-  providers: [JobService],
+  providers: [
+    JobService,
+    {
+      provide: APP_GUARD,
+      useClass: JobThrottlerGuard,
+    },
+  ],
 })
 export class JobModule {}

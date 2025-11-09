@@ -12,6 +12,7 @@ import {
   TRIP_END,
   TRIP_START,
 } from "../../config/constants";
+import { JobException } from "./errors";
 
 @Injectable()
 export class JobService {
@@ -26,7 +27,7 @@ export class JobService {
     await this.enqueue(this.reminderQueue, BOOKING_LEG_START_REMINDER, TRIP_START);
   }
 
-  async triggerStatusUpdates() {
+  async triggerActivateBookings() {
     await this.enqueue(this.statusUpdateQueue, CONFIRMED_TO_ACTIVE, CONFIRMED_TO_ACTIVE);
   }
 
@@ -42,17 +43,22 @@ export class JobService {
     const timestamp = new Date().toISOString();
     const jobId = `${name}-${timestamp}-${randomUUID().slice(0, 8)}`;
 
-    await queue.add(
-      name,
-      { type, timestamp },
-      {
-        jobId,
-        removeOnComplete: 100,
-        removeOnFail: 50,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 1000 },
-      },
-    );
-    this.logger.log(`Enqueued ${name} jobId=${jobId}`);
+    try {
+      await queue.add(
+        name,
+        { type, timestamp },
+        {
+          jobId,
+          removeOnComplete: 100,
+          removeOnFail: 50,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
+        },
+      );
+      this.logger.log(`Enqueued ${name} jobId=${jobId}`);
+    } catch (error) {
+      this.logger.error(`Failed to enqueue ${name}: ${error.message}`, error.stack);
+      throw JobException.enqueueFailed(name, error.message);
+    }
   }
 }

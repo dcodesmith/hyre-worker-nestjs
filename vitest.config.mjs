@@ -10,7 +10,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.{test,spec}.ts"],
-    exclude: ["node_modules/**", "dist/**"],
+    exclude: ["node_modules/**", "dist/**", "**/*.e2e-spec.ts"],
     setupFiles: ["./test/setup.ts"],
     pool: "threads",
     poolOptions: {
