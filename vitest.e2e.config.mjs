@@ -25,7 +25,9 @@ export default defineConfig({
     hookTimeout: 30000,
   },
   plugins: [
-    // Keep SWC plugin for NestJS decorator support
+    // Keep SWC plugin for NestJS decorator support.
+    // useDefineForClassFields: false is required to ensure decorators can
+    // modify class fields before they are initialized (NestJS dependency injection).
     swc.vite({
       module: { type: "es6" },
       jsc: { transform: { useDefineForClassFields: false } },

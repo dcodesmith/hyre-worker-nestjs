@@ -48,36 +48,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Determine error message
-    let message: string;
-    if (exception instanceof HttpException) {
-      const exceptionResponse = exception.getResponse();
-      if (typeof exceptionResponse === "string") {
-        message = exceptionResponse;
-      } else if (typeof exceptionResponse === "object" && exceptionResponse !== null) {
-        const response = exceptionResponse as { message?: unknown; error?: unknown };
-        const responseMessage = response.message;
-
-        if (typeof responseMessage === "string") {
-          message = responseMessage;
-        } else if (Array.isArray(responseMessage)) {
-          message = responseMessage
-            .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-            .join(", ");
-        } else if (responseMessage !== undefined) {
-          message = String(responseMessage);
-        } else if (typeof response.error === "string") {
-          message = response.error;
-        } else {
-          message = exception.message;
-        }
-      } else {
-        message = exception.message;
-      }
-    } else if (exception instanceof Error) {
-      message = exception.message;
-    } else {
-      message = "Internal server error";
-    }
+    const message = this.extractMessage(exception);
 
     // Log error with full context (including error code if present)
     this.logError(exception, request, httpStatus, errorCode);
@@ -95,17 +66,46 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
   }
 
+  private extractMessage(exception: unknown): string {
+    if (!(exception instanceof HttpException)) {
+      return exception instanceof Error ? exception.message : "Internal server error";
+    }
+
+    const response = exception.getResponse();
+    if (typeof response === "string") {
+      return response;
+    }
+
+    if (typeof response === "object" && response !== null) {
+      const { message: responseMessage, error } = response as {
+        message?: unknown;
+        error?: unknown;
+      };
+
+      if (typeof responseMessage === "string") return responseMessage;
+      if (Array.isArray(responseMessage)) {
+        return responseMessage
+          .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+          .join(", ");
+      }
+      if (responseMessage !== undefined) return String(responseMessage);
+      if (typeof error === "string") return error;
+    }
+
+    return exception.message;
+  }
+
   /**
    * Log error with appropriate level and context
    */
   private logError(
     exception: unknown,
-    request: Request,
+    request: { url?: string; method?: string },
     httpStatus: number,
     errorCode?: string,
   ): void {
-    const url = (request as unknown as { url?: string }).url || "unknown";
-    const method = (request as unknown as { method?: string }).method || "unknown";
+    const url = request.url || "unknown";
+    const method = request.method || "unknown";
 
     // Include error code in log message if present
     const errorCodePrefix = errorCode ? `[${errorCode}] ` : "";

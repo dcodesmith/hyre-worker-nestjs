@@ -33,6 +33,19 @@ export async function setup() {
 
     const prismaEnv = { ...process.env, DATABASE_URL: databaseUrl };
 
+    console.log("Generating Prisma client with test database URL...");
+
+    try {
+      execSync("npx prisma generate", {
+        env: prismaEnv,
+        stdio: "inherit",
+      });
+      console.log("Prisma client generated successfully");
+    } catch (error) {
+      console.error("Prisma client generation failed:", error);
+      throw new Error("Failed to generate Prisma client for test database");
+    }
+
     console.log("Running Prisma migrations on test database...");
 
     try {
@@ -43,7 +56,7 @@ export async function setup() {
       console.log("Prisma migrations completed successfully");
     } catch (error) {
       console.error("Prisma migration failed:", error);
-      throw new Error("Failed to run Prisma migrations on test database");
+      throw error;
     }
 
     // Teardown function to stop containers after tests
@@ -54,11 +67,15 @@ export async function setup() {
   } catch (error) {
     // Clean up any started containers on failure
     if (pgContainer) {
-      await pgContainer.stop().catch(() => {});
+      await pgContainer.stop().catch(() => {
+        console.error("Failed to stop PostgreSQL container during cleanup:", error);
+      });
     }
 
     if (redisContainer) {
-      await redisContainer.stop().catch(() => {});
+      await redisContainer.stop().catch(() => {
+        console.error("Failed to stop Redis container during cleanup:", error);
+      });
     }
 
     throw error;

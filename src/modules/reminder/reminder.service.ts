@@ -18,7 +18,6 @@ import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationService } from "../notification/notification.service";
-import { ReminderException } from "./errors";
 
 @Injectable()
 export class ReminderService {
