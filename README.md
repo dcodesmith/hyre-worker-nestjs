@@ -35,7 +35,8 @@ A production-ready NestJS worker service for automated booking management, handl
 - **Flutterwave** - Payment processing and bank transfers
 
 **Testing & Quality**
-- **Vitest 3.x** - Fast unit test runner with coverage
+- **Vitest 3.x** - Fast unit and e2e test runner with coverage
+- **Testcontainers** - PostgreSQL and Redis containers for e2e testing
 - **Biome** - Fast linter and formatter
 - **SonarQube** - Code quality analysis
 
@@ -137,7 +138,9 @@ A production-ready NestJS worker service for automated booking management, handl
 
 **JobModule** (`src/modules/job/`)
 - Manual job triggering for testing/admin operations
-- Rate limited: 5 requests per 60 seconds
+- **Endpoint**: `POST /job/trigger/:jobType` (accepts: `start-reminders`, `end-reminders`, `activate-bookings`, `complete-bookings`)
+- **Rate limiting**: 1 request per hour per job type (independent limits using custom JobThrottlerGuard)
+- **Error handling**: Structured errors with error codes (JOB.RATE_LIMIT.EXCEEDED, JOB.VALIDATION.INVALID_TYPE, JOB.AUTH.MANUAL_TRIGGERS_DISABLED)
 - Requires: `ENABLE_MANUAL_TRIGGERS=true` environment variable
 
 ## Queue System (BullMQ)
@@ -266,29 +269,38 @@ Bull Board dashboard (HTML interface)
 
 ⚠️ **Requires**: `ENABLE_MANUAL_TRIGGERS=true` environment variable
 
+**Rate Limiting**: 1 request per hour per job type (independent limits)
+
 All endpoints return `202 Accepted` on success.
 
 ```http
-POST /job/trigger/reminders
+POST /job/trigger/start-reminders
 ```
 Manually trigger booking start reminders
-- Rate limit: 5 requests per 60 seconds
-- Response: `{ "success": true, "message": "Reminder job triggered" }`
+- Response: `{ "success": true, "message": "Start reminder job triggered" }`
 
 ```http
 POST /job/trigger/end-reminders
 ```
 Manually trigger booking end reminders
+- Response: `{ "success": true, "message": "End reminder job triggered" }`
 
 ```http
-POST /job/trigger/status-updates
+POST /job/trigger/activate-bookings
 ```
 Manually trigger CONFIRMED → ACTIVE status updates
+- Response: `{ "success": true, "message": "Activate bookings job triggered" }`
 
 ```http
 POST /job/trigger/complete-bookings
 ```
-Manually trigger ACTIVE → COMPLETED status updates + payouts
+Manually trigger ACTIVE → COMPLETED status updates + payouts + referral processing
+- Response: `{ "success": true, "message": "Complete bookings job triggered" }`
+
+**Error Responses**:
+- `403` - Manual triggers disabled (JOB.AUTH.MANUAL_TRIGGERS_DISABLED)
+- `400` - Invalid job type (JOB.VALIDATION.INVALID_TYPE)
+- `429` - Rate limit exceeded (JOB.RATE_LIMIT.EXCEEDED) - includes `retryAfter` timestamp
 
 ## Environment Variables
 
@@ -329,8 +341,8 @@ ENABLE_MANUAL_TRIGGERS=false  # Set to 'true' to enable manual trigger endpoints
 ## Development
 
 ### Prerequisites
-- Node.js >= 20.0.0
-- pnpm 10.13.1 (required package manager)
+- Node.js 22.11.0 (exact version specified in engines)
+- pnpm 10.20.0 (required package manager)
 - Redis server (for BullMQ)
 - PostgreSQL database
 
@@ -367,6 +379,7 @@ pnpm run test:watch         # Watch mode for tests
 pnpm run test:coverage      # Generate coverage report
 pnpm run test:coverage:ci   # CI-optimized coverage with NYC reporter
 pnpm run test:ui            # Launch Vitest web UI
+pnpm run test:e2e           # Run end-to-end tests with Testcontainers
 
 # Code Quality
 pnpm run lint               # Run Biome linting
@@ -384,7 +397,8 @@ pnpm run db:generate        # Generate Prisma client from schema
 ### Testing Stack
 - **Framework**: Vitest 3.2.4 with NestJS testing utilities
 - **Coverage**: V8 coverage provider
-- **Strategy**: Unit tests with mocked dependencies
+- **E2E Testing**: Testcontainers for PostgreSQL and Redis
+- **Strategy**: Unit tests with mocked dependencies, E2E tests with real containers
 
 ### Test Structure
 
@@ -415,7 +429,7 @@ describe('ReminderService', () => {
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all unit tests
 pnpm run test
 
 # Watch mode (re-run on file changes)
@@ -428,6 +442,9 @@ pnpm run test:coverage
 # Launch interactive test UI
 pnpm run test:ui
 # UI available at: http://localhost:51204/__vitest__/
+
+# Run end-to-end tests (spins up PostgreSQL and Redis via Testcontainers)
+pnpm run test:e2e
 ```
 
 ## Docker
@@ -443,7 +460,7 @@ docker run -p 3000:3000 --env-file .env hyre-worker
 ```
 
 ### Docker Configuration
-- **Base Image**: node:20-alpine (multi-stage build)
+- **Base Image**: node:22-alpine (multi-stage build)
 - **User**: node (non-root for security)
 - **Health Check**: Curl to `GET /health` every 30 seconds
 - **Exposed Port**: 3000
