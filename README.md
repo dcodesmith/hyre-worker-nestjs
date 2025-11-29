@@ -1,5 +1,7 @@
 # Hyre Worker - NestJS
 
+   [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=dcodesmith_hyre-worker-nestjs&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=dcodesmith_hyre-worker-nestjs)
+
 A production-ready NestJS worker service for automated booking management, handling reminders, status transitions, notifications, and payment processing for chauffeur-driven ride-booking platform.
 
 ## Features
@@ -465,16 +467,105 @@ docker run -p 3000:3000 --env-file .env hyre-worker
 - **Health Check**: Curl to `GET /health` every 30 seconds
 - **Exposed Port**: 3000
 
-## Production Deployment
+## Production Deployment (Fly.io)
 
-### Pre-deployment Checklist
+### Prerequisites
+- [Fly.io CLI](https://fly.io/docs/hands-on/install-flyctl/) installed
+- Fly.io account and logged in (`flyctl auth login`)
 
-1. **Environment Variables**: All required vars configured
-2. **Database**: Migrations applied (`prisma migrate deploy`)
-3. **Redis**: Connection tested and accessible
-4. **External Services**: API keys validated (Resend, Twilio, Flutterwave)
-5. **Timezone**: `TZ` env var set correctly (affects cron scheduling)
-6. **Manual Triggers**: `ENABLE_MANUAL_TRIGGERS` disabled in production
+### Setup Native Redis on Fly.io
+
+This app requires Redis for BullMQ queues. Use the automated setup script to deploy a native Redis instance (no managed service fees):
+
+```bash
+# Run the setup script to create and deploy Redis
+./scripts/setup-redis.sh
+```
+
+This will:
+1. Create a new Fly.io app: `hyre-worker-nestjs-redis`
+2. Generate a secure 32-character random password for Redis authentication
+3. Deploy Redis 7 Alpine container with persistent storage and security hardening
+4. Set the `REDIS_URL` secret (with authentication) in your worker app
+5. Connect via Fly.io's internal private network (`.internal` domain)
+
+**Security Features:**
+- Password authentication (32-character random password)
+- Private network binding (no public exposure)
+- Memory limits (400MB with LRU eviction policy)
+- Data persistence (AOF + periodic snapshots)
+- Health checks (15s interval)
+
+**Manual Setup** (alternative):
+
+```bash
+# 1. Create Redis app
+flyctl apps create hyre-worker-nestjs-redis
+
+# 2. Create persistent volume
+flyctl volumes create redis_data \
+  --app hyre-worker-nestjs-redis \
+  --region lhr \
+  --size 1
+
+# 3. Generate and set Redis password
+REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+flyctl secrets set REDIS_PASSWORD="$REDIS_PASSWORD" \
+  --app hyre-worker-nestjs-redis \
+  --stage
+
+# 4. Deploy Redis
+flyctl deploy --config fly.redis.toml
+
+# 5. Set Redis URL in worker app (with authentication)
+flyctl secrets set REDIS_URL="redis://:${REDIS_PASSWORD}@hyre-worker-nestjs-redis.internal:6379" \
+  --app hyre-worker-nestjs
+```
+
+### Verify Redis Connection
+
+```bash
+# Check Redis app status
+flyctl status --app hyre-worker-nestjs-redis
+
+# Test Redis from worker app
+flyctl ssh console --app hyre-worker-nestjs -C 'redis-cli -u $REDIS_URL ping'
+# Should return: PONG
+
+# Monitor Redis activity (requires password from secrets)
+flyctl ssh console --app hyre-worker-nestjs-redis
+redis-cli -a $REDIS_PASSWORD monitor
+```
+
+### Deploy Worker App
+
+```bash
+# Deploy the worker application
+flyctl deploy
+
+# View logs
+flyctl logs
+
+# Check application status
+flyctl status
+```
+
+### Configuration Files
+
+- [`fly.toml`](fly.toml) - Main worker app configuration
+- [`fly.redis.toml`](fly.redis.toml) - Redis instance configuration
+- [`scripts/setup-redis.sh`](scripts/setup-redis.sh) - Automated Redis setup
+
+### Cost Optimization
+
+The native Redis setup runs on Fly.io's infrastructure with:
+- **Redis App**: 1 shared CPU, 512MB RAM
+- **Persistent Volume**: 1GB storage
+- **Network**: Internal `.internal` domain (no internet traffic)
+- **Estimated Cost**: ~$2-3/month (vs $7+/month for managed Redis)
+
+Both apps run in the `lhr` (London) region for optimal latency.
+
 
 ### Build for Production
 

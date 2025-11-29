@@ -1,0 +1,41 @@
+# Fly.io configuration for native Redis
+# Deploy with: flyctl deploy --config fly.redis.toml
+
+app = 'hyre-worker-nestjs-redis'
+primary_region = 'lhr'
+
+[build]
+  image = 'redis:7-alpine'
+
+[env]
+  # Redis configuration with security and production optimizations
+  # - Password auth via REDIS_PASSWORD secret (set by setup script)
+  # - Private network only (fly-local-6pn)
+  # - Memory limits with LRU eviction
+  # - Periodic snapshots + AOF for durability
+  REDIS_ARGS = '''--appendonly yes
+    --dir /data
+    --bind fly-local-6pn
+    --requirepass ${REDIS_PASSWORD}
+    --maxmemory 400mb
+    --maxmemory-policy allkeys-lru
+    --save 60 1000
+    --loglevel notice'''
+
+[mounts]
+  source = 'redis_data'
+  destination = '/data'
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 6379
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
