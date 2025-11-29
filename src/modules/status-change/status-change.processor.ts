@@ -24,10 +24,14 @@ export class StatusChangeProcessor extends WorkerHost {
       let result: string | undefined;
 
       if (job.name === CONFIRMED_TO_ACTIVE) {
-        result = await this.statusChangeService.updateBookingsFromConfirmedToActive();
+        result = await this.statusChangeService.updateBookingsFromConfirmedToActive(
+          job.data.timestamp,
+        );
         this.logger.log(`Confirmed to active updates processed: ${result}`);
       } else if (job.name === ACTIVE_TO_COMPLETED) {
-        result = await this.statusChangeService.updateBookingsFromActiveToCompleted();
+        result = await this.statusChangeService.updateBookingsFromActiveToCompleted(
+          job.data.timestamp,
+        );
         this.logger.log(`Active to completed updates processed: ${result}`);
       } else {
         throw new Error(`Unknown status update job type: ${job.name}`);
