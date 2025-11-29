@@ -467,9 +467,17 @@ This app requires Redis for BullMQ queues. Use the automated setup script to dep
 
 This will:
 1. Create a new Fly.io app: `hyre-worker-nestjs-redis`
-2. Deploy Redis 7 Alpine container with persistent storage
-3. Set the `REDIS_URL` secret in your worker app
-4. Connect via Fly.io's internal private network (`.internal` domain)
+2. Generate a secure 32-character random password for Redis authentication
+3. Deploy Redis 7 Alpine container with persistent storage and security hardening
+4. Set the `REDIS_URL` secret (with authentication) in your worker app
+5. Connect via Fly.io's internal private network (`.internal` domain)
+
+**Security Features:**
+- Password authentication (32-character random password)
+- Private network binding (no public exposure)
+- Memory limits (400MB with LRU eviction policy)
+- Data persistence (AOF + periodic snapshots)
+- Health checks (15s interval)
 
 **Manual Setup** (alternative):
 
@@ -483,11 +491,17 @@ flyctl volumes create redis_data \
   --region lhr \
   --size 1
 
-# 3. Deploy Redis
+# 3. Generate and set Redis password
+REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+flyctl secrets set REDIS_PASSWORD="$REDIS_PASSWORD" \
+  --app hyre-worker-nestjs-redis \
+  --stage
+
+# 4. Deploy Redis
 flyctl deploy --config fly.redis.toml
 
-# 4. Set Redis URL in worker app
-flyctl secrets set REDIS_URL="redis://hyre-worker-nestjs-redis.internal:6379" \
+# 5. Set Redis URL in worker app (with authentication)
+flyctl secrets set REDIS_URL="redis://:${REDIS_PASSWORD}@hyre-worker-nestjs-redis.internal:6379" \
   --app hyre-worker-nestjs
 ```
 
@@ -501,9 +515,9 @@ flyctl status --app hyre-worker-nestjs-redis
 flyctl ssh console --app hyre-worker-nestjs -C 'redis-cli -u $REDIS_URL ping'
 # Should return: PONG
 
-# Monitor Redis activity
+# Monitor Redis activity (requires password from secrets)
 flyctl ssh console --app hyre-worker-nestjs-redis
-redis-cli monitor
+redis-cli -a $REDIS_PASSWORD monitor
 ```
 
 ### Deploy Worker App

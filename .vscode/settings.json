@@ -1,6 +1,6 @@
 {
   "sonarlint.connectedMode.project": {
-    "connectionId": "06/11 Connection",
+    "connectionId": "dcodesmith",
     "projectKey": "dcodesmith_hyre-worker-nestjs"
   }
 }

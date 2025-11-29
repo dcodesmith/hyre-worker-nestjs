@@ -106,11 +106,14 @@ export class PaymentService {
               transactionId: payoutTransaction.id,
             });
           } catch (updateError) {
-            this.logger.error("Failed to update existing payout transaction with latest values", {
-              bookingId: booking.id,
-              transactionId: existingTransaction.id,
-              error: updateError instanceof Error ? updateError.message : String(updateError),
-            });
+            this.logger.error(
+              "Failed to update existing payout transaction with latest values",
+              {
+                bookingId: booking.id,
+                transactionId: existingTransaction.id,
+                error: updateError instanceof Error ? updateError.message : String(updateError),
+              },
+            );
             // Re-throw the update error
             throw updateError;
           }
