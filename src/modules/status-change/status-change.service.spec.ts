@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking } from "../../shared/helper.fixtures";
+import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
@@ -135,11 +135,17 @@ describe("StatusChangeService", () => {
   });
 
   it("should update bookings from active to completed and queue referral processing", async () => {
+    const mockCar = createCar({
+      id: "car-1",
+      status: Status.BOOKED,
+    });
+
     const mockBooking = createBooking({
       id: "2",
       status: BookingStatus.ACTIVE,
       paymentStatus: PaymentStatus.PAID,
       carId: "car-1",
+      car: mockCar,
     });
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
@@ -148,6 +154,7 @@ describe("StatusChangeService", () => {
       const mockTx = {
         booking: {
           update: vi.fn().mockResolvedValue({ ...mockBooking, status: BookingStatus.COMPLETED }),
+          findFirst: vi.fn().mockResolvedValue(null),
         },
         car: {
           update: vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE }),
