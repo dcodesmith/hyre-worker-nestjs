@@ -4,5 +4,5 @@ type StatusUpdateType = typeof CONFIRMED_TO_ACTIVE | typeof ACTIVE_TO_COMPLETED;
 
 export interface StatusUpdateJobData {
   type: StatusUpdateType;
-  timestamp: string;
+  timestamp?: string;
 }

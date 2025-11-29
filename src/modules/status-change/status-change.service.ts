@@ -41,16 +41,17 @@ export class StatusChangeService {
     return { gte, lte };
   }
 
-  async updateBookingsFromConfirmedToActive() {
+  async updateBookingsFromConfirmedToActive(timestamp?: string) {
     try {
-      // Find all confirmed bookings where start date falls within the current UTC hour window
+      const startDate = timestamp ? { lt: new Date(timestamp) } : this.getCurrentUtcHourWindow();
 
+      // Find all confirmed bookings where start date falls within the current UTC hour window
       const bookingsToUpdate = await this.databaseService.booking.findMany({
         where: {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           chauffeurId: { not: null },
-          startDate: this.getCurrentUtcHourWindow(),
+          startDate,
           car: {
             status: Status.BOOKED,
           },
@@ -84,7 +85,6 @@ export class StatusChangeService {
             },
           });
 
-          // Queue notifications instead of sending directly
           try {
             await this.notificationService.queueBookingStatusNotifications(
               updatedBooking,
@@ -110,15 +110,18 @@ export class StatusChangeService {
     }
   }
 
-  async updateBookingsFromActiveToCompleted() {
+  async updateBookingsFromActiveToCompleted(timestamp?: string) {
     try {
+      const endDate = timestamp ? { lt: new Date(timestamp) } : this.getCurrentUtcHourWindow();
       // Find all active bookings where end date falls within the current UTC hour window
+      // Query for BOOKED cars only - cars with ACTIVE bookings should always be BOOKED
       const bookingsToUpdate = await this.databaseService.booking.findMany({
         where: {
           status: BookingStatus.ACTIVE,
           paymentStatus: PaymentStatus.PAID,
-          endDate: this.getCurrentUtcHourWindow(),
+          endDate,
           car: {
+            id: { not: null },
             status: Status.BOOKED,
           },
         },
@@ -151,12 +154,33 @@ export class StatusChangeService {
             },
           });
 
-          await tx.car.update({
-            where: { id: booking.carId },
-            data: { status: Status.AVAILABLE },
+          // Check if there are any upcoming bookings for this car that should keep it booked
+          // Look for CONFIRMED or ACTIVE bookings that start after this booking ends
+          const hasUpcomingBooking = await tx.booking.findFirst({
+            where: {
+              carId: booking.carId,
+              status: BookingStatus.CONFIRMED,
+              paymentStatus: PaymentStatus.PAID,
+              id: { not: booking.id },
+              startDate: {
+                gte: booking.endDate, // Follow-up booking should start after this one ends
+              },
+            },
           });
 
-          // Queue notifications instead of sending directly (using fresh updatedBooking)
+          // Only update car status if there's no upcoming booking
+          // If hasUpcomingBooking is true, the car should already be BOOKED, so no update needed
+          if (!hasUpcomingBooking) {
+            await tx.car.update({
+              where: { id: booking.carId },
+              data: { status: Status.AVAILABLE },
+            });
+          } else {
+            this.logger.log(
+              `Car ${booking.carId} remains BOOKED due to upcoming booking ${hasUpcomingBooking.id} (status: ${hasUpcomingBooking.status})`,
+            );
+          }
+
           try {
             await this.notificationService.queueBookingStatusNotifications(
               updatedBooking,

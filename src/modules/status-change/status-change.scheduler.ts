@@ -23,10 +23,10 @@ export class StatusChangeScheduler {
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleConfirmedToActiveUpdates() {
     this.logger.log("Scheduling confirmed to active status updates...");
+
     try {
       await this.statusUpdateQueue.add(CONFIRMED_TO_ACTIVE, {
         type: CONFIRMED_TO_ACTIVE,
-        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       this.logger.error(
@@ -39,10 +39,10 @@ export class StatusChangeScheduler {
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleActiveToCompletedUpdates() {
     this.logger.log("Scheduling active to completed status updates...");
+
     try {
       await this.statusUpdateQueue.add(ACTIVE_TO_COMPLETED, {
         type: ACTIVE_TO_COMPLETED,
-        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       this.logger.error(

@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking } from "../../shared/helper.fixtures";
+import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
@@ -135,22 +135,35 @@ describe("StatusChangeService", () => {
   });
 
   it("should update bookings from active to completed and queue referral processing", async () => {
+    const mockCar = createCar({
+      id: "car-1",
+      status: Status.BOOKED,
+    });
+
     const mockBooking = createBooking({
       id: "2",
       status: BookingStatus.ACTIVE,
       paymentStatus: PaymentStatus.PAID,
       carId: "car-1",
+      car: mockCar,
     });
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
 
+    const bookingUpdateMock = vi
+      .fn()
+      .mockResolvedValue({ ...mockBooking, status: BookingStatus.COMPLETED });
+    const bookingFindFirstMock = vi.fn().mockResolvedValue(null);
+    const carUpdateMock = vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE });
+
     vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
       const mockTx = {
         booking: {
-          update: vi.fn().mockResolvedValue({ ...mockBooking, status: BookingStatus.COMPLETED }),
+          update: bookingUpdateMock,
+          findFirst: bookingFindFirstMock,
         },
         car: {
-          update: vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE }),
+          update: carUpdateMock,
         },
       } as unknown as DatabaseService;
       return callback(mockTx);
@@ -159,6 +172,20 @@ describe("StatusChangeService", () => {
     const result = await service.updateBookingsFromActiveToCompleted();
 
     expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
+    expect(bookingFindFirstMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          carId: "car-1",
+          status: BookingStatus.CONFIRMED,
+        }),
+      }),
+    );
+    expect(carUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: Status.AVAILABLE }),
+      }),
+    );
+
     expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
       BookingStatus.ACTIVE,
