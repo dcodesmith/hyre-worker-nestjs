@@ -121,6 +121,7 @@ export class StatusChangeService {
           paymentStatus: PaymentStatus.PAID,
           endDate,
           car: {
+            id: { not: null },
             status: Status.BOOKED,
           },
         },
@@ -139,13 +140,6 @@ export class StatusChangeService {
 
       for (const booking of bookingsToUpdate) {
         const oldStatus = booking.status;
-
-        // Validate consistency: ACTIVE bookings should always have BOOKED cars
-        if (booking.car.status !== Status.BOOKED) {
-          this.logger.warn(
-            `Consistency check failed: Booking ${booking.id} is ACTIVE but car ${booking.carId} status is ${booking.car.status}, expected BOOKED`,
-          );
-        }
 
         // Perform all operations in a transaction for atomicity
         await this.databaseService.$transaction(async (tx) => {
