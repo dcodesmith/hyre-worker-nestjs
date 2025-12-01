@@ -81,6 +81,7 @@ export class FlutterwaveService {
       this.logger.error("Failed to initiate payout via Flutterwave", {
         error: String(error),
         bookingId,
+        bookingReference,
       });
 
       if (error instanceof FlutterwaveError) {

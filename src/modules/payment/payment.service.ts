@@ -33,12 +33,10 @@ export class PaymentService {
 
     if (!bankDetails.isVerified) {
       this.logger.warn(
-        "Bank details for fleet owner not found or not verified. Cannot process payout for booking",
+        "Bank details for fleet owner are not verified. Cannot process payout for booking",
         {
           fleetOwnerId: fleetOwner.id,
           bookingId: booking.id,
-          detailsFound: !!bankDetails,
-          isVerified: bankDetails.isVerified,
         },
       );
       return null;
@@ -120,7 +118,7 @@ export class PaymentService {
     }
   }
 
-  private async handleExistingPayoutTransactionStatus(
+  private async evaluatePayoutTransactionRetriability(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
   ) {
@@ -155,17 +153,19 @@ export class PaymentService {
   ) {
     const transferId = this.extractTransferId(payoutResultData);
 
-    const updatedTransaction = await this.databaseService.payoutTransaction.update({
-      where: { id: payoutTransaction.id },
-      data: {
-        status: "PROCESSING",
-        payoutProviderReference: transferId,
-      },
-    });
-
-    await this.databaseService.booking.update({
-      where: { id: bookingId },
-      data: { overallPayoutStatus: "PROCESSING" },
+    const updatedTransaction = await this.databaseService.$transaction(async (tx) => {
+      const updated = await tx.payoutTransaction.update({
+        where: { id: payoutTransaction.id },
+        data: {
+          status: "PROCESSING",
+          payoutProviderReference: transferId,
+        },
+      });
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { overallPayoutStatus: "PROCESSING" },
+      });
+      return updated;
     });
 
     this.logger.log("Payout for booking initiated successfully. Transaction ID", {
@@ -192,17 +192,15 @@ export class PaymentService {
   ) {
     const errorMessage = this.extractErrorMessage(payoutResultData);
 
-    await this.databaseService.payoutTransaction.update({
-      where: { id: payoutTransaction.id },
-      data: {
-        status: "FAILED",
-        notes: `Flutterwave initiation failed: ${errorMessage}`,
-      },
-    });
-
-    await this.databaseService.booking.update({
-      where: { id: bookingId },
-      data: { overallPayoutStatus: "FAILED" },
+    await this.databaseService.$transaction(async (tx) => {
+      await tx.payoutTransaction.update({
+        where: { id: payoutTransaction.id },
+        data: { status: "FAILED", notes: `Flutterwave initiation failed: ${errorMessage}` },
+      });
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { overallPayoutStatus: "FAILED" },
+      });
     });
 
     this.logger.error("Payout initiation for booking failed. Reason", {
@@ -233,7 +231,7 @@ export class PaymentService {
         payoutAmount,
       );
 
-      const statusHandlingResult = await this.handleExistingPayoutTransactionStatus(
+      const statusHandlingResult = await this.evaluatePayoutTransactionRetriability(
         booking.id,
         payoutTransaction,
       );

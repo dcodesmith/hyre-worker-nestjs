@@ -215,7 +215,7 @@ export class StatusChangeService {
             include: {
               chauffeur: true,
               user: true,
-              car: { include: { owner: true } },
+              car: { include: { owner: { include: { bankDetails: true } } } },
               legs: {
                 include: {
                   extensions: true,

@@ -64,11 +64,14 @@ describe("PaymentService", () => {
   it("should use a deterministic reference derived from payout transaction id", async () => {
     const booking: any = {
       id: "booking-123",
+      bookingReference: "BR-booking-123",
       fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
       car: { owner: { id: "owner-1" } },
     };
 
-    (flutterwaveService.initiatePayout as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (
+      flutterwaveService.initiatePayout as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
       success: true,
       data: { id: 12345 },
     });
@@ -84,17 +87,18 @@ describe("PaymentService", () => {
   it("should not retry payout when status is PROCESSING or PAID_OUT", async () => {
     const booking: any = {
       id: "booking-123",
+      bookingReference: "BR-booking-123",
       fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
       car: { owner: { id: "owner-1" } },
     };
 
     // Simulate existing payout transaction already in a terminal/processing state
-    (databaseService.payoutTransaction.create as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      {
-        id: "payout-123",
-        status: "PROCESSING",
-      },
-    );
+    (
+      databaseService.payoutTransaction.create as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      id: "payout-123",
+      status: "PROCESSING",
+    });
 
     await service.initiatePayout(booking);
 
