@@ -94,24 +94,26 @@ describe("PaymentService", () => {
     expect(callArgs.reference).toBe("payout_payout-123");
   });
 
-  it("should not retry payout when status is PROCESSING or PAID_OUT", async () => {
-    const booking: any = {
-      id: "booking-123",
-      bookingReference: "BR-booking-123",
-      fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
-      car: { owner: { id: "owner-1" } },
-    };
+  for (const terminalStatus of ["PROCESSING", "PAID_OUT"] as const) {
+    it(`should not retry payout when status is ${terminalStatus}`, async () => {
+      const booking: any = {
+        id: "booking-123",
+        bookingReference: "BR-booking-123",
+        fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
+        car: { owner: { id: "owner-1" } },
+      };
 
-    // Simulate existing payout transaction already in a terminal/processing state
-    (
-      databaseService.payoutTransaction.create as unknown as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
-      id: "payout-123",
-      status: "PROCESSING",
+      // Simulate existing payout transaction already in a terminal/processing state
+      (
+        databaseService.payoutTransaction.create as unknown as ReturnType<typeof vi.fn>
+      ).mockResolvedValueOnce({
+        id: "payout-123",
+        status: terminalStatus,
+      });
+
+      await service.initiatePayout(booking);
+
+      expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
     });
-
-    await service.initiatePayout(booking);
-
-    expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
-  });
+  }
 });
