@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
 import { PaymentService } from "./payment.service";
 
 describe("PaymentService", () => {
   let service: PaymentService;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  const payoutsQueue = {
+    add: vi.fn(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -48,9 +52,7 @@ describe("PaymentService", () => {
         },
         {
           provide: getQueueToken(PAYOUTS_QUEUE),
-          useValue: {
-            add: vi.fn(),
-          },
+          useValue: payoutsQueue,
         },
       ],
     }).compile();
@@ -102,8 +104,26 @@ describe("PaymentService", () => {
     expect(callArgs.reference).toBe("payout_payout-123");
   });
 
-  for (const terminalStatus of ["PROCESSING", "PAID_OUT"] as const) {
-    it(`should not retry payout when status is ${terminalStatus}`, async () => {
+  // test that payout job is queued when initiatePayout is called
+  it("should queue payout job when initiatePayout is called", async () => {
+    const booking: any = {
+      id: "booking-123",
+      bookingReference: "BR-booking-123",
+      fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
+      car: { owner: { id: "owner-1" } },
+    };
+
+    await service.initiatePayout(booking);
+
+    expect(payoutsQueue.add).toHaveBeenCalledWith(
+      PROCESS_PAYOUT_FOR_BOOKING,
+      expect.objectContaining({ bookingId: "booking-123" }),
+    );
+  });
+
+  it.each([["PROCESSING"], ["PAID_OUT"]])(
+    "should not retry payout when status is %s",
+    async (terminalStatus) => {
       const booking: any = {
         id: "booking-123",
         bookingReference: "BR-booking-123",
@@ -122,6 +142,6 @@ describe("PaymentService", () => {
       await service.initiatePayout(booking);
 
       expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
-    });
-  }
+    },
+  );
 });

@@ -77,4 +77,15 @@ describe("PaymentProcessor", () => {
     expect(paymentService.initiatePayout).not.toHaveBeenCalled();
     expect(result).toEqual({ success: false, reason: "BOOKING_NOT_FOUND" });
   });
+
+  it("should throw error for unknown job type", async () => {
+    const job: any = {
+      name: "unknown-job-type",
+      data: { bookingId: "booking-1", timestamp: new Date().toISOString() },
+    };
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Unknown payout job type: unknown-job-type",
+    );
+  });
 });

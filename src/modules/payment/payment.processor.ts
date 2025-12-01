@@ -3,8 +3,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
-import { PaymentService } from "./payment.service";
 import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
+import { PaymentService } from "./payment.service";
 
 @Processor(PAYOUTS_QUEUE)
 @Injectable()
@@ -47,6 +47,14 @@ export class PaymentProcessor extends WorkerHost {
         return { success: false, reason: "BOOKING_NOT_FOUND" };
       }
 
+      if (booking.status !== "COMPLETED") {
+        this.logger.warn(`Booking ${bookingId} is not in COMPLETED status, skipping payout`, {
+          bookingId,
+          currentStatus: booking.status,
+        });
+        return { success: false, reason: "INVALID_BOOKING_STATUS" };
+      }
+
       await this.paymentService.initiatePayout(booking);
 
       return { success: true };
@@ -78,8 +86,18 @@ export class PaymentProcessor extends WorkerHost {
 
   @OnWorkerEvent("active")
   onActive(job: Job<PayoutJobData>) {
-    this.logger.log(`Payout job started: ${job.name} [${job.id}] - Attempt ${job.attemptsMade + 1}`);
+    this.logger.log(
+      `Payout job started: ${job.name} [${job.id}] - Attempt ${job.attemptsMade + 1}`,
+    );
+  }
+
+  @OnWorkerEvent("stalled")
+  onStalled(jobId: string) {
+    this.logger.warn(`Payout job stalled: ${jobId}`);
+  }
+
+  @OnWorkerEvent("progress")
+  onProgress(job: Job<PayoutJobData>, progress: number | object) {
+    this.logger.debug(`Payout job progress: ${job.name} [${job.id}]`, progress);
   }
 }
-
-

@@ -1,8 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
+import { Injectable, Logger } from "@nestjs/common";
+import { PayoutTransaction } from "@prisma/client";
 import { Queue } from "bullmq";
 import { PAYOUTS_QUEUE } from "../../config/constants";
-import { PayoutTransaction } from "@prisma/client";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -282,10 +282,21 @@ export class PaymentService {
    */
   async queuePayoutForBooking(bookingId: string) {
     try {
-      await this.payoutsQueue.add(PROCESS_PAYOUT_FOR_BOOKING, {
-        bookingId,
-        timestamp: new Date().toISOString(),
-      });
+      await this.payoutsQueue.add(
+        PROCESS_PAYOUT_FOR_BOOKING,
+        {
+          bookingId,
+          timestamp: new Date().toISOString(),
+        },
+        {
+          jobId: `payout-${bookingId}`,
+          attempts: 3,
+          backoff: {
+            type: "exponential",
+            delay: 5000,
+          },
+        },
+      );
 
       this.logger.log(`Queued payout processing for booking ${bookingId}`);
     } catch (error) {

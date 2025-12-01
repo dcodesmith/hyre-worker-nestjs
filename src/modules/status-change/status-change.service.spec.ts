@@ -48,7 +48,6 @@ describe("StatusChangeService", () => {
         {
           provide: PaymentService,
           useValue: {
-            initiatePayout: vi.fn(),
             queuePayoutForBooking: vi.fn(),
           },
         },
