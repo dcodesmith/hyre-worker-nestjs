@@ -104,20 +104,22 @@ describe("PaymentService", () => {
     expect(callArgs.reference).toBe("payout_payout-123");
   });
 
-  // test that payout job is queued when initiatePayout is called
-  it("should queue payout job when initiatePayout is called", async () => {
-    const booking: any = {
-      id: "booking-123",
-      bookingReference: "BR-booking-123",
-      fleetOwnerPayoutAmountNet: { isZero: () => false, toNumber: () => 15000 },
-      car: { owner: { id: "owner-1" } },
-    };
-
-    await service.initiatePayout(booking);
+  // test that payout job is queued when queuePayoutForBooking is called
+  it("should queue payout job when queuePayoutForBooking is called", async () => {
+    const bookingId = "booking-123";
+    await service.queuePayoutForBooking(bookingId);
 
     expect(payoutsQueue.add).toHaveBeenCalledWith(
       PROCESS_PAYOUT_FOR_BOOKING,
-      expect.objectContaining({ bookingId: "booking-123" }),
+      expect.objectContaining({ bookingId, timestamp: expect.any(String) }),
+      {
+        jobId: `payout-${bookingId}`,
+        attempts: 3,
+        backoff: {
+          type: "exponential",
+          delay: 5000,
+        },
+      },
     );
   });
 
