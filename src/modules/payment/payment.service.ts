@@ -13,16 +13,11 @@ export class PaymentService {
     private readonly flutterwaveService: FlutterwaveService,
   ) {}
 
-  /**
-   * Initiates a payout for a completed booking.
-   * It creates a PayoutTransaction record and triggers the actual payout via Flutterwave.
-   */
-  async initiatePayout(booking: BookingWithRelations) {
-    if (!booking.fleetOwnerPayoutAmountNet || booking.fleetOwnerPayoutAmountNet.isZero()) {
-      this.logger.log("Booking has no payout amount. Skipping payout", { bookingId: booking.id });
-      return;
-    }
+  private hasNoPayoutAmount(booking: BookingWithRelations): boolean {
+    return !booking.fleetOwnerPayoutAmountNet || booking.fleetOwnerPayoutAmountNet.isZero();
+  }
 
+  private async getVerifiedBankDetails(booking: BookingWithRelations) {
     const fleetOwner = booking.car.owner;
     const bankDetails = await this.databaseService.bankDetails.findUnique({
       where: { userId: fleetOwner.id }, // userId is @unique
@@ -33,111 +28,223 @@ export class PaymentService {
         fleetOwnerId: fleetOwner.id,
         bookingId: booking.id,
       });
-      return;
+      return null;
     }
 
-    if (!bankDetails || !bankDetails.isVerified) {
+    if (!bankDetails.isVerified) {
       this.logger.warn(
         "Bank details for fleet owner not found or not verified. Cannot process payout for booking",
         {
           fleetOwnerId: fleetOwner.id,
           bookingId: booking.id,
           detailsFound: !!bankDetails,
-          isVerified: bankDetails?.isVerified,
+          isVerified: bankDetails.isVerified,
         },
       );
-      return;
+      return null;
     }
 
-    const payoutAmount = booking.fleetOwnerPayoutAmountNet.toNumber();
-    const reference = `payout_${booking.id}_${Date.now()}`;
+    return bankDetails;
+  }
+
+  private getMaskedAccountDetails(bankDetails: { bankName: string; accountNumber: string }) {
+    const accountMask =
+      bankDetails.accountNumber.length >= 4
+        ? `****${bankDetails.accountNumber.slice(-4)}`
+        : "********";
+
+    return `Bank: ${bankDetails.bankName}, Account: ${accountMask}`;
+  }
+
+  private async createOrUpdatePayoutTransaction(
+    booking: BookingWithRelations,
+    bankDetails: { bankName: string; accountNumber: string },
+    payoutAmount: number,
+  ): Promise<PayoutTransaction> {
+    const fleetOwner = booking.car.owner;
+    const payoutMethodDetails = this.getMaskedAccountDetails(bankDetails);
 
     try {
-      let payoutTransaction: PayoutTransaction;
+      return await this.databaseService.payoutTransaction.create({
+        data: {
+          fleetOwnerId: fleetOwner.id,
+          bookingId: booking.id,
+          amountToPay: payoutAmount,
+          currency: "NGN",
+          status: "PENDING_DISBURSEMENT",
+          payoutMethodDetails,
+        },
+      });
+    } catch (error) {
+      const errorHasCodeProperty =
+        error && typeof error === "object" && "code" in error && (error as { code: string }).code;
 
-      try {
-        // Attempt to create the payout transaction directly
-        // If it already exists, this will fail with P2002 (unique constraint violation)
-        payoutTransaction = await this.databaseService.payoutTransaction.create({
-          data: {
-            fleetOwnerId: fleetOwner.id,
-            bookingId: booking.id,
-            amountToPay: payoutAmount,
-            currency: "NGN",
-            status: "PENDING_DISBURSEMENT",
-            payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
-          },
-        });
-      } catch (error) {
-        // Check if it's a unique constraint violation (P2002)
-        if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
-          // Record already exists, fetch it
-          this.logger.log(
-            "Payout transaction already exists for booking, fetching existing record",
-            {
-              bookingId: booking.id,
-            },
-          );
-          // Note: bookingId is nullable in the schema (PayoutTransaction can be for either a booking or extension),
-          // but it has a unique constraint. Prisma query engine will use the unique index for optimal performance.
-          const existingTransaction = await this.databaseService.payoutTransaction.findFirst({
-            where: { bookingId: booking.id },
-          });
-
-          if (!existingTransaction) {
-            // This should never happen, but handle gracefully
-            throw new Error(
-              "Failed to fetch existing payout transaction after constraint violation",
-            );
-          }
-
-          // Refresh the existing transaction with latest computed values
-          try {
-            payoutTransaction = await this.databaseService.payoutTransaction.update({
-              where: { id: existingTransaction.id },
-              data: {
-                amountToPay: payoutAmount,
-                currency: "NGN",
-                payoutMethodDetails: `Bank: ${bankDetails.bankName}, Account: ${bankDetails.accountNumber.length >= 4 ? `****${bankDetails.accountNumber.slice(-4)}` : "********"}`,
-              },
-            });
-            this.logger.log("Updated existing payout transaction with latest values", {
-              bookingId: booking.id,
-              transactionId: payoutTransaction.id,
-            });
-          } catch (updateError) {
-            this.logger.error(
-              "Failed to update existing payout transaction with latest values",
-              {
-                bookingId: booking.id,
-                transactionId: existingTransaction.id,
-                error: updateError instanceof Error ? updateError.message : String(updateError),
-              },
-            );
-            // Re-throw the update error
-            throw updateError;
-          }
-        } else {
-          // Re-throw if it's not a constraint violation
-          throw error;
-        }
+      if (errorHasCodeProperty !== "P2002") {
+        throw error;
       }
 
-      // If the transaction already exists and is not in a retriable state, return early
-      if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
-        this.logger.log("Payout already processed or in progress for booking", {
-          bookingId: booking.id,
-          status: payoutTransaction.status,
+      this.logger.log("Payout transaction already exists for booking, fetching existing record", {
+        bookingId: booking.id,
+      });
+
+      const existingTransaction = await this.databaseService.payoutTransaction.findFirst({
+        where: { bookingId: booking.id },
+      });
+
+      if (!existingTransaction) {
+        throw new Error("Failed to fetch existing payout transaction after constraint violation");
+      }
+
+      try {
+        const updatedTransaction = await this.databaseService.payoutTransaction.update({
+          where: { id: existingTransaction.id },
+          data: {
+            amountToPay: payoutAmount,
+            currency: "NGN",
+            payoutMethodDetails,
+          },
         });
+        this.logger.log("Updated existing payout transaction with latest values", {
+          bookingId: booking.id,
+          transactionId: updatedTransaction.id,
+        });
+        return updatedTransaction;
+      } catch (updateError) {
+        this.logger.error("Failed to update existing payout transaction with latest values", {
+          bookingId: booking.id,
+          transactionId: existingTransaction.id,
+          error: updateError instanceof Error ? updateError.message : String(updateError),
+        });
+        throw updateError;
+      }
+    }
+  }
+
+  private async handleExistingPayoutTransactionStatus(
+    bookingId: string,
+    payoutTransaction: PayoutTransaction,
+  ) {
+    if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
+      this.logger.log("Payout already processed or in progress for booking", {
+        bookingId,
+        status: payoutTransaction.status,
+      });
+      return "NON_RETRIABLE";
+    }
+
+    if (payoutTransaction.status === "FAILED") {
+      this.logger.log("Retrying failed payout for booking", { bookingId });
+    }
+
+    return "RETRIABLE";
+  }
+
+  private extractTransferId(data: unknown): string | null {
+    if (!data || typeof data !== "object" || !("id" in data)) {
+      return null;
+    }
+
+    const typedData = data as { id?: unknown };
+    return typedData.id != null ? String(typedData.id) : null;
+  }
+
+  private async handleSuccessfulPayout(
+    bookingId: string,
+    payoutTransaction: PayoutTransaction,
+    payoutResultData: unknown,
+  ) {
+    const transferId = this.extractTransferId(payoutResultData);
+
+    const updatedTransaction = await this.databaseService.payoutTransaction.update({
+      where: { id: payoutTransaction.id },
+      data: {
+        status: "PROCESSING",
+        payoutProviderReference: transferId,
+      },
+    });
+
+    await this.databaseService.booking.update({
+      where: { id: bookingId },
+      data: { overallPayoutStatus: "PROCESSING" },
+    });
+
+    this.logger.log("Payout for booking initiated successfully. Transaction ID", {
+      bookingId,
+      transactionId: updatedTransaction.id,
+    });
+  }
+
+  private extractErrorMessage(data: unknown): string {
+    if (!data || typeof data !== "object" || !("message" in data)) {
+      return "Unknown error from Flutterwave";
+    }
+
+    const typedData = data as { message?: unknown };
+    return typeof typedData.message === "string"
+      ? typedData.message
+      : "Unknown error from Flutterwave";
+  }
+
+  private async handleFailedPayout(
+    bookingId: string,
+    payoutTransaction: PayoutTransaction,
+    payoutResultData: unknown,
+  ) {
+    const errorMessage = this.extractErrorMessage(payoutResultData);
+
+    await this.databaseService.payoutTransaction.update({
+      where: { id: payoutTransaction.id },
+      data: {
+        status: "FAILED",
+        notes: `Flutterwave initiation failed: ${errorMessage}`,
+      },
+    });
+
+    await this.databaseService.booking.update({
+      where: { id: bookingId },
+      data: { overallPayoutStatus: "FAILED" },
+    });
+
+    this.logger.error("Payout initiation for booking failed. Reason", {
+      bookingId,
+      reason: errorMessage,
+    });
+  }
+
+  /**
+   * Initiates a payout for a completed booking.
+   * It creates a PayoutTransaction record and triggers the actual payout via Flutterwave.
+   */
+  async initiatePayout(booking: BookingWithRelations) {
+    try {
+      if (this.hasNoPayoutAmount(booking)) {
+        this.logger.log("Booking has no payout amount. Skipping payout", { bookingId: booking.id });
         return;
       }
 
-      // If the existing transaction failed, we can retry by continuing with the Flutterwave call
-      if (payoutTransaction.status === "FAILED") {
-        this.logger.log("Retrying failed payout for booking", { bookingId: booking.id });
+      const bankDetails = await this.getVerifiedBankDetails(booking);
+      if (!bankDetails) return;
+
+      const payoutAmount = booking.fleetOwnerPayoutAmountNet.toNumber();
+
+      const payoutTransaction = await this.createOrUpdatePayoutTransaction(
+        booking,
+        bankDetails,
+        payoutAmount,
+      );
+
+      const statusHandlingResult = await this.handleExistingPayoutTransactionStatus(
+        booking.id,
+        payoutTransaction,
+      );
+      if (statusHandlingResult === "NON_RETRIABLE") {
+        return;
       }
 
-      // 2. Initiate the actual payout via Flutterwave
+      // Use a deterministic reference derived from the payout transaction ID so that
+      // retries for the same logical payout use the same Flutterwave reference.
+      const reference = `payout_${payoutTransaction.id}`;
+
       const payoutResult = await this.flutterwaveService.initiatePayout({
         bankDetails: {
           bankCode: bankDetails.bankCode,
@@ -147,56 +254,13 @@ export class PaymentService {
         amount: payoutAmount,
         reference,
         bookingId: booking.id,
+        bookingReference: booking.bookingReference,
       });
 
-      // 3. Update the PayoutTransaction and Booking based on the result
       if (payoutResult.success) {
-        const transferData = payoutResult.data as Record<string, unknown>;
-        const transferId =
-          transferData && typeof transferData === "object" && "id" in transferData
-            ? String(transferData.id)
-            : null;
-
-        payoutTransaction = await this.databaseService.payoutTransaction.update({
-          where: { id: payoutTransaction.id },
-          data: {
-            status: "PROCESSING",
-            payoutProviderReference: transferId,
-          },
-        });
-        await this.databaseService.booking.update({
-          where: { id: booking.id },
-          data: { overallPayoutStatus: "PROCESSING" },
-        });
-        this.logger.log("Payout for booking initiated successfully. Transaction ID", {
-          bookingId: booking.id,
-          transactionId: payoutTransaction.id,
-        });
+        await this.handleSuccessfulPayout(booking.id, payoutTransaction, payoutResult.data);
       } else {
-        const errorData = payoutResult.data as Record<string, unknown>;
-        const errorMessage =
-          errorData &&
-          typeof errorData === "object" &&
-          "message" in errorData &&
-          typeof errorData.message === "string"
-            ? errorData.message
-            : "Unknown error from Flutterwave";
-
-        await this.databaseService.payoutTransaction.update({
-          where: { id: payoutTransaction.id },
-          data: {
-            status: "FAILED",
-            notes: `Flutterwave initiation failed: ${errorMessage}`,
-          },
-        });
-        await this.databaseService.booking.update({
-          where: { id: booking.id },
-          data: { overallPayoutStatus: "FAILED" },
-        });
-        this.logger.error("Payout initiation for booking failed. Reason", {
-          bookingId: booking.id,
-          reason: errorData.message,
-        });
+        await this.handleFailedPayout(booking.id, payoutTransaction, payoutResult.data);
       }
     } catch (error) {
       if (error instanceof Error) {

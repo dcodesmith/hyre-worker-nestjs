@@ -58,6 +58,7 @@ export interface PayoutRequest {
   amount: number;
   reference: string;
   bookingId: string;
+  bookingReference: string;
 }
 
 export interface PayoutResponse {

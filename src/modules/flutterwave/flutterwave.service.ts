@@ -40,13 +40,13 @@ export class FlutterwaveService {
   }
 
   async initiatePayout(request: PayoutRequest): Promise<PayoutResponse> {
-    const { bankDetails, amount, reference, bookingId } = request;
+    const { bankDetails, amount, reference, bookingId, bookingReference } = request;
 
     const payload = {
       account_bank: bankDetails.bankCode,
       account_number: bankDetails.accountNumber,
       amount: amount,
-      narration: `Payout for booking ${bookingId}`,
+      narration: `Payout for booking ${bookingReference} - ${bookingId}`,
       currency: "NGN",
       reference: reference,
       callback_url: `${this.config.webhookUrl}/api/payments/webhook/flutterwave`,
