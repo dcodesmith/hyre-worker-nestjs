@@ -50,6 +50,16 @@ describe("PaymentService", () => {
     service = module.get<PaymentService>(PaymentService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
+
+    // Mock Prisma-style $transaction helper used in PaymentService
+    (
+      databaseService as unknown as {
+        $transaction: (cb: (tx: unknown) => unknown) => Promise<unknown>;
+      }
+    ).$transaction = vi.fn(async (callback: (tx: unknown) => unknown) =>
+      // In tests we don't need a separate transactional client; reuse the same mock.
+      callback(databaseService),
+    );
   });
 
   it("should be defined", () => {
