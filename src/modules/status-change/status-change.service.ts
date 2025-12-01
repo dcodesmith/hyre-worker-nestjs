@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
+import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
 
 @Injectable()
@@ -11,6 +12,7 @@ export class StatusChangeService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
+    private readonly paymentService: PaymentService,
     private readonly referralService: ReferralService,
   ) {}
 
@@ -121,7 +123,6 @@ export class StatusChangeService {
           paymentStatus: PaymentStatus.PAID,
           endDate,
           car: {
-            id: { not: null },
             status: Status.BOOKED,
           },
         },
@@ -205,6 +206,38 @@ export class StatusChangeService {
             `Failed to queue referral processing for booking ${booking.id}: ${error}`,
           );
           // Continue without failing the entire operation
+        }
+
+        try {
+          // Fetch the completed booking with the relations required by PaymentService
+          const completedBooking = await this.databaseService.booking.findUnique({
+            where: { id: booking.id },
+            include: {
+              chauffeur: true,
+              user: true,
+              car: { include: { owner: { include: { bankDetails: true } } } },
+              legs: {
+                include: {
+                  extensions: true,
+                },
+              },
+            },
+          });
+
+          if (!completedBooking) {
+            this.logger.error(
+              `Completed booking ${booking.id} not found when attempting to initiate payout`,
+            );
+          } else {
+            await this.paymentService.initiatePayout(completedBooking);
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to initiate payout for completed booking ${booking.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          // Do not throw so that other bookings can continue processing
         }
       }
 
