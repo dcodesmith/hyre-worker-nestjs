@@ -49,6 +49,7 @@ describe("StatusChangeService", () => {
           provide: PaymentService,
           useValue: {
             initiatePayout: vi.fn(),
+            queuePayoutForBooking: vi.fn(),
           },
         },
       ],
@@ -170,11 +171,6 @@ describe("StatusChangeService", () => {
       return callback(mockTx);
     });
 
-    vi.mocked(mockDatabaseService.booking.findUnique).mockResolvedValue({
-      ...mockBooking,
-      status: BookingStatus.COMPLETED,
-    });
-
     const result = await service.updateBookingsFromActiveToCompleted();
 
     expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
@@ -198,9 +194,7 @@ describe("StatusChangeService", () => {
       BookingStatus.COMPLETED,
     );
     expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
-    expect(mockPaymentService.initiatePayout).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
-    );
+    expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("2");
     expect(result).toBe("Updated 1 bookings from active to completed");
   });
 });

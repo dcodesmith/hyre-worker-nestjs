@@ -209,31 +209,11 @@ export class StatusChangeService {
         }
 
         try {
-          // Fetch the completed booking with the relations required by PaymentService
-          const completedBooking = await this.databaseService.booking.findUnique({
-            where: { id: booking.id },
-            include: {
-              chauffeur: true,
-              user: true,
-              car: { include: { owner: { include: { bankDetails: true } } } },
-              legs: {
-                include: {
-                  extensions: true,
-                },
-              },
-            },
-          });
-
-          if (!completedBooking) {
-            this.logger.error(
-              `Completed booking ${booking.id} not found when attempting to initiate payout`,
-            );
-          } else {
-            await this.paymentService.initiatePayout(completedBooking);
-          }
+          // Queue payout processing OUTSIDE the transaction for better isolation
+          await this.paymentService.queuePayoutForBooking(booking.id);
         } catch (error) {
           this.logger.error(
-            `Failed to initiate payout for completed booking ${booking.id}: ${
+            `Failed to queue payout processing for booking ${booking.id}: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );

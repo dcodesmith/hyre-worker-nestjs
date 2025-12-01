@@ -1,8 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
+import { PAYOUTS_QUEUE } from "../../config/constants";
 import { PayoutTransaction } from "@prisma/client";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
 
 @Injectable()
 export class PaymentService {
@@ -11,6 +15,8 @@ export class PaymentService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
+    @InjectQueue(PAYOUTS_QUEUE)
+    private readonly payoutsQueue: Queue<PayoutJobData>,
   ) {}
 
   private hasNoPayoutAmount(booking: BookingWithRelations): boolean {
@@ -266,6 +272,27 @@ export class PaymentService {
       } else {
         this.logger.error(`Failed to initiate payout: ${String(error)}`);
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Queue payout processing for a completed booking.
+   * This allows payouts to be processed asynchronously via BullMQ.
+   */
+  async queuePayoutForBooking(bookingId: string) {
+    try {
+      await this.payoutsQueue.add(PROCESS_PAYOUT_FOR_BOOKING, {
+        bookingId,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.log(`Queued payout processing for booking ${bookingId}`);
+    } catch (error) {
+      this.logger.error("Failed to queue payout processing", {
+        bookingId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }

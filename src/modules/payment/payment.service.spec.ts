@@ -1,5 +1,7 @@
+import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PAYOUTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PaymentService } from "./payment.service";
@@ -42,6 +44,12 @@ describe("PaymentService", () => {
               success: true,
               data: { id: 12345 },
             }),
+          },
+        },
+        {
+          provide: getQueueToken(PAYOUTS_QUEUE),
+          useValue: {
+            add: vi.fn(),
           },
         },
       ],
