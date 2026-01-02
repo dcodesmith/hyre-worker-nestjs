@@ -183,10 +183,19 @@ export class StatusChangeService {
           }
 
           try {
+            // Check if a review already exists for this booking
+            const existingReview = await tx.review.findUnique({
+              where: { bookingId: booking.id },
+            });
+
+            // Show review request only if no review exists and booking is completed
+            const showReviewRequest = !existingReview;
+
             await this.notificationService.queueBookingStatusNotifications(
               updatedBooking,
               oldStatus,
               BookingStatus.COMPLETED,
+              showReviewRequest,
             );
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);

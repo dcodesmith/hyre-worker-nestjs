@@ -39,6 +39,7 @@ export class NotificationService {
     booking: BookingWithRelations,
     oldStatus: string,
     newStatus: string,
+    showReviewRequest = false,
   ): Promise<void> {
     const bookingDetails = normaliseBookingDetails(booking);
 
@@ -46,6 +47,7 @@ export class NotificationService {
       bookingDetails,
       oldStatus,
       newStatus,
+      showReviewRequest,
     });
 
     await this.addJobToQueue(jobData, STATUS_CHANGE_JOB_OPTIONS);
@@ -70,10 +72,12 @@ export class NotificationService {
     bookingDetails,
     oldStatus,
     newStatus,
+    showReviewRequest = false,
   }: {
     bookingDetails: NormalisedBookingDetails;
     oldStatus: string;
     newStatus: string;
+    showReviewRequest?: boolean;
   }): NotificationJobData {
     return {
       id: `status-${bookingDetails.id}-${Date.now()}`,
@@ -91,6 +95,7 @@ export class NotificationService {
         oldStatus,
         newStatus,
         subject: this.getStatusChangeSubject(newStatus),
+        showReviewRequest,
       },
     };
   }

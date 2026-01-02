@@ -1,9 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider              = "prisma-client-js"
+  skipDefaultValidation = true
 }
 
 datasource db {
   provider = "postgresql"
+  // Note: In Prisma 7+, move this to prisma.config.ts
   url      = env("DATABASE_URL")
 }
 
@@ -25,6 +27,11 @@ model Car {
   nightRate          Int
   fuelUpgradeRate    Int
   fullDayRate        Int
+  airportPickupRate  Int
+  // Vehicle categorization
+  vehicleType        VehicleType        @default(SEDAN)
+  serviceTier        ServiceTier        @default(STANDARD)
+  passengerCapacity  Int                @default(4)
   bookings           Booking[]
   owner              User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   documents          DocumentApproval[] @relation("CarDocuments")
@@ -36,49 +43,58 @@ model Car {
   @@index([approvalStatus])
   @@index([status])
   @@index([updatedAt(sort: Desc), dayRate])
+  @@index([vehicleType])
+  @@index([serviceTier])
+  @@index([serviceTier, vehicleType])
 }
 
 model User {
-  id                      String                   @id @default(cuid())
-  email                   String                   @unique
-  username                String?                  @unique
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  address                 String?
-  city                    String?
-  fleetOwnerId            String?
-  name                    String?
-  phoneNumber             String?
-  fleetOwnerStatus        FleetOwnerStatus?        @default(PROCESSING)
-  chauffeurApprovalStatus ChauffeurApprovalStatus? @default(PENDING)
-  hasOnboarded            Boolean                  @default(false)
+  id                        String                     @id @default(cuid())
+  email                     String                     @unique
+  emailVerified             Boolean                    @default(false)
+  username                  String?                    @unique
+  image                     String?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  address                   String?
+  city                      String?
+  fleetOwnerId              String?
+  name                      String?
+  phoneNumber               String?
+  fleetOwnerStatus          FleetOwnerStatus?          @default(PROCESSING)
+  chauffeurApprovalStatus   ChauffeurApprovalStatus?   @default(PENDING)
+  hasOnboarded              Boolean                    @default(false)
+  isOwnerDriver             Boolean                    @default(false)
   // Referral fields
-  referralCode            String?                  @unique
-  referredByUserId        String?
+  referralCode              String?                    @unique
+  referredByUserId          String?
   referralAttributionSource ReferralAttributionSource?
-  referralSignupAt        DateTime?
-  referralDiscountUsed    Boolean                  @default(false)
-  
-  bankDetails             BankDetails?             @relation("UserBankDetails")
-  bookingsAsChauffeur     Booking[]                @relation("BookingChauffeur")
-  bookings                Booking[]                @relation("BookingCustomer")
-  cars                    Car[]
-  approvedDocuments       DocumentApproval[]       @relation("ApprovedBy")
-  documents               DocumentApproval[]       @relation("UserDocuments")
-  payoutsReceived         PayoutTransaction[]      @relation("FleetOwnerPayouts")
-  fleetOwner              User?                    @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  chauffeurs              User[]                   @relation("FleetOwnerChauffeurs")
-  approvedVehicleImages   VehicleImage[]           @relation("ApprovedVehicleImages")
-  roles                   Role[]                   @relation("RoleToUser")
+  referralSignupAt          DateTime?
+  referralDiscountUsed      Boolean                    @default(false)
+
+  bankDetails           BankDetails?          @relation("UserBankDetails")
+  bookingsAsChauffeur   Booking[]             @relation("BookingChauffeur")
+  bookings              Booking[]             @relation("BookingCustomer")
+  cars                  Car[]
+  approvedDocuments     DocumentApproval[]    @relation("ApprovedBy")
+  documents             DocumentApproval[]    @relation("UserDocuments")
+  payoutsReceived       PayoutTransaction[]   @relation("FleetOwnerPayouts")
+  fleetOwner            User?                 @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  chauffeurs            User[]                @relation("FleetOwnerChauffeurs")
+  approvedVehicleImages VehicleImage[]        @relation("ApprovedVehicleImages")
+  roles                 Role[]                @relation("RoleToUser")
   // Referral relations
-  referredBy              User?                    @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals               User[]                   @relation("UserReferrals")
-  referralStats           UserReferralStats?
-  referralAttribution     ReferralAttribution?     @relation("RefereeAttribution")
-  referralAttributions    ReferralAttribution[]    @relation("ReferrerAttributions")
-  referralRewardsEarned   ReferralReward[]         @relation("ReferrerRewards")
-  referralRewardsFrom     ReferralReward[]         @relation("RefereeRewards")
-  bookingReferrals        Booking[]                @relation("BookingReferrals")
+  referredBy            User?                 @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals             User[]                @relation("UserReferrals")
+  referralStats         UserReferralStats?
+  referralAttribution   ReferralAttribution?  @relation("RefereeAttribution")
+  referralAttributions  ReferralAttribution[] @relation("ReferrerAttributions")
+  referralRewardsEarned ReferralReward[]      @relation("ReferrerRewards")
+  referralRewardsFrom   ReferralReward[]      @relation("RefereeRewards")
+  bookingReferrals      Booking[]             @relation("BookingReferrals")
+  sessions              Session[]
+  reviewsWritten        Review[]              @relation("CustomerReviews")
+  moderatedReviews      Review[]              @relation("ReviewModerator")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -95,6 +111,109 @@ model Role {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   users       User[]   @relation("RoleToUser")
+}
+
+enum FlightStatus {
+  SCHEDULED // "Scheduled" - not yet departed
+  DEPARTED // "Departed" - just took off / taxiing out
+  EN_ROUTE // "En Route" - in the air
+  LANDED // "Landed" / "Arrived" - at destination
+  CANCELLED // "Cancelled"
+  DIVERTED // "Diverted"
+  UNKNOWN // "Unknown" / unrecognized status
+}
+
+enum FlightDataSource {
+  FLIGHTAWARE
+  MANUAL
+  CACHED
+}
+
+model Flight {
+  id String @id @default(cuid())
+
+  // Flight identification
+  flightNumber String // e.g., "P47579", "BA75"
+  flightDate   DateTime @db.Date // Date of flight (in Lagos timezone)
+  faFlightId   String? // FlightAware's unique flight ID
+
+  // Route information
+  originCode     String // ICAO code e.g., "EGLL"
+  originCodeIATA String? // IATA code e.g., "LHR"
+  originName     String? // e.g., "London Heathrow"
+  originCity     String? // e.g., "London"
+
+  destinationCode     String // ICAO code e.g., "DNMM"
+  destinationCodeIATA String? // IATA code e.g., "LOS"
+  destinationName     String? // e.g., "Murtala Muhammed International Airport"
+  destinationCity     String? // e.g., "Lagos"
+
+  // Timing
+  scheduledDeparture DateTime?
+  scheduledArrival   DateTime
+  estimatedDeparture DateTime?
+  estimatedArrival   DateTime?
+  actualDeparture    DateTime?
+  actualArrival      DateTime?
+
+  // Status
+  status       FlightStatus @default(SCHEDULED)
+  delayMinutes Int? // Current delay in minutes
+
+  // Additional details
+  aircraftType  String? // e.g., "B738"
+  registration  String? // Tail number
+  departureGate String?
+  arrivalGate   String?
+
+  // FlightAware alert management
+  alertId         String?   @unique // FlightAware alert ID
+  alertEnabled    Boolean   @default(false)
+  alertCreatedAt  DateTime?
+  alertDisabledAt DateTime?
+
+  // Metadata
+  lastUpdated DateTime         @updatedAt
+  createdAt   DateTime         @default(now())
+  dataSource  FlightDataSource @default(FLIGHTAWARE)
+  isLive      Boolean          @default(false) // Live data vs scheduled
+
+  // Relations
+  bookings     Booking[]           @relation("BookingFlight")
+  statusEvents FlightStatusEvent[]
+
+  @@unique([flightNumber, flightDate])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+  @@index([alertId])
+  @@index([destinationCodeIATA, flightDate])
+  @@index([scheduledArrival])
+}
+
+model FlightStatusEvent {
+  id        String   @id @default(cuid())
+  flightId  String
+  eventType String // "departure", "arrival", "delay", "cancellation", etc.
+  eventTime DateTime // When event occurred (from FlightAware)
+  eventData Json // Full webhook payload from FlightAware
+
+  // Changes captured
+  oldStatus   FlightStatus?
+  newStatus   FlightStatus?
+  delayChange Int? // Change in delay minutes
+
+  // Notification tracking
+  processed         Boolean @default(false)
+  notificationsSent Boolean @default(false)
+  notifiedUserIds   Json? // Array of user IDs notified
+
+  createdAt DateTime @default(now())
+
+  flight Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+
+  @@index([flightId, eventTime])
+  @@index([eventType])
+  @@index([processed])
 }
 
 model Booking {
@@ -115,6 +234,7 @@ model Booking {
   chauffeurId                             String?
   cancelledAt                             DateTime?
   cancellationReason                      String?
+  deletedAt                               DateTime? // Soft-delete: preserves review history and analytics
   guestUser                               Json?
   type                                    BookingType              @default(DAY)
   paymentIntent                           String?
@@ -131,21 +251,26 @@ model Booking {
   bookingReference                        String                   @unique
   securityDetailCost                      Decimal?                 @db.Decimal(10, 2)
   fuelUpgradeCost                         Decimal?                 @db.Decimal(10, 2)
+  flightNumber                            String?
+  estimatedDuration                       Int?
+  flightId                                String?
   // Referral fields
   referralReferrerUserId                  String?
-  referralDiscountAmount                  Decimal                  @db.Decimal(10, 2) @default(0)
+  referralDiscountAmount                  Decimal                  @default(0) @db.Decimal(10, 2)
   referralStatus                          BookingReferralStatus    @default(NONE)
-  referralCreditsUsed                     Decimal                  @db.Decimal(10, 2) @default(0)
-  referralCreditsReserved                 Decimal                  @db.Decimal(10, 2) @default(0)
-  
-  car                                     Car                      @relation(fields: [carId], references: [id])
-  chauffeur                               User?                    @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
-  user                                    User?                    @relation("BookingCustomer", fields: [userId], references: [id])
-  referralReferrer                        User?                    @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
-  legs                                    BookingLeg[]
-  customerPayments                        Payment[]                @relation("BookingCustomerPayments")
-  payoutTransactions                      PayoutTransaction[]      @relation("BookingPayouts")
-  referralRewards                         ReferralReward[]
+  referralCreditsUsed                     Decimal                  @default(0) @db.Decimal(10, 2)
+  referralCreditsReserved                 Decimal                  @default(0) @db.Decimal(10, 2)
+
+  car                Car                 @relation(fields: [carId], references: [id])
+  chauffeur          User?               @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
+  user               User?               @relation("BookingCustomer", fields: [userId], references: [id])
+  referralReferrer   User?               @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
+  flight             Flight?             @relation("BookingFlight", fields: [flightId], references: [id])
+  legs               BookingLeg[]
+  customerPayments   Payment[]           @relation("BookingCustomerPayments")
+  payoutTransactions PayoutTransaction[] @relation("BookingPayouts")
+  referralRewards    ReferralReward[]
+  review             Review?
 
   @@index([bookingReference])
   @@index([carId])
@@ -163,6 +288,8 @@ model Booking {
   @@index([referralStatus, status])
   @@index([userId, paymentStatus, referralCreditsUsed])
   @@index([userId, paymentStatus, referralCreditsReserved])
+  @@index([flightId])
+  @@index([deletedAt])
 }
 
 model BookingLeg {
@@ -255,7 +382,7 @@ model Payment {
 model PayoutTransaction {
   id                      String                  @id @default(cuid())
   fleetOwnerId            String
-  bookingId               String?                 @unique
+  bookingId               String?
   extensionId             String?
   amountToPay             Decimal                 @db.Decimal(10, 2)
   amountPaid              Decimal?                @db.Decimal(10, 2)
@@ -273,6 +400,7 @@ model PayoutTransaction {
 
   @@index([fleetOwnerId])
   @@index([status])
+  @@index([bookingId])
   @@index([extensionId])
 }
 
@@ -313,6 +441,45 @@ model VehicleImage {
 
   @@index([carId])
   @@index([status])
+}
+
+model Review {
+  id        String @id @default(cuid())
+  bookingId String @unique // One review per booking
+  userId    String // Customer who wrote the review
+
+  // Ratings (1-5 stars)
+  overallRating   Int // Overall experience rating
+  carRating       Int // Car condition, cleanliness, comfort
+  chauffeurRating Int // Professionalism, driving, communication (required - all bookings have chauffeurs)
+  serviceRating   Int // Booking process, punctuality, communication
+
+  // Written feedback
+  comment String? // Optional text review, max 2000 chars
+
+  // Moderation
+  isVisible       Boolean   @default(true) // For admin moderation
+  moderatedAt     DateTime?
+  moderatedBy     String?
+  moderationNotes String?
+
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict) // Restrict prevents accidental deletion - reviews must persist for analytics/reputation
+  user      User    @relation("CustomerReviews", fields: [userId], references: [id], onDelete: Cascade) // Cascade: when user is deleted, their reviews are deleted too
+  moderator User?   @relation("ReviewModerator", fields: [moderatedBy], references: [id])
+
+  @@index([userId])
+  @@index([overallRating])
+  @@index([carRating])
+  @@index([chauffeurRating])
+  @@index([serviceRating])
+  @@index([isVisible])
+  @@index([createdAt])
+  @@index([moderatedBy])
 }
 
 model TaxRate {
@@ -399,6 +566,7 @@ enum BookingType {
   DAY
   NIGHT
   FULL_DAY
+  AIRPORT_PICKUP
 }
 
 enum ExtensionEventType {
@@ -431,6 +599,22 @@ enum CarApprovalStatus {
   REJECTED
 }
 
+enum VehicleType {
+  SEDAN
+  SUV
+  LUXURY_SEDAN
+  LUXURY_SUV
+  VAN
+  CROSSOVER
+}
+
+enum ServiceTier {
+  STANDARD
+  EXECUTIVE
+  LUXURY
+  ULTRA_LUXURY
+}
+
 enum FleetOwnerStatus {
   PROCESSING
   APPROVED
@@ -453,6 +637,7 @@ enum DocumentStatus {
 enum DocumentType {
   NIN
   DRIVERS_LICENSE
+  LASDRI
   MOT_CERTIFICATE
   INSURANCE_CERTIFICATE
   VEHICLE_IMAGES
@@ -485,7 +670,6 @@ enum ReferralReleaseCondition {
   COMPLETED
 }
 
-
 enum BookingReferralStatus {
   NONE
   APPLIED
@@ -499,24 +683,24 @@ model UserReferralStats {
   updatedAt           DateTime  @updatedAt
   userId              String    @unique
   totalReferrals      Int       @default(0)
-  totalRewardsGranted Decimal   @db.Decimal(10, 2) @default(0)
-  totalRewardsPending Decimal   @db.Decimal(10, 2) @default(0)
+  totalRewardsGranted Decimal   @default(0) @db.Decimal(10, 2)
+  totalRewardsPending Decimal   @default(0) @db.Decimal(10, 2)
   lastReferralAt      DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model ReferralAttribution {
-  id            String                    @id @default(cuid())
-  createdAt     DateTime                  @default(now())
-  refereeUserId String                    @unique
+  id             String                    @id @default(cuid())
+  createdAt      DateTime                  @default(now())
+  refereeUserId  String                    @unique
   referrerUserId String
-  referralCode  String
-  source        ReferralAttributionSource
-  ipAddress     String?
-  userAgent     String?
-  sessionId     String?
-  securityFlags Json?
+  referralCode   String
+  source         ReferralAttributionSource
+  ipAddress      String?
+  userAgent      String?
+  sessionId      String?
+  securityFlags  Json?
 
   referee  User @relation("RefereeAttribution", fields: [refereeUserId], references: [id], onDelete: Cascade)
   referrer User @relation("ReferrerAttributions", fields: [referrerUserId], references: [id], onDelete: Cascade)
@@ -525,17 +709,17 @@ model ReferralAttribution {
 }
 
 model ReferralReward {
-  id                 String                      @id @default(cuid())
-  createdAt          DateTime                    @default(now())
-  updatedAt          DateTime                    @updatedAt
-  referrerUserId     String
-  refereeUserId      String
-  bookingId          String
-  amount             Decimal                     @db.Decimal(10, 2)
-  status             ReferralRewardStatus        @default(PENDING)
-  releaseCondition   ReferralReleaseCondition
-  reason             String?
-  processedAt        DateTime?
+  id               String                   @id @default(cuid())
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  referrerUserId   String
+  refereeUserId    String
+  bookingId        String
+  amount           Decimal                  @db.Decimal(10, 2)
+  status           ReferralRewardStatus     @default(PENDING)
+  releaseCondition ReferralReleaseCondition
+  reason           String?
+  processedAt      DateTime?
 
   referrer User    @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
   referee  User    @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
@@ -554,4 +738,45 @@ model ReferralProgramConfig {
   value     Json
   updatedAt DateTime @updatedAt
   updatedBy String?
+}
+
+// Better-auth required tables
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("session")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@index([value])
+  @@map("verification")
+}
+
+model RateLimit {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  count       Int
+  lastRequest BigInt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("rateLimit")
 }
