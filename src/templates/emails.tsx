@@ -6,7 +6,6 @@ import {
   Heading,
   Hr,
   Html,
-  Img,
   Link,
   Preview,
   Section,
@@ -24,9 +23,7 @@ export interface EmailTemplateProps {
   readonly pageTitle?: string;
 }
 
-const COMPANY_NAME = process.env.APP_NAME || "Your Company Name";
-const COMPANY_LOGO_URL =
-  process.env.COMPANY_LOGO_URL || "https://via.placeholder.com/150x50?text=Your+Logo";
+const COMPANY_NAME = process.env.APP_NAME || "Tripdly";
 const COMPANY_ADDRESS = process.env.COMPANY_ADDRESS || "Lagos, Nigeria";
 const WEBSITE_URL = process.env.WEBSITE_URL || process.env.DOMAIN || "https://dcodesmith.com";
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@dcodesmith.com";
@@ -50,18 +47,20 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
             fontWeight={400}
             fontStyle="normal"
           />
+          <style>
+            {`@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');`}
+          </style>
           <Preview>{previewText}</Preview>
         </Head>
         <Body className="bg-gray-100 text-gray-800 font-sans text-base leading-relaxed">
           <Container className="bg-white border border-gray-200 rounded-md shadow-sm mx-auto my-8 p-6 sm:p-8 max-w-xl">
             <Section className="mb-6 text-center">
-              <Img
-                src={COMPANY_LOGO_URL}
-                alt={`${COMPANY_NAME} Logo`}
-                width="150"
-                height="auto"
-                className="mx-auto mb-4"
-              />
+              <Text
+                style={{ fontFamily: '"Dancing Script", cursive' }}
+                className="mx-auto mb-4 text-4xl leading-tight text-gray-900"
+              >
+                {COMPANY_NAME}
+              </Text>
             </Section>
 
             <Section>{children}</Section>
@@ -131,8 +130,11 @@ function DetailListItem({
   );
 }
 
-export async function renderBookingStatusUpdateEmail(booking: NormalisedBookingDetails) {
+export async function renderBookingStatusUpdateEmail(
+  booking: NormalisedBookingDetails & { showReviewRequest?: boolean },
+) {
   const previewText = `Your booking has ${booking.title}`;
+  const showReviewRequest = booking.showReviewRequest ?? false;
 
   return await render(
     <EmailTemplate previewText={previewText} pageTitle={`Booking ${booking.title}`}>
@@ -155,6 +157,47 @@ export async function renderBookingStatusUpdateEmail(booking: NormalisedBookingD
         <Hr className="my-2 border-gray-300" />
         <DetailListItem label="Total Amount" value={booking.totalAmount} />
       </Section>
+
+      {showReviewRequest && (
+        <Section className="mt-6 border-t-2 border-blue-200 pt-6">
+          <Section className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 mb-4">
+            <Heading as="h3" className="text-xl font-bold mb-3 text-gray-900">
+              Your Feedback Matters
+            </Heading>
+            <Text className="mb-3 text-gray-700 leading-relaxed">
+              Your feedback is essential to our service improvement process. We review every comment
+              and rating to identify areas for enhancement and celebrate what we're doing right.
+            </Text>
+            <Text className="mb-4 text-gray-700 leading-relaxed">
+              Your review helps us maintain high standards and improve our service. We use your
+              feedback to make data-driven decisions that directly impact vehicle quality, chauffeur
+              training, and customer experience.
+            </Text>
+            <Section className="bg-white rounded-md p-4 border border-blue-100 mb-4">
+              <Text className="text-sm text-gray-600 mb-2 font-semibold">
+                Share your experience in just 2 minutes:
+              </Text>
+              <Text className="text-sm text-gray-700 mb-0">
+                • Rate your overall experience, the car, chauffeur, and service
+              </Text>
+              <Text className="text-sm text-gray-700 mb-0">
+                • Help us understand what we did well and where we can improve
+              </Text>
+            </Section>
+            <Section className="text-center">
+              <Link
+                href={`${WEBSITE_URL}/bookings/${booking.id}/review`}
+                className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-3 rounded-lg text-base shadow-md transition-colors"
+              >
+                Leave Your Review
+              </Link>
+            </Section>
+            <Text className="mt-4 text-xs text-gray-500 text-center italic">
+              Thank you for being part of our journey to excellence
+            </Text>
+          </Section>
+        </Section>
+      )}
     </EmailTemplate>,
   );
 }
@@ -187,7 +230,7 @@ export async function renderBookingReminderEmail(
         approximately 1 hour.
       </Text>
 
-      <Section className="border border-gray-200 p-4 bg-gray-50">
+      <Section className="border border-gray-200 p-4">
         <Text className="font-semibold mb-2 underline">Booking Leg Details</Text>
         <DetailListItem label="Car" value={carName} />
         <DetailListItem label="Start Date & Time" value={bookingLeg.legStartTime} />

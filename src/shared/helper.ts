@@ -140,8 +140,8 @@ export function normaliseBookingDetails(booking: BookingWithRelations): Normalis
     cancellationReason: booking.cancellationReason ?? "No reason provided",
     pickupLocation,
     returnLocation,
-    startDate: formatDate(booking.startDate),
-    endDate: formatDate(booking.endDate),
+    startDate: format(booking.startDate, "PPPp"),
+    endDate: format(booking.endDate, "PPPp"),
     totalAmount: formatCurrency(Number(booking.totalAmount.toFixed(2))),
   };
 }
@@ -163,8 +163,8 @@ export function normaliseBookingLegDetails(
     customerEmail: customerDetails.email || undefined,
     chauffeurName,
     legDate: format(bookingLeg.legDate, "PPPP"),
-    legStartTime: format(bookingLeg.legStartTime, "p"),
-    legEndTime: format(bookingLeg.legEndTime, "p"),
+    legStartTime: format(bookingLeg.legStartTime, "PPPp"),
+    legEndTime: format(bookingLeg.legEndTime, "PPPp"),
     chauffeurPhone: booking.chauffeur?.phoneNumber,
     chauffeurEmail: booking.chauffeur?.email,
     pickupLocation: booking.pickupLocation,

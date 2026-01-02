@@ -171,22 +171,31 @@ export class StatusChangeService {
 
           // Only update car status if there's no upcoming booking
           // If hasUpcomingBooking is true, the car should already be BOOKED, so no update needed
-          if (!hasUpcomingBooking) {
+          if (hasUpcomingBooking) {
+            this.logger.log(
+              `Car ${booking.carId} remains BOOKED due to upcoming booking ${hasUpcomingBooking.id} (status: ${hasUpcomingBooking.status})`,
+            );
+          } else {
             await tx.car.update({
               where: { id: booking.carId },
               data: { status: Status.AVAILABLE },
             });
-          } else {
-            this.logger.log(
-              `Car ${booking.carId} remains BOOKED due to upcoming booking ${hasUpcomingBooking.id} (status: ${hasUpcomingBooking.status})`,
-            );
           }
 
           try {
+            // Check if a review already exists for this booking
+            const existingReview = await tx.review.findUnique({
+              where: { bookingId: booking.id },
+            });
+
+            // Show review request only if no review exists and booking is completed
+            const showReviewRequest = !existingReview;
+
             await this.notificationService.queueBookingStatusNotifications(
               updatedBooking,
               oldStatus,
               BookingStatus.COMPLETED,
+              showReviewRequest,
             );
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);

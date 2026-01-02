@@ -157,6 +157,8 @@ describe("StatusChangeService", () => {
     const bookingFindFirstMock = vi.fn().mockResolvedValue(null);
     const carUpdateMock = vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE });
 
+    const reviewFindUniqueMock = vi.fn().mockResolvedValue(null);
+
     vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
       const mockTx = {
         booking: {
@@ -165,6 +167,9 @@ describe("StatusChangeService", () => {
         },
         car: {
           update: carUpdateMock,
+        },
+        review: {
+          findUnique: reviewFindUniqueMock,
         },
       } as unknown as DatabaseService;
       return callback(mockTx);
@@ -187,10 +192,14 @@ describe("StatusChangeService", () => {
       }),
     );
 
+    expect(reviewFindUniqueMock).toHaveBeenCalledWith({
+      where: { bookingId: "2" },
+    });
     expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
       BookingStatus.ACTIVE,
       BookingStatus.COMPLETED,
+      true, // showReviewRequest should be true when no review exists
     );
     expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
     expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("2");
