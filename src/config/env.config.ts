@@ -2,7 +2,8 @@ import { z } from "zod";
 
 export const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  REDIS_URL: z.url("REDIS_URL must be a valid URL"),
+  UPSTASH_REDIS_REST_URL: z.url("UPSTASH_REDIS_REST_URL must be a valid URL"),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN is required"),
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
   RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
   APP_NAME: z.string().min(1, "APP_NAME is required"),

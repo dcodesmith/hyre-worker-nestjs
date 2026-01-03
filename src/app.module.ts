@@ -25,14 +25,18 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const redisUrl = configService.get<string>("REDIS_URL");
+        const redisUrl = configService.get<string>("UPSTASH_REDIS_REST_URL");
+        const redisToken = configService.get<string>("UPSTASH_REDIS_REST_TOKEN");
         const url = new URL(redisUrl);
 
         return {
           connection: {
             host: url.hostname,
             port: Number.parseInt(url.port) || 6379,
-            password: url.password || undefined,
+            password: redisToken,
+            tls: {
+              rejectUnauthorized: false,
+            },
           },
         };
       },
