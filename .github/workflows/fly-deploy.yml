@@ -20,6 +20,6 @@ jobs:
       - name: Verify deployment
         run: |
           flyctl status
-          # Wait for app to be healthy
-          timeout 300 bash -c 'until flyctl status --json | jq -e ".Status == "running"" > /dev/null; do sleep 5; done'
+          # Wait for app to be healthy (check if machines are running)
+          timeout 300 bash -c 'until flyctl status --json | jq -e '\''(.Machines[]? | select(.State == "started")) != null'\'' > /dev/null; do sleep 5; done'
           flyctl logs --limit 50
