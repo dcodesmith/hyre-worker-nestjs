@@ -34,7 +34,7 @@ jobs:
             echo "Waiting for machines to start... (attempt $i/60)"
             sleep 5
           done
-          flyctl logs --limit 50
+          flyctl logs -n | head -50
           if [ "$DEPLOY_SUCCESS" != "true" ]; then
             echo "Error: Deployment verification timed out - no machines reached 'started' state"
             exit 1
