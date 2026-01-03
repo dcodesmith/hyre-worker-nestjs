@@ -5,8 +5,7 @@ const logger = new Logger("EnvConfig");
 
 export const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  REDIS_URL: z.string().min(1, "REDIS_URL is required"),
-
+  REDIS_URL: z.url("REDIS_URL must be a valid URL"),
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
   RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
 
