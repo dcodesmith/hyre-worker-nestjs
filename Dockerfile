@@ -34,12 +34,11 @@ COPY package.json pnpm-lock.yaml ./
 # Copy pruned production node_modules from builder stage (optimization)
 COPY --from=builder /tmp/node_modules_prod ./node_modules
 
-# Copy Prisma schema and generate client (needed at runtime)
-COPY prisma ./prisma
-RUN npx prisma generate
-
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+
+# Copy Prisma schema
+COPY prisma ./prisma
 
 # Set production environment
 ENV NODE_ENV=production
