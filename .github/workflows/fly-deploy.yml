@@ -14,10 +14,12 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@v1.4
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only
       - name: Verify deployment
         run: |
           flyctl status
+          # Wait for app to be healthy
+          timeout 300 bash -c 'until flyctl status --json | jq -e ".Status == "running"" > /dev/null; do sleep 5; done'
           flyctl logs --limit 50
