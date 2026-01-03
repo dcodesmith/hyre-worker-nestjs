@@ -55,5 +55,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Run the worker
 USER node
-CMD ["pnpm", "start"]
+CMD ["node", "start:prod"]
 
