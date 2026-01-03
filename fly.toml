@@ -6,11 +6,6 @@
 app = 'hyre-worker-nestjs'
 primary_region = 'lhr'
 
-[build]
-
-[deploy]
-  release_command = 'npx prisma migrate deploy'
-
 [env]
   TZ = 'Africa/Lagos'
 
