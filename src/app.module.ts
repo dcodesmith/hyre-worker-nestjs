@@ -1,10 +1,10 @@
 import { ExpressAdapter } from "@bull-board/express";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
-import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { BasicAuthMiddleware } from "./middleware/basic-auth.middleware";
 import { ScheduleModule } from "@nestjs/schedule";
+import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-auth.middleware";
 import { validateEnvironment } from "./config/env.config";
 import { DatabaseModule } from "./modules/database/database.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
@@ -45,9 +45,24 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
       },
       inject: [ConfigService],
     }),
-    BullBoardModule.forRoot({
-      route: "/queues",
-      adapter: ExpressAdapter,
+    BullBoardModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        const bullBoardUsername = configService.get<string>("BULL_BOARD_USERNAME");
+        const bullBoardPassword = configService.get<string>("BULL_BOARD_PASSWORD");
+
+        const middleware =
+          bullBoardUsername && bullBoardPassword
+            ? createBullBoardAuthMiddleware(bullBoardUsername, bullBoardPassword)
+            : undefined;
+
+        return {
+          route: "/queues",
+          adapter: ExpressAdapter,
+          middleware,
+        };
+      },
+      inject: [ConfigService],
     }),
     // Queues are registered in their respective feature modules
     DatabaseModule,
@@ -61,8 +76,4 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     ReferralModule,
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(BasicAuthMiddleware).forRoutes("/queues");
-  }
-}
+export class AppModule {}
