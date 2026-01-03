@@ -1,11 +1,13 @@
-import { Controller, HttpCode, HttpStatus, Param, Post } from "@nestjs/common";
+import { Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ApiKeyGuard } from "./api-key.guard";
 import { JobException } from "./errors";
 import { ValidateJobTypePipe } from "./job.dto";
 import { JobType, JobTypeNames } from "./job.schema";
 import { JobService } from "./job.service";
 
 @Controller("job")
+@UseGuards(ApiKeyGuard)
 export class JobController {
   private readonly manualTriggersEnabled: boolean;
 

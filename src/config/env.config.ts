@@ -47,6 +47,14 @@ export const envSchema = z.object({
       return val.toLowerCase() === "true";
     })
     .default(false),
+
+  API_KEY: z.string().min(8, "API_KEY must be at least 32 characters").optional(),
+
+  BULL_BOARD_USERNAME: z.string().min(1).optional(),
+  BULL_BOARD_PASSWORD: z
+    .string()
+    .min(8, "BULL_BOARD_PASSWORD must be at least 8 characters")
+    .optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
