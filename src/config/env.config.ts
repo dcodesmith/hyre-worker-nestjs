@@ -1,4 +1,7 @@
+import { Logger } from "@nestjs/common";
 import { z } from "zod";
+
+const logger = new Logger("EnvConfig");
 
 export const envSchema = z
   .object({
@@ -24,7 +27,7 @@ export const envSchema = z
           }
         },
         {
-          message: "TIMEZONE must be a valid IANA timezone (e.g., Africa/Lagos, America/New_York)",
+          error: "TIMEZONE must be a valid IANA timezone (e.g., Africa/Lagos, America/New_York)",
         },
       ),
 
@@ -56,7 +59,7 @@ export const envSchema = z
       return hasRedisUrl || hasUpstash;
     },
     {
-      message:
+      error:
         "Either REDIS_URL or both UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be provided",
     },
   );
@@ -74,6 +77,6 @@ export function validateEnvironment(config: Record<string, unknown>): EnvConfig 
     throw new Error(`Invalid environment configuration. Please check your .env file. ${errors}`);
   }
 
-  console.log("Environment variables validated successfully");
+  logger.log("Environment variables validated successfully");
   return result.data;
 }
