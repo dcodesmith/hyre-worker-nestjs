@@ -57,7 +57,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
             port: Number.parseInt(url.port) || 6379,
             password: upstashToken,
             tls: {
-              rejectUnauthorized: false,
+              rejectUnauthorized: true,
             },
           },
         };
