@@ -16,13 +16,6 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService);
 
-    // Bull Board authentication is configured in AppModule via BullBoardModule.forRootAsync
-    const bullBoardUsername = configService.get<string>("BULL_BOARD_USERNAME");
-    const bullBoardPassword = configService.get<string>("BULL_BOARD_PASSWORD");
-    if (bullBoardUsername && bullBoardPassword) {
-      logger.log("Bull Board authentication enabled");
-    }
-
     // Get HttpAdapterHost for platform-agnostic exception filter
     const httpAdapterHost = app.get(HttpAdapterHost);
 
