@@ -24,12 +24,18 @@ jobs:
         run: |
           flyctl status
           # Wait for app to be healthy (check if machines are running)
+          DEPLOY_SUCCESS=false
           for i in {1..60}; do
             if flyctl status --json | jq -e '[.Machines[]? | select(.state == "started")] | length > 0' > /dev/null 2>&1; then
               echo "Deployment verified: machines are running"
+              DEPLOY_SUCCESS=true
               break
             fi
             echo "Waiting for machines to start... (attempt $i/60)"
             sleep 5
           done
           flyctl logs --limit 50
+          if [ "$DEPLOY_SUCCESS" != "true" ]; then
+            echo "Error: Deployment verification timed out - no machines reached 'started' state"
+            exit 1
+          fi
