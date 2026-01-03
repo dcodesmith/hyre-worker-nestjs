@@ -1,8 +1,9 @@
 import { ExpressAdapter } from "@bull-board/express";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
-import { Module } from "@nestjs/common";
+import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { BasicAuthMiddleware } from "./middleware/basic-auth.middleware";
 import { ScheduleModule } from "@nestjs/schedule";
 import { validateEnvironment } from "./config/env.config";
 import { DatabaseModule } from "./modules/database/database.module";
@@ -60,4 +61,8 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     ReferralModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(BasicAuthMiddleware).forRoutes("/queues");
+  }
+}
