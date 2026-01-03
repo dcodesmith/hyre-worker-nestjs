@@ -31,12 +31,15 @@ RUN corepack enable pnpm
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Copy pruned production node_modules from builder stage (optimization)
-COPY --from=builder /tmp/node_modules_prod ./node_modules
+# Install prisma CLI temporarily for generating client
+RUN pnpm add -g prisma
 
 # Copy Prisma schema and generate client (needed at runtime)
 COPY prisma ./prisma
-RUN npx prisma generate
+RUN prisma generate
+
+# Copy pruned production node_modules from builder stage (optimization)
+COPY --from=builder /tmp/node_modules_prod ./node_modules
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
