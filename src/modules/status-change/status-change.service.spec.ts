@@ -25,10 +25,14 @@ describe("StatusChangeService", () => {
             booking: {
               findMany: vi.fn(),
               findUnique: vi.fn(),
+              findFirst: vi.fn(),
               update: vi.fn(),
             },
             car: {
               update: vi.fn(),
+            },
+            review: {
+              findUnique: vi.fn(),
             },
             $transaction: vi.fn(),
           },
@@ -107,14 +111,16 @@ describe("StatusChangeService", () => {
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
 
-    vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
-      const mockTx = {
-        booking: {
-          update: vi.fn().mockResolvedValue({ ...mockBooking, status: BookingStatus.ACTIVE }),
-        },
-      } as unknown as DatabaseService;
-      return callback(mockTx);
-    });
+    const bookingUpdateMock = vi
+      .fn()
+      .mockResolvedValue({ ...mockBooking, status: BookingStatus.ACTIVE });
+    vi.mocked(mockDatabaseService.booking.update).mockImplementation(bookingUpdateMock);
+
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> => {
+        return callback(mockDatabaseService);
+      },
+    );
 
     const result = await service.updateBookingsFromConfirmedToActive();
 
@@ -159,21 +165,16 @@ describe("StatusChangeService", () => {
 
     const reviewFindUniqueMock = vi.fn().mockResolvedValue(null);
 
-    vi.mocked(mockDatabaseService.$transaction).mockImplementation(async (callback) => {
-      const mockTx = {
-        booking: {
-          update: bookingUpdateMock,
-          findFirst: bookingFindFirstMock,
-        },
-        car: {
-          update: carUpdateMock,
-        },
-        review: {
-          findUnique: reviewFindUniqueMock,
-        },
-      } as unknown as DatabaseService;
-      return callback(mockTx);
-    });
+    vi.mocked(mockDatabaseService.booking.update).mockImplementation(bookingUpdateMock);
+    vi.mocked(mockDatabaseService.booking.findFirst).mockImplementation(bookingFindFirstMock);
+    vi.mocked(mockDatabaseService.car.update).mockImplementation(carUpdateMock);
+    vi.mocked(mockDatabaseService.review.findUnique).mockImplementation(reviewFindUniqueMock);
+
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> => {
+        return callback(mockDatabaseService);
+      },
+    );
 
     const result = await service.updateBookingsFromActiveToCompleted();
 
