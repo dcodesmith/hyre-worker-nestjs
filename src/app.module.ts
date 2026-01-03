@@ -35,6 +35,9 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
               host: url.hostname,
               port: Number.parseInt(url.port) || 6379,
               password: url.password || undefined,
+              tls: {
+                rejectUnauthorized: false,
+              },
             },
           };
         }
