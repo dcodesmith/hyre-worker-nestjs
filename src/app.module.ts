@@ -25,15 +25,37 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const redisUrl = configService.get<string>("UPSTASH_REDIS_REST_URL");
-        const redisToken = configService.get<string>("UPSTASH_REDIS_REST_TOKEN");
-        const url = new URL(redisUrl);
+        const redisUrl = configService.get<string>("REDIS_URL");
+
+        // If REDIS_URL is provided (local/test), use it
+        if (redisUrl) {
+          const url = new URL(redisUrl);
+          return {
+            connection: {
+              host: url.hostname,
+              port: Number.parseInt(url.port) || 6379,
+              password: url.password || undefined,
+            },
+          };
+        }
+
+        // Otherwise, use Upstash (production)
+        const upstashUrl = configService.get<string>("UPSTASH_REDIS_REST_URL");
+        const upstashToken = configService.get<string>("UPSTASH_REDIS_REST_TOKEN");
+
+        if (!upstashUrl || !upstashToken) {
+          throw new Error(
+            "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required when REDIS_URL is not provided",
+          );
+        }
+
+        const url = new URL(upstashUrl);
 
         return {
           connection: {
             host: url.hostname,
             port: Number.parseInt(url.port) || 6379,
-            password: redisToken,
+            password: upstashToken,
             tls: {
               rejectUnauthorized: false,
             },
