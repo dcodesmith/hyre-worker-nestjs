@@ -186,7 +186,7 @@ export async function renderBookingStatusUpdateEmail(
             </Section>
             <Section className="text-center">
               <Link
-                href={`${WEBSITE_URL}/bookings/${booking.id}/review`}
+                href={`${WEBSITE_URL}/bookings/${booking.id}#review`}
                 className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-3 rounded-lg text-base shadow-md transition-colors"
               >
                 Leave Your Review
