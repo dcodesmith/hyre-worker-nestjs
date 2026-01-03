@@ -8,8 +8,8 @@ WORKDIR /app
 
 RUN corepack enable pnpm
 
-# Copy package and workspace files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
 
 RUN pnpm fetch --frozen-lockfile
 # Copy source code and configs
@@ -28,8 +28,8 @@ WORKDIR /app
 
 RUN corepack enable pnpm
 
-# Copy package and workspace files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
 
 # Copy pruned production node_modules from builder stage (optimization)
 COPY --from=builder /tmp/node_modules_prod ./node_modules
