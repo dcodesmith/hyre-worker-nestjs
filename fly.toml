@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for hyre-worker on 2025-07-26T21:50:14+01:00
+# fly.toml app configuration file generated for hyre-worker-nestjs on 2026-01-03T09:48:37Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -12,7 +12,7 @@ primary_region = 'lhr'
   release_command = 'npx prisma migrate deploy'
 
 [env]
-  TZ = "Africa/Lagos"
+  TZ = 'Africa/Lagos'
 
 [http_service]
   internal_port = 3000
@@ -26,3 +26,4 @@ primary_region = 'lhr'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
