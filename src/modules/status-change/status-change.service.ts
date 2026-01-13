@@ -114,7 +114,7 @@ export class StatusChangeService {
 
   async updateBookingsFromActiveToCompleted(timestamp?: string) {
     try {
-      const endDate = timestamp ? { lt: new Date(timestamp) } : this.getCurrentUtcHourWindow();
+      const endDate = timestamp ? { lte: new Date(timestamp) } : this.getCurrentUtcHourWindow();
       // Find all active bookings where end date falls within the current UTC hour window
       // Query for BOOKED cars only - cars with ACTIVE bookings should always be BOOKED
       const bookingsToUpdate = await this.databaseService.booking.findMany({

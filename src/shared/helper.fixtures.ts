@@ -129,6 +129,7 @@ export function createCar(
     approvalStatus: CarApprovalStatus.APPROVED,
     approvalNotes: null,
     ownerId: "owner-123",
+    pricingIncludesFuel: false,
     createdAt: new Date("2024-01-01T00:00:00Z"),
     updatedAt: new Date("2024-01-01T00:00:00Z"),
     ...overrides,
