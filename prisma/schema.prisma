@@ -25,9 +25,10 @@ model Car {
   hourlyRate         Int
   dayRate            Int
   nightRate          Int
-  fuelUpgradeRate    Int
+  fuelUpgradeRate    Int?
   fullDayRate        Int
   airportPickupRate  Int
+  pricingIncludesFuel Boolean           @default(false)
   // Vehicle categorization
   vehicleType        VehicleType        @default(SEDAN)
   serviceTier        ServiceTier        @default(STANDARD)
@@ -270,7 +271,7 @@ model Booking {
   customerPayments   Payment[]           @relation("BookingCustomerPayments")
   payoutTransactions PayoutTransaction[] @relation("BookingPayouts")
   referralRewards    ReferralReward[]
-  review             Review?
+  review             Review?             @relation("BookingReview")
 
   @@index([bookingReference])
   @@index([carId])
@@ -468,7 +469,7 @@ model Review {
   updatedAt DateTime @updatedAt
 
   // Relations
-  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict) // Restrict prevents accidental deletion - reviews must persist for analytics/reputation
+  booking   Booking @relation("BookingReview", fields: [bookingId], references: [id], onDelete: Restrict) // Restrict prevents accidental deletion - reviews must persist for analytics/reputation
   user      User    @relation("CustomerReviews", fields: [userId], references: [id], onDelete: Cascade) // Cascade: when user is deleted, their reviews are deleted too
   moderator User?   @relation("ReviewModerator", fields: [moderatedBy], references: [id])
 

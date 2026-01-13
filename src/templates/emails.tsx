@@ -25,7 +25,7 @@ export interface EmailTemplateProps {
 
 const COMPANY_NAME = process.env.APP_NAME || "Tripdly";
 const COMPANY_ADDRESS = process.env.COMPANY_ADDRESS || "Lagos, Nigeria";
-const WEBSITE_URL = process.env.WEBSITE_URL || process.env.DOMAIN || "https://dcodesmith.com";
+const WEBSITE_URL = process.env.DOMAIN;
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@dcodesmith.com";
 const CURRENT_YEAR = new Date().getFullYear();
 
