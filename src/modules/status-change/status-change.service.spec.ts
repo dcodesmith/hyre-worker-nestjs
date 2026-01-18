@@ -133,6 +133,38 @@ describe("StatusChangeService", () => {
     expect(result).toBe("Updated 1 bookings from confirmed to active");
   });
 
+  it("should continue when status notification queue fails for confirmed to active", async () => {
+    const mockBooking = createBooking({
+      id: "1",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+    });
+
+    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
+    vi.mocked(mockDatabaseService.booking.update).mockResolvedValue({
+      ...mockBooking,
+      status: BookingStatus.ACTIVE,
+    });
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+      new Error("Notification error"),
+    );
+
+    const result = await service.updateBookingsFromConfirmedToActive();
+
+    expect(result).toBe("Updated 1 bookings from confirmed to active");
+  });
+
+  it("should throw error when booking query fails for confirmed to active", async () => {
+    const error = new Error("Database error");
+    vi.mocked(mockDatabaseService.booking.findMany).mockRejectedValueOnce(error);
+
+    await expect(service.updateBookingsFromConfirmedToActive()).rejects.toThrow(error);
+  });
+
   it("should update bookings from active to completed when no bookings found", async () => {
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([]);
 
@@ -204,6 +236,85 @@ describe("StatusChangeService", () => {
     );
     expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
     expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("2");
+    expect(result).toBe("Updated 1 bookings from active to completed");
+  });
+
+  it("should continue when status notification queue fails for active to completed", async () => {
+    const mockCar = createCar({
+      id: "car-2",
+      status: Status.BOOKED,
+    });
+
+    const mockBooking = createBooking({
+      id: "3",
+      status: BookingStatus.ACTIVE,
+      paymentStatus: PaymentStatus.PAID,
+      carId: "car-2",
+      car: mockCar,
+    });
+
+    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
+    vi.mocked(mockDatabaseService.booking.update).mockResolvedValue({
+      ...mockBooking,
+      status: BookingStatus.COMPLETED,
+    });
+    vi.mocked(mockDatabaseService.booking.findFirst).mockResolvedValue(null);
+    vi.mocked(mockDatabaseService.car.update).mockResolvedValue(
+      createCar({ id: "car-2", status: Status.AVAILABLE }),
+    );
+    vi.mocked(mockDatabaseService.review.findUnique).mockResolvedValue(null);
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+      new Error("Notification error"),
+    );
+
+    const result = await service.updateBookingsFromActiveToCompleted();
+
+    expect(result).toBe("Updated 1 bookings from active to completed");
+  });
+
+  it("should continue when referral or payout queueing fails", async () => {
+    const mockCar = createCar({
+      id: "car-3",
+      status: Status.BOOKED,
+    });
+
+    const mockBooking = createBooking({
+      id: "4",
+      status: BookingStatus.ACTIVE,
+      paymentStatus: PaymentStatus.PAID,
+      carId: "car-3",
+      car: mockCar,
+    });
+
+    vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
+    vi.mocked(mockDatabaseService.booking.update).mockResolvedValue({
+      ...mockBooking,
+      status: BookingStatus.COMPLETED,
+    });
+    vi.mocked(mockDatabaseService.booking.findFirst).mockResolvedValue(null);
+    vi.mocked(mockDatabaseService.car.update).mockResolvedValue(
+      createCar({ id: "car-3", status: Status.AVAILABLE }),
+    );
+    vi.mocked(mockDatabaseService.review.findUnique).mockResolvedValue(null);
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+    vi.mocked(mockReferralService.queueReferralProcessing).mockRejectedValueOnce(
+      new Error("Referral queue error"),
+    );
+    vi.mocked(mockPaymentService.queuePayoutForBooking).mockRejectedValueOnce(
+      new Error("Payout queue error"),
+    );
+
+    const result = await service.updateBookingsFromActiveToCompleted();
+
+    expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("4");
+    expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("4");
     expect(result).toBe("Updated 1 bookings from active to completed");
   });
 });
