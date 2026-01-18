@@ -5,10 +5,11 @@ import { Prisma, PrismaClient } from "@prisma/client";
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
+  private readonly isDevelopment: boolean;
 
-  constructor(configService: ConfigService) {
-    // Environment variables are validated at startup, so we can safely use them
+  constructor(private readonly configService: ConfigService) {
     const databaseUrl = configService.get<string>("DATABASE_URL");
+    const isDevelopment = configService.get<string>("NODE_ENV") === "development";
 
     super({
       datasources: {
@@ -16,29 +17,35 @@ export class DatabaseService extends PrismaClient implements OnModuleInit, OnMod
           url: databaseUrl,
         },
       },
-      log:
-        process.env.NODE_ENV === "development"
-          ? [
-              { level: "query", emit: "event" },
-              { level: "info", emit: "stdout" },
-              { level: "warn", emit: "stdout" },
-              { level: "error", emit: "stdout" },
-            ]
-          : [
-              { level: "warn", emit: "stdout" },
-              { level: "error", emit: "stdout" },
-            ],
+      log: isDevelopment
+        ? [
+            { level: "query", emit: "event" },
+            { level: "info", emit: "stdout" },
+            { level: "warn", emit: "stdout" },
+            { level: "error", emit: "stdout" },
+          ]
+        : [
+            { level: "warn", emit: "stdout" },
+            { level: "error", emit: "stdout" },
+          ],
     });
 
-    if (process.env.NODE_ENV === "development") {
-      this.$on("query", (queryEvent: Prisma.QueryEvent) => {
-        if (queryEvent.duration > 1000) {
-          this.logger.warn(
-            `[Prisma] Slow Query (${queryEvent.duration}ms): ${queryEvent.query} -- Params: ${queryEvent.params}`,
-          );
-        }
-      });
-    }
+    this.isDevelopment = isDevelopment;
+    this.setupSlowQueryLogging();
+  }
+
+  private setupSlowQueryLogging(): void {
+    if (!this.isDevelopment) return;
+
+    const slowQueryThresholdMs = this.configService.get<number>("SLOW_QUERY_THRESHOLD_MS", 1000);
+
+    this.$on("query", (event: Prisma.QueryEvent) => {
+      if (event.duration > slowQueryThresholdMs) {
+        this.logger.warn(
+          `[Prisma] Slow Query (${event.duration}ms): ${event.query} -- Params: ${event.params}`,
+        );
+      }
+    });
   }
 
   async onModuleInit() {

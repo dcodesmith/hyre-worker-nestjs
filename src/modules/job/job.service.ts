@@ -1,7 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { Queue } from "bullmq";
-import { randomUUID } from "node:crypto";
 import {
   ACTIVE_TO_COMPLETED,
   BOOKING_LEG_END_REMINDER,
