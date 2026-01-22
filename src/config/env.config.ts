@@ -57,10 +57,10 @@ export const envSchema = z.object({
     .min(8, "BULL_BOARD_PASSWORD must be at least 8 characters")
     .optional(),
 
-  // Auth configuration
-  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
-  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL"),
-  TRUSTED_ORIGINS: z.string().min(1, "TRUSTED_ORIGINS is required"),
+  // Auth configuration (optional - only required when AuthModule is used)
+  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters").optional(),
+  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL").optional(),
+  TRUSTED_ORIGINS: z.string().min(1, "TRUSTED_ORIGINS is required").optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

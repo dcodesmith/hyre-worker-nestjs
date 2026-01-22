@@ -17,14 +17,16 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService<EnvConfig>);
 
-    // Configure CORS for auth endpoints
-    const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true })?.split(",") ?? [];
-    app.enableCors({
-      origin: trustedOrigins,
-      credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
-      exposedHeaders: ["Set-Cookie"],
-    });
+    // Configure CORS for auth endpoints (if TRUSTED_ORIGINS is set)
+    const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true });
+    if (trustedOrigins) {
+      app.enableCors({
+        origin: trustedOrigins.split(","),
+        credentials: true,
+        allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+        exposedHeaders: ["Set-Cookie"],
+      });
+    }
 
     // Get HttpAdapterHost for platform-agnostic exception filter
     const httpAdapterHost = app.get(HttpAdapterHost);
