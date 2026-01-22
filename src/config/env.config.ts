@@ -11,6 +11,7 @@ export const envSchema = z.object({
 
   APP_NAME: z.string().min(1, "APP_NAME is required"),
   PORT: z.coerce.number().default(3000),
+  HOST: z.string().default("0.0.0.0"),
   TZ: z
     .string()
     .default("Africa/Lagos")
@@ -55,6 +56,11 @@ export const envSchema = z.object({
     .string()
     .min(8, "BULL_BOARD_PASSWORD must be at least 8 characters")
     .optional(),
+
+  // Auth configuration
+  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
+  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL"),
+  TRUSTED_ORIGINS: z.string().min(1, "TRUSTED_ORIGINS is required"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
