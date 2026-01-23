@@ -62,6 +62,7 @@ export class AuthService implements OnModuleInit {
         validateRoleForClient: this.validateRoleForClient.bind(this),
         validateExistingUserRole: this.validateExistingUserRole.bind(this),
         assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
+        getUserRoles: this.getUserRoles.bind(this),
       },
     });
 
@@ -290,5 +291,24 @@ export class AuthService implements OnModuleInit {
       this.logger.warn(`User ${userId} does not have required role: ${role}`);
       throw new UnauthorizedException(`User does not have required role: ${role}`);
     }
+  }
+
+  /**
+   * Gets all roles for a user.
+   *
+   * @param userId - User's ID
+   * @returns Array of role names, empty array if user not found
+   */
+  async getUserRoles(userId: string): Promise<RoleName[]> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      include: { roles: { select: { name: true } } },
+    });
+
+    if (!user) {
+      return [];
+    }
+
+    return user.roles.map((r) => r.name as RoleName);
   }
 }

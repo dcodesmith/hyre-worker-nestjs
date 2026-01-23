@@ -23,6 +23,8 @@ export interface RoleValidationCallbacks {
   validateExistingUserRole: (email: string, role: RoleName) => Promise<boolean>;
   /** Assigns a role to a newly created user (called from databaseHooks.user.create.after) */
   assignRoleToNewUser: (userId: string, role: RoleName) => Promise<void>;
+  /** Gets all roles for a user (used by after hook to enrich sign-in response) */
+  getUserRoles: (userId: string) => Promise<RoleName[]>;
 }
 
 /**
@@ -202,6 +204,53 @@ export function createAuth(options: AuthConfigOptions) {
       })
     : undefined;
 
+  /**
+   * Creates a plugin to enrich sign-in response with user roles.
+   * This uses Better Auth's plugin hooks system to intercept and modify
+   * the sign-in response after successful authentication.
+   */
+  const roleEnrichmentPlugin = roleValidation
+    ? {
+        id: "role-enrichment",
+        hooks: {
+          after: [
+            {
+              matcher: (context) => context.path === "/sign-in/email-otp",
+              handler: createAuthMiddleware(async (ctx) => {
+                // Get the response from the context - it's already the parsed body, not a Response
+                const returned = ctx.context.returned as
+                  | { user?: { id?: string }; token?: string }
+                  | Error
+                  | undefined;
+
+                // Skip if no returned value or if it's an error
+                if (!returned || returned instanceof Error) {
+                  return;
+                }
+
+                // Check if response contains user data (successful sign-in)
+                if (!returned.user?.id) {
+                  return;
+                }
+
+                // Fetch roles for the user
+                const roles = await roleValidation.getUserRoles(returned.user.id);
+
+                // Enrich user object with roles and return using ctx.json
+                return ctx.json({
+                  ...returned,
+                  user: {
+                    ...returned.user,
+                    roles,
+                  },
+                });
+              }),
+            },
+          ],
+        },
+      }
+    : null;
+
   return betterAuth({
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     secret: sessionSecret,
@@ -247,6 +296,7 @@ export function createAuth(options: AuthConfigOptions) {
         },
       }),
       bearer(),
+      ...(roleEnrichmentPlugin ? [roleEnrichmentPlugin] : []),
     ],
     rateLimit: {
       enabled: enableRateLimit,

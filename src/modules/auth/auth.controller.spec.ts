@@ -4,10 +4,12 @@ import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
+import type { RoleName } from "./auth.types";
 
 describe("AuthController", () => {
   let controller: AuthController;
   let mockGetSession: ReturnType<typeof vi.fn>;
+  let mockGetUserRoles: ReturnType<typeof vi.fn>;
 
   const mockRequest = {
     headers: {
@@ -15,8 +17,11 @@ describe("AuthController", () => {
     },
   } as unknown as Request;
 
+  const mockRoles: RoleName[] = ["user"];
+
   const createMockAuthService = (isInitialized: boolean) => {
     mockGetSession = vi.fn();
+    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
     return {
       isInitialized,
       auth: {
@@ -24,6 +29,7 @@ describe("AuthController", () => {
           getSession: mockGetSession,
         },
       },
+      getUserRoles: mockGetUserRoles,
     };
   };
 
@@ -51,7 +57,7 @@ describe("AuthController", () => {
     });
 
     describe("getSession", () => {
-      it("should return session when authenticated", async () => {
+      it("should return session with roles when authenticated", async () => {
         const mockSession = {
           user: { id: "user-123", email: "test@example.com" },
           session: { id: "session-123", expiresAt: new Date() },
@@ -61,10 +67,14 @@ describe("AuthController", () => {
 
         const result = await controller.getSession(mockRequest);
 
-        expect(result).toEqual(mockSession);
+        expect(result).toEqual({
+          user: { ...mockSession.user, roles: mockRoles },
+          session: mockSession.session,
+        });
         expect(mockGetSession).toHaveBeenCalledWith({
           headers: expect.any(Headers),
         });
+        expect(mockGetUserRoles).toHaveBeenCalledWith("user-123");
       });
 
       it("should throw UnauthorizedException when not authenticated", async () => {

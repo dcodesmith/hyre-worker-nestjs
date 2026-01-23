@@ -46,10 +46,12 @@ export class AuthController {
 
   /**
    * Get current session information.
-   * Returns session data if authenticated, 401 if not.
+   * Returns session data with user roles if authenticated, 401 if not.
    */
   @Get("session")
-  async getSession(@Req() req: Request): Promise<{ user: unknown; session: unknown }> {
+  async getSession(
+    @Req() req: Request,
+  ): Promise<{ user: Record<string, unknown> & { roles: string[] }; session: unknown }> {
     this.ensureAuthInitialized();
 
     const session = await this.authService.auth.api.getSession({
@@ -60,7 +62,13 @@ export class AuthController {
       throw new UnauthorizedException("Not authenticated");
     }
 
-    return session;
+    // Fetch user roles from database
+    const roles = await this.authService.getUserRoles(session.user.id);
+
+    return {
+      user: { ...session.user, roles },
+      session: session.session,
+    };
   }
 
   /**
