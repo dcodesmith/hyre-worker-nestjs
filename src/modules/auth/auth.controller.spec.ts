@@ -84,7 +84,9 @@ describe("AuthController", () => {
 
     it("should throw ServiceUnavailableException on getSession", async () => {
       await expect(controller.getSession(mockRequest)).rejects.toThrow(
-        new ServiceUnavailableException("Authentication service is not configured. Contact support."),
+        new ServiceUnavailableException(
+          "Authentication service is not configured. Contact support.",
+        ),
       );
     });
   });

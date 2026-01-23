@@ -1,4 +1,4 @@
-import { TemplateData, RecipientType } from "./template-data.interface";
+import { RecipientType, TemplateData } from "./template-data.interface";
 
 export enum NotificationChannel {
   EMAIL = "email",
@@ -47,4 +47,3 @@ export interface NotificationResult {
   messageId?: string;
   error?: string;
 }
-

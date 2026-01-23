@@ -2,8 +2,8 @@ import { Module } from "@nestjs/common";
 import { DatabaseModule } from "../database/database.module";
 import { NotificationModule } from "../notification/notification.module";
 import { AuthController } from "./auth.controller";
-import { AuthEmailService } from "./auth-email.service";
 import { AuthService } from "./auth.service";
+import { AuthEmailService } from "./auth-email.service";
 import { SessionGuard } from "./guards/session.guard";
 
 @Module({

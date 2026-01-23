@@ -3,9 +3,9 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  STATUS_UPDATES_QUEUE,
-  CONFIRMED_TO_ACTIVE,
   ACTIVE_TO_COMPLETED,
+  CONFIRMED_TO_ACTIVE,
+  STATUS_UPDATES_QUEUE,
 } from "../../config/constants";
 import { StatusUpdateJobData } from "./status-change.interface";
 import { StatusChangeScheduler } from "./status-change.scheduler";

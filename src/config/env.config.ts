@@ -64,8 +64,17 @@ export const envSchema = z.object({
   TRUSTED_ORIGINS: z
     .string()
     .min(1, "TRUSTED_ORIGINS is required")
-    .transform((val) => val.split(",").map((origin) => origin.trim()).filter(Boolean))
-    .pipe(z.array(z.url("Each TRUSTED_ORIGIN must be a valid URL")).min(1, "At least one valid TRUSTED_ORIGIN is required"))
+    .transform((val) =>
+      val
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    )
+    .pipe(
+      z
+        .array(z.url("Each TRUSTED_ORIGIN must be a valid URL"))
+        .min(1, "At least one valid TRUSTED_ORIGIN is required"),
+    )
     .optional(),
 });
 

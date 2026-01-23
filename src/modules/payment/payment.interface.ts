@@ -4,5 +4,3 @@ export interface PayoutJobData {
   bookingId: string;
   timestamp: string;
 }
-
-

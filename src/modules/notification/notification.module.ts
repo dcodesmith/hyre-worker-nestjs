@@ -1,6 +1,6 @@
-import { BullModule } from "@nestjs/bullmq";
-import { BullBoardModule } from "@bull-board/nestjs";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { BullBoardModule } from "@bull-board/nestjs";
+import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { EmailService } from "./email.service";

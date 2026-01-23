@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-auth.middleware";
 import { validateEnvironment } from "./config/env.config";
+import { AuthModule } from "./modules/auth/auth.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
 import { HealthModule } from "./modules/health/health.module";
@@ -15,7 +16,6 @@ import { PaymentModule } from "./modules/payment/payment.module";
 import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
-import { AuthModule } from "./modules/auth/auth.module";
 
 @Module({
   imports: [

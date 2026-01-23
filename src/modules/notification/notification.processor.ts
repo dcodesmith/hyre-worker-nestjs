@@ -12,10 +12,10 @@ import {
   NotificationType,
 } from "./notification.interface";
 import {
-  RecipientType,
-  type TemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
+  RecipientType,
+  type TemplateData,
 } from "./template-data.interface";
 import {
   BookingReminderEndMapper,
