@@ -47,13 +47,13 @@ export type ClientType = (typeof CLIENT_TYPES)[number];
  * Roles that can be auto-granted on registration.
  * These are "safe" roles that anyone can obtain through self-signup.
  */
-export const GRANTABLE_ROLES: readonly RoleName[] = [USER, FLEET_OWNER] as const;
+export const GRANTABLE_ROLES = [USER, FLEET_OWNER] as const;
 
 /**
  * Roles that require pre-existing assignment (cannot be auto-granted).
  * These are privileged roles that must be assigned by an admin.
  */
-export const PROTECTED_ROLES: readonly RoleName[] = [ADMIN, STAFF] as const;
+export const PROTECTED_ROLES = [ADMIN, STAFF] as const;
 
 /**
  * Type guard to validate if a value is a valid RoleName.
@@ -73,14 +73,14 @@ export function isValidClientType(clientType: unknown): clientType is ClientType
  * Check if a role can be auto-granted during registration.
  */
 export function isGrantableRole(role: RoleName): boolean {
-  return GRANTABLE_ROLES.includes(role);
+  return (GRANTABLE_ROLES as readonly RoleName[]).includes(role);
 }
 
 /**
  * Check if a role is protected (requires pre-assignment).
  */
 export function isProtectedRole(role: RoleName): boolean {
-  return PROTECTED_ROLES.includes(role);
+  return (PROTECTED_ROLES as readonly RoleName[]).includes(role);
 }
 
 /**

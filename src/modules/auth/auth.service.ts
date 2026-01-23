@@ -70,6 +70,11 @@ export class AuthService implements OnModuleInit {
   /**
    * Validates that a role is allowed for the given client type and origin.
    *
+   * SECURITY NOTE: This method only controls which roles can be REQUESTED from
+   * a given entry point. It does NOT grant authorization. Protected roles (admin, staff)
+   * still require the user to already have the role in the database - this is enforced
+   * by verifyUserHasRole() which is called during OTP verification via assignRoleOnVerify().
+   *
    * Rules:
    * - Mobile clients can only request "user" role
    * - Web clients must have an Origin header
@@ -94,21 +99,44 @@ export class AuthService implements OnModuleInit {
       return false;
     }
 
-    // Use referer to determine entry point if available, otherwise use origin
-    const pathSource = referer || origin;
+    // Safely extract pathname from referer or origin
+    const pathname = this.extractPathname(referer) || this.extractPathname(origin) || "";
 
     // Admin portal: admin and staff roles only
-    if (pathSource.includes("/admin")) {
+    // Use startsWith for stricter matching (prevents "/not-admin" matching)
+    if (pathname.startsWith("/admin")) {
       return role === ADMIN || role === STAFF;
     }
 
     // Fleet owner portal: fleetOwner role only
-    if (pathSource.includes("/fleet-owner")) {
+    if (pathname.startsWith("/fleet-owner")) {
       return role === FLEET_OWNER;
     }
 
     // Default public auth: user role only
     return role === USER;
+  }
+
+  /**
+   * Safely extracts the pathname from a URL string.
+   * Returns null if the URL is invalid or empty.
+   */
+  private extractPathname(urlString: string | null | undefined): string | null {
+    if (!urlString) {
+      return null;
+    }
+
+    try {
+      const url = new URL(urlString);
+      return url.pathname;
+    } catch {
+      // Invalid URL - could be a path-only string or malformed
+      // If it looks like a path (starts with /), use it directly
+      if (urlString.startsWith("/")) {
+        return urlString;
+      }
+      return null;
+    }
   }
 
   /**

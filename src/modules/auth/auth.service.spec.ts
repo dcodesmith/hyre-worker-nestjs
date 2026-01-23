@@ -291,6 +291,49 @@ describe("AuthService", () => {
         expect(result).toBe(true);
       });
     });
+
+    describe("path matching security", () => {
+      it("should reject admin role for paths that contain but don't start with /admin", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/not-admin/dashboard",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject fleetOwner role for paths that contain but don't start with /fleet-owner", () => {
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/fake-fleet-owner/vehicles",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should handle malformed referer URLs gracefully", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "not-a-valid-url",
+        });
+        // Falls back to origin, which has no path, so defaults to user role
+        expect(result).toBe(true);
+      });
+
+      it("should handle path-only referer strings", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin/dashboard",
+        });
+        expect(result).toBe(true);
+      });
+    });
   });
 
   describe("validateExistingUserRole", () => {
