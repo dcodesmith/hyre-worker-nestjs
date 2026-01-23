@@ -234,7 +234,7 @@ export class AuthService implements OnModuleInit {
       await this.ensureUserHasRole(userId, role);
     } else if ((PROTECTED_ROLES as readonly RoleName[]).includes(role)) {
       // Protected roles cannot be assigned to new users
-      // This should never happen as the before hook validates this
+      // The before hook should prevent this, but this is a safety check
       throw new UnauthorizedException(`Protected role "${role}" cannot be assigned to new users`);
     } else {
       throw new UnauthorizedException(`Invalid role: ${role}`);

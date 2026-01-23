@@ -125,8 +125,10 @@ export function createAuth(options: AuthConfigOptions) {
           });
         }
 
-        // For send-verification-otp and sign-in, validate existing user has the role
-        if (email && path !== "/email-otp/verify-email") {
+        // Validate user can use this role:
+        // - New users can only request grantable roles (user, fleetOwner)
+        // - Existing users must already have the requested role
+        if (email) {
           const isValid = await roleValidation.validateExistingUserRole(email, role);
           if (!isValid) {
             throw new APIError("FORBIDDEN", {
@@ -134,7 +136,6 @@ export function createAuth(options: AuthConfigOptions) {
             });
           }
         }
-
       })
     : undefined;
 
@@ -167,7 +168,7 @@ export function createAuth(options: AuthConfigOptions) {
                 const role: RoleName = isValidRole(bodyRole) ? bodyRole : USER;
 
                 // Assign the role to the newly created user
-                // Role was already validated in the before hook
+                // Protected roles were already rejected in the before hook via validateExistingUserRole()
                 await roleValidation.assignRoleToNewUser(user.id, role);
               },
             },
