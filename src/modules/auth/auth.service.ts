@@ -58,6 +58,11 @@ export class AuthService implements OnModuleInit {
       secureCookies: nodeEnv !== "development",
       enableRateLimit: true,
       sendOTPEmail: this.authEmailService.sendOTPEmail.bind(this.authEmailService),
+      roleValidation: {
+        validateRoleForClient: this.validateRoleForClient.bind(this),
+        validateExistingUserRole: this.validateExistingUserRole.bind(this),
+        assignRoleOnVerify: this.assignRoleOnVerify.bind(this),
+      },
     });
 
     this.logger.log("Auth service initialized successfully");
