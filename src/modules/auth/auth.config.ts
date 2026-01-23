@@ -21,8 +21,8 @@ export interface RoleValidationCallbacks {
   validateRoleForClient: (params: ValidateRoleForClientParams) => boolean;
   /** Validates that an existing user has the requested role */
   validateExistingUserRole: (email: string, role: RoleName) => Promise<boolean>;
-  /** Assigns or verifies a role after successful OTP verification */
-  assignRoleOnVerify: (userId: string, role: RoleName) => Promise<void>;
+  /** Assigns a role to a newly created user (called from databaseHooks.user.create.after) */
+  assignRoleToNewUser: (userId: string, role: RoleName) => Promise<void>;
 }
 
 export interface AuthConfigOptions {
@@ -45,11 +45,6 @@ const ROLE_VALIDATED_PATHS = [
   "/email-otp/verify-email",
   "/sign-in/email-otp",
 ] as const;
-
-/**
- * Paths where role assignment happens after successful verification.
- */
-const ROLE_ASSIGNMENT_PATHS = ["/email-otp/verify-email", "/sign-in/email-otp"] as const;
 
 /**
  * Safely extracts email from an unknown body type.
@@ -140,33 +135,6 @@ export function createAuth(options: AuthConfigOptions) {
           }
         }
 
-        // Role will be extracted again in after hook from request body
-      })
-    : undefined;
-
-  // Create after hook middleware for role assignment
-  const afterHook = roleValidation
-    ? createAuthMiddleware(async (ctx) => {
-        const path = ctx.path;
-
-        // Only process paths that need role assignment
-        if (!ROLE_ASSIGNMENT_PATHS.includes(path as (typeof ROLE_ASSIGNMENT_PATHS)[number])) {
-          return;
-        }
-
-        // Extract role from request body (same as before hook)
-        const { role } = extractRoleParams(ctx);
-
-        // Try to get user ID from newSession (for sign-in flows) or from returned response
-        const context = ctx.context as {
-          newSession?: { user?: { id?: string } };
-          returned?: { user?: { id?: string } };
-        };
-        const userId = context.newSession?.user?.id || context.returned?.user?.id;
-
-        if (userId) {
-          await roleValidation.assignRoleOnVerify(userId, role);
-        }
       })
     : undefined;
 
@@ -183,13 +151,29 @@ export function createAuth(options: AuthConfigOptions) {
         maxAge: 60 * 5, // 5 minutes
       },
     },
-    hooks:
-      beforeHook || afterHook
-        ? {
-            before: beforeHook,
-            after: afterHook,
-          }
-        : undefined,
+    hooks: beforeHook
+      ? {
+          before: beforeHook,
+        }
+      : undefined,
+    databaseHooks: roleValidation
+      ? {
+          user: {
+            create: {
+              async after(user, context) {
+                // Extract role from request body, defaulting to USER
+                // The context contains the endpoint request information
+                const bodyRole = extractRole(context?.body);
+                const role: RoleName = isValidRole(bodyRole) ? bodyRole : USER;
+
+                // Assign the role to the newly created user
+                // Role was already validated in the before hook
+                await roleValidation.assignRoleToNewUser(user.id, role);
+              },
+            },
+          },
+        }
+      : undefined,
     plugins: [
       emailOTP({
         expiresIn: 600, // 10 minutes

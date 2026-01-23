@@ -91,7 +91,6 @@ describe("Auth E2E Tests", () => {
 
   describe("POST /auth/api/email-otp/send-verification-otp", () => {
     beforeEach(async () => {
-      // Clear rate limits before each OTP test to ensure clean state
       await clearRateLimits();
     });
 
@@ -127,7 +126,7 @@ describe("Auth E2E Tests", () => {
         .send({ email: "not-an-email", type: "sign-in" });
 
       // Better Auth returns 400 for validation errors
-      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     });
   });
 
@@ -152,7 +151,7 @@ describe("Auth E2E Tests", () => {
         .send({ email: testEmail, otp: "000000" });
 
       // Should fail verification
-      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     });
 
     it("should verify correct OTP and return session with cookies", async () => {
@@ -251,7 +250,6 @@ describe("Auth E2E Tests", () => {
 
   describe("Rate limiting", () => {
     beforeEach(async () => {
-      // Clear rate limits to start fresh for rate limit tests
       await clearRateLimits();
     });
 
@@ -298,25 +296,13 @@ describe("Auth E2E Tests", () => {
         expect(response.body.success).toBe(true);
       });
 
-      it("should reject fleetOwner role for mobile client", async () => {
-        const testEmail = uniqueEmail("mobile-fleet");
+      it.each(["fleetOwner", "admin"])("should reject %s role for mobile client", async (role) => {
+        const testEmail = uniqueEmail(`mobile-${role}`);
 
         const response = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
-          .send({ email: testEmail, type: "sign-in", role: "fleetOwner" });
-
-        expect(response.status).toBe(HttpStatus.FORBIDDEN);
-        expect(response.body.message).toContain("not allowed from this client");
-      });
-
-      it("should reject admin role for mobile client", async () => {
-        const testEmail = uniqueEmail("mobile-admin");
-
-        const response = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
-          .set("X-Client-Type", "mobile")
-          .send({ email: testEmail, type: "sign-in", role: "admin" });
+          .send({ email: testEmail, type: "sign-in", role });
 
         expect(response.status).toBe(HttpStatus.FORBIDDEN);
         expect(response.body.message).toContain("not allowed from this client");
@@ -324,9 +310,6 @@ describe("Auth E2E Tests", () => {
     });
 
     describe("Web client with Origin header", () => {
-      // Note: TRUSTED_ORIGINS must include these test origins in the test environment
-      // The default config should allow localhost origins in development
-
       it("should allow user role for web client from trusted origin", async () => {
         const testEmail = uniqueEmail("web-user");
 
@@ -335,13 +318,8 @@ describe("Auth E2E Tests", () => {
           .set("Origin", "http://localhost:3000")
           .send({ email: testEmail, type: "sign-in", role: "user" });
 
-        // May succeed or fail depending on TRUSTED_ORIGINS config
-        // If origin not trusted, will get 403
-        if (response.status === HttpStatus.FORBIDDEN) {
-          expect(response.body.message).toContain("not allowed from this client");
-        } else {
-          expect(response.status).toBe(HttpStatus.OK);
-        }
+        expect(response.status).toBe(HttpStatus.OK);
+        expect(response.body.success).toBe(true);
       });
 
       it("should reject requests from untrusted origin", async () => {

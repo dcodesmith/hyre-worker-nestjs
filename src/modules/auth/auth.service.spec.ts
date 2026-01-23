@@ -658,7 +658,7 @@ describe("AuthService", () => {
     });
   });
 
-  describe("assignRoleOnVerify", () => {
+  describe("assignRoleToNewUser", () => {
     beforeEach(async () => {
       await setupTestModule({
         SESSION_SECRET: "test-secret-at-least-32-characters-long",
@@ -680,7 +680,7 @@ describe("AuthService", () => {
       });
       mockDatabaseService.user.update.mockResolvedValue({});
 
-      await service.assignRoleOnVerify("user-1", USER);
+      await service.assignRoleToNewUser("user-1", USER);
 
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
@@ -695,7 +695,7 @@ describe("AuthService", () => {
       });
       mockDatabaseService.user.update.mockResolvedValue({});
 
-      await service.assignRoleOnVerify("user-1", FLEET_OWNER);
+      await service.assignRoleToNewUser("user-1", FLEET_OWNER);
 
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
@@ -709,40 +709,30 @@ describe("AuthService", () => {
         roles: [{ name: USER }],
       });
 
-      await service.assignRoleOnVerify("user-1", USER);
+      await service.assignRoleToNewUser("user-1", USER);
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
 
-    it("should throw for admin role if user does not have it (protected)", async () => {
-      mockDatabaseService.user.findUnique.mockResolvedValue({
-        id: "user-1",
-        roles: [{ name: USER }],
-      });
-
-      await expect(service.assignRoleOnVerify("user-1", ADMIN)).rejects.toThrow(
-        UnauthorizedException,
-      );
-    });
-
-    it("should not throw for admin role if user already has it", async () => {
-      mockDatabaseService.user.findUnique.mockResolvedValue({
-        id: "user-1",
-        roles: [{ name: ADMIN }],
-      });
-
-      await expect(service.assignRoleOnVerify("user-1", ADMIN)).resolves.not.toThrow();
-      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
-    });
-
-    it("should throw for staff role if user does not have it (protected)", async () => {
+    it("should throw for admin role (protected roles cannot be assigned to new users)", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue({
         id: "user-1",
         roles: [],
       });
 
-      await expect(service.assignRoleOnVerify("user-1", STAFF)).rejects.toThrow(
-        UnauthorizedException,
+      await expect(service.assignRoleToNewUser("user-1", ADMIN)).rejects.toThrow(
+        'Protected role "admin" cannot be assigned to new users',
+      );
+    });
+
+    it("should throw for staff role (protected roles cannot be assigned to new users)", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "user-1",
+        roles: [],
+      });
+
+      await expect(service.assignRoleToNewUser("user-1", STAFF)).rejects.toThrow(
+        'Protected role "staff" cannot be assigned to new users',
       );
     });
   });
