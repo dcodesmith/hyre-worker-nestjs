@@ -1,5 +1,11 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
 import { AuthService } from "../auth.service";
@@ -44,7 +50,9 @@ export class SessionGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (!this.authService.isInitialized) {
-      throw new UnauthorizedException("Authentication service is not available");
+      throw new ServiceUnavailableException(
+        "Authentication service is not configured. Contact support.",
+      );
     }
 
     const request = context.switchToHttp().getRequest<Request>();

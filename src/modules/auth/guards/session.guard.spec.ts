@@ -1,4 +1,8 @@
-import { ExecutionContext, UnauthorizedException } from "@nestjs/common";
+import {
+  ExecutionContext,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthService } from "../auth.service";
@@ -111,11 +115,13 @@ describe("SessionGuard", () => {
       await setupTestModule(false);
     });
 
-    it("should throw UnauthorizedException", async () => {
+    it("should throw ServiceUnavailableException", async () => {
       const context = createMockExecutionContext();
 
       await expect(guard.canActivate(context)).rejects.toThrow(
-        new UnauthorizedException("Authentication service is not available"),
+        new ServiceUnavailableException(
+          "Authentication service is not configured. Contact support.",
+        ),
       );
     });
   });
