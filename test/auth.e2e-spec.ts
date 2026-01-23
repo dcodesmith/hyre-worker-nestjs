@@ -465,7 +465,7 @@ describe("Auth E2E Tests", () => {
 
     describe("Role assignment after verification", () => {
       it("should assign user role after successful OTP verification", async () => {
-        const testEmail = uniqueEmail("role-assign");
+        const testEmail = uniqueEmail("role-assign-user");
 
         // Send OTP with user role
         const sendResponse = await request(app.getHttpServer())
@@ -499,6 +499,45 @@ describe("Auth E2E Tests", () => {
 
         expect(user).toBeDefined();
         expect(user?.roles.some((r) => r.name === "user")).toBe(true);
+      });
+
+      it("should assign fleetOwner role after successful OTP verification", async () => {
+        const testEmail = uniqueEmail("role-assign-fleet");
+
+        // Send OTP with fleetOwner role from fleet-owner path
+        const sendResponse = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/fleet-owner/signup")
+          .send({ email: testEmail, type: "sign-in", role: "fleetOwner" });
+
+        expect(sendResponse.status).toBe(HttpStatus.OK);
+
+        // Get OTP from database
+        const verification = await databaseService.verification.findFirst({
+          where: { identifier: `sign-in-otp-${testEmail}` },
+          orderBy: { createdAt: "desc" },
+        });
+        const otp = verification?.value.split(":")[0];
+
+        // Verify OTP with fleetOwner role
+        const verifyResponse = await request(app.getHttpServer())
+          .post("/auth/api/sign-in/email-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/fleet-owner/signup")
+          .send({ email: testEmail, otp, role: "fleetOwner" });
+
+        expect(verifyResponse.status).toBe(HttpStatus.OK);
+        expect(verifyResponse.body.user).toBeDefined();
+
+        // Check that user has the fleetOwner role in database (NOT just user role)
+        const user = await databaseService.user.findUnique({
+          where: { email: testEmail },
+          include: { roles: { select: { name: true } } },
+        });
+
+        expect(user).toBeDefined();
+        expect(user?.roles.some((r) => r.name === "fleetOwner")).toBe(true);
       });
     });
 

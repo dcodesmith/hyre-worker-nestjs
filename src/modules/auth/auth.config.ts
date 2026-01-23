@@ -25,6 +25,64 @@ export interface RoleValidationCallbacks {
   assignRoleToNewUser: (userId: string, role: RoleName) => Promise<void>;
 }
 
+/**
+ * In-memory cache for pending role assignments.
+ *
+ * This cache bridges the gap between the before hook and database hook:
+ * - Before hook has access to full request body (including custom 'role' field)
+ * - Database hook only receives validated body (Better Auth strips unknown fields)
+ *
+ * Flow:
+ * 1. Before hook validates role and stores: setPendingRole(email, role)
+ * 2. User is created by Better Auth
+ * 3. Database hook retrieves and deletes: consumePendingRole(email)
+ *
+ * TTL cleanup prevents memory leaks from abandoned OTP flows.
+ */
+const pendingRoles = new Map<string, { role: RoleName; timestamp: number }>();
+const PENDING_ROLE_TTL_MS = 10 * 60 * 1000; // 10 minutes (matches OTP expiry)
+
+/**
+ * Cleans up expired pending role entries to prevent memory leaks.
+ */
+function cleanupExpiredPendingRoles(): void {
+  const now = Date.now();
+  for (const [email, entry] of pendingRoles) {
+    if (now - entry.timestamp > PENDING_ROLE_TTL_MS) {
+      pendingRoles.delete(email);
+    }
+  }
+}
+
+/**
+ * Stores a pending role for an email address.
+ * Called from the before hook after successful validation.
+ */
+function setPendingRole(email: string, role: RoleName): void {
+  // Clean up old entries periodically to prevent unbounded growth
+  if (pendingRoles.size > 100) {
+    cleanupExpiredPendingRoles();
+  }
+  pendingRoles.set(email, { role, timestamp: Date.now() });
+}
+
+/**
+ * Retrieves and removes the pending role for an email address.
+ * Called from the database hook when a new user is created.
+ * Returns USER as default if no valid pending role exists.
+ */
+function consumePendingRole(email: string): RoleName {
+  const entry = pendingRoles.get(email);
+  if (entry) {
+    pendingRoles.delete(email);
+    // Only return role if not expired
+    if (Date.now() - entry.timestamp <= PENDING_ROLE_TTL_MS) {
+      return entry.role;
+    }
+  }
+  return USER;
+}
+
 export interface AuthConfigOptions {
   prisma: PrismaClient;
   sessionSecret: string;
@@ -135,6 +193,11 @@ export function createAuth(options: AuthConfigOptions) {
               message: `User does not have the "${role}" role`,
             });
           }
+
+          // Store the validated role for the database hook to retrieve later.
+          // This is necessary because Better Auth's email-otp plugin strips
+          // custom fields (like 'role') from the request body during validation.
+          setPendingRole(email, role);
         }
       })
     : undefined;
@@ -161,11 +224,11 @@ export function createAuth(options: AuthConfigOptions) {
       ? {
           user: {
             create: {
-              async after(user, context) {
-                // Extract role from request body, defaulting to USER
-                // The context contains the endpoint request information
-                const bodyRole = extractRole(context?.body);
-                const role: RoleName = isValidRole(bodyRole) ? bodyRole : USER;
+              async after(user) {
+                // Retrieve the role that was stored by the before hook.
+                // Better Auth's email-otp plugin strips custom fields from the body,
+                // so we use the pendingRoles cache to pass the role between hooks.
+                const role = consumePendingRole(user.email);
 
                 // Assign the role to the newly created user
                 // Protected roles were already rejected in the before hook via validateExistingUserRole()
