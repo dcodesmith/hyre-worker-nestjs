@@ -38,6 +38,7 @@
     "@react-email/components": "^0.3.3",
     "@react-email/render": "^1.2.1",
     "axios": "^1.11.0",
+    "better-auth": "^1.4.17",
     "bullmq": "^5.63.0",
     "date-fns": "^4.1.0",
     "ioredis": "^5.7.0",

@@ -5,6 +5,7 @@ import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
+import type { EnvConfig } from "./config/env.config";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -14,7 +15,18 @@ async function bootstrap() {
 
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-    const configService = app.get(ConfigService);
+    const configService = app.get(ConfigService<EnvConfig>);
+
+    // Configure CORS for auth endpoints (if TRUSTED_ORIGINS is set)
+    const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true });
+    if (trustedOrigins) {
+      app.enableCors({
+        origin: trustedOrigins.split(","),
+        credentials: true,
+        allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+        exposedHeaders: ["Set-Cookie"],
+      });
+    }
 
     // Get HttpAdapterHost for platform-agnostic exception filter
     const httpAdapterHost = app.get(HttpAdapterHost);
@@ -24,9 +36,9 @@ async function bootstrap() {
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     app.enableShutdownHooks();
-    const port = configService.get<number>("PORT", 3000);
-    const host = configService.get<string>("HOST", "0.0.0.0");
-    const timezone = configService.get<string>("TZ");
+    const port = configService.get("PORT", { infer: true });
+    const host = configService.get("HOST", { infer: true });
+    const timezone = configService.get("TZ", { infer: true });
 
     await app.listen(port, host);
 

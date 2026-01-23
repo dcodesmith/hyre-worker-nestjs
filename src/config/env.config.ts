@@ -4,6 +4,7 @@ import { z } from "zod";
 const logger = new Logger("EnvConfig");
 
 export const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.url("REDIS_URL must be a valid URL"),
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
@@ -11,6 +12,7 @@ export const envSchema = z.object({
 
   APP_NAME: z.string().min(1, "APP_NAME is required"),
   PORT: z.coerce.number().default(3000),
+  HOST: z.string().default("0.0.0.0"),
   TZ: z
     .string()
     .default("Africa/Lagos")
@@ -55,6 +57,11 @@ export const envSchema = z.object({
     .string()
     .min(8, "BULL_BOARD_PASSWORD must be at least 8 characters")
     .optional(),
+
+  // Auth configuration (optional - only required when AuthModule is used)
+  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters").optional(),
+  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL").optional(),
+  TRUSTED_ORIGINS: z.string().min(1, "TRUSTED_ORIGINS is required").optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
