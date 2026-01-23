@@ -15,6 +15,7 @@ import { PaymentModule } from "./modules/payment/payment.module";
 import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
+import { AuthModule } from "./modules/auth/auth.module";
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     HealthModule,
     JobModule,
     ReferralModule,
+    AuthModule,
   ],
 })
 export class AppModule {}
