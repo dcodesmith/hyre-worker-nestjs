@@ -173,12 +173,14 @@ export class AuthService implements OnModuleInit {
    * @throws UnauthorizedException if user doesn't have a protected role
    */
   async assignRoleOnVerify(userId: string, role: RoleName): Promise<void> {
-    if (PROTECTED_ROLES.includes(role)) {
+    if ((PROTECTED_ROLES as readonly RoleName[]).includes(role)) {
       // Protected roles: validate only, don't grant
       await this.verifyUserHasRole(userId, role);
-    } else if (GRANTABLE_ROLES.includes(role)) {
+    } else if ((GRANTABLE_ROLES as readonly RoleName[]).includes(role)) {
       // Grantable roles: auto-grant if missing
       await this.ensureUserHasRole(userId, role);
+    } else {
+      throw new UnauthorizedException(`Invalid role: ${role}`);
     }
   }
 
