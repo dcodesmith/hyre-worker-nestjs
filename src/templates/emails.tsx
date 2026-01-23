@@ -268,3 +268,36 @@ export async function renderBookingReminderEmail(
     </EmailTemplate>,
   );
 }
+
+export interface AuthOTPEmailProps {
+  readonly otp: string;
+}
+
+export async function renderAuthOTPEmail({ otp }: AuthOTPEmailProps) {
+  const previewText = `Your verification code is ${otp}`;
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="Verification Code">
+      <Heading as="h2" className="text-xl font-semibold mb-4 text-center">
+        Your Verification Code
+      </Heading>
+
+      <Text className="mb-4 text-center text-gray-600">
+        Use the code below to complete your sign in. This code will expire in 10 minutes.
+      </Text>
+
+      <Section className="bg-gray-50 border border-gray-200 rounded-lg p-6 my-6 text-center">
+        <Text
+          className="text-4xl font-bold tracking-widest text-gray-900 m-0"
+          style={{ letterSpacing: "0.5em" }}
+        >
+          {otp}
+        </Text>
+      </Section>
+
+      <Text className="text-sm text-gray-500 text-center">
+        If you didn't request this code, you can safely ignore this email.
+      </Text>
+    </EmailTemplate>,
+  );
+}
