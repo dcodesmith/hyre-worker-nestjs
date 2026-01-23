@@ -199,7 +199,7 @@ export class AuthService implements OnModuleInit {
 
     if (!user) {
       this.logger.warn(`Cannot assign role: user ${userId} not found`);
-      return;
+      throw new Error(`Cannot assign role: user ${userId} not found`);
     }
 
     const hasRole = user.roles.some((r) => r.name === role);

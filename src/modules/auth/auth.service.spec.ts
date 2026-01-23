@@ -499,10 +499,12 @@ describe("AuthService", () => {
       };
     });
 
-    it("should do nothing if user not found", async () => {
+    it("should throw error if user not found", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue(null);
 
-      await service.ensureUserHasRole("nonexistent", USER);
+      await expect(service.ensureUserHasRole("nonexistent", USER)).rejects.toThrow(
+        "Cannot assign role: user nonexistent not found",
+      );
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
