@@ -333,6 +333,164 @@ describe("AuthService", () => {
         });
         expect(result).toBe(true);
       });
+
+      it("should reject admin role for paths like /administrator (no segment boundary)", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/administrator",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject admin role for paths like /admin-panel (no segment boundary)", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/admin-panel",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should allow admin role for exact /admin path", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/admin",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should reject fleetOwner role for paths like /fleet-owners (no segment boundary)", () => {
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/fleet-owners",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should allow fleetOwner role for exact /fleet-owner path", () => {
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "https://example.com/fleet-owner",
+        });
+        expect(result).toBe(true);
+      });
+    });
+
+    describe("untrusted origin validation", () => {
+      it("should reject requests from untrusted origins", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://evil.com",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject spoofed origin attempting to get fleetOwner role", () => {
+        // This is the specific attack vector: attacker spoofs origin and referer
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://evil.com",
+          clientType: WEB,
+          referer: "https://evil.com/fleet-owner/dashboard",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject spoofed origin attempting to get admin role", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://attacker.com",
+          clientType: WEB,
+          referer: "https://attacker.com/admin/dashboard",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject malformed origin URLs", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "not-a-valid-url",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject origin with different port than trusted", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://example.com:8080",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject origin with different protocol than trusted", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "http://example.com",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should reject subdomain when only root domain is trusted", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://sub.example.com",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
+    });
+
+    describe("trusted origin with multiple entries", () => {
+      beforeEach(async () => {
+        await setupTestModule({
+          SESSION_SECRET: "test-secret-at-least-32-characters-long",
+          AUTH_BASE_URL: "https://api.example.com",
+          TRUSTED_ORIGINS: [
+            "https://example.com",
+            "https://app.example.com",
+            "https://admin.example.com",
+          ],
+          NODE_ENV: "production",
+        });
+      });
+
+      it("should allow any trusted origin", () => {
+        const result1 = service.validateRoleForClient({
+          role: USER,
+          origin: "https://example.com",
+          clientType: WEB,
+        });
+        expect(result1).toBe(true);
+
+        const result2 = service.validateRoleForClient({
+          role: USER,
+          origin: "https://app.example.com",
+          clientType: WEB,
+        });
+        expect(result2).toBe(true);
+      });
+
+      it("should still reject untrusted origins when multiple are configured", () => {
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://untrusted.example.com",
+          clientType: WEB,
+        });
+        expect(result).toBe(false);
+      });
     });
   });
 

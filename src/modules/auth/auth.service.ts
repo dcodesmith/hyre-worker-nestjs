@@ -20,6 +20,7 @@ import { AuthEmailService } from "./auth-email.service";
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
   private _auth: Auth | null = null;
+  private trustedOrigins: string[] = [];
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -40,6 +41,8 @@ export class AuthService implements OnModuleInit {
       );
       return;
     }
+
+    this.trustedOrigins = trustedOrigins;
 
     this._auth = createAuth({
       prisma: this.databaseService,
@@ -77,7 +80,7 @@ export class AuthService implements OnModuleInit {
    *
    * Rules:
    * - Mobile clients can only request "user" role
-   * - Web clients must have an Origin header
+   * - Web clients must have an Origin header from a TRUSTED_ORIGINS source
    * - Web clients accessing /admin/* can request "admin" or "staff"
    * - Web clients accessing /fleet-owner/* can request "fleetOwner"
    * - Web clients accessing /auth (default) can only request "user"
@@ -93,9 +96,14 @@ export class AuthService implements OnModuleInit {
       return role === USER;
     }
 
-    // Web app: must have Origin header
+    // Web app: must have Origin header from a trusted source
     if (!origin) {
       // No origin and not mobile = reject for security
+      return false;
+    }
+
+    // Validate origin is in the trusted origins list
+    if (!this.isTrustedOrigin(origin)) {
       return false;
     }
 
@@ -103,13 +111,14 @@ export class AuthService implements OnModuleInit {
     const pathname = this.extractPathname(referer) || this.extractPathname(origin) || "";
 
     // Admin portal: admin and staff roles only
-    // Use startsWith for stricter matching (prevents "/not-admin" matching)
-    if (pathname.startsWith("/admin")) {
+    // Enforce segment boundary: exact match or subtree with trailing slash
+    if (pathname === "/admin" || pathname.startsWith("/admin/")) {
       return role === ADMIN || role === STAFF;
     }
 
     // Fleet owner portal: fleetOwner role only
-    if (pathname.startsWith("/fleet-owner")) {
+    // Enforce segment boundary: exact match or subtree with trailing slash
+    if (pathname === "/fleet-owner" || pathname.startsWith("/fleet-owner/")) {
       return role === FLEET_OWNER;
     }
 
@@ -136,6 +145,32 @@ export class AuthService implements OnModuleInit {
         return urlString;
       }
       return null;
+    }
+  }
+
+  /**
+   * Validates that the provided origin is in the trusted origins list.
+   * Compares the full origin (protocol://host:port) for security.
+   *
+   * @param origin - The origin header value to validate
+   * @returns true if the origin is trusted, false otherwise
+   */
+  private isTrustedOrigin(origin: string): boolean {
+    try {
+      const originUrl = new URL(origin);
+      const originBase = originUrl.origin; // Gets protocol://host:port
+
+      return this.trustedOrigins.some((trusted) => {
+        try {
+          const trustedUrl = new URL(trusted);
+          return trustedUrl.origin === originBase;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      // Invalid origin URL
+      return false;
     }
   }
 
