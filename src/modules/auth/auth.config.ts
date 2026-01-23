@@ -9,10 +9,12 @@ export interface AuthConfigOptions {
   authBaseUrl: string;
   trustedOrigins: string[];
   sendOTPEmail: (email: string, otp: string) => Promise<void>;
+  secureCookies: boolean;
 }
 
 export function createAuth(options: AuthConfigOptions) {
-  const { prisma, sessionSecret, authBaseUrl, trustedOrigins, sendOTPEmail } = options;
+  const { prisma, sessionSecret, authBaseUrl, trustedOrigins, sendOTPEmail, secureCookies } =
+    options;
 
   return betterAuth({
     database: prismaAdapter(prisma, { provider: "postgresql" }),
@@ -43,14 +45,14 @@ export function createAuth(options: AuthConfigOptions) {
       storage: "database",
       customRules: {
         "/email-otp/send-verification-otp": { window: 60, max: 5 },
-        "/email-otp/verify-email": { window: 60, max: 10 },
+        "/email-otp/check-verification-otp": { window: 60, max: 10 },
       },
     },
     advanced: {
       cookiePrefix: "", // Web app handles __Host- prefix
       defaultCookieAttributes: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: secureCookies,
         sameSite: "lax",
       },
     },

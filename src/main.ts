@@ -36,8 +36,8 @@ async function bootstrap() {
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     app.enableShutdownHooks();
-    const port = configService.get("PORT", { infer: true }) ?? 3000;
-    const host = configService.get("HOST", { infer: true }) ?? "0.0.0.0";
+    const port = configService.get("PORT", { infer: true });
+    const host = configService.get("HOST", { infer: true });
     const timezone = configService.get("TZ", { infer: true });
 
     await app.listen(port, host);

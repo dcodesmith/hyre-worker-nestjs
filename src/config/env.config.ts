@@ -4,6 +4,7 @@ import { z } from "zod";
 const logger = new Logger("EnvConfig");
 
 export const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.url("REDIS_URL must be a valid URL"),
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
