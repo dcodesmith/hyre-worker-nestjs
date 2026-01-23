@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { maskEmail } from "../../shared/helper";
 import { renderAuthOTPEmail } from "../../templates/emails";
 import { EmailService } from "../notification/email.service";
 
@@ -9,7 +10,8 @@ export class AuthEmailService {
   constructor(private readonly emailService: EmailService) {}
 
   async sendOTPEmail(email: string, otp: string): Promise<void> {
-    this.logger.log(`Sending OTP email to ${email}`);
+    const maskedEmail = maskEmail(email);
+    this.logger.log(`Sending OTP email to ${maskedEmail}`);
 
     const html = await renderAuthOTPEmail({ otp });
 
@@ -19,6 +21,6 @@ export class AuthEmailService {
       html,
     });
 
-    this.logger.log(`OTP email sent successfully to ${email}`);
+    this.logger.log(`OTP email sent successfully to ${maskedEmail}`);
   }
 }

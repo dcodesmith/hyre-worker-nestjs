@@ -274,10 +274,8 @@ export interface AuthOTPEmailProps {
 }
 
 export async function renderAuthOTPEmail({ otp }: AuthOTPEmailProps) {
-  const previewText = `Your verification code is ${otp}`;
-
   return await render(
-    <EmailTemplate previewText={previewText} pageTitle="Verification Code">
+    <EmailTemplate previewText="Your verification code" pageTitle="Verification Code">
       <Heading as="h2" className="text-xl font-semibold mb-4 text-center">
         Your Verification Code
       </Heading>

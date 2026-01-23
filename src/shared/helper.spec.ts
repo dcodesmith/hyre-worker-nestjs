@@ -1,6 +1,6 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { formatCurrency, getCustomerDetails, getUserDisplayName } from "./helper";
+import { formatCurrency, getCustomerDetails, getUserDisplayName, maskEmail } from "./helper";
 import {
   createBooking,
   createBookingLeg,
@@ -11,6 +11,32 @@ import {
 } from "./helper.fixtures";
 
 describe("Helper Functions", () => {
+  describe("maskEmail", () => {
+    it("should mask email with single character local part", () => {
+      expect(maskEmail("a@example.com")).toBe("a***@example.com");
+    });
+
+    it("should mask email with multi-character local part", () => {
+      expect(maskEmail("user@example.com")).toBe("u***@example.com");
+    });
+
+    it("should mask email with long local part", () => {
+      expect(maskEmail("verylongemail@test.org")).toBe("v***@test.org");
+    });
+
+    it("should preserve domain", () => {
+      expect(maskEmail("john@subdomain.example.co.uk")).toBe("j***@subdomain.example.co.uk");
+    });
+
+    it("should return *** for invalid email without @", () => {
+      expect(maskEmail("invalidemail")).toBe("***");
+    });
+
+    it("should handle empty local part", () => {
+      expect(maskEmail("@example.com")).toBe("***@example.com");
+    });
+  });
+
   describe("formatCurrency", () => {
     it("should handle zero amount", () => {
       expect(formatCurrency(0)).toContain("₦0");
