@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { ReminderModule } from "../reminder/reminder.module";
 import { StatusChangeModule } from "../status-change/status-change.module";
@@ -20,12 +19,6 @@ import { JobThrottlerGuard } from "./job-throttler.guard";
     StatusChangeModule,
   ],
   controllers: [JobController],
-  providers: [
-    JobService,
-    {
-      provide: APP_GUARD,
-      useClass: JobThrottlerGuard,
-    },
-  ],
+  providers: [JobService, JobThrottlerGuard],
 })
 export class JobModule {}

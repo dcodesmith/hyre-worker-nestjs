@@ -36,6 +36,7 @@ export class AuthService implements OnModuleInit {
       authBaseUrl,
       trustedOrigins,
       secureCookies: nodeEnv !== "development",
+      enableRateLimit: true,
       sendOTPEmail: this.authEmailService.sendOTPEmail.bind(this.authEmailService),
     });
 

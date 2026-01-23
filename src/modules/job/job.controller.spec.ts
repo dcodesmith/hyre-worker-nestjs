@@ -1,9 +1,12 @@
 import { ConfigService } from "@nestjs/config";
+import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
+import { ThrottlerStorage } from "@nestjs/throttler";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JobException } from "./errors";
 import { JobController } from "./job.controller";
 import { JobService } from "./job.service";
+import { JobThrottlerGuard } from "./job-throttler.guard";
 
 describe("JobController", () => {
   let controller: JobController;
@@ -32,6 +35,17 @@ describe("JobController", () => {
             get: mockConfigGet,
           },
         },
+        // Mock throttler dependencies for the guard
+        {
+          provide: "THROTTLER:MODULE_OPTIONS",
+          useValue: [{ name: "manual-triggers", ttl: 3600, limit: 1 }],
+        },
+        {
+          provide: ThrottlerStorage,
+          useValue: { increment: vi.fn(), get: vi.fn() },
+        },
+        Reflector,
+        JobThrottlerGuard,
       ],
     }).compile();
 
@@ -68,6 +82,17 @@ describe("JobController", () => {
             get: configGet,
           },
         },
+        // Mock throttler dependencies for the guard
+        {
+          provide: "THROTTLER:MODULE_OPTIONS",
+          useValue: [{ name: "manual-triggers", ttl: 3600, limit: 1 }],
+        },
+        {
+          provide: ThrottlerStorage,
+          useValue: { increment: vi.fn(), get: vi.fn() },
+        },
+        Reflector,
+        JobThrottlerGuard,
       ],
     }).compile();
     return module.get<JobController>(JobController);

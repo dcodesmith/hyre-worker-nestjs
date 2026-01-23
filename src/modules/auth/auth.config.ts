@@ -10,16 +10,25 @@ export interface AuthConfigOptions {
   trustedOrigins: string[];
   sendOTPEmail: (email: string, otp: string) => Promise<void>;
   secureCookies: boolean;
+  enableRateLimit: boolean;
 }
 
 export function createAuth(options: AuthConfigOptions) {
-  const { prisma, sessionSecret, authBaseUrl, trustedOrigins, sendOTPEmail, secureCookies } =
-    options;
+  const {
+    prisma,
+    sessionSecret,
+    authBaseUrl,
+    trustedOrigins,
+    sendOTPEmail,
+    secureCookies,
+    enableRateLimit,
+  } = options;
 
   return betterAuth({
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     secret: sessionSecret,
     baseURL: authBaseUrl,
+    basePath: "/auth/api",
     trustedOrigins,
     session: {
       expiresIn: 60 * 60 * 24 * 7, // 7 days
@@ -39,7 +48,7 @@ export function createAuth(options: AuthConfigOptions) {
       bearer(),
     ],
     rateLimit: {
-      enabled: true,
+      enabled: enableRateLimit,
       window: 60,
       max: 100,
       storage: "database",

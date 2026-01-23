@@ -46,16 +46,18 @@ export async function setup() {
       throw error;
     }
 
-    console.log("Running Prisma migrations on test database...");
+    console.log("Pushing Prisma schema to test database...");
 
     try {
-      execSync("npx prisma migrate deploy", {
+      // Use db push for e2e tests since it syncs the full schema without requiring migrations
+      // This ensures all tables (including auth tables) are created regardless of migration state
+      execSync("npx prisma db push --skip-generate", {
         env: prismaEnv,
         stdio: "inherit",
       });
-      console.log("Prisma migrations completed successfully");
+      console.log("Prisma schema push completed successfully");
     } catch (error) {
-      console.error("Prisma migration failed:", error);
+      console.error("Prisma schema push failed:", error);
       throw error;
     }
 

@@ -3,11 +3,12 @@ import { ConfigService } from "@nestjs/config";
 import { ApiKeyGuard } from "./api-key.guard";
 import { JobException } from "./errors";
 import { ValidateJobTypePipe } from "./job.dto";
+import { JobThrottlerGuard } from "./job-throttler.guard";
 import { JobType, JobTypeNames } from "./job.schema";
 import { JobService } from "./job.service";
 
 @Controller("job")
-@UseGuards(ApiKeyGuard)
+@UseGuards(ApiKeyGuard, JobThrottlerGuard)
 export class JobController {
   private readonly manualTriggersEnabled: boolean;
 
