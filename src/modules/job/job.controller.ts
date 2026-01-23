@@ -3,9 +3,9 @@ import { ConfigService } from "@nestjs/config";
 import { ApiKeyGuard } from "./api-key.guard";
 import { JobException } from "./errors";
 import { ValidateJobTypePipe } from "./job.dto";
-import { JobThrottlerGuard } from "./job-throttler.guard";
 import { JobType, JobTypeNames } from "./job.schema";
 import { JobService } from "./job.service";
+import { JobThrottlerGuard } from "./job-throttler.guard";
 
 @Controller("job")
 @UseGuards(ApiKeyGuard, JobThrottlerGuard)

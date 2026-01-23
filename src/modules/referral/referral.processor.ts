@@ -22,7 +22,9 @@ export class ReferralProcessor extends WorkerHost {
     try {
       if (job.name === PROCESS_REFERRAL_COMPLETION) {
         await this.referralService.processReferralCompletionForBooking(job.data.bookingId);
-        this.logger.log(`Referral completion processed successfully for booking ${job.data.bookingId}`);
+        this.logger.log(
+          `Referral completion processed successfully for booking ${job.data.bookingId}`,
+        );
         return { success: true };
       }
 

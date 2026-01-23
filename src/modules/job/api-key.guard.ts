@@ -1,7 +1,7 @@
+import { timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Request } from "express";
-import { timingSafeEqual } from "node:crypto";
 
 /**
  * Guard that validates API key from request headers.
