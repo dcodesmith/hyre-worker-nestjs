@@ -8,6 +8,18 @@ import {
   NormalisedBookingLegDetails,
 } from "../types";
 
+/**
+ * Masks an email address for safe logging (PII protection).
+ * Example: "user@example.com" -> "u***@example.com"
+ * Example: "ab@test.org" -> "a***@test.org"
+ */
+export function maskEmail(email: string): string {
+  const [localPart, domain] = email.split("@");
+  if (!domain) return "***";
+  const maskedLocal = localPart.length > 0 ? `${localPart[0]}***` : "***";
+  return `${maskedLocal}@${domain}`;
+}
+
 // Helper to generate a user-friendly name or email
 export function getUserDisplayName(
   booking: Partial<Omit<BookingWithRelations, "legs">>,
