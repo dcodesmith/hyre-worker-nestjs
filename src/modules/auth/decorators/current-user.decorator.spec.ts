@@ -6,7 +6,7 @@ import { AUTH_SESSION_KEY, AuthSession } from "../guards/session.guard";
 import { CurrentUser } from "./current-user.decorator";
 
 describe("CurrentUser Decorator", () => {
-  const mockUser: User = {
+  const mockUser: AuthSession["user"] = {
     id: "user-123",
     email: "test@example.com",
     name: "Test User",
@@ -14,6 +14,7 @@ describe("CurrentUser Decorator", () => {
     image: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    roles: ["user"],
   };
 
   const mockSessionData: Session = {
