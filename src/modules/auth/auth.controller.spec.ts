@@ -7,80 +7,85 @@ import { AuthService } from "./auth.service";
 
 describe("AuthController", () => {
   let controller: AuthController;
-  let authService: AuthService;
+  let mockGetSession: ReturnType<typeof vi.fn>;
 
-  const mockAuthService = {
-    isInitialized: true,
-    auth: {
-      api: {
-        getSession: vi.fn(),
-      },
+  const mockRequest = {
+    headers: {
+      cookie: "session=test-token",
     },
+  } as unknown as Request;
+
+  const createMockAuthService = (isInitialized: boolean) => {
+    mockGetSession = vi.fn();
+    return {
+      isInitialized,
+      auth: {
+        api: {
+          getSession: mockGetSession,
+        },
+      },
+    };
   };
 
-  beforeEach(async () => {
-    vi.clearAllMocks();
-
+  const setupTestModule = async (isInitialized: boolean) => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
         {
           provide: AuthService,
-          useValue: mockAuthService,
+          useValue: createMockAuthService(isInitialized),
         },
       ],
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
-    authService = module.get<AuthService>(AuthService);
-  });
+  };
 
-  it("should be defined", () => {
-    expect(controller).toBeDefined();
-  });
+  describe("when auth is initialized", () => {
+    beforeEach(async () => {
+      await setupTestModule(true);
+    });
 
-  describe("getSession", () => {
-    const mockRequest = {
-      headers: {
-        cookie: "session=test-token",
-      },
-    } as unknown as Request;
+    it("should be defined", () => {
+      expect(controller).toBeDefined();
+    });
 
-    it("should return session when authenticated", async () => {
-      const mockSession = {
-        user: { id: "user-123", email: "test@example.com" },
-        session: { id: "session-123", expiresAt: new Date() },
-      };
+    describe("getSession", () => {
+      it("should return session when authenticated", async () => {
+        const mockSession = {
+          user: { id: "user-123", email: "test@example.com" },
+          session: { id: "session-123", expiresAt: new Date() },
+        };
 
-      mockAuthService.auth.api.getSession.mockResolvedValueOnce(mockSession);
+        mockGetSession.mockResolvedValueOnce(mockSession);
 
-      const result = await controller.getSession(mockRequest);
+        const result = await controller.getSession(mockRequest);
 
-      expect(result).toEqual(mockSession);
-      expect(mockAuthService.auth.api.getSession).toHaveBeenCalledWith({
-        headers: mockRequest.headers,
+        expect(result).toEqual(mockSession);
+        expect(mockGetSession).toHaveBeenCalledWith({
+          headers: expect.any(Headers),
+        });
+      });
+
+      it("should throw UnauthorizedException when not authenticated", async () => {
+        mockGetSession.mockResolvedValueOnce(null);
+
+        await expect(controller.getSession(mockRequest)).rejects.toThrow(
+          new UnauthorizedException("Not authenticated"),
+        );
       });
     });
+  });
 
-    it("should throw UnauthorizedException when not authenticated", async () => {
-      mockAuthService.auth.api.getSession.mockResolvedValueOnce(null);
-
-      await expect(controller.getSession(mockRequest)).rejects.toThrow(UnauthorizedException);
-      await expect(controller.getSession(mockRequest)).rejects.toThrow("Not authenticated");
+  describe("when auth is not initialized", () => {
+    beforeEach(async () => {
+      await setupTestModule(false);
     });
 
-    it("should throw ServiceUnavailableException when auth not initialized", async () => {
-      mockAuthService.isInitialized = false;
-
+    it("should throw ServiceUnavailableException on getSession", async () => {
       await expect(controller.getSession(mockRequest)).rejects.toThrow(
-        ServiceUnavailableException,
+        new ServiceUnavailableException("Authentication service is not configured. Contact support."),
       );
-      await expect(controller.getSession(mockRequest)).rejects.toThrow(
-        "Authentication service is not configured",
-      );
-
-      // Reset for other tests
-      mockAuthService.isInitialized = true;
     });
   });
 });

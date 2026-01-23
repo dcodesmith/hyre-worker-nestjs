@@ -14,6 +14,13 @@ vi.mock("./auth.config", () => ({
   }),
 }));
 
+type AuthConfig = {
+  SESSION_SECRET?: string;
+  AUTH_BASE_URL?: string;
+  TRUSTED_ORIGINS?: string[];
+  NODE_ENV?: string;
+};
+
 describe("AuthService", () => {
   let service: AuthService;
 
@@ -22,35 +29,35 @@ describe("AuthService", () => {
     sendOTPEmail: vi.fn(),
   };
 
-  const createMockConfigService = (config: Record<string, string | undefined>) => ({
-    get: vi.fn((key: string) => config[key]),
-  });
+  const setupTestModule = async (config: AuthConfig = {}) => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: DatabaseService, useValue: mockDatabaseService },
+        { provide: AuthEmailService, useValue: mockAuthEmailService },
+        {
+          provide: ConfigService,
+          useValue: { get: vi.fn((key: string) => config[key as keyof AuthConfig]) },
+        },
+      ],
+    }).compile();
 
-  beforeEach(async () => {
+    service = module.get<AuthService>(AuthService);
+    service.onModuleInit();
+  };
+
+  beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe("when auth config is complete", () => {
     beforeEach(async () => {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          AuthService,
-          { provide: DatabaseService, useValue: mockDatabaseService },
-          { provide: AuthEmailService, useValue: mockAuthEmailService },
-          {
-            provide: ConfigService,
-            useValue: createMockConfigService({
-              SESSION_SECRET: "test-secret-at-least-32-characters-long",
-              AUTH_BASE_URL: "https://api.example.com",
-              TRUSTED_ORIGINS: "https://example.com,https://app.example.com",
-              NODE_ENV: "production",
-            }),
-          },
-        ],
-      }).compile();
-
-      service = module.get<AuthService>(AuthService);
-      service.onModuleInit();
+      await setupTestModule({
+        SESSION_SECRET: "test-secret-at-least-32-characters-long",
+        AUTH_BASE_URL: "https://api.example.com",
+        TRUSTED_ORIGINS: ["https://example.com", "https://app.example.com"],
+        NODE_ENV: "production",
+      });
     });
 
     it("should be defined", () => {
@@ -69,24 +76,7 @@ describe("AuthService", () => {
 
   describe("when auth config is incomplete", () => {
     beforeEach(async () => {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          AuthService,
-          { provide: DatabaseService, useValue: mockDatabaseService },
-          { provide: AuthEmailService, useValue: mockAuthEmailService },
-          {
-            provide: ConfigService,
-            useValue: createMockConfigService({
-              SESSION_SECRET: undefined,
-              AUTH_BASE_URL: undefined,
-              TRUSTED_ORIGINS: undefined,
-            }),
-          },
-        ],
-      }).compile();
-
-      service = module.get<AuthService>(AuthService);
-      service.onModuleInit();
+      await setupTestModule();
     });
 
     it("should not be initialized", () => {
@@ -102,24 +92,10 @@ describe("AuthService", () => {
 
   describe("when only some config is provided", () => {
     beforeEach(async () => {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          AuthService,
-          { provide: DatabaseService, useValue: mockDatabaseService },
-          { provide: AuthEmailService, useValue: mockAuthEmailService },
-          {
-            provide: ConfigService,
-            useValue: createMockConfigService({
-              SESSION_SECRET: "test-secret",
-              AUTH_BASE_URL: undefined,
-              TRUSTED_ORIGINS: "https://example.com",
-            }),
-          },
-        ],
-      }).compile();
-
-      service = module.get<AuthService>(AuthService);
-      service.onModuleInit();
+      await setupTestModule({
+        SESSION_SECRET: "test-secret",
+        TRUSTED_ORIGINS: ["https://example.com"],
+      });
     });
 
     it("should not be initialized when AUTH_BASE_URL is missing", () => {

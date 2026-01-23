@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from "node:http";
 import {
   All,
   Controller,
@@ -10,6 +11,19 @@ import {
 import { toNodeHandler } from "better-auth/node";
 import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
+
+/**
+ * Converts Express IncomingHttpHeaders to a Headers object.
+ * Normalizes string[] values to comma-separated strings and skips undefined values.
+ */
+function toHeaders(incomingHeaders: IncomingHttpHeaders): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(incomingHeaders)) {
+    if (value === undefined) continue;
+    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+  }
+  return headers;
+}
 
 @Controller("auth")
 export class AuthController {
@@ -39,7 +53,7 @@ export class AuthController {
     this.ensureAuthInitialized();
 
     const session = await this.authService.auth.api.getSession({
-      headers: req.headers as Record<string, string>,
+      headers: toHeaders(req.headers),
     });
 
     if (!session) {

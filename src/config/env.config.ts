@@ -61,7 +61,12 @@ export const envSchema = z.object({
   // Auth configuration (optional - only required when AuthModule is used)
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters").optional(),
   AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL").optional(),
-  TRUSTED_ORIGINS: z.string().min(1, "TRUSTED_ORIGINS is required").optional(),
+  TRUSTED_ORIGINS: z
+    .string()
+    .min(1, "TRUSTED_ORIGINS is required")
+    .transform((val) => val.split(",").map((origin) => origin.trim()).filter(Boolean))
+    .pipe(z.array(z.url("Each TRUSTED_ORIGIN must be a valid URL")).min(1, "At least one valid TRUSTED_ORIGIN is required"))
+    .optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

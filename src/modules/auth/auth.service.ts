@@ -19,10 +19,10 @@ export class AuthService implements OnModuleInit {
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
-    const trustedOriginsStr = this.configService.get("TRUSTED_ORIGINS", { infer: true });
+    const trustedOrigins = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
 
-    if (!sessionSecret || !authBaseUrl || !trustedOriginsStr) {
+    if (!sessionSecret || !authBaseUrl || !trustedOrigins?.length) {
       this.logger.warn(
         "Auth configuration incomplete. AuthService will not be initialized. " +
           "Set SESSION_SECRET, AUTH_BASE_URL, and TRUSTED_ORIGINS to enable auth.",
@@ -30,14 +30,12 @@ export class AuthService implements OnModuleInit {
       return;
     }
 
-    const trustedOrigins = trustedOriginsStr.split(",").map((origin) => origin.trim());
-
     this._auth = createAuth({
       prisma: this.databaseService,
       sessionSecret,
       authBaseUrl,
       trustedOrigins,
-      secureCookies: nodeEnv === "production",
+      secureCookies: nodeEnv !== "development",
       sendOTPEmail: this.authEmailService.sendOTPEmail.bind(this.authEmailService),
     });
 
