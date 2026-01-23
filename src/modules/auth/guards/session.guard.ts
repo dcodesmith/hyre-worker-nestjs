@@ -9,6 +9,7 @@ import {
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
 import { AuthService } from "../auth.service";
+import type { RoleName } from "../auth.types";
 
 /**
  * Converts Express IncomingHttpHeaders to a Headers object.
@@ -25,7 +26,7 @@ function toHeaders(incomingHeaders: IncomingHttpHeaders): Headers {
 export const AUTH_SESSION_KEY = "authSession";
 
 export interface AuthSession {
-  user: User;
+  user: User & { roles: RoleName[] };
   session: Session;
 }
 
@@ -64,8 +65,15 @@ export class SessionGuard implements CanActivate {
       throw new UnauthorizedException("Invalid or expired session");
     }
 
-    // Attach session to request for use by @CurrentUser decorator
-    (request as Request & { [AUTH_SESSION_KEY]: AuthSession })[AUTH_SESSION_KEY] = session;
+    // Fetch user roles from database
+    const roles = await this.authService.getUserRoles(session.user.id);
+
+    // Attach session with roles to request for use by @CurrentUser decorator
+    const authSession: AuthSession = {
+      user: { ...session.user, roles },
+      session: session.session,
+    };
+    (request as Request & { [AUTH_SESSION_KEY]: AuthSession })[AUTH_SESSION_KEY] = authSession;
 
     return true;
   }

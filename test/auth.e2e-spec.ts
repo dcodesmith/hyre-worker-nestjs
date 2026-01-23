@@ -246,6 +246,99 @@ describe("Auth E2E Tests", () => {
       expect(sessionResponse.body.session).toBeDefined();
       expect(sessionResponse.body.session.userId).toBe(sessionResponse.body.user.id);
     });
+
+    it("should return user roles in session response", async () => {
+      const testEmail = uniqueEmail("session-with-roles");
+
+      // Step 1: Send OTP with fleetOwner role
+      const sendResponse = await request(app.getHttpServer())
+        .post("/auth/api/email-otp/send-verification-otp")
+        .set("Origin", "http://localhost:3000")
+        .set("Referer", "http://localhost:3000/fleet-owner/signup")
+        .send({ email: testEmail, type: "sign-in", role: "fleetOwner" });
+
+      expect(sendResponse.status).toBe(HttpStatus.OK);
+
+      // Step 2: Get OTP from database
+      const verification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${testEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const otp = verification?.value.split(":")[0];
+
+      // Step 3: Verify OTP and sign in
+      const verifyResponse = await request(app.getHttpServer())
+        .post("/auth/api/sign-in/email-otp")
+        .set("Origin", "http://localhost:3000")
+        .set("Referer", "http://localhost:3000/fleet-owner/signup")
+        .send({ email: testEmail, otp, role: "fleetOwner" });
+
+      expect(verifyResponse.status).toBe(HttpStatus.OK);
+
+      // Extract session cookie
+      const cookies = verifyResponse.headers["set-cookie"];
+      const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
+
+      // Step 4: Access session endpoint and verify roles are included
+      const sessionResponse = await request(app.getHttpServer())
+        .get("/auth/session")
+        .set("Cookie", sessionCookie);
+
+      expect(sessionResponse.status).toBe(HttpStatus.OK);
+      expect(sessionResponse.body.user).toBeDefined();
+      expect(sessionResponse.body.user.email).toBe(testEmail);
+
+      // Verify roles array is included in response
+      expect(sessionResponse.body.user.roles).toBeDefined();
+      expect(Array.isArray(sessionResponse.body.user.roles)).toBe(true);
+      expect(sessionResponse.body.user.roles).toContain("fleetOwner");
+    });
+
+    it("should return multiple roles for admin user", async () => {
+      const testEmail = uniqueEmail("session-multi-roles");
+
+      // Step 1: Create a regular user first
+      const sendResponse = await request(app.getHttpServer())
+        .post("/auth/api/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: testEmail, type: "sign-in", role: "user" });
+
+      expect(sendResponse.status).toBe(HttpStatus.OK);
+
+      const verification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${testEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const otp = verification?.value.split(":")[0];
+
+      const verifyResponse = await request(app.getHttpServer())
+        .post("/auth/api/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: testEmail, otp, role: "user" });
+
+      expect(verifyResponse.status).toBe(HttpStatus.OK);
+
+      // Step 2: Manually grant admin role (simulating admin-assigned privilege)
+      await databaseService.user.update({
+        where: { email: testEmail },
+        data: { roles: { connect: { name: "admin" } } },
+      });
+
+      // Extract session cookie
+      const cookies = verifyResponse.headers["set-cookie"];
+      const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
+
+      // Step 3: Access session endpoint and verify both roles are included
+      const sessionResponse = await request(app.getHttpServer())
+        .get("/auth/session")
+        .set("Cookie", sessionCookie);
+
+      expect(sessionResponse.status).toBe(HttpStatus.OK);
+      expect(sessionResponse.body.user.roles).toBeDefined();
+      expect(sessionResponse.body.user.roles).toContain("user");
+      expect(sessionResponse.body.user.roles).toContain("admin");
+      expect(sessionResponse.body.user.roles.length).toBe(2);
+    });
   });
 
   describe("Rate limiting", () => {
@@ -499,6 +592,74 @@ describe("Auth E2E Tests", () => {
 
         expect(user).toBeDefined();
         expect(user?.roles.some((r) => r.name === "user")).toBe(true);
+      });
+
+      it("should return roles in sign-in response (after hook enrichment)", async () => {
+        const testEmail = uniqueEmail("signin-roles");
+
+        // Send OTP
+        const sendResponse = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("X-Client-Type", "mobile")
+          .send({ email: testEmail, type: "sign-in", role: "user" });
+
+        expect(sendResponse.status).toBe(HttpStatus.OK);
+
+        // Get OTP from database
+        const verification = await databaseService.verification.findFirst({
+          where: { identifier: `sign-in-otp-${testEmail}` },
+          orderBy: { createdAt: "desc" },
+        });
+        const otp = verification?.value.split(":")[0];
+
+        // Verify OTP - response should include roles directly
+        const verifyResponse = await request(app.getHttpServer())
+          .post("/auth/api/sign-in/email-otp")
+          .set("X-Client-Type", "mobile")
+          .send({ email: testEmail, otp, role: "user" });
+
+        expect(verifyResponse.status).toBe(HttpStatus.OK);
+        expect(verifyResponse.body.user).toBeDefined();
+
+        // Verify roles are included in sign-in response (from after hook)
+        expect(verifyResponse.body.user.roles).toBeDefined();
+        expect(Array.isArray(verifyResponse.body.user.roles)).toBe(true);
+        expect(verifyResponse.body.user.roles).toContain("user");
+      });
+
+      it("should return fleetOwner role in sign-in response", async () => {
+        const testEmail = uniqueEmail("signin-fleet-roles");
+
+        // Send OTP with fleetOwner role from fleet-owner path
+        const sendResponse = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/fleet-owner/signup")
+          .send({ email: testEmail, type: "sign-in", role: "fleetOwner" });
+
+        expect(sendResponse.status).toBe(HttpStatus.OK);
+
+        // Get OTP from database
+        const verification = await databaseService.verification.findFirst({
+          where: { identifier: `sign-in-otp-${testEmail}` },
+          orderBy: { createdAt: "desc" },
+        });
+        const otp = verification?.value.split(":")[0];
+
+        // Verify OTP - response should include fleetOwner role directly
+        const verifyResponse = await request(app.getHttpServer())
+          .post("/auth/api/sign-in/email-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/fleet-owner/signup")
+          .send({ email: testEmail, otp, role: "fleetOwner" });
+
+        expect(verifyResponse.status).toBe(HttpStatus.OK);
+        expect(verifyResponse.body.user).toBeDefined();
+
+        // Verify fleetOwner role is in the sign-in response
+        expect(verifyResponse.body.user.roles).toBeDefined();
+        expect(Array.isArray(verifyResponse.body.user.roles)).toBe(true);
+        expect(verifyResponse.body.user.roles).toContain("fleetOwner");
       });
 
       it("should assign fleetOwner role after successful OTP verification", async () => {

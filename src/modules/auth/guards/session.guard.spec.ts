@@ -6,11 +6,13 @@ import {
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthService } from "../auth.service";
+import type { RoleName } from "../auth.types";
 import { AUTH_SESSION_KEY, SessionGuard } from "./session.guard";
 
 describe("SessionGuard", () => {
   let guard: SessionGuard;
   let mockGetSession: ReturnType<typeof vi.fn>;
+  let mockGetUserRoles: ReturnType<typeof vi.fn>;
 
   const mockSession = {
     user: {
@@ -34,8 +36,11 @@ describe("SessionGuard", () => {
     },
   };
 
+  const mockRoles: RoleName[] = ["user"];
+
   const createMockAuthService = (isInitialized: boolean) => {
     mockGetSession = vi.fn();
+    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
     return {
       isInitialized,
       auth: {
@@ -43,6 +48,7 @@ describe("SessionGuard", () => {
           getSession: mockGetSession,
         },
       },
+      getUserRoles: mockGetUserRoles,
     };
   };
 
@@ -76,14 +82,18 @@ describe("SessionGuard", () => {
       expect(guard).toBeDefined();
     });
 
-    it("should return true and attach session when valid session exists", async () => {
+    it("should return true and attach session with roles when valid session exists", async () => {
       mockGetSession.mockResolvedValueOnce(mockSession);
       const context = createMockExecutionContext({ cookie: "session=token-123" });
 
       const result = await guard.canActivate(context);
 
       expect(result).toBe(true);
-      expect(context.getRequest()[AUTH_SESSION_KEY]).toEqual(mockSession);
+      expect(mockGetUserRoles).toHaveBeenCalledWith("user-123");
+      expect(context.getRequest()[AUTH_SESSION_KEY]).toEqual({
+        user: { ...mockSession.user, roles: mockRoles },
+        session: mockSession.session,
+      });
     });
 
     it("should throw UnauthorizedException when no session found", async () => {

@@ -889,4 +889,49 @@ describe("AuthService", () => {
       );
     });
   });
+
+  describe("getUserRoles", () => {
+    beforeEach(async () => {
+      await setupTestModule({
+        SESSION_SECRET: "test-secret-at-least-32-characters-long",
+        AUTH_BASE_URL: "https://api.example.com",
+        TRUSTED_ORIGINS: ["https://example.com"],
+        NODE_ENV: "production",
+      });
+
+      mockDatabaseService.user = {
+        findUnique: vi.fn(),
+      };
+    });
+
+    it("should return empty array if user not found", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue(null);
+
+      const roles = await service.getUserRoles("nonexistent");
+
+      expect(roles).toEqual([]);
+    });
+
+    it("should return user roles", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "user-1",
+        roles: [{ name: USER }, { name: ADMIN }],
+      });
+
+      const roles = await service.getUserRoles("user-1");
+
+      expect(roles).toEqual([USER, ADMIN]);
+    });
+
+    it("should return empty array if user has no roles", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "user-1",
+        roles: [],
+      });
+
+      const roles = await service.getUserRoles("user-1");
+
+      expect(roles).toEqual([]);
+    });
+  });
 });
