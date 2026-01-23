@@ -21,7 +21,7 @@ async function bootstrap() {
     const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true });
     if (trustedOrigins) {
       app.enableCors({
-        origin: trustedOrigins.split(","),
+        origin: trustedOrigins,
         credentials: true,
         allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
         exposedHeaders: ["Set-Cookie"],
