@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit, UnauthorizedException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
@@ -129,6 +135,9 @@ export class AuthService implements OnModuleInit {
   /**
    * Safely extracts the pathname from a URL string.
    * Returns null if the URL is invalid or empty.
+   *
+   * SECURITY NOTE: This method normalizes path traversal sequences (e.g., /admin/../user)
+   * to prevent bypassing pathname-based role validation.
    */
   private extractPathname(urlString: string | null | undefined): string | null {
     if (!urlString) {
@@ -140,9 +149,16 @@ export class AuthService implements OnModuleInit {
       return url.pathname;
     } catch {
       // Invalid URL - could be a path-only string or malformed
-      // If it looks like a path (starts with /), use it directly
+      // If it looks like a path (starts with /), normalize it using URL with a dummy base
       if (urlString.startsWith("/")) {
-        return urlString;
+        try {
+          // Use URL constructor with dummy base to normalize path traversal sequences
+          const normalizedUrl = new URL(urlString, "http://localhost");
+          return normalizedUrl.pathname;
+        } catch {
+          // If normalization fails, reject the path for security
+          return null;
+        }
       }
       return null;
     }
@@ -234,7 +250,7 @@ export class AuthService implements OnModuleInit {
 
     if (!user) {
       this.logger.warn(`Cannot assign role: user ${userId} not found`);
-      throw new Error(`Cannot assign role: user ${userId} not found`);
+      throw new NotFoundException(`Cannot assign role: user ${userId} not found`);
     }
 
     const hasRole = user.roles.some((r) => r.name === role);

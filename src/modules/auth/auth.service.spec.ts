@@ -334,6 +334,111 @@ describe("AuthService", () => {
         expect(result).toBe(true);
       });
 
+      it("should strip query parameters from path-only referer strings", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin?query=value",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should strip fragments from path-only referer strings", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin#section",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should strip both query and fragment from path-only referer strings", () => {
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin/dashboard?tab=users#section",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should correctly parse fleet-owner path with query parameters", () => {
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/fleet-owner?vehicle=123",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should correctly parse fleet-owner path with fragment", () => {
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/fleet-owner#vehicles",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should normalize path traversal sequences in path-only referer (fleet-owner)", () => {
+        // /fleet-owner/../ normalizes to / which should only allow user role
+        const result = service.validateRoleForClient({
+          role: FLEET_OWNER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/fleet-owner/../",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should normalize path traversal sequences in path-only referer (admin)", () => {
+        // /admin/../user normalizes to /user which should only allow user role
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin/../user",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should allow user role for normalized path traversal that resolves to root", () => {
+        // /fleet-owner/../ normalizes to / which defaults to user role
+        const result = service.validateRoleForClient({
+          role: USER,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/fleet-owner/../",
+        });
+        expect(result).toBe(true);
+      });
+
+      it("should correctly handle nested path traversal sequences", () => {
+        // /admin/deep/../../../user normalizes to /user which should only allow user role
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin/deep/../../../user",
+        });
+        expect(result).toBe(false);
+      });
+
+      it("should handle path traversal that stays within admin directory", () => {
+        // /admin/sub/../dashboard normalizes to /admin/dashboard which should allow admin role
+        const result = service.validateRoleForClient({
+          role: ADMIN,
+          origin: "https://example.com",
+          clientType: WEB,
+          referer: "/admin/sub/../dashboard",
+        });
+        expect(result).toBe(true);
+      });
+
       it("should reject admin role for paths like /administrator (no segment boundary)", () => {
         const result = service.validateRoleForClient({
           role: ADMIN,
