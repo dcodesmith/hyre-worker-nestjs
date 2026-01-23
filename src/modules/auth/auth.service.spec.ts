@@ -609,56 +609,103 @@ describe("AuthService", () => {
       });
     });
 
-    it("should return true for new user (not found)", async () => {
-      mockDatabaseService.user = {
-        findUnique: vi.fn().mockResolvedValue(null),
-      };
+    describe("new user (not found in database)", () => {
+      beforeEach(() => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue(null),
+        };
+      });
 
-      const result = await service.validateExistingUserRole("new@example.com", USER);
-      expect(result).toBe(true);
+      it("should return true for user role (grantable)", async () => {
+        const result = await service.validateExistingUserRole("new@example.com", USER);
+        expect(result).toBe(true);
+      });
+
+      it("should return true for fleetOwner role (grantable)", async () => {
+        const result = await service.validateExistingUserRole("new@example.com", FLEET_OWNER);
+        expect(result).toBe(true);
+      });
+
+      it("should return false for admin role (protected)", async () => {
+        const result = await service.validateExistingUserRole("new@example.com", ADMIN);
+        expect(result).toBe(false);
+      });
+
+      it("should return false for staff role (protected)", async () => {
+        const result = await service.validateExistingUserRole("new@example.com", STAFF);
+        expect(result).toBe(false);
+      });
     });
 
-    it("should return true if existing user has the role", async () => {
-      mockDatabaseService.user = {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "user-1",
-          email: "existing@example.com",
-          roles: [{ name: USER }],
-        }),
-      };
+    describe("existing user", () => {
+      it("should return true if existing user has the role", async () => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "user-1",
+            email: "existing@example.com",
+            roles: [{ name: USER }],
+          }),
+        };
 
-      const result = await service.validateExistingUserRole("existing@example.com", USER);
-      expect(result).toBe(true);
-    });
+        const result = await service.validateExistingUserRole("existing@example.com", USER);
+        expect(result).toBe(true);
+      });
 
-    it("should return false if existing user does not have the role", async () => {
-      mockDatabaseService.user = {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "user-1",
-          email: "existing@example.com",
-          roles: [{ name: USER }],
-        }),
-      };
+      it("should return false if existing user does not have the role", async () => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "user-1",
+            email: "existing@example.com",
+            roles: [{ name: USER }],
+          }),
+        };
 
-      const result = await service.validateExistingUserRole("existing@example.com", ADMIN);
-      expect(result).toBe(false);
-    });
+        const result = await service.validateExistingUserRole("existing@example.com", ADMIN);
+        expect(result).toBe(false);
+      });
 
-    it("should return true if user has multiple roles including requested", async () => {
-      mockDatabaseService.user = {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "user-1",
-          email: "admin@example.com",
-          roles: [{ name: USER }, { name: ADMIN }],
-        }),
-      };
+      it("should return true if user has multiple roles including requested", async () => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "user-1",
+            email: "admin@example.com",
+            roles: [{ name: USER }, { name: ADMIN }],
+          }),
+        };
 
-      const result = await service.validateExistingUserRole("admin@example.com", ADMIN);
-      expect(result).toBe(true);
+        const result = await service.validateExistingUserRole("admin@example.com", ADMIN);
+        expect(result).toBe(true);
+      });
+
+      it("should return true for admin with existing admin role (protected but already has it)", async () => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "user-1",
+            email: "admin@example.com",
+            roles: [{ name: ADMIN }],
+          }),
+        };
+
+        const result = await service.validateExistingUserRole("admin@example.com", ADMIN);
+        expect(result).toBe(true);
+      });
+
+      it("should return true for staff with existing staff role (protected but already has it)", async () => {
+        mockDatabaseService.user = {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "user-1",
+            email: "staff@example.com",
+            roles: [{ name: STAFF }],
+          }),
+        };
+
+        const result = await service.validateExistingUserRole("staff@example.com", STAFF);
+        expect(result).toBe(true);
+      });
     });
   });
 
-  describe("assignRoleOnVerify", () => {
+  describe("assignRoleToNewUser", () => {
     beforeEach(async () => {
       await setupTestModule({
         SESSION_SECRET: "test-secret-at-least-32-characters-long",
@@ -680,7 +727,7 @@ describe("AuthService", () => {
       });
       mockDatabaseService.user.update.mockResolvedValue({});
 
-      await service.assignRoleOnVerify("user-1", USER);
+      await service.assignRoleToNewUser("user-1", USER);
 
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
@@ -695,7 +742,7 @@ describe("AuthService", () => {
       });
       mockDatabaseService.user.update.mockResolvedValue({});
 
-      await service.assignRoleOnVerify("user-1", FLEET_OWNER);
+      await service.assignRoleToNewUser("user-1", FLEET_OWNER);
 
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
@@ -709,40 +756,30 @@ describe("AuthService", () => {
         roles: [{ name: USER }],
       });
 
-      await service.assignRoleOnVerify("user-1", USER);
+      await service.assignRoleToNewUser("user-1", USER);
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
 
-    it("should throw for admin role if user does not have it (protected)", async () => {
-      mockDatabaseService.user.findUnique.mockResolvedValue({
-        id: "user-1",
-        roles: [{ name: USER }],
-      });
-
-      await expect(service.assignRoleOnVerify("user-1", ADMIN)).rejects.toThrow(
-        UnauthorizedException,
-      );
-    });
-
-    it("should not throw for admin role if user already has it", async () => {
-      mockDatabaseService.user.findUnique.mockResolvedValue({
-        id: "user-1",
-        roles: [{ name: ADMIN }],
-      });
-
-      await expect(service.assignRoleOnVerify("user-1", ADMIN)).resolves.not.toThrow();
-      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
-    });
-
-    it("should throw for staff role if user does not have it (protected)", async () => {
+    it("should throw for admin role (protected roles cannot be assigned to new users)", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue({
         id: "user-1",
         roles: [],
       });
 
-      await expect(service.assignRoleOnVerify("user-1", STAFF)).rejects.toThrow(
-        UnauthorizedException,
+      await expect(service.assignRoleToNewUser("user-1", ADMIN)).rejects.toThrow(
+        'Protected role "admin" cannot be assigned to new users',
+      );
+    });
+
+    it("should throw for staff role (protected roles cannot be assigned to new users)", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "user-1",
+        roles: [],
+      });
+
+      await expect(service.assignRoleToNewUser("user-1", STAFF)).rejects.toThrow(
+        'Protected role "staff" cannot be assigned to new users',
       );
     });
   });

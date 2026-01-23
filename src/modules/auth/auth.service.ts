@@ -58,6 +58,11 @@ export class AuthService implements OnModuleInit {
       secureCookies: nodeEnv !== "development",
       enableRateLimit: true,
       sendOTPEmail: this.authEmailService.sendOTPEmail.bind(this.authEmailService),
+      roleValidation: {
+        validateRoleForClient: this.validateRoleForClient.bind(this),
+        validateExistingUserRole: this.validateExistingUserRole.bind(this),
+        assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
+      },
     });
 
     this.logger.log("Auth service initialized successfully");
@@ -82,7 +87,7 @@ export class AuthService implements OnModuleInit {
    * SECURITY NOTE: This method only controls which roles can be REQUESTED from
    * a given entry point. It does NOT grant authorization. Protected roles (admin, staff)
    * still require the user to already have the role in the database - this is enforced
-   * by verifyUserHasRole() which is called during OTP verification via assignRoleOnVerify().
+   * by validateExistingUserRole() in the before hook.
    *
    * Rules:
    * - Mobile clients can only request "user" role
@@ -192,11 +197,12 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Validates that an existing user has the requested role.
-   * For new users (not found), returns true to allow registration.
+   * For new users (not found), only allows grantable roles (user, fleetOwner).
+   * Protected roles (admin, staff) require the user to already exist with that role.
    *
    * @param email - User's email address
    * @param role - Role being requested
-   * @returns true if user doesn't exist or has the role, false otherwise
+   * @returns true if new user with grantable role, or existing user has the role
    */
   async validateExistingUserRole(email: string, role: RoleName): Promise<boolean> {
     const user = await this.databaseService.user.findUnique({
@@ -204,9 +210,10 @@ export class AuthService implements OnModuleInit {
       include: { roles: { select: { name: true } } },
     });
 
-    // New user - allow (will be created on verify)
+    // New user - only allow grantable roles (user, fleetOwner)
+    // Protected roles (admin, staff) require existing user with that role
     if (!user) {
-      return true;
+      return (GRANTABLE_ROLES as readonly RoleName[]).includes(role);
     }
 
     // Existing user - must have the role
@@ -214,22 +221,21 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Assigns a role to a user after successful OTP verification.
-   * Uses different strategies based on role type:
-   * - Grantable roles (user, fleetOwner): Auto-grant if missing
-   * - Protected roles (admin, staff): Validate only, don't grant
+   * Assigns a role to a newly created user (called from databaseHooks.user.create.after).
+   * Only handles grantable roles since protected roles cannot be self-assigned.
    *
    * @param userId - User's ID
    * @param role - Role to assign
-   * @throws UnauthorizedException if user doesn't have a protected role
+   * @throws UnauthorizedException if role is not grantable
    */
-  async assignRoleOnVerify(userId: string, role: RoleName): Promise<void> {
-    if ((PROTECTED_ROLES as readonly RoleName[]).includes(role)) {
-      // Protected roles: validate only, don't grant
-      await this.verifyUserHasRole(userId, role);
-    } else if ((GRANTABLE_ROLES as readonly RoleName[]).includes(role)) {
-      // Grantable roles: auto-grant if missing
+  async assignRoleToNewUser(userId: string, role: RoleName): Promise<void> {
+    if ((GRANTABLE_ROLES as readonly RoleName[]).includes(role)) {
+      // Grantable roles: auto-grant to new user
       await this.ensureUserHasRole(userId, role);
+    } else if ((PROTECTED_ROLES as readonly RoleName[]).includes(role)) {
+      // Protected roles cannot be assigned to new users
+      // The before hook should prevent this, but this is a safety check
+      throw new UnauthorizedException(`Protected role "${role}" cannot be assigned to new users`);
     } else {
       throw new UnauthorizedException(`Invalid role: ${role}`);
     }

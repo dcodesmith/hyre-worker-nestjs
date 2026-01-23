@@ -31,6 +31,11 @@ export async function setup() {
     process.env.REDIS_HOST = redisHost;
     process.env.REDIS_PORT = redisPort.toString();
 
+    // Auth configuration for e2e tests
+    process.env.SESSION_SECRET = "e2e-test-session-secret-at-least-32-chars";
+    process.env.AUTH_BASE_URL = "http://localhost:3000";
+    process.env.TRUSTED_ORIGINS = "http://localhost:3000";
+
     const prismaEnv = { ...process.env, DATABASE_URL: databaseUrl };
 
     console.log("Generating Prisma client with test database URL...");
