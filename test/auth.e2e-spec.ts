@@ -336,7 +336,7 @@ describe("Auth E2E Tests", () => {
     });
 
     describe("Protected roles (admin, staff)", () => {
-      it("should reject admin role for user who does not have it", async () => {
+      it("should reject admin role for existing user who does not have it", async () => {
         const testEmail = uniqueEmail("no-admin-role");
 
         // First create a regular user
@@ -370,10 +370,96 @@ describe("Auth E2E Tests", () => {
           .set("Referer", "http://localhost:3000/admin/dashboard")
           .send({ email: testEmail, type: "sign-in", role: "admin" });
 
-        // Should be forbidden because:
-        // 1. Either origin is not trusted, OR
-        // 2. User doesn't have admin role
         expect(adminResponse.status).toBe(HttpStatus.FORBIDDEN);
+        expect(adminResponse.body.message).toContain('does not have the "admin" role');
+      });
+
+      it("should reject admin role for new user even from valid admin path", async () => {
+        const testEmail = uniqueEmail("new-user-admin");
+
+        // Ensure user doesn't exist
+        const existingUser = await databaseService.user.findUnique({
+          where: { email: testEmail },
+        });
+        expect(existingUser).toBeNull();
+
+        // Try to sign up as admin from valid /admin path
+        // This should fail because new users cannot self-assign protected roles
+        const response = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/admin/login")
+          .send({ email: testEmail, type: "sign-in", role: "admin" });
+
+        expect(response.status).toBe(HttpStatus.FORBIDDEN);
+        expect(response.body.message).toContain('does not have the "admin" role');
+
+        // Verify no user was created
+        const userAfterRequest = await databaseService.user.findUnique({
+          where: { email: testEmail },
+        });
+        expect(userAfterRequest).toBeNull();
+      });
+
+      it("should reject staff role for new user even from valid admin path", async () => {
+        const testEmail = uniqueEmail("new-user-staff");
+
+        // Try to sign up as staff from valid /admin path
+        const response = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/admin/staff-login")
+          .send({ email: testEmail, type: "sign-in", role: "staff" });
+
+        expect(response.status).toBe(HttpStatus.FORBIDDEN);
+        expect(response.body.message).toContain('does not have the "staff" role');
+
+        // Verify no user was created
+        const userAfterRequest = await databaseService.user.findUnique({
+          where: { email: testEmail },
+        });
+        expect(userAfterRequest).toBeNull();
+      });
+
+      it("should allow admin role for existing user who has it", async () => {
+        const testEmail = uniqueEmail("existing-admin");
+
+        // First create a regular user
+        const sendResponse = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("X-Client-Type", "mobile")
+          .send({ email: testEmail, type: "sign-in", role: "user" });
+
+        expect(sendResponse.status).toBe(HttpStatus.OK);
+
+        const verification = await databaseService.verification.findFirst({
+          where: { identifier: `sign-in-otp-${testEmail}` },
+          orderBy: { createdAt: "desc" },
+        });
+        const otp = verification?.value.split(":")[0];
+
+        await request(app.getHttpServer())
+          .post("/auth/api/sign-in/email-otp")
+          .set("X-Client-Type", "mobile")
+          .send({ email: testEmail, otp, role: "user" });
+
+        // Manually grant admin role to simulate admin-assigned user
+        await databaseService.user.update({
+          where: { email: testEmail },
+          data: { roles: { connect: { name: "admin" } } },
+        });
+
+        await clearRateLimits();
+
+        // Now request admin role - should succeed since user has the role
+        const adminResponse = await request(app.getHttpServer())
+          .post("/auth/api/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/admin/dashboard")
+          .send({ email: testEmail, type: "sign-in", role: "admin" });
+
+        expect(adminResponse.status).toBe(HttpStatus.OK);
+        expect(adminResponse.body.success).toBe(true);
       });
     });
 

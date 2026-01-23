@@ -197,11 +197,12 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Validates that an existing user has the requested role.
-   * For new users (not found), returns true to allow registration.
+   * For new users (not found), only allows grantable roles (user, fleetOwner).
+   * Protected roles (admin, staff) require the user to already exist with that role.
    *
    * @param email - User's email address
    * @param role - Role being requested
-   * @returns true if user doesn't exist or has the role, false otherwise
+   * @returns true if new user with grantable role, or existing user has the role
    */
   async validateExistingUserRole(email: string, role: RoleName): Promise<boolean> {
     const user = await this.databaseService.user.findUnique({
@@ -209,9 +210,10 @@ export class AuthService implements OnModuleInit {
       include: { roles: { select: { name: true } } },
     });
 
-    // New user - allow (will be created on verify)
+    // New user - only allow grantable roles (user, fleetOwner)
+    // Protected roles (admin, staff) require existing user with that role
     if (!user) {
-      return true;
+      return (GRANTABLE_ROLES as readonly RoleName[]).includes(role);
     }
 
     // Existing user - must have the role
