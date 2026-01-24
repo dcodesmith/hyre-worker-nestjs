@@ -1,8 +1,14 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
 import { EnvConfig } from "src/config/env.config";
+
+/**
+ * HMAC key used for constant-time signature comparison.
+ * This ensures comparison time is independent of input length.
+ */
+const HMAC_KEY = "flutterwave-webhook-comparison";
 
 /**
  * Guard to verify Flutterwave webhook signatures.
@@ -51,17 +57,19 @@ export class FlutterwaveWebhookGuard implements CanActivate {
 
   /**
    * Verify the webhook signature using timing-safe comparison.
-   * This prevents timing attacks that could leak the secret.
+   *
+   * Uses HMAC to hash both values before comparison, ensuring:
+   * - Constant-time comparison regardless of input length (no length oracle)
+   * - Fixed-size buffers for timingSafeEqual
+   *
+   * This prevents timing attacks that could leak information about the secret.
    */
   private verifySignature(received: string, expected: string): boolean {
-    // Ensure both strings are the same length for timing-safe comparison
-    if (received.length !== expected.length) {
-      return false;
-    }
+    // Hash both values to get fixed-length outputs for comparison
+    // This prevents length-based timing attacks
+    const receivedHash = createHmac("sha256", HMAC_KEY).update(received).digest();
+    const expectedHash = createHmac("sha256", HMAC_KEY).update(expected).digest();
 
-    const receivedBuffer = Buffer.from(received);
-    const expectedBuffer = Buffer.from(expected);
-
-    return timingSafeEqual(receivedBuffer, expectedBuffer);
+    return timingSafeEqual(receivedHash, expectedHash);
   }
 }

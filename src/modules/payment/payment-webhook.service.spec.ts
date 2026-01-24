@@ -142,7 +142,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
 
-      await service.handleChargeCompleted(mockChargeData);
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
 
       expect(flutterwaveService.verifyTransaction).toHaveBeenCalledWith("12345");
       expect(databaseService.payment.findFirst).toHaveBeenCalledWith({
@@ -175,7 +175,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
 
-      await service.handleChargeCompleted(failedChargeData);
+      await service.handleWebhook({ event: "charge.completed", data: failedChargeData });
 
       expect(databaseService.payment.update).toHaveBeenCalledWith({
         where: { id: "payment-123" },
@@ -199,7 +199,26 @@ describe("PaymentWebhookService", () => {
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
 
-      await service.handleChargeCompleted(mockChargeData);
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing if payment already failed (idempotency)", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.FAILED,
+      });
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: {},
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
 
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
@@ -210,7 +229,7 @@ describe("PaymentWebhookService", () => {
         message: "Transaction not found",
       });
 
-      await service.handleChargeCompleted(mockChargeData);
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
 
       expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
       expect(databaseService.payment.update).not.toHaveBeenCalled();
@@ -224,7 +243,7 @@ describe("PaymentWebhookService", () => {
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
-      await service.handleChargeCompleted(mockChargeData);
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
 
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
@@ -234,7 +253,9 @@ describe("PaymentWebhookService", () => {
         new Error("Network error"),
       );
 
-      await expect(service.handleChargeCompleted(mockChargeData)).rejects.toThrow("Network error");
+      await expect(
+        service.handleWebhook({ event: "charge.completed", data: mockChargeData }),
+      ).rejects.toThrow("Network error");
     });
   });
 
@@ -269,7 +290,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(mockPayout);
       vi.mocked(databaseService.payoutTransaction.update).mockResolvedValueOnce(mockPayout);
 
-      await service.handleTransferCompleted(mockTransferData);
+      await service.handleWebhook({ event: "transfer.completed", data: mockTransferData });
 
       expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
         where: { payoutProviderReference: "payout-ref-123" },
@@ -294,7 +315,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(mockPayout);
       vi.mocked(databaseService.payoutTransaction.update).mockResolvedValueOnce(mockPayout);
 
-      await service.handleTransferCompleted(failedTransferData);
+      await service.handleWebhook({ event: "transfer.completed", data: failedTransferData });
 
       expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
         where: { id: "payout-123" },
@@ -314,7 +335,7 @@ describe("PaymentWebhookService", () => {
 
       vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(mockPayout);
 
-      await service.handleTransferCompleted(mockTransferData);
+      await service.handleWebhook({ event: "transfer.completed", data: mockTransferData });
 
       expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
     });
@@ -322,7 +343,7 @@ describe("PaymentWebhookService", () => {
     it("should not update if payout transaction not found", async () => {
       vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(null);
 
-      await service.handleTransferCompleted(mockTransferData);
+      await service.handleWebhook({ event: "transfer.completed", data: mockTransferData });
 
       expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
     });
@@ -356,7 +377,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
 
-      await service.handleRefundCompleted(mockRefundData);
+      await service.handleWebhook({ event: "refund.completed", data: mockRefundData });
 
       expect(databaseService.payment.findFirst).toHaveBeenCalledWith({
         where: { flutterwaveTransactionId: "12345" },
@@ -386,7 +407,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
 
-      await service.handleRefundCompleted(partialRefundData);
+      await service.handleWebhook({ event: "refund.completed", data: partialRefundData });
 
       expect(databaseService.payment.update).toHaveBeenCalledWith({
         where: { id: "payment-123" },
@@ -408,7 +429,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
 
-      await service.handleRefundCompleted(failedRefundData);
+      await service.handleWebhook({ event: "refund.completed", data: failedRefundData });
 
       expect(databaseService.payment.update).toHaveBeenCalledWith({
         where: { id: "payment-123" },
@@ -428,7 +449,7 @@ describe("PaymentWebhookService", () => {
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
 
-      await service.handleRefundCompleted(mockRefundData);
+      await service.handleWebhook({ event: "refund.completed", data: mockRefundData });
 
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
@@ -436,9 +457,30 @@ describe("PaymentWebhookService", () => {
     it("should not update if payment not found", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
-      await service.handleRefundCompleted(mockRefundData);
+      await service.handleWebhook({ event: "refund.completed", data: mockRefundData });
 
       expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should treat as partial refund when amountCharged is null", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        flutterwaveTransactionId: "12345",
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+        amountCharged: null, // Missing amountCharged
+      });
+
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "refund.completed", data: mockRefundData });
+
+      expect(databaseService.payment.update).toHaveBeenCalledWith({
+        where: { id: "payment-123" },
+        data: expect.objectContaining({
+          status: "PARTIALLY_REFUNDED",
+        }),
+      });
     });
   });
 });

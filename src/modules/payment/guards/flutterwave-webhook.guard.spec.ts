@@ -102,11 +102,24 @@ describe("FlutterwaveWebhookGuard", () => {
     });
 
     it("should use timing-safe comparison to prevent timing attacks", () => {
-      // This test verifies the guard handles similar-length strings correctly
-      // The actual timing-safe behavior is provided by Node's timingSafeEqual
+      // The guard uses HMAC-based comparison which provides constant-time
+      // comparison regardless of input length, preventing timing side-channels
       const almostCorrect = `${WEBHOOK_SECRET.slice(0, -1)}x`;
       const context = createMockExecutionContext({ "verif-hash": almostCorrect });
       expect(guard.canActivate(context)).toBe(false);
+    });
+
+    it("should reject different-length inputs without leaking length info", () => {
+      // HMAC-based comparison ensures this takes constant time
+      // regardless of input length (no length oracle attack)
+      const shortInput = "abc";
+      const longInput = "a".repeat(1000);
+
+      const shortContext = createMockExecutionContext({ "verif-hash": shortInput });
+      const longContext = createMockExecutionContext({ "verif-hash": longInput });
+
+      expect(guard.canActivate(shortContext)).toBe(false);
+      expect(guard.canActivate(longContext)).toBe(false);
     });
   });
 });

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import type {
   FlutterwaveChargeData,
@@ -46,6 +47,11 @@ export class PaymentWebhookService {
       case "refund.completed":
         await this.handleRefundCompleted(payload.data);
         break;
+
+      default:
+        this.logger.warn("Received unknown webhook event", {
+          event: (payload as { event: string }).event,
+        });
     }
   }
 
@@ -58,7 +64,7 @@ export class PaymentWebhookService {
    * 2. Update the Payment record status
    * 3. Activate the booking/extension (via BookingActivationService in future PR)
    */
-  async handleChargeCompleted(data: FlutterwaveChargeData): Promise<void> {
+  private async handleChargeCompleted(data: FlutterwaveChargeData): Promise<void> {
     const { tx_ref, id: transactionId, status, charged_amount } = data;
 
     this.logger.log("Processing charge.completed webhook", {
@@ -102,8 +108,15 @@ export class PaymentWebhookService {
     }
 
     // Skip if already processed (idempotency)
-    if (payment.status === "SUCCESSFUL") {
-      this.logger.log("Payment already processed, skipping", { txRef: tx_ref });
+    // Both SUCCESSFUL and FAILED are terminal states that should not be overwritten
+    if (
+      payment.status === PaymentAttemptStatus.SUCCESSFUL ||
+      payment.status === PaymentAttemptStatus.FAILED
+    ) {
+      this.logger.log("Payment already finalized, skipping", {
+        txRef: tx_ref,
+        currentStatus: payment.status,
+      });
       return;
     }
 
@@ -111,7 +124,8 @@ export class PaymentWebhookService {
     await this.databaseService.payment.update({
       where: { id: payment.id },
       data: {
-        status: status === "successful" ? "SUCCESSFUL" : "FAILED",
+        status:
+          status === "successful" ? PaymentAttemptStatus.SUCCESSFUL : PaymentAttemptStatus.FAILED,
         flutterwaveTransactionId: transactionId.toString(),
         amountCharged: charged_amount,
         confirmedAt: new Date(),
@@ -121,7 +135,8 @@ export class PaymentWebhookService {
     this.logger.log("Payment status updated from webhook", {
       txRef: tx_ref,
       paymentId: payment.id,
-      newStatus: status === "successful" ? "SUCCESSFUL" : "FAILED",
+      newStatus:
+        status === "successful" ? PaymentAttemptStatus.SUCCESSFUL : PaymentAttemptStatus.FAILED,
     });
 
     // TODO: In PR 5 (Booking Activation), call BookingActivationService here
@@ -136,7 +151,7 @@ export class PaymentWebhookService {
    * This is called when a payout transfer is completed.
    * Delegates to PaymentService which handles payout state management.
    */
-  async handleTransferCompleted(data: FlutterwaveTransferWebhookData): Promise<void> {
+  private async handleTransferCompleted(data: FlutterwaveTransferWebhookData): Promise<void> {
     const { reference, status, id: transferId } = data;
 
     this.logger.log("Processing transfer.completed webhook", {
@@ -156,7 +171,10 @@ export class PaymentWebhookService {
     }
 
     // Skip if already processed (idempotency)
-    if (payoutTransaction.status === "PAID_OUT" || payoutTransaction.status === "FAILED") {
+    if (
+      payoutTransaction.status === PayoutTransactionStatus.PAID_OUT ||
+      payoutTransaction.status === PayoutTransactionStatus.FAILED
+    ) {
       this.logger.log("Payout transaction already finalized, skipping", {
         reference,
         currentStatus: payoutTransaction.status,
@@ -166,7 +184,8 @@ export class PaymentWebhookService {
 
     // Update payout transaction status
     // Flutterwave transfer status "SUCCESSFUL" maps to our "PAID_OUT"
-    const newStatus = status === "SUCCESSFUL" ? "PAID_OUT" : "FAILED";
+    const newStatus =
+      status === "successful" ? PayoutTransactionStatus.PAID_OUT : PayoutTransactionStatus.FAILED;
     await this.databaseService.payoutTransaction.update({
       where: { id: payoutTransaction.id },
       data: {
@@ -188,7 +207,7 @@ export class PaymentWebhookService {
    * This is called when a refund is processed.
    * It should update the Payment record with refund status.
    */
-  async handleRefundCompleted(data: FlutterwaveRefundWebhookData): Promise<void> {
+  private async handleRefundCompleted(data: FlutterwaveRefundWebhookData): Promise<void> {
     const { FlwRef, AmountRefunded, status, TransactionId } = data;
 
     this.logger.log("Processing refund.completed webhook", {
@@ -212,7 +231,7 @@ export class PaymentWebhookService {
     }
 
     // Skip if not in a refund processing state (idempotency)
-    if (payment.status !== "REFUND_PROCESSING") {
+    if (payment.status !== PaymentAttemptStatus.REFUND_PROCESSING) {
       this.logger.log("Payment not in refund processing state, skipping", {
         paymentId: payment.id,
         currentStatus: payment.status,
@@ -222,11 +241,27 @@ export class PaymentWebhookService {
 
     // Determine final refund status
     // If refunded amount equals charged amount, it's a full refund
-    const amountCharged = payment.amountCharged?.toNumber() || 0;
-    const isFullRefund = AmountRefunded >= amountCharged;
-    // Use REFUNDED for full refund, PARTIALLY_REFUNDED for partial
-    const newStatus =
-      status === "completed" ? (isFullRefund ? "REFUNDED" : "PARTIALLY_REFUNDED") : "REFUND_FAILED";
+    // Only consider it a full refund if we have a valid amountCharged to compare against
+    const hasAmountCharged = payment.amountCharged != null;
+    const amountCharged = hasAmountCharged ? payment.amountCharged.toNumber() : null;
+    const isFullRefund = hasAmountCharged && AmountRefunded >= amountCharged;
+
+    if (!hasAmountCharged) {
+      this.logger.warn("Payment missing amountCharged, treating as partial refund", {
+        paymentId: payment.id,
+        amountRefunded: AmountRefunded,
+      });
+    }
+
+    // Determine final refund status
+    let newStatus: PaymentAttemptStatus;
+    if (status !== "completed") {
+      newStatus = PaymentAttemptStatus.REFUND_FAILED;
+    } else if (isFullRefund) {
+      newStatus = PaymentAttemptStatus.REFUNDED;
+    } else {
+      newStatus = PaymentAttemptStatus.PARTIALLY_REFUNDED;
+    }
 
     await this.databaseService.payment.update({
       where: { id: payment.id },
