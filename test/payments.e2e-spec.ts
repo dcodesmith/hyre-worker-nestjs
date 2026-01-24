@@ -495,7 +495,7 @@ describe("Payments E2E Tests", () => {
             data: {
               id: 77777,
               reference: payoutReference,
-              status: "SUCCESSFUL",
+              status: "successful",
               account_number: "1234567890",
               bank_code: "044",
               full_name: "Test Fleet Owner",

@@ -2,7 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { addHours } from "date-fns";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import {
   createBooking,
@@ -133,6 +133,12 @@ describe("ReminderService", () => {
   });
 
   describe("sendBookingEndReminderEmails", () => {
+    // Use fake timers for time-sensitive tests to avoid flakiness
+    // caused by time drift between test setup and service execution
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should return message when no legs found", async () => {
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([]);
 
@@ -143,8 +149,12 @@ describe("ReminderService", () => {
     });
 
     it("should queue notifications for legs with effective end time in reminder window", async () => {
-      const now = new Date();
-      const reminderTargetTime = addHours(now, 1);
+      // Use a fixed time to avoid flakiness from minute boundary race conditions
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
+      const reminderTargetTime = addHours(fixedNow, 1);
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         paymentStatus: PaymentStatus.PAID,
@@ -154,7 +164,7 @@ describe("ReminderService", () => {
       });
       const leg = {
         ...createBookingLeg({
-          legDate: now,
+          legDate: fixedNow,
         }),
         booking,
         extensions: [],
@@ -172,17 +182,21 @@ describe("ReminderService", () => {
     });
 
     it("should skip legs with effective end time outside reminder window", async () => {
-      const now = new Date();
+      // Use a fixed time to avoid flakiness
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         paymentStatus: PaymentStatus.PAID,
-        endDate: addHours(now, 2), // 2 hours from now, outside window
+        endDate: addHours(fixedNow, 2), // 2 hours from now, outside window
         car: createCar({ status: Status.BOOKED, owner: createOwner() }),
         user: createUser(),
       });
       const leg = {
         ...createBookingLeg({
-          legDate: now,
+          legDate: fixedNow,
         }),
         booking,
         extensions: [],
@@ -197,19 +211,23 @@ describe("ReminderService", () => {
     });
 
     it("should use extension end time when available", async () => {
-      const now = new Date();
-      const reminderTargetTime = addHours(now, 1);
+      // Use a fixed time to avoid flakiness
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
+      const reminderTargetTime = addHours(fixedNow, 1);
       const extensionEndTime = reminderTargetTime;
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         paymentStatus: PaymentStatus.PAID,
-        endDate: addHours(now, 2),
+        endDate: addHours(fixedNow, 2),
         car: createCar({ status: Status.BOOKED, owner: createOwner() }),
         user: createUser(),
       });
       const leg = {
         ...createBookingLeg({
-          legDate: now,
+          legDate: fixedNow,
         }),
         booking,
         extensions: [
@@ -218,7 +236,7 @@ describe("ReminderService", () => {
             extensionEndTime,
             paymentStatus: PaymentStatus.PAID,
             status: "ACTIVE",
-            extensionStartTime: now,
+            extensionStartTime: fixedNow,
             totalAmount: new Decimal(5000),
             paymentId: "pay-ext-1",
             paymentIntent: "pi-ext-1",
@@ -231,8 +249,8 @@ describe("ReminderService", () => {
             extendedDurationHours: 1,
             eventType: "HOURLY_ADDITION",
             bookingLegId: "leg-1",
-            createdAt: now,
-            updatedAt: now,
+            createdAt: fixedNow,
+            updatedAt: fixedNow,
           },
         ],
       };

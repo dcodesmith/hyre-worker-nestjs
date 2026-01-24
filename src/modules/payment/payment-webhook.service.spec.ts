@@ -270,7 +270,7 @@ describe("PaymentWebhookService", () => {
       debit_currency: "NGN",
       amount: 5000,
       fee: 50,
-      status: "SUCCESSFUL",
+      status: "successful",
       reference: "payout-ref-123",
       meta: {},
       narration: "Payout for booking",
