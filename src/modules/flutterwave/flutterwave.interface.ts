@@ -96,6 +96,8 @@ export interface RefundOptions {
   transactionId: string;
   amount: number;
   callbackUrl?: string;
+  /** Idempotency key to prevent duplicate refunds on retry */
+  idempotencyKey: string;
 }
 
 export interface RefundResponse {

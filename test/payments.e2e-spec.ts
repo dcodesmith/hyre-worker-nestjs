@@ -9,6 +9,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
+import { PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 
 describe("Payments E2E Tests", () => {
   let app: INestApplication;
@@ -151,7 +152,10 @@ describe("Payments E2E Tests", () => {
     let testPaymentTxRef: string;
 
     beforeAll(async () => {
-      const payment = await factory.createPayment(testBookingId);
+      const payment = await factory.createPayment(testBookingId, {
+        amountExpected: 50000,
+        status: PaymentAttemptStatus.PENDING,
+      });
       testPaymentTxRef = payment.txRef;
     });
 

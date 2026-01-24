@@ -417,8 +417,11 @@ describe("PaymentApiService", () => {
       expect(result.refundId).toBe(67890);
 
       expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
-        where: { id: "payment-123", status: "SUCCESSFUL" },
-        data: { status: "REFUND_PROCESSING" },
+        where: { id: "payment-123", status: { in: ["SUCCESSFUL", "REFUND_ERROR"] } },
+        data: {
+          status: "REFUND_PROCESSING",
+          refundIdempotencyKey: expect.stringMatching(/^refund_payment-123_[a-f0-9-]+$/),
+        },
       });
     });
 
@@ -517,7 +520,7 @@ describe("PaymentApiService", () => {
       });
     });
 
-    it("should revert to SUCCESSFUL when network error occurs during refund", async () => {
+    it("should set REFUND_ERROR when network error occurs during refund", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
       });
@@ -533,10 +536,11 @@ describe("PaymentApiService", () => {
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
       ).rejects.toThrow("Network timeout");
 
-      // Network error - revert to SUCCESSFUL since we don't know if refund went through
+      // Network error - set to REFUND_ERROR for reconciliation via webhook
+      // The idempotency key is preserved so retries can safely use the same key
       expect(databaseService.payment.update).toHaveBeenCalledWith({
         where: { id: "payment-123" },
-        data: { status: "SUCCESSFUL" },
+        data: { status: "REFUND_ERROR" },
       });
     });
 
@@ -551,6 +555,45 @@ describe("PaymentApiService", () => {
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
       ).rejects.toThrow(/already in progress/i);
+    });
+
+    it("should reuse existing idempotency key when retrying from REFUND_ERROR state", async () => {
+      const existingIdempotencyKey = "refund_payment-123_existing-uuid";
+      const payment = createPayment({
+        status: "REFUND_ERROR",
+        refundIdempotencyKey: existingIdempotencyKey,
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+      });
+
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+
+      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
+        success: true,
+        refundId: 67890,
+        amountRefunded: 5000,
+        status: "completed",
+      });
+
+      const result = await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
+
+      expect(result.success).toBe(true);
+
+      // Should reuse the existing idempotency key for retry
+      expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
+        where: { id: "payment-123", status: { in: ["SUCCESSFUL", "REFUND_ERROR"] } },
+        data: {
+          status: "REFUND_PROCESSING",
+          refundIdempotencyKey: existingIdempotencyKey,
+        },
+      });
+
+      // Flutterwave should be called with the same idempotency key
+      expect(flutterwaveService.initiateRefund).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: existingIdempotencyKey,
+        }),
+      );
     });
   });
 });

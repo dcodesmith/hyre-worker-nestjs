@@ -273,6 +273,7 @@ export function createPayment(overrides: Partial<PaymentWithRelations> = {}): Pa
     lastVerifiedAt: null,
     webhookPayload: null,
     verificationResponse: null,
+    refundIdempotencyKey: null,
     booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "user-123" },
     extension: null,
     ...overrides,
