@@ -49,12 +49,25 @@ export class PaymentApiService {
       userId: user.id,
     });
 
-    // Validate entity belongs to user and is not already paid
-    await this.validateEntityForPayment(dto.type, dto.entityId, user.id);
+    // Validate entity and get server-side amount
+    const serverAmount = await this.validateEntityForPayment(dto.type, dto.entityId, user.id);
 
-    // Create payment intent with Flutterwave
+    // Reject if client-supplied amount doesn't match server-side amount
+    if (dto.amount !== serverAmount) {
+      this.logger.warn("Payment amount mismatch", {
+        clientAmount: dto.amount,
+        serverAmount,
+        type: dto.type,
+        entityId: dto.entityId,
+      });
+      throw new BadRequestException(
+        `Payment amount mismatch: expected ${serverAmount}, received ${dto.amount}`,
+      );
+    }
+
+    // Create payment intent with Flutterwave using server-validated amount
     const paymentIntent = await this.flutterwaveService.createPaymentIntent({
-      amount: dto.amount,
+      amount: serverAmount,
       customer: {
         email: user.email,
         name: user.name || undefined,
@@ -158,28 +171,61 @@ export class PaymentApiService {
       throw new BadRequestException("Cannot refund a payment that is not successful");
     }
 
-    if (dto.amount > payment.amountExpected.toNumber()) {
-      throw new BadRequestException("Refund amount cannot exceed payment amount");
+    // Validate refund amount against what was actually charged, not what was expected
+    if (!payment.amountCharged) {
+      throw new BadRequestException("Payment has no charged amount recorded");
+    }
+
+    if (dto.amount > payment.amountCharged.toNumber()) {
+      throw new BadRequestException("Refund amount cannot exceed the amount charged");
     }
 
     if (!payment.flutterwaveTransactionId) {
       throw new BadRequestException("Payment does not have a provider reference");
     }
 
-    const refundResult = await this.flutterwaveService.initiateRefund({
-      transactionId: payment.flutterwaveTransactionId,
-      amount: dto.amount,
-      callbackUrl: this.flutterwaveService.getWebhookUrl("/api/payments/webhook/flutterwave"),
+    // Reserve the refund to prevent concurrent duplicate requests
+    const { count } = await this.databaseService.payment.updateMany({
+      where: { id: payment.id, status: "SUCCESSFUL" },
+      data: { status: "REFUND_PROCESSING" },
     });
 
-    if (refundResult.success) {
+    if (count === 0) {
+      throw new BadRequestException("Refund already in progress");
+    }
+
+    let refundResult: RefundResponse;
+
+    try {
+      refundResult = await this.flutterwaveService.initiateRefund({
+        transactionId: payment.flutterwaveTransactionId,
+        amount: dto.amount,
+        callbackUrl: this.flutterwaveService.getWebhookUrl("/api/payments/webhook/flutterwave"),
+      });
+    } catch (error) {
+      // Network error or unexpected failure - revert to SUCCESSFUL since we don't know
+      // if the refund request reached Flutterwave
       await this.databaseService.payment.update({
         where: { id: payment.id },
-        data: {
-          status: "REFUND_PROCESSING",
-        },
+        data: { status: "SUCCESSFUL" },
+      });
+      throw error;
+    }
+
+    if (!refundResult.success) {
+      // Flutterwave explicitly rejected the refund - mark as REFUND_FAILED
+      await this.databaseService.payment.update({
+        where: { id: payment.id },
+        data: { status: "REFUND_FAILED" },
       });
 
+      this.logger.warn("Refund request rejected by provider", {
+        txRef,
+        error: refundResult.error,
+      });
+    } else {
+      // Refund initiated successfully - stays as REFUND_PROCESSING
+      // Webhook will update to REFUND_PARTIAL or REFUND_FULL when complete
       this.logger.log("Refund initiated successfully", {
         txRef,
         refundId: refundResult.refundId,
@@ -191,16 +237,17 @@ export class PaymentApiService {
 
   /**
    * Validates that an entity exists, belongs to the user, and is not already paid.
+   * Returns the authoritative server-side amount for the entity.
    */
   private async validateEntityForPayment(
     type: "booking" | "extension",
     entityId: string,
     userId: string,
-  ): Promise<void> {
+  ): Promise<number> {
     if (type === "booking") {
       const booking = await this.databaseService.booking.findUnique({
         where: { id: entityId },
-        select: { id: true, userId: true, paymentStatus: true },
+        select: { id: true, userId: true, paymentStatus: true, totalAmount: true },
       });
 
       if (!booking) {
@@ -214,10 +261,17 @@ export class PaymentApiService {
       if (booking.paymentStatus === "PAID") {
         throw new BadRequestException("This booking has already been paid");
       }
+
+      return booking.totalAmount.toNumber();
     } else {
       const extension = await this.databaseService.extension.findUnique({
         where: { id: entityId },
-        include: { bookingLeg: { select: { booking: { select: { userId: true } } } } },
+        select: {
+          id: true,
+          paymentStatus: true,
+          totalAmount: true,
+          bookingLeg: { select: { booking: { select: { userId: true } } } },
+        },
       });
 
       if (!extension) {
@@ -231,6 +285,8 @@ export class PaymentApiService {
       if (extension.paymentStatus === "PAID") {
         throw new BadRequestException("This extension has already been paid");
       }
+
+      return extension.totalAmount.toNumber();
     }
   }
 }

@@ -97,7 +97,11 @@ export class TestDataFactory {
       orderBy: { createdAt: "desc" },
     });
 
-    const otp = verification?.value.split(":")[0];
+    if (!verification) {
+      throw new Error(`OTP verification record not found for ${email}. OTP send may have failed.`);
+    }
+
+    const otp = verification.value.split(":")[0];
 
     // Verify OTP
     const verifyResponse = await request(this.app.getHttpServer())
@@ -112,7 +116,9 @@ export class TestDataFactory {
   /**
    * Get user by email.
    */
-  async getUserByEmail(email: string): Promise<{ id: string; email: string; name: string | null } | null> {
+  async getUserByEmail(
+    email: string,
+  ): Promise<{ id: string; email: string; name: string | null } | null> {
     return this.prisma.user.findUnique({
       where: { email },
       select: { id: true, email: true, name: true },
@@ -161,14 +167,18 @@ export class TestDataFactory {
    * Create a test user directly in the database (bypasses auth flow).
    * Use this when you need a user without going through OTP authentication.
    */
-  async createUser(options: CreateUserOptions = {}): Promise<{ id: string; email: string; name: string | null }> {
+  async createUser(
+    options: CreateUserOptions = {},
+  ): Promise<{ id: string; email: string; name: string | null }> {
     const email = options.email ?? uniqueEmail("test-user");
     const user = await this.prisma.user.create({
       data: {
         email,
         name: options.name ?? "Test User",
         emailVerified: options.emailVerified ?? true,
-        roles: options.roles?.length ? { connect: options.roles.map((name) => ({ name })) } : undefined,
+        roles: options.roles?.length
+          ? { connect: options.roles.map((name) => ({ name })) }
+          : undefined,
       },
       select: { id: true, email: true, name: true },
     });
@@ -204,7 +214,8 @@ export class TestDataFactory {
         color: options.color ?? "Black",
         ownerId,
         registrationNumber:
-          options.registrationNumber ?? `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          options.registrationNumber ??
+          `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         status: options.status ?? "AVAILABLE",
         hourlyRate: options.hourlyRate ?? 5000,
         dayRate: options.dayRate ?? 50000,
@@ -236,7 +247,9 @@ export class TestDataFactory {
         returnLocation: options.returnLocation ?? "Victoria Island",
         status: options.status ?? "PENDING",
         paymentStatus: options.paymentStatus ?? "UNPAID",
-        bookingReference: options.bookingReference ?? `BOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        bookingReference:
+          options.bookingReference ??
+          `BOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       },
       select: { id: true, bookingReference: true },
     });
@@ -246,7 +259,10 @@ export class TestDataFactory {
   /**
    * Create a test payment in the database.
    */
-  async createPayment(bookingId: string, options: CreatePaymentOptions = {}): Promise<{ id: string; txRef: string }> {
+  async createPayment(
+    bookingId: string,
+    options: CreatePaymentOptions = {},
+  ): Promise<{ id: string; txRef: string }> {
     const payment = await this.prisma.payment.create({
       data: {
         txRef: options.txRef ?? `tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -285,42 +301,6 @@ export class TestDataFactory {
     const car = await this.createCar(fleetOwner.id, options.car);
     return this.createBooking(userId, car.id, options.booking);
   }
-}
-
-/**
- * Authenticate a user and return the session cookie.
- * Creates the user if they don't exist.
- *
- * @deprecated Use TestDataFactory.authenticateAndGetCookie() instead for consistency
- */
-export async function authenticateUser(
-  app: INestApplication,
-  prisma: PrismaClient,
-  email: string,
-  role: AuthRole = "user",
-): Promise<string> {
-  // Send OTP
-  await request(app.getHttpServer())
-    .post("/auth/api/email-otp/send-verification-otp")
-    .set("X-Client-Type", "mobile")
-    .send({ email, type: "sign-in", role });
-
-  // Get OTP from database
-  const verification = await prisma.verification.findFirst({
-    where: { identifier: `sign-in-otp-${email}` },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const otp = verification?.value.split(":")[0];
-
-  // Verify OTP
-  const verifyResponse = await request(app.getHttpServer())
-    .post("/auth/api/sign-in/email-otp")
-    .set("X-Client-Type", "mobile")
-    .send({ email, otp, role });
-
-  const cookies = verifyResponse.headers["set-cookie"];
-  return Array.isArray(cookies) ? cookies.join("; ") : cookies;
 }
 
 /**

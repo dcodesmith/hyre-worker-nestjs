@@ -118,12 +118,9 @@ describe("Payments E2E Tests", () => {
     });
 
     it("should reject payment for booking owned by another user", async () => {
-      const otherEmail = uniqueEmail("other-user");
-      const otherCookie = await factory.authenticateAndGetCookie(otherEmail, "user");
-
       const response = await request(app.getHttpServer())
         .post("/api/payments/initialize")
-        .set("Cookie", otherCookie)
+        .set("Cookie", otherUserCookie)
         .send({
           type: "booking",
           entityId: testBookingId,
@@ -189,12 +186,9 @@ describe("Payments E2E Tests", () => {
     });
 
     it("should reject access to payment owned by another user", async () => {
-      const otherEmail = uniqueEmail("other-user-status");
-      const otherCookie = await factory.authenticateAndGetCookie(otherEmail, "user");
-
       const response = await request(app.getHttpServer())
         .get(`/api/payments/status/${testPaymentTxRef}`)
-        .set("Cookie", otherCookie);
+        .set("Cookie", otherUserCookie);
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       expect(response.body.message).toContain("permission");
@@ -277,6 +271,7 @@ describe("Payments E2E Tests", () => {
     it("should reject refund amount exceeding payment amount", async () => {
       const excessPayment = await factory.createPayment(testBookingId, {
         status: "SUCCESSFUL",
+        amountCharged: 50000,
         flutterwaveTransactionId: `FLW-EXCESS-${Date.now()}`,
       });
 
