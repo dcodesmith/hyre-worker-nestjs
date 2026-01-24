@@ -1,8 +1,9 @@
 import { HttpStatus, type INestApplication } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
@@ -297,6 +298,351 @@ describe("Payments E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       expect(response.body.message).toBe("Validation failed");
+    });
+  });
+
+  describe("POST /api/payments/webhook/flutterwave", () => {
+    let webhookSecret: string;
+
+    beforeAll(() => {
+      const configService = app.get(ConfigService);
+      webhookSecret = configService.get("FLUTTERWAVE_WEBHOOK_SECRET") ?? "test-webhook-secret";
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    describe("Signature Verification", () => {
+      it("should reject request without verif-hash header", async () => {
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .send({ event: "charge.completed", data: {} });
+
+        expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      });
+
+      it("should reject request with invalid verif-hash header", async () => {
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", "invalid-secret")
+          .send({ event: "charge.completed", data: {} });
+
+        expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      });
+
+      it("should accept request with valid verif-hash header", async () => {
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: { status: "successful" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: {
+              id: 12345,
+              tx_ref: "non-existent-tx-ref",
+              status: "successful",
+              charged_amount: 50000,
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+      });
+    });
+
+    describe("charge.completed", () => {
+      it("should update payment status to SUCCESSFUL when charge is successful", async () => {
+        const payment = await factory.createPayment(testBookingId, {
+          status: PaymentAttemptStatus.PENDING,
+          amountExpected: 50000,
+        });
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: { status: "successful" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: {
+              id: 99999,
+              tx_ref: payment.txRef,
+              status: "successful",
+              charged_amount: 50000,
+              flw_ref: "FLW-MOCK-REF",
+              device_fingerprint: "device-123",
+              amount: 50000,
+              currency: "NGN",
+              app_fee: 700,
+              merchant_fee: 0,
+              processor_response: "Approved",
+              auth_model: "PIN",
+              ip: "127.0.0.1",
+              narration: "Test payment",
+              payment_type: "card",
+              created_at: new Date().toISOString(),
+              account_id: 123,
+              customer: {
+                id: 456,
+                name: "Test User",
+                phone_number: null,
+                email: "test@example.com",
+                created_at: new Date().toISOString(),
+              },
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+
+        // Verify payment was updated in database
+        const updatedPayment = await factory.getPaymentById(payment.id);
+        expect(updatedPayment?.status).toBe("SUCCESSFUL");
+        expect(updatedPayment?.flutterwaveTransactionId).toBe("99999");
+        expect(updatedPayment?.amountCharged?.toNumber()).toBe(50000);
+      });
+
+      it("should handle idempotency - skip already processed payment", async () => {
+        const originalTransactionId = `FLW-IDEMPOTENT-${Date.now()}`;
+        const payment = await factory.createPayment(testBookingId, {
+          status: PaymentAttemptStatus.SUCCESSFUL,
+          amountExpected: 50000,
+          amountCharged: 50000,
+          flutterwaveTransactionId: originalTransactionId,
+          confirmedAt: new Date(Date.now() - 60000), // Set 1 minute ago
+        });
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: { status: "successful" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: {
+              id: 88888,
+              tx_ref: payment.txRef,
+              status: "successful",
+              charged_amount: 50000,
+              flw_ref: "FLW-MOCK-REF",
+              device_fingerprint: "device-123",
+              amount: 50000,
+              currency: "NGN",
+              app_fee: 700,
+              merchant_fee: 0,
+              processor_response: "Approved",
+              auth_model: "PIN",
+              ip: "127.0.0.1",
+              narration: "Test payment",
+              payment_type: "card",
+              created_at: new Date().toISOString(),
+              account_id: 123,
+              customer: {
+                id: 456,
+                name: "Test User",
+                phone_number: null,
+                email: "test@example.com",
+                created_at: new Date().toISOString(),
+              },
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+
+        // Verify the payment wasn't modified (idempotency check)
+        // flutterwaveTransactionId should still be the original value, not "88888"
+        const unchangedPayment = await factory.getPaymentById(payment.id);
+        expect(unchangedPayment?.flutterwaveTransactionId).toBe(originalTransactionId);
+        expect(unchangedPayment?.status).toBe("SUCCESSFUL");
+      });
+    });
+
+    describe("transfer.completed", () => {
+      let fleetOwnerId: string;
+
+      beforeAll(async () => {
+        const fleetOwner = await factory.createFleetOwner();
+        fleetOwnerId = fleetOwner.id;
+      });
+
+      it("should update payout transaction status to PAID_OUT when transfer is successful", async () => {
+        const payoutReference = `payout-${Date.now()}`;
+        const payoutTransaction = await factory.createPayoutTransaction(fleetOwnerId, {
+          bookingId: testBookingId,
+          status: "PROCESSING",
+          payoutProviderReference: payoutReference,
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "transfer.completed",
+            data: {
+              id: 77777,
+              reference: payoutReference,
+              status: "SUCCESSFUL",
+              account_number: "1234567890",
+              bank_code: "044",
+              full_name: "Test Fleet Owner",
+              created_at: new Date().toISOString(),
+              currency: "NGN",
+              debit_currency: "NGN",
+              amount: 45000,
+              fee: 50,
+              meta: {},
+              narration: "Payout for booking",
+              complete_message: "Transfer completed",
+              requires_approval: 0,
+              is_approved: 1,
+              bank_name: "Access Bank",
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+
+        // Verify payout transaction was updated
+        const updatedPayout = await factory.getPayoutTransactionById(payoutTransaction.id);
+        expect(updatedPayout?.status).toBe("PAID_OUT");
+        expect(updatedPayout?.completedAt).toBeDefined();
+      });
+
+      it("should update payout transaction status to FAILED when transfer fails", async () => {
+        const payoutReference = `payout-failed-${Date.now()}`;
+        const payoutTransaction = await factory.createPayoutTransaction(fleetOwnerId, {
+          bookingId: testBookingId,
+          status: "PROCESSING",
+          payoutProviderReference: payoutReference,
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "transfer.completed",
+            data: {
+              id: 66666,
+              reference: payoutReference,
+              status: "FAILED",
+              account_number: "1234567890",
+              bank_code: "044",
+              full_name: "Test Fleet Owner",
+              created_at: new Date().toISOString(),
+              currency: "NGN",
+              debit_currency: "NGN",
+              amount: 45000,
+              fee: 50,
+              meta: {},
+              narration: "Payout for booking",
+              complete_message: "Transfer failed",
+              requires_approval: 0,
+              is_approved: 1,
+              bank_name: "Access Bank",
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+
+        // Verify payout transaction was marked as failed
+        const updatedPayout = await factory.getPayoutTransactionById(payoutTransaction.id);
+        expect(updatedPayout?.status).toBe("FAILED");
+      });
+    });
+
+    describe("refund.completed", () => {
+      it("should update payment status to REFUNDED when refund is completed", async () => {
+        // Use a unique numeric transaction ID since Flutterwave sends TransactionId as a number
+        const flwTransactionId = Date.now() + Math.floor(Math.random() * 100000);
+        const payment = await factory.createPayment(testBookingId, {
+          status: "REFUND_PROCESSING",
+          amountExpected: 50000,
+          amountCharged: 50000,
+          flutterwaveTransactionId: flwTransactionId.toString(),
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.completed",
+            data: {
+              id: 55555,
+              AmountRefunded: 50000,
+              status: "completed",
+              FlwRef: "FLW-REF-REFUND",
+              destination: "card",
+              comments: "Customer requested refund",
+              settlement_id: "settle-123",
+              meta: "{}",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              walletId: 789,
+              AccountId: 123,
+              TransactionId: flwTransactionId,
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+
+        // Verify payment was updated
+        const updatedPayment = await factory.getPaymentById(payment.id);
+        expect(updatedPayment?.status).toBe("REFUNDED");
+      });
+
+      it("should update payment status to PARTIALLY_REFUNDED for partial refunds", async () => {
+        // Use a numeric transaction ID since Flutterwave sends TransactionId as a number
+        const flwTransactionId = Math.floor(Date.now() / 1000) + 1;
+        const payment = await factory.createPayment(testBookingId, {
+          status: "REFUND_PROCESSING",
+          amountExpected: 50000,
+          amountCharged: 50000,
+          flutterwaveTransactionId: flwTransactionId.toString(),
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.completed",
+            data: {
+              id: 44444,
+              AmountRefunded: 25000, // Partial refund
+              status: "completed",
+              FlwRef: "FLW-REF-PARTIAL",
+              destination: "card",
+              comments: "Partial refund",
+              settlement_id: "settle-456",
+              meta: "{}",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              walletId: 789,
+              AccountId: 123,
+              TransactionId: flwTransactionId,
+            },
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+
+        // Verify payment was marked as partially refunded
+        const updatedPayment = await factory.getPaymentById(payment.id);
+        expect(updatedPayment?.status).toBe("PARTIALLY_REFUNDED");
+      });
     });
   });
 });

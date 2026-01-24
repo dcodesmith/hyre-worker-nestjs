@@ -1,5 +1,5 @@
 import type { INestApplication } from "@nestjs/common";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { PayoutTransactionStatus, Prisma, PrismaClient } from "@prisma/client";
 import request from "supertest";
 
 // ============================================================================
@@ -15,6 +15,8 @@ export type CreateCarOptions = Partial<Prisma.CarUncheckedCreateInput>;
 export type CreateBookingOptions = Partial<Prisma.BookingUncheckedCreateInput>;
 
 export type CreatePaymentOptions = Partial<Prisma.PaymentUncheckedCreateInput>;
+
+export type CreatePayoutTransactionOptions = Partial<Prisma.PayoutTransactionUncheckedCreateInput>;
 
 export type AuthRole = "user" | "fleetOwner" | "admin";
 
@@ -305,6 +307,47 @@ export class TestDataFactory {
     const fleetOwner = await this.createFleetOwner(options.fleetOwner);
     const car = await this.createCar(fleetOwner.id, options.car);
     return this.createBooking(userId, car.id, options.booking);
+  }
+
+  /**
+   * Create a payout transaction in the database.
+   */
+  async createPayoutTransaction(
+    fleetOwnerId: string,
+    options: Omit<CreatePayoutTransactionOptions, "fleetOwnerId"> = {},
+  ): Promise<{ id: string }> {
+    const payoutTransaction = await this.prisma.payoutTransaction.create({
+      data: {
+        fleetOwnerId,
+        bookingId: options.bookingId,
+        extensionId: options.extensionId,
+        amountToPay: options.amountToPay ?? 45000,
+        currency: options.currency ?? "NGN",
+        status: (options.status ?? "PROCESSING") as PayoutTransactionStatus,
+        payoutProviderReference:
+          options.payoutProviderReference ?? `payout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      },
+      select: { id: true },
+    });
+    return payoutTransaction;
+  }
+
+  /**
+   * Get a payment by ID.
+   */
+  async getPaymentById(paymentId: string) {
+    return this.prisma.payment.findUnique({
+      where: { id: paymentId },
+    });
+  }
+
+  /**
+   * Get a payout transaction by ID.
+   */
+  async getPayoutTransactionById(payoutTransactionId: string) {
+    return this.prisma.payoutTransaction.findUnique({
+      where: { id: payoutTransactionId },
+    });
   }
 }
 

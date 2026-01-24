@@ -132,3 +132,75 @@ export class FlutterwaveError extends Error {
     this.name = "FlutterwaveError";
   }
 }
+
+// Webhook Types
+// @see https://developer.flutterwave.com/v3.0/docs/webhooks
+
+/** Discriminated union for Flutterwave webhook payloads */
+export type FlutterwaveWebhookPayload =
+  | { event: "charge.completed"; data: FlutterwaveChargeData }
+  | { event: "transfer.completed"; data: FlutterwaveTransferWebhookData }
+  | { event: "refund.completed"; data: FlutterwaveRefundWebhookData };
+
+/**
+ * Customer data in webhook payloads
+ */
+export interface FlutterwaveCustomerData {
+  id: number;
+  name: string;
+  phone_number: string | null;
+  email: string;
+  created_at: string;
+}
+
+/**
+ * Data for charge.completed webhook event
+ * @see https://developer.flutterwave.com/v3.0/docs/webhooks
+ */
+export interface FlutterwaveChargeData {
+  id: number;
+  tx_ref: string;
+  flw_ref: string;
+  device_fingerprint: string;
+  amount: number;
+  currency: string;
+  charged_amount: number;
+  app_fee: number;
+  merchant_fee: number;
+  processor_response: string;
+  auth_model: string;
+  ip: string;
+  narration: string;
+  status: string;
+  payment_type: string;
+  created_at: string;
+  account_id: number;
+  customer: FlutterwaveCustomerData;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Data for transfer.completed webhook event
+ * Uses same structure as FlutterwaveTransferData
+ */
+export type FlutterwaveTransferWebhookData = FlutterwaveTransferData;
+
+/**
+ * Data for refund.completed webhook event
+ * @see https://developer.flutterwave.com/v3.0/docs/refunds
+ */
+export interface FlutterwaveRefundWebhookData {
+  id: number;
+  AmountRefunded: number;
+  status: string;
+  FlwRef: string;
+  destination: string;
+  comments: string;
+  settlement_id: string;
+  meta: string;
+  createdAt: string;
+  updatedAt: string;
+  walletId: number;
+  AccountId: number;
+  TransactionId: number;
+}

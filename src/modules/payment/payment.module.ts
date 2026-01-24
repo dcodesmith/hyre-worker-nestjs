@@ -10,6 +10,7 @@ import { PaymentController } from "./payment.controller";
 import { PaymentProcessor } from "./payment.processor";
 import { PaymentService } from "./payment.service";
 import { PaymentApiService } from "./payment-api.service";
+import { PaymentWebhookService } from "./payment-webhook.service";
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { PaymentApiService } from "./payment-api.service";
     }),
   ],
   controllers: [PaymentController],
-  providers: [PaymentService, PaymentApiService, PaymentProcessor],
-  exports: [PaymentService, PaymentApiService],
+  providers: [PaymentService, PaymentApiService, PaymentWebhookService, PaymentProcessor],
+  exports: [PaymentService, PaymentApiService, PaymentWebhookService],
 })
 export class PaymentModule {}
