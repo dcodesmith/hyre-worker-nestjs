@@ -1,3 +1,4 @@
+import { PrismaClient } from "@prisma/client";
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, StartedRedisContainer } from "@testcontainers/redis";
 import { execSync } from "node:child_process";
@@ -64,6 +65,23 @@ export async function setup() {
     } catch (error) {
       console.error("Prisma schema push failed:", error);
       throw error;
+    }
+
+    // Seed roles for authentication tests
+    console.log("Seeding roles...");
+    const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+    try {
+      const roles = ["user", "fleetOwner", "admin", "staff"];
+      for (const roleName of roles) {
+        await prisma.role.upsert({
+          where: { name: roleName },
+          update: {},
+          create: { name: roleName, description: `${roleName} role` },
+        });
+      }
+      console.log("Roles seeded successfully");
+    } finally {
+      await prisma.$disconnect();
     }
 
     // Teardown function to stop containers after tests

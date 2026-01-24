@@ -3,8 +3,11 @@ import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { PAYOUTS_QUEUE } from "../../config/constants";
+import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
+import { PaymentApiService } from "./payment-api.service";
+import { PaymentController } from "./payment.controller";
 import { PaymentProcessor } from "./payment.processor";
 import { PaymentService } from "./payment.service";
 
@@ -12,6 +15,7 @@ import { PaymentService } from "./payment.service";
   imports: [
     FlutterwaveModule,
     DatabaseModule,
+    AuthModule,
     BullModule.registerQueue({
       name: PAYOUTS_QUEUE,
       defaultJobOptions: {
@@ -29,7 +33,8 @@ import { PaymentService } from "./payment.service";
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [PaymentService, PaymentProcessor],
-  exports: [PaymentService],
+  controllers: [PaymentController],
+  providers: [PaymentService, PaymentApiService, PaymentProcessor],
+  exports: [PaymentService, PaymentApiService],
 })
 export class PaymentModule {}

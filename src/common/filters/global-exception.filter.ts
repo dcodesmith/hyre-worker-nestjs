@@ -41,10 +41,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Extract error code and details if this is an AppException
     let errorCode: string | undefined;
     let details: Record<string, unknown> | undefined;
+    let errors: unknown[] | undefined;
 
     if (exception instanceof AppException) {
       errorCode = exception.getErrorCode();
       details = exception.getDetails();
+    }
+
+    // Extract validation errors from HttpException response
+    if (exception instanceof HttpException) {
+      const response = exception.getResponse();
+      if (typeof response === "object" && response !== null && "errors" in response) {
+        errors = (response as { errors: unknown[] }).errors;
+      }
     }
 
     // Determine error message
@@ -61,6 +70,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: httpAdapter.getRequestUrl(request),
       ...(details && { details }), // Include details if present
+      ...(errors && { errors }), // Include validation errors if present
     };
 
     httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);

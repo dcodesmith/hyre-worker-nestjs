@@ -4,14 +4,16 @@ import {
   BookingType,
   CarApprovalStatus,
   ChauffeurApprovalStatus,
+  ExtensionEventType,
   FleetOwnerStatus,
+  PaymentAttemptStatus,
   PaymentStatus,
   ServiceTier,
   Status,
   VehicleType,
 } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
-import { BookingWithRelations } from "../types";
+import { BookingWithRelations, ExtensionWithBookingLeg, PaymentWithRelations } from "../types";
 
 /**
  * Mock objects for testing purposes
@@ -207,6 +209,74 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     user: null,
     car: null,
     legs: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Create a mock Extension for testing.
+ * Includes nested bookingLeg with booking for ownership checks.
+ */
+export function createExtension(
+  overrides: Partial<ExtensionWithBookingLeg> = {},
+): ExtensionWithBookingLeg {
+  return {
+    id: "extension-123",
+    createdAt: new Date("2024-01-01T00:00:00Z"),
+    updatedAt: new Date("2024-01-01T00:00:00Z"),
+    totalAmount: new Decimal(5000),
+    paymentStatus: PaymentStatus.UNPAID,
+    paymentId: null,
+    paymentIntent: null,
+    status: "PENDING",
+    bookingLegId: "leg-123",
+    eventType: ExtensionEventType.HOURLY_ADDITION,
+    extendedDurationHours: 2,
+    extensionStartTime: new Date("2024-01-01T18:00:00Z"),
+    extensionEndTime: new Date("2024-01-01T20:00:00Z"),
+    fleetOwnerPayoutAmountNet: null,
+    netTotal: null,
+    overallPayoutStatus: null,
+    platformCustomerServiceFeeAmount: null,
+    platformCustomerServiceFeeRatePercent: null,
+    platformFleetOwnerCommissionAmount: null,
+    platformFleetOwnerCommissionRatePercent: null,
+    subtotalBeforeVat: null,
+    vatAmount: null,
+    vatRatePercent: null,
+    bookingLeg: { booking: { userId: "user-123" } },
+    ...overrides,
+  };
+}
+
+/**
+ * Create a mock Payment for testing.
+ * Includes nested booking/extension for ownership checks.
+ */
+export function createPayment(
+  overrides: Partial<PaymentWithRelations> = {},
+): PaymentWithRelations {
+  return {
+    id: "payment-123",
+    bookingId: "booking-123",
+    extensionId: null,
+    txRef: "tx-ref-123",
+    flutterwaveTransactionId: "flw-tx-123",
+    flutterwaveReference: null,
+    amountExpected: new Decimal(10000),
+    amountCharged: new Decimal(10000),
+    currency: "NGN",
+    feeChargedByProvider: null,
+    status: PaymentAttemptStatus.SUCCESSFUL,
+    paymentProviderStatus: null,
+    paymentMethod: null,
+    initiatedAt: new Date("2024-01-01T00:00:00Z"),
+    confirmedAt: new Date("2024-01-01T00:00:00Z"),
+    lastVerifiedAt: null,
+    webhookPayload: null,
+    verificationResponse: null,
+    booking: { id: "booking-123", status: "CONFIRMED", userId: "user-123" },
+    extension: null,
     ...overrides,
   };
 }
