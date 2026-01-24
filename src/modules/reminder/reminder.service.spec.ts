@@ -58,6 +58,12 @@ describe("ReminderService", () => {
   });
 
   describe("sendBookingStartReminderEmails", () => {
+    // Use fake timers for time-sensitive tests to avoid flakiness
+    // caused by time drift between test setup and service execution
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should return message when no legs found", async () => {
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([]);
 
@@ -68,8 +74,12 @@ describe("ReminderService", () => {
     });
 
     it("should queue notifications for matching legs", async () => {
-      const now = new Date();
-      const legStartTime = addHours(now, 0.5); // 30 minutes from now
+      // Use a fixed time to avoid flakiness from minute boundary race conditions
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
+      const legStartTime = addHours(fixedNow, 0.5); // 30 minutes from now
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         paymentStatus: PaymentStatus.PAID,
@@ -79,7 +89,7 @@ describe("ReminderService", () => {
       });
       const leg = {
         ...createBookingLeg({
-          legDate: now,
+          legDate: fixedNow,
           legStartTime,
         }),
         booking,
@@ -97,8 +107,12 @@ describe("ReminderService", () => {
     });
 
     it("should handle errors when queueing notifications", async () => {
-      const now = new Date();
-      const legStartTime = addHours(now, 0.5);
+      // Use a fixed time to avoid flakiness
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
+      const legStartTime = addHours(fixedNow, 0.5);
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         paymentStatus: PaymentStatus.PAID,
@@ -108,7 +122,7 @@ describe("ReminderService", () => {
       });
       const leg = {
         ...createBookingLeg({
-          legDate: now,
+          legDate: fixedNow,
           legStartTime,
         }),
         booking,

@@ -223,6 +223,34 @@ describe("PaymentWebhookService", () => {
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
 
+    it.each([
+      PaymentAttemptStatus.REFUNDED,
+      PaymentAttemptStatus.PARTIALLY_REFUNDED,
+      PaymentAttemptStatus.REFUND_FAILED,
+      PaymentAttemptStatus.REFUND_ERROR,
+      PaymentAttemptStatus.REFUND_PROCESSING,
+    ])(
+      "should skip processing if payment is in %s state (idempotency - preserves refund states)",
+      async (refundStatus) => {
+        const mockPayment = createMockPayment({
+          id: "payment-123",
+          txRef: "tx-ref-123",
+          status: refundStatus,
+        });
+
+        vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: {},
+        });
+        vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+
+        await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+        expect(databaseService.payment.update).not.toHaveBeenCalled();
+      },
+    );
+
     it("should not update payment if verification fails", async () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "error",
@@ -270,7 +298,7 @@ describe("PaymentWebhookService", () => {
       debit_currency: "NGN",
       amount: 5000,
       fee: 50,
-      status: "successful",
+      status: "SUCCESSFUL", // Flutterwave uses uppercase for transfer statuses
       reference: "payout-ref-123",
       meta: {},
       narration: "Payout for booking",

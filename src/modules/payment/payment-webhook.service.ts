@@ -108,12 +108,10 @@ export class PaymentWebhookService {
     }
 
     // Skip if already processed (idempotency)
-    // Both SUCCESSFUL and FAILED are terminal states that should not be overwritten
-    if (
-      payment.status === PaymentAttemptStatus.SUCCESSFUL ||
-      payment.status === PaymentAttemptStatus.FAILED
-    ) {
-      this.logger.log("Payment already finalized, skipping", {
+    // Only process webhooks for PENDING payments - all other states are terminal or in-progress refunds
+    // This prevents delayed/duplicate webhooks from overwriting refund states (REFUNDED, PARTIALLY_REFUNDED, etc.)
+    if (payment.status !== PaymentAttemptStatus.PENDING) {
+      this.logger.log("Payment not in PENDING state, skipping", {
         txRef: tx_ref,
         currentStatus: payment.status,
       });
@@ -183,9 +181,12 @@ export class PaymentWebhookService {
     }
 
     // Update payout transaction status
-    // Flutterwave transfer status "SUCCESSFUL" maps to our "PAID_OUT"
+    // Flutterwave transfer status "SUCCESSFUL" (uppercase) maps to our "PAID_OUT"
+    // Use case-insensitive comparison to handle potential API inconsistencies
     const newStatus =
-      status === "successful" ? PayoutTransactionStatus.PAID_OUT : PayoutTransactionStatus.FAILED;
+      status.toUpperCase() === "SUCCESSFUL"
+        ? PayoutTransactionStatus.PAID_OUT
+        : PayoutTransactionStatus.FAILED;
     await this.databaseService.payoutTransaction.update({
       where: { id: payoutTransaction.id },
       data: {
@@ -254,8 +255,12 @@ export class PaymentWebhookService {
     }
 
     // Determine final refund status
+    // Flutterwave may send various "completed" variants like "completed", "completed-bank-transfer", "completed-momo"
+    // Use case-insensitive prefix matching to handle all successful refund statuses
+    const isRefundSuccessful = status.toLowerCase().startsWith("completed");
+
     let newStatus: PaymentAttemptStatus;
-    if (status !== "completed") {
+    if (!isRefundSuccessful) {
       newStatus = PaymentAttemptStatus.REFUND_FAILED;
     } else if (isFullRefund) {
       newStatus = PaymentAttemptStatus.REFUNDED;

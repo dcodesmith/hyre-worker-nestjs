@@ -27,6 +27,8 @@ describe("Payments E2E Tests", () => {
   beforeAll(async () => {
     const mockSendOTPEmail = vi.fn().mockResolvedValue(undefined);
 
+    process.env.FLUTTERWAVE_WEBHOOK_SECRET = "test-webhook-secret";
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -495,7 +497,7 @@ describe("Payments E2E Tests", () => {
             data: {
               id: 77777,
               reference: payoutReference,
-              status: "successful",
+              status: "SUCCESSFUL", // Flutterwave uses uppercase for transfer statuses
               account_number: "1234567890",
               bank_code: "044",
               full_name: "Test Fleet Owner",
