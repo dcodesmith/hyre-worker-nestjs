@@ -58,7 +58,7 @@ export class PaymentWebhookService {
    * 2. Update the Payment record status
    * 3. Activate the booking/extension (via BookingActivationService in future PR)
    */
-  private async handleChargeCompleted(data: FlutterwaveChargeData): Promise<void> {
+  async handleChargeCompleted(data: FlutterwaveChargeData): Promise<void> {
     const { tx_ref, id: transactionId, status, charged_amount } = data;
 
     this.logger.log("Processing charge.completed webhook", {
@@ -136,7 +136,7 @@ export class PaymentWebhookService {
    * This is called when a payout transfer is completed.
    * Delegates to PaymentService which handles payout state management.
    */
-  private async handleTransferCompleted(data: FlutterwaveTransferWebhookData): Promise<void> {
+  async handleTransferCompleted(data: FlutterwaveTransferWebhookData): Promise<void> {
     const { reference, status, id: transferId } = data;
 
     this.logger.log("Processing transfer.completed webhook", {
@@ -188,7 +188,7 @@ export class PaymentWebhookService {
    * This is called when a refund is processed.
    * It should update the Payment record with refund status.
    */
-  private async handleRefundCompleted(data: FlutterwaveRefundWebhookData): Promise<void> {
+  async handleRefundCompleted(data: FlutterwaveRefundWebhookData): Promise<void> {
     const { FlwRef, AmountRefunded, status, TransactionId } = data;
 
     this.logger.log("Processing refund.completed webhook", {
