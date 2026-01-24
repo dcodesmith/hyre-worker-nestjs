@@ -36,7 +36,9 @@ describe("FlutterwaveService", () => {
       },
     };
 
-    vi.mocked(axios.create).mockReturnValue(mockAxiosInstance as unknown as ReturnType<typeof axios.create>);
+    vi.mocked(axios.create).mockReturnValue(
+      mockAxiosInstance as unknown as ReturnType<typeof axios.create>,
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -219,7 +221,9 @@ describe("FlutterwaveService", () => {
       await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
 
       mockAxiosInstance.post.mockResolvedValue(mockResponse);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow("Invalid customer email");
+      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
+        "Invalid customer email",
+      );
     });
 
     it("should throw FlutterwaveError when API returns success but no link", async () => {
@@ -403,6 +407,7 @@ describe("FlutterwaveService", () => {
     const validRefundOptions: RefundOptions = {
       transactionId: "12345",
       amount: 5000,
+      idempotencyKey: "refund_payment-123_test-uuid",
     };
 
     it("should initiate refund successfully", async () => {
@@ -439,7 +444,11 @@ describe("FlutterwaveService", () => {
       expect(mockAxiosInstance.post).toHaveBeenCalledWith(
         "/v3/transactions/12345/refund",
         { amount: 5000 },
-        undefined,
+        {
+          headers: {
+            "X-Idempotency-Key": "refund_payment-123_test-uuid",
+          },
+        },
       );
     });
 
@@ -478,7 +487,11 @@ describe("FlutterwaveService", () => {
           amount: 5000,
           callback_url: "https://example.com/refund-callback",
         },
-        undefined,
+        {
+          headers: {
+            "X-Idempotency-Key": "refund_payment-123_test-uuid",
+          },
+        },
       );
     });
 
@@ -532,25 +545,30 @@ describe("FlutterwaveService", () => {
       expect(result.error).toContain("Invalid transaction ID");
     });
 
-    it("should handle network errors", async () => {
-      // Network errors get wrapped by handleError with "Unexpected error:" prefix
-      const networkError = new Error("Network Error");
+    it("should throw network errors for caller to handle as uncertain state", async () => {
+      // Network errors should be thrown so caller can distinguish uncertain states
+      // from explicit rejections and handle appropriately (e.g., REFUND_ERROR vs REFUND_FAILED)
+      const networkError = new FlutterwaveError(
+        "Network error: Unable to reach Flutterwave servers",
+        "NETWORK_ERROR",
+      );
       mockAxiosInstance.post.mockRejectedValueOnce(networkError);
 
-      const result = await service.initiateRefund(validRefundOptions);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Network Error");
+      await expect(service.initiateRefund(validRefundOptions)).rejects.toMatchObject({
+        message: "Network error: Unable to reach Flutterwave servers",
+        code: "NETWORK_ERROR",
+      });
     });
 
-    it("should handle unknown errors", async () => {
-      // Unknown errors get wrapped by handleError
-      mockAxiosInstance.post.mockRejectedValueOnce("Unknown error string");
+    it("should throw unknown errors for caller to handle as uncertain state", async () => {
+      // Unknown errors should be thrown wrapped as FlutterwaveError with UNEXPECTED_ERROR code
+      const unknownError = new Error("Something unexpected happened");
+      mockAxiosInstance.post.mockRejectedValueOnce(unknownError);
 
-      const result = await service.initiateRefund(validRefundOptions);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
+      await expect(service.initiateRefund(validRefundOptions)).rejects.toMatchObject({
+        message: expect.stringContaining("Something unexpected happened"),
+        code: "UNEXPECTED_ERROR",
+      });
     });
   });
 

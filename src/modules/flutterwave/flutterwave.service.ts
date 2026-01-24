@@ -118,7 +118,7 @@ export class FlutterwaveService {
   }
 
   async initiateRefund(options: RefundOptions): Promise<RefundResponse> {
-    const { transactionId, amount, callbackUrl } = options;
+    const { transactionId, amount, callbackUrl, idempotencyKey } = options;
 
     const payload: Record<string, unknown> = {
       amount,
@@ -132,11 +132,17 @@ export class FlutterwaveService {
       this.logger.log("Initiating refund", {
         transactionId,
         amount,
+        idempotencyKey,
       });
 
       const response = await this.post<FlutterwaveRefundData>(
         `/v3/transactions/${transactionId}/refund`,
         payload,
+        {
+          headers: {
+            "X-Idempotency-Key": idempotencyKey,
+          },
+        },
       );
 
       if (response.status === "success" && response.data) {
@@ -165,17 +171,23 @@ export class FlutterwaveService {
         transactionId,
       });
 
+      // FlutterwaveError with a response means the API explicitly rejected the refund
+      // Re-throw network/unexpected errors so caller can distinguish uncertain states
       if (error instanceof FlutterwaveError) {
+        if (error.code === "NETWORK_ERROR" || error.code === "UNEXPECTED_ERROR") {
+          throw error;
+        }
         return {
           success: false,
           error: error.message,
         };
       }
 
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error initiating refund",
-      };
+      // Unknown error type - wrap and throw for caller to handle as uncertain state
+      throw new FlutterwaveError(
+        error instanceof Error ? error.message : "Unknown error initiating refund",
+        "UNEXPECTED_ERROR",
+      );
     }
   }
 
@@ -332,6 +344,11 @@ export class FlutterwaveService {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
     this.logger.error(`Flutterwave ${operation} failed: ${errorMessage}`);
+
+    // Pass through existing FlutterwaveError instances unchanged
+    if (error instanceof FlutterwaveError) {
+      return error;
+    }
 
     if (error instanceof AxiosError && error.response) {
       const { status, data } = error.response;

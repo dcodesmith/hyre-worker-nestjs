@@ -369,6 +369,7 @@ model Payment {
   lastVerifiedAt           DateTime?
   webhookPayload           Json?
   verificationResponse     Json?
+  refundIdempotencyKey     String?              @unique // Idempotency key for refund requests to prevent duplicate refunds
   booking                  Booking?             @relation("BookingCustomerPayments", fields: [bookingId], references: [id])
   extension                Extension?           @relation("ExtensionCustomerPayments", fields: [extensionId], references: [id])
 
@@ -582,6 +583,7 @@ enum PaymentAttemptStatus {
   REFUNDED
   REFUND_PROCESSING
   REFUND_FAILED
+  REFUND_ERROR // Network/unknown error during refund - needs reconciliation
   PARTIALLY_REFUNDED
 }
 

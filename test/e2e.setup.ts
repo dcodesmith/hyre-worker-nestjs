@@ -66,6 +66,25 @@ export async function setup() {
       throw error;
     }
 
+    // Seed roles for authentication tests
+    // Dynamic import to avoid loading before prisma generate runs
+    console.log("Seeding roles...");
+    const { PrismaClient } = await import("@prisma/client");
+    const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+    try {
+      const roles = ["user", "fleetOwner", "admin", "staff"];
+      for (const roleName of roles) {
+        await prisma.role.upsert({
+          where: { name: roleName },
+          update: {},
+          create: { name: roleName, description: `${roleName} role` },
+        });
+      }
+      console.log("Roles seeded successfully");
+    } finally {
+      await prisma.$disconnect();
+    }
+
     // Teardown function to stop containers after tests
     return async () => {
       await pgContainer.stop();
