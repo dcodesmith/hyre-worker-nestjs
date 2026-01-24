@@ -5,12 +5,15 @@ import {
   FlutterwaveConfig,
   FlutterwaveError,
   FlutterwavePaymentLinkData,
+  FlutterwaveRefundData,
   FlutterwaveResponse,
   FlutterwaveTransferData,
   PaymentIntentOptions,
   PaymentIntentResponse,
   PayoutRequest,
   PayoutResponse,
+  RefundOptions,
+  RefundResponse,
 } from "./flutterwave.interface";
 
 @Injectable()
@@ -111,6 +114,68 @@ export class FlutterwaveService {
         transactionId,
       });
       throw error;
+    }
+  }
+
+  async initiateRefund(options: RefundOptions): Promise<RefundResponse> {
+    const { transactionId, amount, callbackUrl } = options;
+
+    const payload: Record<string, unknown> = {
+      amount,
+    };
+
+    if (callbackUrl) {
+      payload.callback_url = callbackUrl;
+    }
+
+    try {
+      this.logger.log("Initiating refund", {
+        transactionId,
+        amount,
+      });
+
+      const response = await this.post<FlutterwaveRefundData>(
+        `/v3/transactions/${transactionId}/refund`,
+        payload,
+      );
+
+      if (response.status === "success" && response.data) {
+        this.logger.log("Refund initiated successfully", {
+          transactionId,
+          refundId: response.data.id,
+          amountRefunded: response.data.amount_refunded,
+          status: response.data.status,
+        });
+
+        return {
+          success: true,
+          refundId: response.data.id,
+          amountRefunded: response.data.amount_refunded,
+          status: response.data.status,
+        };
+      }
+
+      return {
+        success: false,
+        error: response.message || "Failed to initiate refund",
+      };
+    } catch (error) {
+      this.logger.error("Failed to initiate refund", {
+        error: String(error),
+        transactionId,
+      });
+
+      if (error instanceof FlutterwaveError) {
+        return {
+          success: false,
+          error: error.message,
+        };
+      }
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error initiating refund",
+      };
     }
   }
 
