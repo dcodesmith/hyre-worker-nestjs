@@ -253,9 +253,7 @@ export function createExtension(
  * Create a mock Payment for testing.
  * Includes nested booking/extension for ownership checks.
  */
-export function createPayment(
-  overrides: Partial<PaymentWithRelations> = {},
-): PaymentWithRelations {
+export function createPayment(overrides: Partial<PaymentWithRelations> = {}): PaymentWithRelations {
   return {
     id: "payment-123",
     bookingId: "booking-123",

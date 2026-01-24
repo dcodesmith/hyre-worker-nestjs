@@ -1,12 +1,7 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
+import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
 
@@ -130,7 +125,11 @@ export class PaymentApiService {
    * Initiate a refund for a payment.
    * Only the booking/extension owner can request a refund.
    */
-  async initiateRefund(txRef: string, dto: RefundPaymentDto, userId: string): Promise<RefundResponse> {
+  async initiateRefund(
+    txRef: string,
+    dto: RefundPaymentDto,
+    userId: string,
+  ): Promise<RefundResponse> {
     this.logger.log("Initiating refund", { txRef, amount: dto.amount, reason: dto.reason, userId });
 
     const payment = await this.databaseService.payment.findFirst({

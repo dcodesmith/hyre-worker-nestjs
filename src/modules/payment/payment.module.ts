@@ -6,10 +6,10 @@ import { PAYOUTS_QUEUE } from "../../config/constants";
 import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
-import { PaymentApiService } from "./payment-api.service";
 import { PaymentController } from "./payment.controller";
 import { PaymentProcessor } from "./payment.processor";
 import { PaymentService } from "./payment.service";
+import { PaymentApiService } from "./payment-api.service";
 
 @Module({
   imports: [

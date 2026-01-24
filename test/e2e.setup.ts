@@ -1,4 +1,3 @@
-import { PrismaClient } from "@prisma/client";
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, StartedRedisContainer } from "@testcontainers/redis";
 import { execSync } from "node:child_process";
@@ -68,7 +67,9 @@ export async function setup() {
     }
 
     // Seed roles for authentication tests
+    // Dynamic import to avoid loading before prisma generate runs
     console.log("Seeding roles...");
+    const { PrismaClient } = await import("@prisma/client");
     const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
     try {
       const roles = ["user", "fleetOwner", "admin", "staff"];

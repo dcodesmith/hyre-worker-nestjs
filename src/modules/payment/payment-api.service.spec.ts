@@ -269,9 +269,9 @@ describe("PaymentApiService", () => {
     it("should throw NotFoundException when payment not found", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
-      await expect(service.initiateRefund("invalid-ref", refundDto, mockUserInfo.id)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.initiateRefund("invalid-ref", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it("should throw BadRequestException when user does not own payment", async () => {
@@ -282,9 +282,9 @@ describe("PaymentApiService", () => {
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
-      await expect(service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it("should throw BadRequestException when payment is not successful", async () => {
@@ -295,9 +295,9 @@ describe("PaymentApiService", () => {
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
-      await expect(service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it("should throw BadRequestException when refund amount exceeds payment", async () => {
@@ -309,9 +309,9 @@ describe("PaymentApiService", () => {
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
-      await expect(service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it("should throw BadRequestException when payment has no provider reference", async () => {
@@ -323,9 +323,9 @@ describe("PaymentApiService", () => {
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
-      await expect(service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it("should not update payment status when refund fails", async () => {

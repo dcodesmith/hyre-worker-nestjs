@@ -36,7 +36,9 @@ describe("FlutterwaveService", () => {
       },
     };
 
-    vi.mocked(axios.create).mockReturnValue(mockAxiosInstance as unknown as ReturnType<typeof axios.create>);
+    vi.mocked(axios.create).mockReturnValue(
+      mockAxiosInstance as unknown as ReturnType<typeof axios.create>,
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -219,7 +221,9 @@ describe("FlutterwaveService", () => {
       await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
 
       mockAxiosInstance.post.mockResolvedValue(mockResponse);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow("Invalid customer email");
+      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
+        "Invalid customer email",
+      );
     });
 
     it("should throw FlutterwaveError when API returns success but no link", async () => {
