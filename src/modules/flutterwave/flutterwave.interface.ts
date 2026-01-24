@@ -66,6 +66,31 @@ export interface PayoutResponse {
   data: FlutterwaveTransferData | { message: string };
 }
 
+// Payment Intent Types
+export interface CustomerInfo {
+  email: string;
+  name?: string;
+  phoneNumber?: string;
+}
+
+export interface PaymentIntentOptions {
+  amount: number;
+  customer: CustomerInfo;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+  callbackUrl: string;
+  transactionType: "booking_creation" | "booking_extension";
+}
+
+export interface PaymentIntentResponse {
+  paymentIntentId: string;
+  checkoutUrl: string;
+}
+
+export interface FlutterwavePaymentLinkData {
+  link: string;
+}
+
 export class FlutterwaveError extends Error {
   constructor(
     message: string,

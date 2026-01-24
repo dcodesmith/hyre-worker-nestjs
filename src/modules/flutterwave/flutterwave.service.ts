@@ -4,8 +4,11 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
 import {
   FlutterwaveConfig,
   FlutterwaveError,
+  FlutterwavePaymentLinkData,
   FlutterwaveResponse,
   FlutterwaveTransferData,
+  PaymentIntentOptions,
+  PaymentIntentResponse,
   PayoutRequest,
   PayoutResponse,
 } from "./flutterwave.interface";
@@ -98,9 +101,9 @@ export class FlutterwaveService {
     }
   }
 
-  async verifyTransaction(transactionId: string): Promise<FlutterwaveResponse<any>> {
+  async verifyTransaction(transactionId: string): Promise<FlutterwaveResponse<unknown>> {
     try {
-      const response = await this.get<any>(`/v3/transactions/${transactionId}/verify`);
+      const response = await this.get<unknown>(`/v3/transactions/${transactionId}/verify`);
       return response;
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
@@ -108,6 +111,72 @@ export class FlutterwaveService {
         transactionId,
       });
       throw error;
+    }
+  }
+
+  async createPaymentIntent(options: PaymentIntentOptions): Promise<PaymentIntentResponse> {
+    const txRef = options.idempotencyKey || crypto.randomUUID();
+
+    const payload = {
+      tx_ref: txRef,
+      amount: Number(options.amount.toFixed(2)),
+      currency: "NGN",
+      redirect_url: options.callbackUrl,
+      customer: {
+        email: options.customer.email,
+        name: options.customer.name || "Customer",
+        phonenumber: options.customer.phoneNumber,
+      },
+      meta: { ...options.metadata, tx_ref: txRef },
+      customizations: {
+        title:
+          options.transactionType === "booking_creation" ? "Booking Payment" : "Extension Payment",
+        description:
+          options.transactionType === "booking_creation"
+            ? "Payment for car booking"
+            : "Payment for booking extension",
+      },
+    };
+
+    try {
+      this.logger.log("Creating payment intent", {
+        txRef,
+        amount: options.amount,
+        transactionType: options.transactionType,
+      });
+
+      const response = await this.post<FlutterwavePaymentLinkData>("/v3/payments", payload);
+
+      if (response.status === "success" && response.data?.link) {
+        this.logger.log("Payment intent created successfully", {
+          txRef,
+          checkoutUrl: response.data.link,
+        });
+
+        return {
+          paymentIntentId: txRef,
+          checkoutUrl: response.data.link,
+        };
+      }
+
+      throw new FlutterwaveError(
+        response.message || "Failed to create payment link",
+        "PAYMENT_LINK_FAILED",
+      );
+    } catch (error) {
+      this.logger.error("Failed to create payment intent", {
+        error: String(error),
+        txRef,
+      });
+
+      if (error instanceof FlutterwaveError) {
+        throw error;
+      }
+
+      throw new FlutterwaveError(
+        error instanceof Error ? error.message : "Unknown error creating payment intent",
+        "PAYMENT_INTENT_ERROR",
+      );
     }
   }
 
