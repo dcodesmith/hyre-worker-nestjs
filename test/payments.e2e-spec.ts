@@ -9,7 +9,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
-import { PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
+import { PaymentAttemptStatus } from "@prisma/client";
 
 describe("Payments E2E Tests", () => {
   let app: INestApplication;
@@ -102,17 +102,21 @@ describe("Payments E2E Tests", () => {
     });
 
     it("should reject payment for non-existent booking", async () => {
+      // Use a valid CUID format that doesn't exist in the database
+      const nonExistentCuid = "cm5nonexistent00000000001";
+
       const response = await request(app.getHttpServer())
         .post("/api/payments/initialize")
         .set("Cookie", testUserCookie)
         .send({
           type: "booking",
-          entityId: "non-existent-id",
+          entityId: nonExistentCuid,
           amount: 50000,
           callbackUrl: "https://example.com/callback",
         });
 
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
+      expect(response.body.message).toBe("Booking not found");
     });
 
     it("should reject payment for booking owned by another user", async () => {

@@ -416,8 +416,10 @@ describe("PaymentApiService", () => {
       expect(result.success).toBe(true);
       expect(result.refundId).toBe(67890);
 
+      // New refund from SUCCESSFUL: WHERE clause must match exactly SUCCESSFUL (not include REFUND_ERROR)
+      // This prevents race conditions where a concurrent request could overwrite the idempotency key
       expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
-        where: { id: "payment-123", status: { in: ["SUCCESSFUL", "REFUND_ERROR"] } },
+        where: { id: "payment-123", status: "SUCCESSFUL" },
         data: {
           status: "REFUND_PROCESSING",
           refundIdempotencyKey: expect.stringMatching(/^refund_payment-123_[a-f0-9-]+$/),
@@ -579,9 +581,10 @@ describe("PaymentApiService", () => {
 
       expect(result.success).toBe(true);
 
-      // Should reuse the existing idempotency key for retry
+      // Retry from REFUND_ERROR: WHERE clause must match exactly REFUND_ERROR (not include SUCCESSFUL)
+      // This prevents race conditions where a concurrent request could overwrite the idempotency key
       expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
-        where: { id: "payment-123", status: { in: ["SUCCESSFUL", "REFUND_ERROR"] } },
+        where: { id: "payment-123", status: "REFUND_ERROR" },
         data: {
           status: "REFUND_PROCESSING",
           refundIdempotencyKey: existingIdempotencyKey,

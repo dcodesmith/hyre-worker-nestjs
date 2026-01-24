@@ -1,12 +1,12 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PaymentStatus } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
 import type { PaymentStatusResponse, UserInfo } from "./payment.interface";
-
 @Injectable()
 export class PaymentApiService {
   private readonly logger = new Logger(PaymentApiService.name);
@@ -178,14 +178,19 @@ export class PaymentApiService {
     const idempotencyKey =
       isRetry && payment.refundIdempotencyKey
         ? payment.refundIdempotencyKey
-        : `refund_${payment.id}_${crypto.randomUUID()}`;
+        : `refund_${payment.id}_${randomUUID()}`;
 
     // Reserve the refund and persist the idempotency key to prevent concurrent duplicate requests
-    // Allow transition from SUCCESSFUL (new refund) or REFUND_ERROR (retry)
+    // CRITICAL: Match ONLY the status we observed when deciding the idempotency key strategy.
+    // If we fetched SUCCESSFUL, only update if still SUCCESSFUL.
+    // If we fetched REFUND_ERROR, only update if still REFUND_ERROR.
+    // This prevents a race where Request A transitions SUCCESSFUL -> REFUND_ERROR (after a network error),
+    // and Request B (which also fetched SUCCESSFUL) overwrites the idempotency key because REFUND_ERROR
+    // would otherwise be an allowed starting status.
     const { count } = await this.databaseService.payment.updateMany({
       where: {
         id: payment.id,
-        status: { in: ["SUCCESSFUL", "REFUND_ERROR"] },
+        status: isRetry ? "REFUND_ERROR" : "SUCCESSFUL",
       },
       data: {
         status: "REFUND_PROCESSING",
