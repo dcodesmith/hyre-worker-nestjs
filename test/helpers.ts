@@ -110,6 +110,11 @@ export class TestDataFactory {
       .send({ email, otp, role });
 
     const cookies = verifyResponse.headers["set-cookie"];
+
+    if (!cookies) {
+      throw new Error(`No session cookie set for ${email}. Status: ${verifyResponse.status}`);
+    }
+
     return Array.isArray(cookies) ? cookies.join("; ") : cookies;
   }
 

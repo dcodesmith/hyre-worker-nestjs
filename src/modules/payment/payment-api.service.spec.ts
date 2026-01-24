@@ -113,7 +113,7 @@ describe("PaymentApiService", () => {
       const extension = createExtension({
         id: "extension-123",
         paymentStatus: PaymentStatus.UNPAID,
-        bookingLeg: { booking: { userId: mockUserInfo.id } },
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
       });
 
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
@@ -170,6 +170,36 @@ describe("PaymentApiService", () => {
       );
     });
 
+    it("should throw BadRequestException when booking is cancelled", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.CANCELLED,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        /cancelled/i,
+      );
+    });
+
+    it("should throw BadRequestException when booking is rejected", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.REJECTED,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        /rejected/i,
+      );
+    });
+
     it("should throw NotFoundException when extension not found", async () => {
       const extensionDto = {
         type: "extension" as const,
@@ -219,13 +249,101 @@ describe("PaymentApiService", () => {
         id: "extension-123",
         paymentStatus: PaymentStatus.UNPAID,
         totalAmount: new Decimal(5000), // Server has different amount
-        bookingLeg: { booking: { userId: mockUserInfo.id } },
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
       });
 
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(mismatchedDto, mockUserInfo)).rejects.toThrow(
         BadRequestException,
+      );
+    });
+
+    it("should throw BadRequestException when extension status is CANCELLED", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+
+      const extension = createExtension({
+        id: "extension-123",
+        status: "CANCELLED",
+        paymentStatus: PaymentStatus.UNPAID,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        /cancelled/i,
+      );
+    });
+
+    it("should throw BadRequestException when extension status is REJECTED", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+
+      const extension = createExtension({
+        id: "extension-123",
+        status: "REJECTED",
+        paymentStatus: PaymentStatus.UNPAID,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        /rejected/i,
+      );
+    });
+
+    it("should throw BadRequestException when parent booking is cancelled for extension payment", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+
+      const extension = createExtension({
+        id: "extension-123",
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CANCELLED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        /parent booking is cancelled/i,
+      );
+    });
+
+    it("should throw BadRequestException when parent booking is rejected for extension payment", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+
+      const extension = createExtension({
+        id: "extension-123",
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.REJECTED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        /parent booking is rejected/i,
       );
     });
   });

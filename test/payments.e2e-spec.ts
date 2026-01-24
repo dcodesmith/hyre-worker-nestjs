@@ -80,10 +80,8 @@ describe("Payments E2E Tests", () => {
 
     it("should initialize payment for a booking", async () => {
       const mockPaymentIntent = {
-        success: true,
+        paymentIntentId: `booking_${testBookingId}`,
         checkoutUrl: "https://checkout.flutterwave.com/v3/hosted/pay/abc123",
-        paymentIntentId: "FLW-MOCK-123",
-        txRef: `booking_${testBookingId}`,
       };
       vi.spyOn(flutterwaveService, "createPaymentIntent").mockResolvedValueOnce(mockPaymentIntent);
 
@@ -98,9 +96,8 @@ describe("Payments E2E Tests", () => {
         });
 
       expect(response.status).toBe(HttpStatus.CREATED);
-      expect(response.body.success).toBe(true);
-      expect(response.body.checkoutUrl).toBeDefined();
-      expect(response.body.txRef).toBeDefined();
+      expect(response.body.paymentIntentId).toBe(mockPaymentIntent.paymentIntentId);
+      expect(response.body.checkoutUrl).toBe(mockPaymentIntent.checkoutUrl);
     });
 
     it("should reject payment for non-existent booking", async () => {

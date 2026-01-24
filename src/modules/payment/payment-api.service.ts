@@ -1,31 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { PaymentStatus } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
-
-export interface PaymentStatusResponse {
-  txRef: string;
-  status: string;
-  amountExpected: number;
-  amountCharged: number | null;
-  confirmedAt: Date | null;
-  booking?: {
-    id: string;
-    status: string;
-  };
-  extension?: {
-    id: string;
-    status: string;
-  };
-}
-
-export interface UserInfo {
-  id: string;
-  email: string;
-  name: string | null;
-}
+import type { PaymentStatusResponse, UserInfo } from "./payment.interface";
 
 @Injectable()
 export class PaymentApiService {
@@ -114,7 +94,7 @@ export class PaymentApiService {
     }
 
     // Verify user owns this payment
-    const ownerId = payment.booking?.userId || payment.extension?.bookingLeg.booking.userId;
+    const ownerId = payment.booking?.userId || payment.extension?.bookingLeg?.booking?.userId;
     if (ownerId !== userId) {
       throw new BadRequestException("You do not have permission to view this payment");
     }
@@ -162,7 +142,7 @@ export class PaymentApiService {
     }
 
     // Verify user owns this payment
-    const ownerId = payment.booking?.userId || payment.extension?.bookingLeg.booking.userId;
+    const ownerId = payment.booking?.userId || payment.extension?.bookingLeg?.booking?.userId;
     if (ownerId !== userId) {
       throw new BadRequestException("You do not have permission to refund this payment");
     }
@@ -236,7 +216,19 @@ export class PaymentApiService {
   }
 
   /**
-   * Validates that an entity exists, belongs to the user, and is not already paid.
+   * Booking statuses that should block payment initialization.
+   * CANCELLED and REJECTED bookings cannot be paid for.
+   */
+  private static readonly UNPAYABLE_BOOKING_STATUSES = ["CANCELLED", "REJECTED"] as const;
+
+  /**
+   * Extension statuses that should block payment initialization.
+   * CANCELLED and REJECTED extensions cannot be paid for.
+   */
+  private static readonly UNPAYABLE_EXTENSION_STATUSES = ["CANCELLED", "REJECTED"] as const;
+
+  /**
+   * Validates that an entity exists, belongs to the user, and is eligible for payment.
    * Returns the authoritative server-side amount for the entity.
    */
   private async validateEntityForPayment(
@@ -244,49 +236,101 @@ export class PaymentApiService {
     entityId: string,
     userId: string,
   ): Promise<number> {
-    if (type === "booking") {
-      const booking = await this.databaseService.booking.findUnique({
-        where: { id: entityId },
-        select: { id: true, userId: true, paymentStatus: true, totalAmount: true },
-      });
+    return type === "booking"
+      ? this.validateBookingForPayment(entityId, userId)
+      : this.validateExtensionForPayment(entityId, userId);
+  }
 
-      if (!booking) {
-        throw new NotFoundException("Booking not found");
-      }
+  /**
+   * Validates a booking exists, belongs to the user, and is eligible for payment.
+   * Returns the authoritative server-side amount.
+   */
+  private async validateBookingForPayment(entityId: string, userId: string): Promise<number> {
+    const booking = await this.databaseService.booking.findUnique({
+      where: { id: entityId },
+      select: { id: true, userId: true, status: true, paymentStatus: true, totalAmount: true },
+    });
 
-      if (booking.userId !== userId) {
-        throw new BadRequestException("You do not have permission to pay for this booking");
-      }
-
-      if (booking.paymentStatus === "PAID") {
-        throw new BadRequestException("This booking has already been paid");
-      }
-
-      return booking.totalAmount.toNumber();
-    } else {
-      const extension = await this.databaseService.extension.findUnique({
-        where: { id: entityId },
-        select: {
-          id: true,
-          paymentStatus: true,
-          totalAmount: true,
-          bookingLeg: { select: { booking: { select: { userId: true } } } },
-        },
-      });
-
-      if (!extension) {
-        throw new NotFoundException("Extension not found");
-      }
-
-      if (extension.bookingLeg.booking.userId !== userId) {
-        throw new BadRequestException("You do not have permission to pay for this extension");
-      }
-
-      if (extension.paymentStatus === "PAID") {
-        throw new BadRequestException("This extension has already been paid");
-      }
-
-      return extension.totalAmount.toNumber();
+    if (!booking) {
+      throw new NotFoundException("Booking not found");
     }
+
+    if (booking.userId !== userId) {
+      throw new BadRequestException("You do not have permission to pay for this booking");
+    }
+
+    if (this.isUnpayableBookingStatus(booking.status)) {
+      throw new BadRequestException(
+        `Cannot pay for a booking with status: ${booking.status.toLowerCase()}`,
+      );
+    }
+
+    if (booking.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException("This booking has already been paid");
+    }
+
+    return booking.totalAmount.toNumber();
+  }
+
+  /**
+   * Validates an extension exists, belongs to the user, and is eligible for payment.
+   * Returns the authoritative server-side amount.
+   */
+  private async validateExtensionForPayment(entityId: string, userId: string): Promise<number> {
+    const extension = await this.databaseService.extension.findUnique({
+      where: { id: entityId },
+      select: {
+        id: true,
+        status: true,
+        paymentStatus: true,
+        totalAmount: true,
+        bookingLeg: { select: { booking: { select: { userId: true, status: true } } } },
+      },
+    });
+
+    if (!extension) {
+      throw new NotFoundException("Extension not found");
+    }
+
+    if (extension.bookingLeg.booking.userId !== userId) {
+      throw new BadRequestException("You do not have permission to pay for this extension");
+    }
+
+    const parentBookingStatus = extension.bookingLeg.booking.status;
+    if (this.isUnpayableBookingStatus(parentBookingStatus)) {
+      throw new BadRequestException(
+        `Cannot pay for extension: parent booking is ${parentBookingStatus.toLowerCase()}`,
+      );
+    }
+
+    if (this.isUnpayableExtensionStatus(extension.status)) {
+      throw new BadRequestException(
+        `Cannot pay for an extension with status: ${extension.status.toLowerCase()}`,
+      );
+    }
+
+    if (extension.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException("This extension has already been paid");
+    }
+
+    return extension.totalAmount.toNumber();
+  }
+
+  /**
+   * Checks if a booking status blocks payment.
+   */
+  private isUnpayableBookingStatus(status: string): boolean {
+    return PaymentApiService.UNPAYABLE_BOOKING_STATUSES.includes(
+      status as (typeof PaymentApiService.UNPAYABLE_BOOKING_STATUSES)[number],
+    );
+  }
+
+  /**
+   * Checks if an extension status blocks payment.
+   */
+  private isUnpayableExtensionStatus(status: string): boolean {
+    return PaymentApiService.UNPAYABLE_EXTENSION_STATUSES.includes(
+      status as (typeof PaymentApiService.UNPAYABLE_EXTENSION_STATUSES)[number],
+    );
   }
 }

@@ -244,7 +244,7 @@ export function createExtension(
     subtotalBeforeVat: null,
     vatAmount: null,
     vatRatePercent: null,
-    bookingLeg: { booking: { userId: "user-123" } },
+    bookingLeg: { booking: { userId: "user-123", status: BookingStatus.CONFIRMED } },
     ...overrides,
   };
 }

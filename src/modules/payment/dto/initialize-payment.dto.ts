@@ -7,7 +7,7 @@ export const initializePaymentSchema = z.object({
   type: z.enum(["booking", "extension"]),
   entityId: z.string().regex(cuidPattern, "Invalid entity ID format"),
   amount: z.number().min(100, "Minimum amount is 100 NGN"),
-  callbackUrl: z.string().url("Invalid callback URL"),
+  callbackUrl: z.url("Invalid callback URL"),
 });
 
 export type InitializePaymentDto = z.infer<typeof initializePaymentSchema>;

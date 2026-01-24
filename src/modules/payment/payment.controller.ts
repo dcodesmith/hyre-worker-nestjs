@@ -5,7 +5,8 @@ import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutt
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
 import { ZodValidationPipe } from "./dto/zod-validation.pipe";
-import { PaymentApiService, type PaymentStatusResponse } from "./payment-api.service";
+import { PaymentApiService } from "./payment-api.service";
+import { type PaymentStatusResponse } from "./payment.interface";
 
 @Controller("api/payments")
 export class PaymentController {
