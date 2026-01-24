@@ -2,23 +2,24 @@ import { HttpStatus, INestApplication } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
+import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 
 describe("Auth E2E Tests", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let testId: number;
+  let mockSendOTPEmail: ReturnType<typeof vi.fn>;
 
   // Generate unique email for each test to avoid conflicts
   const uniqueEmail = (prefix: string) => `${prefix}-${testId}-${Date.now()}@example.com`;
 
   // Helper to clear rate limits before a test
   const clearRateLimits = async () => {
-    const deleted = await databaseService.rateLimit.deleteMany({});
-    console.log(`Cleared ${deleted.count} rate limit records`);
+    await databaseService.rateLimit.deleteMany();
   };
 
   // Seed roles once at test suite startup
@@ -31,13 +32,17 @@ describe("Auth E2E Tests", () => {
         create: { name: roleName, description: `${roleName} role` },
       });
     }
-    console.log("Seeded roles in database");
   };
 
   beforeAll(async () => {
+    mockSendOTPEmail = vi.fn().mockResolvedValue(undefined);
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AuthEmailService)
+      .useValue({ sendOTPEmail: mockSendOTPEmail })
+      .compile();
 
     app = moduleFixture.createNestApplication();
 
@@ -49,10 +54,8 @@ describe("Auth E2E Tests", () => {
 
     await app.init();
 
-    // Seed roles once at test suite startup
     await seedRoles();
 
-    // Clear any existing rate limits from previous test runs
     await clearRateLimits();
   });
 
@@ -94,8 +97,33 @@ describe("Auth E2E Tests", () => {
       await clearRateLimits();
     });
 
-    it("should send OTP to email and create verification record", async () => {
-      const testEmail = uniqueEmail("otp-test");
+    it("should send OTP to email and create verification record (web client)", async () => {
+      const testEmail = uniqueEmail("otp-test-web");
+
+      const response = await request(app.getHttpServer())
+        .post("/auth/api/email-otp/send-verification-otp")
+        .set("Origin", "http://localhost:5173")
+        .set("Referer", "http://localhost:5173/auth")
+        .send({ email: testEmail, type: "sign-in" });
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body.success).toBe(true);
+
+      // Check verification exists in database
+      const verification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${testEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+
+      expect(verification).toBeDefined();
+      expect(verification?.identifier).toBe(`sign-in-otp-${testEmail}`);
+      expect(verification?.value).toBeDefined();
+      // OTP is stored as "otp:attempts" format (e.g., "123456:0")
+      expect(verification?.value.split(":")[0].length).toBe(6);
+    });
+
+    it("should send OTP to email and create verification record (mobile client)", async () => {
+      const testEmail = uniqueEmail("otp-test-mobile");
 
       const response = await request(app.getHttpServer())
         .post("/auth/api/email-otp/send-verification-otp")

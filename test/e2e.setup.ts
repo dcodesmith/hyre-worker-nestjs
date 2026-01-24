@@ -34,7 +34,7 @@ export async function setup() {
     // Auth configuration for e2e tests
     process.env.SESSION_SECRET = "e2e-test-session-secret-at-least-32-chars";
     process.env.AUTH_BASE_URL = "http://localhost:3000";
-    process.env.TRUSTED_ORIGINS = "http://localhost:3000";
+    process.env.TRUSTED_ORIGINS = "http://localhost:3000, http://localhost:5173";
 
     const prismaEnv = { ...process.env, DATABASE_URL: databaseUrl };
 
