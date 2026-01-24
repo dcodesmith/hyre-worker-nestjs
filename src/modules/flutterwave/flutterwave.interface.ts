@@ -91,6 +91,34 @@ export interface FlutterwavePaymentLinkData {
   link: string;
 }
 
+// Refund Types
+export interface RefundOptions {
+  transactionId: string;
+  amount: number;
+  callbackUrl?: string;
+}
+
+export interface RefundResponse {
+  success: boolean;
+  refundId?: number;
+  amountRefunded?: number;
+  status?: string;
+  error?: string;
+}
+
+export interface FlutterwaveRefundData {
+  id: number;
+  account_id: number;
+  tx_id: number;
+  flw_ref: string;
+  wallet_id: number;
+  amount_refunded: number;
+  status: string;
+  destination: string;
+  meta: Record<string, unknown>;
+  created_at: string;
+}
+
 export class FlutterwaveError extends Error {
   constructor(
     message: string,

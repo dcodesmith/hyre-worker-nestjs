@@ -2,7 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FlutterwaveError, PaymentIntentOptions } from "./flutterwave.interface";
+import { FlutterwaveError, PaymentIntentOptions, RefundOptions } from "./flutterwave.interface";
 import { FlutterwaveService } from "./flutterwave.service";
 
 vi.mock("axios");
@@ -396,6 +396,161 @@ describe("FlutterwaveService", () => {
 
       expect(result.success).toBe(false);
       expect(result.data).toEqual({ message: "Insufficient funds" });
+    });
+  });
+
+  describe("initiateRefund", () => {
+    const validRefundOptions: RefundOptions = {
+      transactionId: "12345",
+      amount: 5000,
+    };
+
+    it("should initiate refund successfully", async () => {
+      const mockResponse = {
+        data: {
+          status: "success",
+          message: "Refund initiated",
+          data: {
+            id: 67890,
+            account_id: 123,
+            tx_id: 12345,
+            flw_ref: "FLW-MOCK-REF",
+            wallet_id: 456,
+            amount_refunded: 5000,
+            status: "completed",
+            destination: "card",
+            meta: {},
+            created_at: "2024-01-15T10:00:00.000Z",
+          },
+        },
+      };
+
+      mockAxiosInstance.post.mockResolvedValueOnce(mockResponse);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result).toEqual({
+        success: true,
+        refundId: 67890,
+        amountRefunded: 5000,
+        status: "completed",
+      });
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/v3/transactions/12345/refund",
+        { amount: 5000 },
+        undefined,
+      );
+    });
+
+    it("should include callback_url when provided", async () => {
+      const optionsWithCallback: RefundOptions = {
+        ...validRefundOptions,
+        callbackUrl: "https://example.com/refund-callback",
+      };
+
+      const mockResponse = {
+        data: {
+          status: "success",
+          message: "Refund initiated",
+          data: {
+            id: 67890,
+            account_id: 123,
+            tx_id: 12345,
+            flw_ref: "FLW-MOCK-REF",
+            wallet_id: 456,
+            amount_refunded: 5000,
+            status: "completed",
+            destination: "card",
+            meta: {},
+            created_at: "2024-01-15T10:00:00.000Z",
+          },
+        },
+      };
+
+      mockAxiosInstance.post.mockResolvedValueOnce(mockResponse);
+
+      await service.initiateRefund(optionsWithCallback);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/v3/transactions/12345/refund",
+        {
+          amount: 5000,
+          callback_url: "https://example.com/refund-callback",
+        },
+        undefined,
+      );
+    });
+
+    it("should return failure when API returns non-success status", async () => {
+      const mockResponse = {
+        data: {
+          status: "error",
+          message: "Transaction not found",
+          data: null,
+        },
+      };
+
+      mockAxiosInstance.post.mockResolvedValueOnce(mockResponse);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result).toEqual({
+        success: false,
+        error: "Transaction not found",
+      });
+    });
+
+    it("should return failure when API returns success but no data", async () => {
+      const mockResponse = {
+        data: {
+          status: "success",
+          message: "Refund initiated",
+          data: null,
+        },
+      };
+
+      mockAxiosInstance.post.mockResolvedValueOnce(mockResponse);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result).toEqual({
+        success: false,
+        error: "Refund initiated",
+      });
+    });
+
+    it("should handle FlutterwaveError from handleError", async () => {
+      // When the post method throws, handleError wraps it as FlutterwaveError
+      // The catch block in initiateRefund then extracts the message
+      const flutterwaveError = new FlutterwaveError("Invalid transaction ID", "INVALID_TX");
+      mockAxiosInstance.post.mockRejectedValueOnce(flutterwaveError);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Invalid transaction ID");
+    });
+
+    it("should handle network errors", async () => {
+      // Network errors get wrapped by handleError with "Unexpected error:" prefix
+      const networkError = new Error("Network Error");
+      mockAxiosInstance.post.mockRejectedValueOnce(networkError);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Network Error");
+    });
+
+    it("should handle unknown errors", async () => {
+      // Unknown errors get wrapped by handleError
+      mockAxiosInstance.post.mockRejectedValueOnce("Unknown error string");
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 
