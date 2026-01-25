@@ -1,5 +1,10 @@
 import { NotificationType } from "../notification.interface";
-import { type TemplateData } from "../template-data.interface";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  RecipientType,
+  type TemplateData,
+} from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 
@@ -8,14 +13,14 @@ export class BookingReminderStartMapper extends BaseTemplateMapper {
     return type === NotificationType.BOOKING_REMINDER_START;
   }
 
-  getTemplateKey(type: NotificationType, recipientType: string): Template | null {
+  getTemplateKey(type: NotificationType, recipientType: RecipientType): Template | null {
     if (!this.canHandle(type)) return null;
 
     // Booking reminders are only for clients and chauffeurs, not fleet owners
-    if (recipientType === "chauffeur") {
+    if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
       return Template.ChauffeurBookingLegStartReminder;
     }
-    if (recipientType === "client") {
+    if (recipientType === CLIENT_RECIPIENT_TYPE) {
       return Template.ClientBookingLegStartReminder;
     }
     return null;
@@ -33,7 +38,8 @@ export class BookingReminderStartMapper extends BaseTemplateMapper {
         "6": this.getValue(templateData, "returnLocation"),
         "7": this.getValue(templateData, "customerName"), // Customer name for chauffeur
       };
-    } else {
+    }
+    if (recipientType === "client") {
       // ClientBookingLegStartReminder template variables
       return {
         "1": this.getValue(templateData, "customerName"),
@@ -45,5 +51,7 @@ export class BookingReminderStartMapper extends BaseTemplateMapper {
         "7": this.getValue(templateData, "chauffeurName"), // Chauffeur name for client
       };
     }
+    // Unsupported recipient type
+    return {};
   }
 }

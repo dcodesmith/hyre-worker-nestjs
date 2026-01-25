@@ -33,7 +33,8 @@ export class BookingReminderEndMapper extends BaseTemplateMapper {
         "6": this.getValue(templateData, "returnLocation"),
         "7": this.getValue(templateData, "customerName"), // Customer name for chauffeur
       };
-    } else {
+    }
+    if (recipientType === "client") {
       // ClientBookingLegEndReminder template variables
       return {
         "1": this.getValue(templateData, "customerName"),
@@ -46,5 +47,7 @@ export class BookingReminderEndMapper extends BaseTemplateMapper {
         "8": this.getValue(templateData, "bookingId"), // Booking ID for end reminders
       };
     }
+    // Unsupported recipient type
+    return {};
   }
 }
