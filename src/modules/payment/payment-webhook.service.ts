@@ -74,6 +74,15 @@ export class PaymentWebhookService {
       chargedAmount: charged_amount,
     });
 
+    // Validate required fields to prevent Prisma from matching any record
+    // when undefined values cause where conditions to be ignored
+    if (!tx_ref) {
+      this.logger.warn(
+        "Missing tx_ref in charge.completed webhook, skipping to prevent data corruption",
+      );
+      return;
+    }
+
     // Verify the transaction with Flutterwave to ensure webhook authenticity
     try {
       const verification = await this.flutterwaveService.verifyTransaction(
@@ -158,6 +167,15 @@ export class PaymentWebhookService {
       status,
     });
 
+    // Validate required fields to prevent Prisma from matching any record
+    // when undefined values cause where conditions to be ignored
+    if (!reference) {
+      this.logger.warn(
+        "Missing reference in transfer.completed webhook, skipping to prevent data corruption",
+      );
+      return;
+    }
+
     // Find the payout transaction by the provider reference
     const payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
       where: { payoutProviderReference: reference },
@@ -217,6 +235,15 @@ export class PaymentWebhookService {
       amountRefunded: AmountRefunded,
       status,
     });
+
+    // Validate required fields to prevent Prisma from matching any record
+    // when undefined values cause where conditions to be ignored
+    if (!TransactionId) {
+      this.logger.warn(
+        "Missing TransactionId in refund.completed webhook, skipping to prevent data corruption",
+      );
+      return;
+    }
 
     // Find the payment by flutterwave transaction ID
     const payment = await this.databaseService.payment.findFirst({

@@ -285,6 +285,26 @@ describe("PaymentWebhookService", () => {
         service.handleWebhook({ event: "charge.completed", data: mockChargeData }),
       ).rejects.toThrow("Network error");
     });
+
+    it("should skip processing when tx_ref is undefined to prevent data corruption", async () => {
+      const malformedData = { ...mockChargeData, tx_ref: undefined as unknown as string };
+
+      await service.handleWebhook({ event: "charge.completed", data: malformedData });
+
+      expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when tx_ref is empty string to prevent data corruption", async () => {
+      const malformedData = { ...mockChargeData, tx_ref: "" };
+
+      await service.handleWebhook({ event: "charge.completed", data: malformedData });
+
+      expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
   });
 
   describe("handleTransferCompleted", () => {
@@ -373,6 +393,24 @@ describe("PaymentWebhookService", () => {
 
       await service.handleWebhook({ event: "transfer.completed", data: mockTransferData });
 
+      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when reference is undefined to prevent data corruption", async () => {
+      const malformedData = { ...mockTransferData, reference: undefined as unknown as string };
+
+      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
+
+      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when reference is empty string to prevent data corruption", async () => {
+      const malformedData = { ...mockTransferData, reference: "" };
+
+      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
+
+      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
       expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
     });
   });
@@ -487,6 +525,24 @@ describe("PaymentWebhookService", () => {
 
       await service.handleWebhook({ event: "refund.completed", data: mockRefundData });
 
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when TransactionId is undefined to prevent data corruption", async () => {
+      const malformedData = { ...mockRefundData, TransactionId: undefined as unknown as number };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when TransactionId is null to prevent data corruption", async () => {
+      const malformedData = { ...mockRefundData, TransactionId: null as unknown as number };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
 
