@@ -8,6 +8,7 @@ import {
   FlutterwaveRefundData,
   FlutterwaveResponse,
   FlutterwaveTransferData,
+  FlutterwaveVerificationData,
   PaymentIntentOptions,
   PaymentIntentResponse,
   PayoutRequest,
@@ -104,9 +105,13 @@ export class FlutterwaveService {
     }
   }
 
-  async verifyTransaction(transactionId: string): Promise<FlutterwaveResponse<unknown>> {
+  async verifyTransaction(
+    transactionId: string,
+  ): Promise<FlutterwaveResponse<FlutterwaveVerificationData>> {
     try {
-      const response = await this.get<unknown>(`/v3/transactions/${transactionId}/verify`);
+      const response = await this.get<FlutterwaveVerificationData>(
+        `/v3/transactions/${transactionId}/verify`,
+      );
       return response;
     } catch (error) {
       this.logger.error("Failed to verify transaction", {

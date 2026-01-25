@@ -1,16 +1,25 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
-import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
+import type {
+  FlutterwaveWebhookPayload,
+  PaymentIntentResponse,
+  RefundResponse,
+} from "../flutterwave/flutterwave.interface";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
 import { ZodValidationPipe } from "./dto/zod-validation.pipe";
+import { FlutterwaveWebhookGuard } from "./guards/flutterwave-webhook.guard";
+import type { PaymentStatusResponse } from "./payment.interface";
 import { PaymentApiService } from "./payment-api.service";
-import { type PaymentStatusResponse } from "./payment.interface";
+import { PaymentWebhookService } from "./payment-webhook.service";
 
 @Controller("api/payments")
 export class PaymentController {
-  constructor(private readonly paymentApiService: PaymentApiService) {}
+  constructor(
+    private readonly paymentApiService: PaymentApiService,
+    private readonly paymentWebhookService: PaymentWebhookService,
+  ) {}
 
   /**
    * Initialize a payment for a booking or extension.
@@ -53,5 +62,29 @@ export class PaymentController {
     @CurrentUser() user: AuthSession["user"],
   ): Promise<RefundResponse> {
     return this.paymentApiService.initiateRefund(txRef, dto, user.id);
+  }
+
+  /**
+   * Handle Flutterwave webhook events.
+   *
+   * This endpoint receives webhook notifications from Flutterwave for:
+   * - charge.completed: Payment successful
+   * - transfer.completed: Payout transfer completed
+   * - refund.completed: Refund processed
+   *
+   * The FlutterwaveWebhookGuard verifies the `verif-hash` header
+   * to ensure the request is from Flutterwave.
+   *
+   * @see https://developer.flutterwave.com/v3.0/docs/webhooks
+   */
+  @Post("webhook/flutterwave")
+  @UseGuards(FlutterwaveWebhookGuard)
+  async handleFlutterwaveWebhook(
+    @Body() payload: FlutterwaveWebhookPayload,
+  ): Promise<{ status: string }> {
+    await this.paymentWebhookService.handleWebhook(payload);
+
+    // Always return 200 OK to acknowledge receipt
+    return { status: "ok" };
   }
 }
