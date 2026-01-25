@@ -335,6 +335,26 @@ describe("PaymentWebhookService", () => {
       expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
 
+    it("should skip processing when id is undefined to prevent TypeError", async () => {
+      const malformedData = { ...mockChargeData, id: undefined as unknown as number };
+
+      await service.handleWebhook({ event: "charge.completed", data: malformedData });
+
+      expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when id is null to prevent TypeError", async () => {
+      const malformedData = { ...mockChargeData, id: null as unknown as number };
+
+      await service.handleWebhook({ event: "charge.completed", data: malformedData });
+
+      expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
     it("should skip processing when verification data is missing", async () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
@@ -723,6 +743,33 @@ describe("PaymentWebhookService", () => {
 
     it("should skip processing when status is not a string to prevent TypeError", async () => {
       const malformedData = { ...mockRefundData, status: 123 as unknown as string };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when AmountRefunded is undefined to prevent incorrect status determination", async () => {
+      const malformedData = { ...mockRefundData, AmountRefunded: undefined as unknown as number };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when AmountRefunded is null to prevent incorrect status determination", async () => {
+      const malformedData = { ...mockRefundData, AmountRefunded: null as unknown as number };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when AmountRefunded is not a number to prevent incorrect status determination", async () => {
+      const malformedData = { ...mockRefundData, AmountRefunded: "10000" as unknown as number };
 
       await service.handleWebhook({ event: "refund.completed", data: malformedData });
 

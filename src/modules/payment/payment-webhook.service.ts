@@ -83,6 +83,14 @@ export class PaymentWebhookService {
       return;
     }
 
+    if (transactionId == null) {
+      this.logger.warn(
+        "Missing id in charge.completed webhook, skipping to prevent data corruption",
+        { txRef: tx_ref },
+      );
+      return;
+    }
+
     // Verify the transaction with Flutterwave to ensure webhook authenticity
     try {
       const verification = await this.flutterwaveService.verifyTransaction(
@@ -307,6 +315,14 @@ export class PaymentWebhookService {
       this.logger.warn(
         "Missing or invalid status in refund.completed webhook, skipping to prevent errors",
         { transactionId: TransactionId, status },
+      );
+      return;
+    }
+
+    if (AmountRefunded == null || typeof AmountRefunded !== "number") {
+      this.logger.warn(
+        "Missing or invalid AmountRefunded in refund.completed webhook, skipping to prevent incorrect status determination",
+        { transactionId: TransactionId, amountRefunded: AmountRefunded },
       );
       return;
     }
