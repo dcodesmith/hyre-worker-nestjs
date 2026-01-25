@@ -2,7 +2,11 @@ import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
-import { renderBookingReminderEmail, renderBookingStatusUpdateEmail } from "../../templates/emails";
+import {
+  renderBookingConfirmationEmail,
+  renderBookingReminderEmail,
+  renderBookingStatusUpdateEmail,
+} from "../../templates/emails";
 import { EmailService } from "./email.service";
 import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 import {
@@ -12,12 +16,14 @@ import {
   NotificationType,
 } from "./notification.interface";
 import {
+  isBookingConfirmedTemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
   RecipientType,
   type TemplateData,
 } from "./template-data.interface";
 import {
+  BookingConfirmedMapper,
   BookingReminderEndMapper,
   BookingReminderStartMapper,
   BookingStatusMapper,
@@ -40,6 +46,7 @@ export class NotificationProcessor extends WorkerHost {
     super();
     // Initialize template mappers in order of specificity
     this.templateMappers = [
+      new BookingConfirmedMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
       new BookingReminderEndMapper(),
@@ -147,6 +154,11 @@ export class NotificationProcessor extends WorkerHost {
 
       const buildHtml = async (recipient: RecipientType) => {
         switch (type) {
+          case NotificationType.BOOKING_CONFIRMED:
+            if (isBookingConfirmedTemplateData(templateData)) {
+              return renderBookingConfirmationEmail(templateData);
+            }
+            throw new Error("Invalid template data for booking confirmation");
           case NotificationType.BOOKING_STATUS_CHANGE:
             if (isBookingStatusTemplateData(templateData)) {
               // Status email currently targets the client. If chauffeur delivery is desired,

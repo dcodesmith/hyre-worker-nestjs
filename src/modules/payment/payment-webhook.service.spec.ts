@@ -1,8 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import type { Payment, PayoutTransaction } from "@prisma/client";
 import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPaymentRecord, createPayoutTransaction } from "../../shared/helper.fixtures";
+import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type {
   FlutterwaveChargeData,
@@ -12,6 +13,10 @@ import type {
 } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PaymentWebhookService } from "./payment-webhook.service";
+
+const mockBookingConfirmationService = {
+  confirmFromPayment: vi.fn(),
+};
 
 // Helper to create mock verification data matching webhook charge data
 function createMockVerificationData(
@@ -41,57 +46,11 @@ function createMockVerificationData(
   };
 }
 
-// Helper to create mock Payment objects with only required fields for testing
-function createMockPayment(overrides: Partial<Payment>): Payment {
-  return {
-    id: "payment-123",
-    bookingId: null,
-    extensionId: null,
-    txRef: "tx-ref-123",
-    flutterwaveTransactionId: null,
-    flutterwaveReference: null,
-    amountExpected: new Decimal(10000),
-    amountCharged: null,
-    currency: "NGN",
-    feeChargedByProvider: null,
-    status: PaymentAttemptStatus.PENDING,
-    paymentProviderStatus: null,
-    paymentMethod: null,
-    initiatedAt: new Date(),
-    confirmedAt: null,
-    lastVerifiedAt: null,
-    webhookPayload: null,
-    verificationResponse: null,
-    refundIdempotencyKey: null,
-    ...overrides,
-  };
-}
-
-// Helper to create mock PayoutTransaction objects with only required fields for testing
-function createMockPayoutTransaction(overrides: Partial<PayoutTransaction>): PayoutTransaction {
-  return {
-    id: "payout-123",
-    fleetOwnerId: "fleet-owner-123",
-    bookingId: null,
-    extensionId: null,
-    amountToPay: new Decimal(5000),
-    amountPaid: null,
-    currency: "NGN",
-    status: PayoutTransactionStatus.PROCESSING,
-    payoutProviderReference: null,
-    payoutMethodDetails: null,
-    initiatedAt: new Date(),
-    processedAt: null,
-    completedAt: null,
-    notes: null,
-    ...overrides,
-  };
-}
-
 describe("PaymentWebhookService", () => {
   let service: PaymentWebhookService;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let bookingConfirmationService: BookingConfirmationService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -116,12 +75,20 @@ describe("PaymentWebhookService", () => {
             verifyTransaction: vi.fn(),
           },
         },
+        {
+          provide: BookingConfirmationService,
+          useValue: mockBookingConfirmationService,
+        },
       ],
     }).compile();
 
     service = module.get<PaymentWebhookService>(PaymentWebhookService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
+    bookingConfirmationService = module.get<BookingConfirmationService>(BookingConfirmationService);
+
+    // Reset mocks between tests
+    vi.clearAllMocks();
   });
 
   it("should be defined", () => {
@@ -157,7 +124,7 @@ describe("PaymentWebhookService", () => {
     };
 
     it("should update payment status to SUCCESSFUL when charge is successful", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         txRef: "tx-ref-123",
         status: PaymentAttemptStatus.PENDING,
@@ -188,9 +155,77 @@ describe("PaymentWebhookService", () => {
       });
     });
 
+    it("should call bookingConfirmationService when payment is successful", async () => {
+      const mockPayment = createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.PENDING,
+      });
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
+      vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(mockPayment);
+    });
+
+    it("should not call bookingConfirmationService when payment fails", async () => {
+      const failedChargeData = { ...mockChargeData, status: "failed" };
+      const mockPayment = createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.PENDING,
+      });
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(failedChargeData, { status: "failed" }),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "charge.completed", data: failedChargeData });
+
+      expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    });
+
+    it("should handle uppercase status from Flutterwave verification (case-insensitive)", async () => {
+      const mockPayment = createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.PENDING,
+      });
+
+      // Flutterwave may return status in different cases (e.g., "SUCCESSFUL", "Successful")
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData, { status: "SUCCESSFUL" }),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.update).toHaveBeenCalledWith({
+        where: { id: "payment-123" },
+        data: expect.objectContaining({
+          status: "SUCCESSFUL",
+        }),
+      });
+    });
+
     it("should update payment status to FAILED when verified status is failed", async () => {
       const failedChargeData = { ...mockChargeData, status: "failed" };
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         txRef: "tx-ref-123",
         status: PaymentAttemptStatus.PENDING,
@@ -215,7 +250,7 @@ describe("PaymentWebhookService", () => {
     });
 
     it("should skip processing if payment already successful (idempotency)", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         txRef: "tx-ref-123",
         status: PaymentAttemptStatus.SUCCESSFUL,
@@ -234,7 +269,7 @@ describe("PaymentWebhookService", () => {
     });
 
     it("should skip processing if payment already failed (idempotency)", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         txRef: "tx-ref-123",
         status: PaymentAttemptStatus.FAILED,
@@ -261,7 +296,7 @@ describe("PaymentWebhookService", () => {
     ])(
       "should skip processing if payment is in %s state (idempotency - preserves refund states)",
       async (refundStatus) => {
-        const mockPayment = createMockPayment({
+        const mockPayment = createPaymentRecord({
           id: "payment-123",
           txRef: "tx-ref-123",
           status: refundStatus,
@@ -410,7 +445,7 @@ describe("PaymentWebhookService", () => {
     it("should use verified status (not webhook status) for payment state", async () => {
       // Webhook claims "successful" but verification shows "failed"
       const webhookWithWrongStatus = { ...mockChargeData, status: "successful" };
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         txRef: "tx-ref-123",
         status: PaymentAttemptStatus.PENDING,
@@ -458,7 +493,7 @@ describe("PaymentWebhookService", () => {
     };
 
     it("should update payout transaction status to PAID_OUT when transfer is successful", async () => {
-      const mockPayout = createMockPayoutTransaction({
+      const mockPayout = createPayoutTransaction({
         id: "payout-123",
         payoutProviderReference: "payout-ref-123",
         status: PayoutTransactionStatus.PROCESSING,
@@ -483,7 +518,7 @@ describe("PaymentWebhookService", () => {
 
     it("should update payout transaction status to FAILED when transfer fails", async () => {
       const failedTransferData = { ...mockTransferData, status: "FAILED" };
-      const mockPayout = createMockPayoutTransaction({
+      const mockPayout = createPayoutTransaction({
         id: "payout-123",
         payoutProviderReference: "payout-ref-123",
         status: PayoutTransactionStatus.PROCESSING,
@@ -504,7 +539,7 @@ describe("PaymentWebhookService", () => {
     });
 
     it("should skip processing if payout already finalized (idempotency)", async () => {
-      const mockPayout = createMockPayoutTransaction({
+      const mockPayout = createPayoutTransaction({
         id: "payout-123",
         payoutProviderReference: "payout-ref-123",
         status: PayoutTransactionStatus.PAID_OUT,
@@ -589,7 +624,7 @@ describe("PaymentWebhookService", () => {
     };
 
     it("should update payment status to REFUNDED for full refund", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         flutterwaveTransactionId: "12345",
         status: PaymentAttemptStatus.REFUND_PROCESSING,
@@ -619,7 +654,7 @@ describe("PaymentWebhookService", () => {
 
     it("should update payment status to PARTIALLY_REFUNDED for partial refund", async () => {
       const partialRefundData = { ...mockRefundData, AmountRefunded: 5000 };
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         flutterwaveTransactionId: "12345",
         status: PaymentAttemptStatus.REFUND_PROCESSING,
@@ -641,7 +676,7 @@ describe("PaymentWebhookService", () => {
 
     it("should update payment status to REFUND_FAILED when refund fails", async () => {
       const failedRefundData = { ...mockRefundData, status: "failed" };
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         flutterwaveTransactionId: "12345",
         status: PaymentAttemptStatus.REFUND_PROCESSING,
@@ -662,7 +697,7 @@ describe("PaymentWebhookService", () => {
     });
 
     it("should skip processing if payment not in REFUND_PROCESSING state (idempotency)", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         flutterwaveTransactionId: "12345",
         status: PaymentAttemptStatus.REFUNDED,
@@ -703,7 +738,7 @@ describe("PaymentWebhookService", () => {
     });
 
     it("should treat as partial refund when amountCharged is null", async () => {
-      const mockPayment = createMockPayment({
+      const mockPayment = createPaymentRecord({
         id: "payment-123",
         flutterwaveTransactionId: "12345",
         status: PaymentAttemptStatus.REFUND_PROCESSING,

@@ -269,6 +269,39 @@ export async function renderBookingReminderEmail(
   );
 }
 
+export async function renderBookingConfirmationEmail(booking: NormalisedBookingDetails) {
+  const customerName = booking.customerName;
+  const carName = booking.carName;
+  const previewText = "Your booking is confirmed!";
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="Booking Confirmation">
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        Booking Confirmed!
+      </Heading>
+      <Text className="mb-3">Hello {customerName},</Text>
+      <Text className="mb-3">
+        Your booking for the <span className="font-semibold">{carName}</span> has been confirmed.
+      </Text>
+      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
+        <Text className="font-semibold mb-2 underline">
+          Booking Details (Booking Reference: {booking.bookingReference})
+        </Text>
+        <DetailListItem label="Start Date & Time" value={booking.startDate} />
+        <DetailListItem label="End Date & Time" value={booking.endDate} />
+        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
+        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
+        <Hr className="my-2 border-gray-300" />
+        <DetailListItem label="Total Amount" value={booking.totalAmount} />
+      </Section>
+      <Text className="mb-3">
+        Please be at the pickup location on time. You'll be assigned a chauffeur shortly, and we
+        will notify you with their details.
+      </Text>
+    </EmailTemplate>,
+  );
+}
+
 export interface AuthOTPEmailProps {
   readonly otp: string;
 }

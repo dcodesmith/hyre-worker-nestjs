@@ -1,4 +1,5 @@
 export { BaseTemplateMapper, type TemplateVariableMapper } from "./base-template-mapper";
+export { BookingConfirmedMapper } from "./booking-confirmed-mapper";
 export { BookingReminderEndMapper } from "./booking-reminder-end-mapper";
 export { BookingReminderStartMapper } from "./booking-reminder-start-mapper";
 export { BookingStatusMapper } from "./booking-status-mapper";

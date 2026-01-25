@@ -349,6 +349,15 @@ export class TestDataFactory {
       where: { id: payoutTransactionId },
     });
   }
+
+  /**
+   * Get a booking by ID.
+   */
+  async getBookingById(bookingId: string) {
+    return this.prisma.booking.findUnique({
+      where: { id: bookingId },
+    });
+  }
 }
 
 /**

@@ -4,6 +4,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { AuthModule } from "../auth/auth.module";
+import { BookingModule } from "../booking/booking.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
 import { PaymentController } from "./payment.controller";
@@ -17,6 +18,7 @@ import { PaymentWebhookService } from "./payment-webhook.service";
     FlutterwaveModule,
     DatabaseModule,
     AuthModule,
+    BookingModule,
     BullModule.registerQueue({
       name: PAYOUTS_QUEUE,
       defaultJobOptions: {

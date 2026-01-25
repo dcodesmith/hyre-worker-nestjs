@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
+import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type {
   FlutterwaveChargeData,
@@ -24,6 +25,7 @@ export class PaymentWebhookService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
+    private readonly bookingConfirmationService: BookingConfirmationService,
   ) {}
 
   /**
@@ -173,8 +175,10 @@ export class PaymentWebhookService {
       }
 
       // Determine payment status from verified data (not webhook data)
+      // Flutterwave transaction status "successful" maps to our "SUCCESSFUL"
+      // Use case-insensitive comparison to handle potential API inconsistencies
       const newPaymentStatus =
-        verifiedStatus === "successful"
+        verifiedStatus.toLowerCase() === "successful"
           ? PaymentAttemptStatus.SUCCESSFUL
           : PaymentAttemptStatus.FAILED;
 
@@ -195,6 +199,11 @@ export class PaymentWebhookService {
         newStatus: newPaymentStatus,
         verifiedStatus,
       });
+
+      // Activate booking if payment was successful
+      if (newPaymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
+        await this.bookingConfirmationService.confirmFromPayment(payment);
+      }
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
         txRef: tx_ref,
@@ -203,11 +212,6 @@ export class PaymentWebhookService {
       });
       throw error;
     }
-
-    // TODO: In PR 5 (Booking Activation), call BookingActivationService here
-    // if (status === "successful") {
-    //   await this.bookingActivationService.activateFromPayment(payment);
-    // }
   }
 
   /**
