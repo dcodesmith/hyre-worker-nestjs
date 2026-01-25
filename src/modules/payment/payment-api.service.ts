@@ -125,6 +125,20 @@ export class PaymentApiService {
   ): Promise<RefundResponse> {
     this.logger.log("Initiating refund", { txRef, amount: dto.amount, reason: dto.reason, userId });
 
+    const payment = await this.fetchPaymentForRefund(txRef);
+    this.validateRefundEligibility(payment, userId, dto.amount);
+
+    const isRetry = payment.status === "REFUND_ERROR";
+    const idempotencyKey = this.getRefundIdempotencyKey(payment, isRetry);
+
+    await this.reserveRefund(payment.id, isRetry, idempotencyKey);
+
+    // Safe: validateRefundEligibility ensures flutterwaveTransactionId exists
+    const transactionId = payment.flutterwaveTransactionId;
+    return this.executeRefund(txRef, payment.id, transactionId, dto.amount, idempotencyKey);
+  }
+
+  private async fetchPaymentForRefund(txRef: string) {
     const payment = await this.databaseService.payment.findFirst({
       where: { txRef },
       select: {
@@ -146,50 +160,60 @@ export class PaymentApiService {
       throw new NotFoundException("Payment not found");
     }
 
-    // Verify user owns this payment
+    return payment;
+  }
+
+  private validateRefundEligibility(
+    payment: Awaited<ReturnType<typeof this.fetchPaymentForRefund>>,
+    userId: string,
+    refundAmount: number,
+  ): void {
     const ownerId = payment.booking?.userId || payment.extension?.bookingLeg?.booking?.userId;
     if (ownerId !== userId) {
       throw new BadRequestException("You do not have permission to refund this payment");
     }
 
-    // Allow refunds for SUCCESSFUL payments or retrying REFUND_ERROR payments
     if (payment.status !== "SUCCESSFUL" && payment.status !== "REFUND_ERROR") {
       throw new BadRequestException(
         "Cannot refund a payment that is not successful or in refund error state",
       );
     }
 
-    // Validate refund amount against what was actually charged, not what was expected
     if (!payment.amountCharged) {
       throw new BadRequestException("Payment has no charged amount recorded");
     }
 
-    if (dto.amount > payment.amountCharged.toNumber()) {
+    if (refundAmount > payment.amountCharged.toNumber()) {
       throw new BadRequestException("Refund amount cannot exceed the amount charged");
     }
 
     if (!payment.flutterwaveTransactionId) {
       throw new BadRequestException("Payment does not have a provider reference");
     }
+  }
 
-    // Generate idempotency key for this refund intent
-    // Use existing key if retrying a REFUND_ERROR payment, otherwise generate new one
-    const isRetry = payment.status === "REFUND_ERROR";
-    const idempotencyKey =
-      isRetry && payment.refundIdempotencyKey
-        ? payment.refundIdempotencyKey
-        : `refund_${payment.id}_${randomUUID()}`;
+  private getRefundIdempotencyKey(
+    payment: Awaited<ReturnType<typeof this.fetchPaymentForRefund>>,
+    isRetry: boolean,
+  ): string {
+    if (isRetry && payment.refundIdempotencyKey) {
+      return payment.refundIdempotencyKey;
+    }
+    return `refund_${payment.id}_${randomUUID()}`;
+  }
 
-    // Reserve the refund and persist the idempotency key to prevent concurrent duplicate requests
-    // CRITICAL: Match ONLY the status we observed when deciding the idempotency key strategy.
-    // If we fetched SUCCESSFUL, only update if still SUCCESSFUL.
-    // If we fetched REFUND_ERROR, only update if still REFUND_ERROR.
-    // This prevents a race where Request A transitions SUCCESSFUL -> REFUND_ERROR (after a network error),
-    // and Request B (which also fetched SUCCESSFUL) overwrites the idempotency key because REFUND_ERROR
-    // would otherwise be an allowed starting status.
+  /**
+   * Reserve the refund and persist the idempotency key to prevent concurrent duplicate requests.
+   * CRITICAL: Match ONLY the status we observed when deciding the idempotency key strategy.
+   */
+  private async reserveRefund(
+    paymentId: string,
+    isRetry: boolean,
+    idempotencyKey: string,
+  ): Promise<void> {
     const { count } = await this.databaseService.payment.updateMany({
       where: {
-        id: payment.id,
+        id: paymentId,
         status: isRetry ? "REFUND_ERROR" : "SUCCESSFUL",
       },
       data: {
@@ -201,56 +225,77 @@ export class PaymentApiService {
     if (count === 0) {
       throw new BadRequestException("Refund already in progress or payment status changed");
     }
+  }
 
+  private async executeRefund(
+    txRef: string,
+    paymentId: string,
+    transactionId: string,
+    amount: number,
+    idempotencyKey: string,
+  ): Promise<RefundResponse> {
     let refundResult: RefundResponse;
 
     try {
       refundResult = await this.flutterwaveService.initiateRefund({
-        transactionId: payment.flutterwaveTransactionId,
-        amount: dto.amount,
+        transactionId,
+        amount,
         callbackUrl: this.flutterwaveService.getWebhookUrl("/api/payments/webhook/flutterwave"),
         idempotencyKey,
       });
     } catch (error) {
-      // Network error or unexpected failure - set to REFUND_ERROR instead of reverting to SUCCESSFUL
-      // The idempotency key is preserved, so retries can safely use the same key
-      // Rely on webhook/status reconciliation to finalize the payment state
-      await this.databaseService.payment.update({
-        where: { id: payment.id },
-        data: { status: "REFUND_ERROR" },
-      });
-
-      this.logger.error("Refund request failed with error, status set to REFUND_ERROR", {
-        txRef,
-        paymentId: payment.id,
-        idempotencyKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
+      await this.handleRefundError(txRef, paymentId, idempotencyKey, error);
       throw error;
     }
 
-    if (!refundResult.success) {
-      // Flutterwave explicitly rejected the refund - mark as REFUND_FAILED
-      await this.databaseService.payment.update({
-        where: { id: payment.id },
-        data: { status: "REFUND_FAILED" },
-      });
+    await this.handleRefundResult(txRef, paymentId, refundResult);
+    return refundResult;
+  }
 
-      this.logger.warn("Refund request rejected by provider", {
-        txRef,
-        error: refundResult.error,
-      });
-    } else {
+  private async handleRefundError(
+    txRef: string,
+    paymentId: string,
+    idempotencyKey: string,
+    error: unknown,
+  ): Promise<void> {
+    await this.databaseService.payment.update({
+      where: { id: paymentId },
+      data: { status: "REFUND_ERROR" },
+    });
+
+    this.logger.error("Refund request failed with error, status set to REFUND_ERROR", {
+      txRef,
+      paymentId,
+      idempotencyKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  private async handleRefundResult(
+    txRef: string,
+    paymentId: string,
+    refundResult: RefundResponse,
+  ): Promise<void> {
+    if (refundResult.success) {
       // Refund initiated successfully - stays as REFUND_PROCESSING
       // Webhook will update to REFUND_PARTIAL or REFUND_FULL when complete
       this.logger.log("Refund initiated successfully", {
         txRef,
         refundId: refundResult.refundId,
       });
+      return;
     }
 
-    return refundResult;
+    // Flutterwave explicitly rejected the refund - mark as REFUND_FAILED
+    await this.databaseService.payment.update({
+      where: { id: paymentId },
+      data: { status: "REFUND_FAILED" },
+    });
+
+    this.logger.warn("Refund request rejected by provider", {
+      txRef,
+      error: refundResult.error,
+    });
   }
 
   /**

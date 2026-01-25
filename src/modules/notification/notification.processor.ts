@@ -333,7 +333,10 @@ export class NotificationProcessor extends WorkerHost {
     }
   }
 
-  private getWhatsAppTemplateKey(type: NotificationType, recipientType: string): Template | null {
+  private getWhatsAppTemplateKey(
+    type: NotificationType,
+    recipientType: RecipientType,
+  ): Template | null {
     const mapper = this.templateMappers.find((mapper) => mapper.canHandle(type));
     return mapper?.getTemplateKey(type, recipientType) || null;
   }
@@ -341,7 +344,7 @@ export class NotificationProcessor extends WorkerHost {
   private buildWhatsAppVariables(
     templateData: TemplateData,
     type: NotificationType,
-    recipientType: string,
+    recipientType: RecipientType,
   ): Record<string, string | number> {
     const mapper = this.templateMappers.find((mapper) => mapper.canHandle(type));
     return mapper?.mapVariables(templateData, recipientType) || {};

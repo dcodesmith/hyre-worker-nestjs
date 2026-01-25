@@ -26,8 +26,11 @@ export class BookingReminderStartMapper extends BaseTemplateMapper {
     return null;
   }
 
-  mapVariables(templateData: TemplateData, recipientType: string): Record<string, string | number> {
-    if (recipientType === "chauffeur") {
+  mapVariables(
+    templateData: TemplateData,
+    recipientType: RecipientType,
+  ): Record<string, string | number> {
+    if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
       // ChauffeurBookingLegStartReminder template variables
       return {
         "1": this.getValue(templateData, "chauffeurName"),
@@ -39,7 +42,7 @@ export class BookingReminderStartMapper extends BaseTemplateMapper {
         "7": this.getValue(templateData, "customerName"), // Customer name for chauffeur
       };
     }
-    if (recipientType === "client") {
+    if (recipientType === CLIENT_RECIPIENT_TYPE) {
       // ClientBookingLegStartReminder template variables
       return {
         "1": this.getValue(templateData, "customerName"),
