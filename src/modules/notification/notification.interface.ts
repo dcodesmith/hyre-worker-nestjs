@@ -9,6 +9,7 @@ export enum NotificationType {
   BOOKING_STATUS_CHANGE = "booking-status-change",
   BOOKING_REMINDER_START = "booking-reminder-start",
   BOOKING_REMINDER_END = "booking-reminder-end",
+  BOOKING_CONFIRMED = "booking-confirmed",
 }
 
 export interface EmailNotificationData {

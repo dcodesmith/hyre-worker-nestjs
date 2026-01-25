@@ -8,9 +8,12 @@ import {
   FleetOwnerStatus,
   PaymentAttemptStatus,
   PaymentStatus,
+  PayoutTransactionStatus,
   ServiceTier,
   Status,
   VehicleType,
+  type Payment,
+  type PayoutTransaction,
 } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { BookingWithRelations, ExtensionWithBookingLeg, PaymentWithRelations } from "../types";
@@ -276,6 +279,58 @@ export function createPayment(overrides: Partial<PaymentWithRelations> = {}): Pa
     refundIdempotencyKey: null,
     booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "user-123" },
     extension: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Create a raw Payment record for testing (without relations).
+ * Use this for webhook tests that don't need nested relations.
+ */
+export function createPaymentRecord(overrides: Partial<Payment> = {}): Payment {
+  return {
+    id: "payment-123",
+    bookingId: null,
+    extensionId: null,
+    txRef: "tx-ref-123",
+    flutterwaveTransactionId: null,
+    flutterwaveReference: null,
+    amountExpected: new Decimal(10000),
+    amountCharged: null,
+    currency: "NGN",
+    feeChargedByProvider: null,
+    status: PaymentAttemptStatus.PENDING,
+    paymentProviderStatus: null,
+    paymentMethod: null,
+    initiatedAt: new Date("2024-01-01T00:00:00Z"),
+    confirmedAt: null,
+    lastVerifiedAt: null,
+    webhookPayload: null,
+    verificationResponse: null,
+    refundIdempotencyKey: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Create a mock PayoutTransaction for testing.
+ */
+export function createPayoutTransaction(overrides: Partial<PayoutTransaction> = {}): PayoutTransaction {
+  return {
+    id: "payout-123",
+    fleetOwnerId: "fleet-owner-123",
+    bookingId: null,
+    extensionId: null,
+    amountToPay: new Decimal(5000),
+    amountPaid: null,
+    currency: "NGN",
+    status: PayoutTransactionStatus.PROCESSING,
+    payoutProviderReference: null,
+    payoutMethodDetails: null,
+    initiatedAt: new Date("2024-01-01T00:00:00Z"),
+    processedAt: null,
+    completedAt: null,
+    notes: null,
     ...overrides,
   };
 }

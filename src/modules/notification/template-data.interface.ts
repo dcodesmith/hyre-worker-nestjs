@@ -37,11 +37,19 @@ export interface BookingReminderTemplateData extends NormalisedBookingLegDetails
 }
 
 /**
+ * Template data specific to booking confirmation after payment
+ */
+export interface BookingConfirmedTemplateData extends NormalisedBookingDetails {
+  subject: string;
+}
+
+/**
  * Union type for all possible template data structures
  */
 export type TemplateData =
   | BookingStatusTemplateData
   | BookingReminderTemplateData
+  | BookingConfirmedTemplateData
   | BaseTemplateData;
 
 /**
@@ -58,4 +66,19 @@ export function isBookingReminderTemplateData(
   data: TemplateData,
 ): data is BookingReminderTemplateData {
   return "legStartTime" in data && "legEndTime" in data && "bookingId" in data;
+}
+
+/**
+ * Type guard to check if template data is for booking confirmation
+ */
+export function isBookingConfirmedTemplateData(
+  data: TemplateData,
+): data is BookingConfirmedTemplateData {
+  // BookingConfirmedTemplateData has NormalisedBookingDetails fields but no oldStatus/newStatus
+  return (
+    "bookingReference" in data &&
+    "totalAmount" in data &&
+    !("oldStatus" in data) &&
+    !("legStartTime" in data)
+  );
 }

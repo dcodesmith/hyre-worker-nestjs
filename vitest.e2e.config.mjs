@@ -20,6 +20,8 @@ export default defineConfig({
     environment: "node",
     // 3. Optional: Point to your container setup if using Testcontainers
     globalSetup: "./test/e2e.setup.ts",
+    // 4. Setup file for mocking modules (runs before each test file)
+    setupFiles: ["./test/setup.e2e.ts"],
     // 4. Increase timeout to allow external services to start
     testTimeout: 30000,
     hookTimeout: 30000,

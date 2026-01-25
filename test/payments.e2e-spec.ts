@@ -2,6 +2,7 @@ import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
+import { PaymentAttemptStatus } from "@prisma/client";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
@@ -10,7 +11,6 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
-import { PaymentAttemptStatus } from "@prisma/client";
 
 describe("Payments E2E Tests", () => {
   let app: INestApplication;
@@ -438,6 +438,127 @@ describe("Payments E2E Tests", () => {
         expect(updatedPayment?.status).toBe("SUCCESSFUL");
         expect(updatedPayment?.flutterwaveTransactionId).toBe("99999");
         expect(updatedPayment?.amountCharged?.toNumber()).toBe(50000);
+      });
+
+      it("should confirm booking when payment is successful", async () => {
+        // Create a new pending booking for this test
+        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
+          booking: { status: "PENDING", paymentStatus: "UNPAID" },
+        });
+
+        const payment = await factory.createPayment(pendingBooking.id, {
+          status: PaymentAttemptStatus.PENDING,
+          amountExpected: 50000,
+        });
+
+        const webhookData = {
+          id: 111111,
+          tx_ref: payment.txRef,
+          status: "successful",
+          charged_amount: 50000,
+          flw_ref: "FLW-CONFIRM-REF",
+          device_fingerprint: "device-confirm",
+          amount: 50000,
+          currency: "NGN",
+          app_fee: 700,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test payment for booking confirmation",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: webhookData,
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: webhookData,
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+
+        // Verify booking was confirmed
+        const confirmedBooking = await factory.getBookingById(pendingBooking.id);
+        expect(confirmedBooking?.status).toBe("CONFIRMED");
+        expect(confirmedBooking?.paymentStatus).toBe("PAID");
+      });
+
+      it("should not confirm booking when payment fails", async () => {
+        // Create a new pending booking for this test
+        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
+          booking: { status: "PENDING", paymentStatus: "UNPAID" },
+        });
+
+        const payment = await factory.createPayment(pendingBooking.id, {
+          status: PaymentAttemptStatus.PENDING,
+          amountExpected: 50000,
+        });
+
+        const webhookData = {
+          id: 222222,
+          tx_ref: payment.txRef,
+          status: "failed",
+          charged_amount: 50000,
+          flw_ref: "FLW-FAILED-REF",
+          device_fingerprint: "device-failed",
+          amount: 50000,
+          currency: "NGN",
+          app_fee: 700,
+          merchant_fee: 0,
+          processor_response: "Declined",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test failed payment",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: webhookData,
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: webhookData,
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+
+        // Verify booking was NOT confirmed (still PENDING)
+        const unchangedBooking = await factory.getBookingById(pendingBooking.id);
+        expect(unchangedBooking?.status).toBe("PENDING");
+        expect(unchangedBooking?.paymentStatus).toBe("UNPAID");
       });
 
       it("should handle idempotency - skip already processed payment", async () => {
