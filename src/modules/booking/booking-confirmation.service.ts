@@ -111,13 +111,21 @@ export class BookingConfirmationService {
    * Uses the notification queue to avoid blocking the webhook handler.
    */
   private async queueBookingConfirmedNotification(booking: BookingWithRelations): Promise<void> {
-    const bookingDetails = normaliseBookingDetails(booking);
+    try {
+      const bookingDetails = normaliseBookingDetails(booking);
 
-    // Queue customer notification
-    await this.queueCustomerNotification(booking.id, bookingDetails);
+      // Queue customer notification
+      await this.queueCustomerNotification(booking.id, bookingDetails);
 
-    // Queue fleet owner notification
-    await this.queueFleetOwnerNotification(booking, bookingDetails);
+      // Queue fleet owner notification
+      await this.queueFleetOwnerNotification(booking, bookingDetails);
+    } catch (error) {
+      // Log but don't throw - notification failure shouldn't fail the confirmation
+      this.logger.error("Failed to queue booking notifications", {
+        bookingId: booking.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

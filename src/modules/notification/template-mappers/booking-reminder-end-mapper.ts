@@ -11,9 +11,14 @@ export class BookingReminderEndMapper extends BaseTemplateMapper {
   getTemplateKey(type: NotificationType, recipientType: string): Template | null {
     if (!this.canHandle(type)) return null;
 
-    return recipientType === "chauffeur"
-      ? Template.ChauffeurBookingLegEndReminder
-      : Template.ClientBookingLegEndReminder;
+    // Booking reminders are only for clients and chauffeurs, not fleet owners
+    if (recipientType === "chauffeur") {
+      return Template.ChauffeurBookingLegEndReminder;
+    }
+    if (recipientType === "client") {
+      return Template.ClientBookingLegEndReminder;
+    }
+    return null;
   }
 
   mapVariables(templateData: TemplateData, recipientType: string): Record<string, string | number> {
