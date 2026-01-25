@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type {
@@ -161,24 +161,14 @@ export class PaymentWebhookService {
         return;
       }
 
-      // Find and update the payment record
+      // Find the payment record with booking relation (needed for idempotency recovery check)
       const payment = await this.databaseService.payment.findFirst({
         where: { txRef: tx_ref },
+        include: { booking: true },
       });
 
       if (!payment) {
         this.logger.warn("Payment not found for webhook", { txRef: tx_ref });
-        return;
-      }
-
-      // Skip if already processed (idempotency)
-      // Only process webhooks for PENDING payments - all other states are terminal or in-progress refunds
-      // This prevents delayed/duplicate webhooks from overwriting refund states (REFUNDED, PARTIALLY_REFUNDED, etc.)
-      if (payment.status !== PaymentAttemptStatus.PENDING) {
-        this.logger.log("Payment not in PENDING state, skipping", {
-          txRef: tx_ref,
-          currentStatus: payment.status,
-        });
         return;
       }
 
@@ -189,6 +179,39 @@ export class PaymentWebhookService {
         verifiedStatus.toLowerCase() === "successful"
           ? PaymentAttemptStatus.SUCCESSFUL
           : PaymentAttemptStatus.FAILED;
+
+      // Idempotency check with recovery logic
+      // If payment is already in a terminal state, check if we need to retry booking confirmation
+      if (payment.status !== PaymentAttemptStatus.PENDING) {
+        // Recovery case: Payment is SUCCESSFUL but booking is still PENDING
+        // This can happen if payment update succeeded but booking confirmation failed on a previous attempt
+        // In this case, we should retry the booking confirmation to recover from the inconsistent state
+        if (
+          payment.status === PaymentAttemptStatus.SUCCESSFUL &&
+          payment.booking?.status === BookingStatus.PENDING
+        ) {
+          this.logger.log(
+            "Payment already SUCCESSFUL but booking still PENDING, retrying confirmation for recovery",
+            {
+              txRef: tx_ref,
+              paymentStatus: payment.status,
+              bookingStatus: payment.booking.status,
+              bookingId: payment.booking.id,
+            },
+          );
+          await this.bookingConfirmationService.confirmFromPayment(payment);
+          return;
+        }
+
+        // Normal idempotency: payment is already processed and booking is not in PENDING state
+        // Skip to prevent duplicate processing or overwriting refund states
+        this.logger.log("Payment already processed, skipping", {
+          txRef: tx_ref,
+          currentStatus: payment.status,
+          bookingStatus: payment.booking?.status,
+        });
+        return;
+      }
 
       // Update payment status
       await this.databaseService.payment.update({

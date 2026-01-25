@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPaymentRecord, createPayoutTransaction } from "../../shared/helper.fixtures";
@@ -143,6 +143,7 @@ describe("PaymentWebhookService", () => {
       expect(flutterwaveService.verifyTransaction).toHaveBeenCalledWith("12345");
       expect(databaseService.payment.findFirst).toHaveBeenCalledWith({
         where: { txRef: "tx-ref-123" },
+        include: { booking: true },
       });
       expect(databaseService.payment.update).toHaveBeenCalledWith({
         where: { id: "payment-123" },
@@ -249,12 +250,16 @@ describe("PaymentWebhookService", () => {
       });
     });
 
-    it("should skip processing if payment already successful (idempotency)", async () => {
-      const mockPayment = createPaymentRecord({
-        id: "payment-123",
-        txRef: "tx-ref-123",
-        status: PaymentAttemptStatus.SUCCESSFUL,
-      });
+    it("should skip processing if payment already successful and booking is CONFIRMED (idempotency)", async () => {
+      const mockPayment = {
+        ...createPaymentRecord({
+          id: "payment-123",
+          txRef: "tx-ref-123",
+          status: PaymentAttemptStatus.SUCCESSFUL,
+          bookingId: "booking-123",
+        }),
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED },
+      };
 
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
@@ -266,14 +271,69 @@ describe("PaymentWebhookService", () => {
       await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
 
       expect(databaseService.payment.update).not.toHaveBeenCalled();
+      expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing if payment already successful and has no booking (idempotency)", async () => {
+      const mockPayment = {
+        ...createPaymentRecord({
+          id: "payment-123",
+          txRef: "tx-ref-123",
+          status: PaymentAttemptStatus.SUCCESSFUL,
+          bookingId: null,
+        }),
+        booking: null,
+      };
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+      expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    });
+
+    it("should retry booking confirmation when payment is SUCCESSFUL but booking is still PENDING (recovery)", async () => {
+      const mockPayment = {
+        ...createPaymentRecord({
+          id: "payment-123",
+          txRef: "tx-ref-123",
+          status: PaymentAttemptStatus.SUCCESSFUL,
+          bookingId: "booking-123",
+        }),
+        booking: { id: "booking-123", status: BookingStatus.PENDING },
+      };
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      // Should NOT update payment (already SUCCESSFUL)
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+      // Should retry booking confirmation for recovery
+      expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(mockPayment);
     });
 
     it("should skip processing if payment already failed (idempotency)", async () => {
-      const mockPayment = createPaymentRecord({
-        id: "payment-123",
-        txRef: "tx-ref-123",
-        status: PaymentAttemptStatus.FAILED,
-      });
+      const mockPayment = {
+        ...createPaymentRecord({
+          id: "payment-123",
+          txRef: "tx-ref-123",
+          status: PaymentAttemptStatus.FAILED,
+        }),
+        booking: null,
+      };
 
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
@@ -296,11 +356,14 @@ describe("PaymentWebhookService", () => {
     ])(
       "should skip processing if payment is in %s state (idempotency - preserves refund states)",
       async (refundStatus) => {
-        const mockPayment = createPaymentRecord({
-          id: "payment-123",
-          txRef: "tx-ref-123",
-          status: refundStatus,
-        });
+        const mockPayment = {
+          ...createPaymentRecord({
+            id: "payment-123",
+            txRef: "tx-ref-123",
+            status: refundStatus,
+          }),
+          booking: null,
+        };
 
         vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
           status: "success",
