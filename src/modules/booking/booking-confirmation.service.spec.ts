@@ -6,12 +6,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import type { Job, Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
-import {
-  createBooking,
-  createCar,
-  createOwner,
-  createUser,
-} from "../../shared/helper.fixtures";
+import { createBooking, createCar, createOwner, createUser } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import type { NotificationJobData } from "../notification/notification.interface";
@@ -128,7 +123,7 @@ describe("BookingConfirmationService", () => {
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       // Fetch updated booking with relations
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(notificationQueue.add).mockResolvedValueOnce(createMockJob());
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       const result = await service.confirmFromPayment(mockPayment);
 
@@ -163,7 +158,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(notificationQueue.add).mockResolvedValueOnce(createMockJob());
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
 
@@ -229,23 +224,20 @@ describe("BookingConfirmationService", () => {
       BookingStatus.COMPLETED,
       BookingStatus.CANCELLED,
       BookingStatus.REJECTED,
-    ])(
-      "should return false when booking is in %s status (idempotency)",
-      async () => {
-        const mockPayment = createMockPayment({
-          id: "payment-123",
-          bookingId: "booking-123",
-        });
+    ])("should return false when booking is in %s status (idempotency)", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
 
-        // Atomic conditional update returns 0 when booking is not in PENDING status
-        vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
+      // Atomic conditional update returns 0 when booking is not in PENDING status
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
 
-        const result = await service.confirmFromPayment(mockPayment);
+      const result = await service.confirmFromPayment(mockPayment);
 
-        expect(result).toBe(false);
-        expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
-      },
-    );
+      expect(result).toBe(false);
+      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+    });
 
     it("should not fail confirmation if notification queueing fails", async () => {
       const mockPayment = createMockPayment({
@@ -259,9 +251,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(notificationQueue.add).mockRejectedValueOnce(
-        new Error("Queue connection failed"),
-      );
+      vi.mocked(notificationQueue.add).mockRejectedValue(new Error("Queue connection failed"));
 
       // Should not throw, should still return true
       const result = await service.confirmFromPayment(mockPayment);

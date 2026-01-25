@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { NotificationType } from "../notification.interface";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  FLEET_OWNER_RECIPIENT_TYPE,
+  RecipientType,
+} from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BookingReminderEndMapper } from "./booking-reminder-end-mapper";
 
@@ -26,27 +32,36 @@ describe("BookingReminderEndMapper", () => {
 
   describe("getTemplateKey", () => {
     it("should return ChauffeurBookingLegEndReminder for chauffeur recipient", () => {
-      expect(mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, "chauffeur")).toBe(
-        Template.ChauffeurBookingLegEndReminder,
-      );
+      expect(
+        mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, CHAUFFEUR_RECIPIENT_TYPE),
+      ).toBe(Template.ChauffeurBookingLegEndReminder);
     });
 
     it("should return ClientBookingLegEndReminder for client recipient", () => {
-      expect(mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, "client")).toBe(
-        Template.ClientBookingLegEndReminder,
-      );
+      expect(
+        mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, CLIENT_RECIPIENT_TYPE),
+      ).toBe(Template.ClientBookingLegEndReminder);
     });
 
     it("should return null for fleetOwner recipient", () => {
-      expect(mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, "fleetOwner")).toBeNull();
+      expect(
+        mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, FLEET_OWNER_RECIPIENT_TYPE),
+      ).toBeNull();
     });
 
     it("should return null for unknown recipient types", () => {
-      expect(mapper.getTemplateKey(NotificationType.BOOKING_REMINDER_END, "unknown")).toBeNull();
+      expect(
+        mapper.getTemplateKey(
+          NotificationType.BOOKING_REMINDER_END,
+          "unknown" as unknown as RecipientType,
+        ),
+      ).toBeNull();
     });
 
     it("should return null for other notification types", () => {
-      expect(mapper.getTemplateKey(NotificationType.BOOKING_CONFIRMED, "client")).toBeNull();
+      expect(
+        mapper.getTemplateKey(NotificationType.BOOKING_CONFIRMED, CLIENT_RECIPIENT_TYPE),
+      ).toBeNull();
     });
   });
 
@@ -64,7 +79,7 @@ describe("BookingReminderEndMapper", () => {
     };
 
     it("should map chauffeur variables correctly", () => {
-      const variables = mapper.mapVariables(mockTemplateData, "chauffeur");
+      const variables = mapper.mapVariables(mockTemplateData, CHAUFFEUR_RECIPIENT_TYPE);
 
       expect(variables).toEqual({
         "1": "John Driver",
@@ -78,7 +93,7 @@ describe("BookingReminderEndMapper", () => {
     });
 
     it("should map client variables correctly with bookingId", () => {
-      const variables = mapper.mapVariables(mockTemplateData, "client");
+      const variables = mapper.mapVariables(mockTemplateData, CLIENT_RECIPIENT_TYPE);
 
       expect(variables).toEqual({
         "1": "Jane Customer",
@@ -98,7 +113,7 @@ describe("BookingReminderEndMapper", () => {
         carName: "BMW X5",
       };
 
-      const variables = mapper.mapVariables(incompleteData, "client");
+      const variables = mapper.mapVariables(incompleteData, CLIENT_RECIPIENT_TYPE);
 
       expect(variables["1"]).toBe("Jane Customer");
       expect(variables["2"]).toBe("BMW X5");
