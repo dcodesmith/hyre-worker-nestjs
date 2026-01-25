@@ -71,7 +71,7 @@ describe("BookingConfirmationService", () => {
           useValue: {
             booking: {
               findUnique: vi.fn(),
-              update: vi.fn(),
+              updateMany: vi.fn(),
             },
           },
         },
@@ -102,21 +102,26 @@ describe("BookingConfirmationService", () => {
       });
       const mockBooking = createMockBookingWithRelations({
         id: "booking-123",
-        status: BookingStatus.PENDING,
-        paymentStatus: PaymentStatus.UNPAID,
-      });
-
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(databaseService.booking.update).mockResolvedValueOnce({
-        ...mockBooking,
-        status: BookingStatus.CONFIRMED,
+        status: BookingStatus.CONFIRMED, // After update
         paymentStatus: PaymentStatus.PAID,
       });
+
+      // Atomic conditional update succeeds (1 row updated)
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      // Fetch updated booking with relations
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(notificationQueue.add).mockResolvedValueOnce({} as any);
 
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(true);
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "booking-123", status: BookingStatus.PENDING },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+        },
+      });
       expect(databaseService.booking.findUnique).toHaveBeenCalledWith({
         where: { id: "booking-123" },
         include: {
@@ -124,13 +129,6 @@ describe("BookingConfirmationService", () => {
           user: true,
           car: { include: { owner: true } },
           legs: { include: { extensions: true } },
-        },
-      });
-      expect(databaseService.booking.update).toHaveBeenCalledWith({
-        where: { id: "booking-123" },
-        data: {
-          status: BookingStatus.CONFIRMED,
-          paymentStatus: PaymentStatus.PAID,
         },
       });
     });
@@ -142,14 +140,11 @@ describe("BookingConfirmationService", () => {
       });
       const mockBooking = createMockBookingWithRelations({
         id: "booking-123",
-        status: BookingStatus.PENDING,
+        status: BookingStatus.CONFIRMED, // After update
       });
 
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(databaseService.booking.update).mockResolvedValueOnce({
-        ...mockBooking,
-        status: BookingStatus.CONFIRMED,
-      });
       vi.mocked(notificationQueue.add).mockResolvedValueOnce({} as any);
 
       await service.confirmFromPayment(mockPayment);
@@ -177,8 +172,8 @@ describe("BookingConfirmationService", () => {
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(false);
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
       expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
-      expect(databaseService.booking.update).not.toHaveBeenCalled();
     });
 
     it("should return false when booking is not found", async () => {
@@ -187,12 +182,13 @@ describe("BookingConfirmationService", () => {
         bookingId: "non-existent-booking",
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(null);
+      // Atomic conditional update returns 0 when booking not found
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
 
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(false);
-      expect(databaseService.booking.update).not.toHaveBeenCalled();
+      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
     });
 
     it("should return false when booking is not in PENDING status", async () => {
@@ -200,17 +196,14 @@ describe("BookingConfirmationService", () => {
         id: "payment-123",
         bookingId: "booking-123",
       });
-      const mockBooking = createMockBookingWithRelations({
-        id: "booking-123",
-        status: BookingStatus.CONFIRMED, // Already confirmed
-      });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      // Atomic conditional update returns 0 when booking is not in PENDING status
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
 
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(false);
-      expect(databaseService.booking.update).not.toHaveBeenCalled();
+      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -220,22 +213,19 @@ describe("BookingConfirmationService", () => {
       BookingStatus.REJECTED,
     ])(
       "should return false when booking is in %s status (idempotency)",
-      async (bookingStatus) => {
+      async () => {
         const mockPayment = createMockPayment({
           id: "payment-123",
           bookingId: "booking-123",
         });
-        const mockBooking = createMockBookingWithRelations({
-          id: "booking-123",
-          status: bookingStatus,
-        });
 
-        vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+        // Atomic conditional update returns 0 when booking is not in PENDING status
+        vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
 
         const result = await service.confirmFromPayment(mockPayment);
 
         expect(result).toBe(false);
-        expect(databaseService.booking.update).not.toHaveBeenCalled();
+        expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
       },
     );
 
@@ -246,14 +236,11 @@ describe("BookingConfirmationService", () => {
       });
       const mockBooking = createMockBookingWithRelations({
         id: "booking-123",
-        status: BookingStatus.PENDING,
+        status: BookingStatus.CONFIRMED, // After update
       });
 
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(databaseService.booking.update).mockResolvedValueOnce({
-        ...mockBooking,
-        status: BookingStatus.CONFIRMED,
-      });
       vi.mocked(notificationQueue.add).mockRejectedValueOnce(
         new Error("Queue connection failed"),
       );
@@ -262,7 +249,7 @@ describe("BookingConfirmationService", () => {
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(true);
-      expect(databaseService.booking.update).toHaveBeenCalled();
+      expect(databaseService.booking.updateMany).toHaveBeenCalled();
     });
   });
 });

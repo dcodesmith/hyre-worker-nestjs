@@ -51,8 +51,28 @@ export class BookingConfirmationService {
       return false;
     }
 
-    // Fetch booking with all relations needed for notification
-    const booking = await this.databaseService.booking.findUnique({
+    // Atomic conditional update - only updates if booking exists and is still PENDING
+    // This prevents TOCTOU race conditions where status could change between read and update
+    const updateResult = await this.databaseService.booking.updateMany({
+      where: { id: bookingId, status: BookingStatus.PENDING },
+      data: {
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+      },
+    });
+
+    // If no records were updated, booking doesn't exist or is not in PENDING status
+    if (updateResult.count === 0) {
+      this.logger.log("Booking not found or not in PENDING status, skipping confirmation", {
+        bookingId,
+        paymentId: payment.id,
+        txRef,
+      });
+      return false;
+    }
+
+    // Fetch the updated booking with relations for notification
+    const updatedBooking = await this.databaseService.booking.findUnique({
       where: { id: bookingId },
       include: {
         chauffeur: true,
@@ -62,8 +82,9 @@ export class BookingConfirmationService {
       },
     });
 
-    if (!booking) {
-      this.logger.warn("Booking not found for payment", {
+    if (!updatedBooking) {
+      // This shouldn't happen since we just updated the booking, but handle gracefully
+      this.logger.error("Booking not found after successful update", {
         bookingId,
         paymentId: payment.id,
         txRef,
@@ -71,35 +92,15 @@ export class BookingConfirmationService {
       return false;
     }
 
-    // Only confirm PENDING bookings - other states should not be modified
-    if (booking.status !== BookingStatus.PENDING) {
-      this.logger.log("Booking not in PENDING status, skipping confirmation", {
-        bookingId,
-        currentStatus: booking.status,
-        txRef,
-      });
-      return false;
-    }
-
-    // Confirm the booking
-    await this.databaseService.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-      },
-    });
-
     this.logger.log("Booking confirmed after payment", {
       bookingId,
-      oldStatus: booking.status,
       newStatus: BookingStatus.CONFIRMED,
       paymentId: payment.id,
       txRef,
     });
 
     // Queue notification asynchronously (don't block webhook response)
-    await this.queueBookingConfirmedNotification(booking as BookingWithRelations);
+    await this.queueBookingConfirmedNotification(updatedBooking);
 
     return true;
   }

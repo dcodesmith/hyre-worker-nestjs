@@ -151,7 +151,15 @@ export class PaymentWebhookService {
       }
 
       // Use verified status for payment state (trust server-side verification over webhook)
+      // Validate status exists and is a string before calling toLowerCase()
       const verifiedStatus = verificationData.status;
+      if (!verifiedStatus || typeof verifiedStatus !== "string") {
+        this.logger.warn(
+          "Missing or invalid status in transaction verification, skipping to prevent errors",
+          { txRef: tx_ref, transactionId, status: verifiedStatus },
+        );
+        return;
+      }
 
       // Find and update the payment record
       const payment = await this.databaseService.payment.findFirst({
