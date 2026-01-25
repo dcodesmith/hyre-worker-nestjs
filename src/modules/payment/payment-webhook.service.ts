@@ -97,6 +97,96 @@ export class PaymentWebhookService {
         });
         return;
       }
+
+      // Validate that verification data exists and matches webhook data
+      // This prevents spoofed webhooks with valid signatures but manipulated data
+      const verificationData = verification.data;
+      if (!verificationData) {
+        this.logger.warn("Transaction verification returned no data", {
+          txRef: tx_ref,
+          transactionId,
+        });
+        return;
+      }
+
+      // Validate tx_ref matches to ensure webhook corresponds to correct payment
+      if (verificationData.tx_ref !== tx_ref) {
+        this.logger.warn("Transaction verification tx_ref mismatch", {
+          webhookTxRef: tx_ref,
+          verifiedTxRef: verificationData.tx_ref,
+          transactionId,
+        });
+        return;
+      }
+
+      // Validate transaction ID matches
+      if (verificationData.id !== transactionId) {
+        this.logger.warn("Transaction verification id mismatch", {
+          webhookTransactionId: transactionId,
+          verifiedTransactionId: verificationData.id,
+          txRef: tx_ref,
+        });
+        return;
+      }
+
+      // Validate charged amount matches (optional but recommended for extra security)
+      if (verificationData.charged_amount !== charged_amount) {
+        this.logger.warn("Transaction verification charged_amount mismatch", {
+          txRef: tx_ref,
+          transactionId,
+          webhookChargedAmount: charged_amount,
+          verifiedChargedAmount: verificationData.charged_amount,
+        });
+        return;
+      }
+
+      // Use verified status for payment state (trust server-side verification over webhook)
+      const verifiedStatus = verificationData.status;
+
+      // Find and update the payment record
+      const payment = await this.databaseService.payment.findFirst({
+        where: { txRef: tx_ref },
+      });
+
+      if (!payment) {
+        this.logger.warn("Payment not found for webhook", { txRef: tx_ref });
+        return;
+      }
+
+      // Skip if already processed (idempotency)
+      // Only process webhooks for PENDING payments - all other states are terminal or in-progress refunds
+      // This prevents delayed/duplicate webhooks from overwriting refund states (REFUNDED, PARTIALLY_REFUNDED, etc.)
+      if (payment.status !== PaymentAttemptStatus.PENDING) {
+        this.logger.log("Payment not in PENDING state, skipping", {
+          txRef: tx_ref,
+          currentStatus: payment.status,
+        });
+        return;
+      }
+
+      // Determine payment status from verified data (not webhook data)
+      const newPaymentStatus =
+        verifiedStatus === "successful"
+          ? PaymentAttemptStatus.SUCCESSFUL
+          : PaymentAttemptStatus.FAILED;
+
+      // Update payment status
+      await this.databaseService.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: newPaymentStatus,
+          flutterwaveTransactionId: transactionId.toString(),
+          amountCharged: verificationData.charged_amount,
+          confirmedAt: new Date(),
+        },
+      });
+
+      this.logger.log("Payment status updated from webhook", {
+        txRef: tx_ref,
+        paymentId: payment.id,
+        newStatus: newPaymentStatus,
+        verifiedStatus,
+      });
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
         txRef: tx_ref,
@@ -105,46 +195,6 @@ export class PaymentWebhookService {
       });
       throw error;
     }
-
-    // Find and update the payment record
-    const payment = await this.databaseService.payment.findFirst({
-      where: { txRef: tx_ref },
-    });
-
-    if (!payment) {
-      this.logger.warn("Payment not found for webhook", { txRef: tx_ref });
-      return;
-    }
-
-    // Skip if already processed (idempotency)
-    // Only process webhooks for PENDING payments - all other states are terminal or in-progress refunds
-    // This prevents delayed/duplicate webhooks from overwriting refund states (REFUNDED, PARTIALLY_REFUNDED, etc.)
-    if (payment.status !== PaymentAttemptStatus.PENDING) {
-      this.logger.log("Payment not in PENDING state, skipping", {
-        txRef: tx_ref,
-        currentStatus: payment.status,
-      });
-      return;
-    }
-
-    // Update payment status
-    await this.databaseService.payment.update({
-      where: { id: payment.id },
-      data: {
-        status:
-          status === "successful" ? PaymentAttemptStatus.SUCCESSFUL : PaymentAttemptStatus.FAILED,
-        flutterwaveTransactionId: transactionId.toString(),
-        amountCharged: charged_amount,
-        confirmedAt: new Date(),
-      },
-    });
-
-    this.logger.log("Payment status updated from webhook", {
-      txRef: tx_ref,
-      paymentId: payment.id,
-      newStatus:
-        status === "successful" ? PaymentAttemptStatus.SUCCESSFUL : PaymentAttemptStatus.FAILED,
-    });
 
     // TODO: In PR 5 (Booking Activation), call BookingActivationService here
     // if (status === "successful") {
@@ -172,6 +222,14 @@ export class PaymentWebhookService {
     if (!reference) {
       this.logger.warn(
         "Missing reference in transfer.completed webhook, skipping to prevent data corruption",
+      );
+      return;
+    }
+
+    if (!status || typeof status !== "string") {
+      this.logger.warn(
+        "Missing or invalid status in transfer.completed webhook, skipping to prevent errors",
+        { reference, status },
       );
       return;
     }
@@ -241,6 +299,14 @@ export class PaymentWebhookService {
     if (!TransactionId) {
       this.logger.warn(
         "Missing TransactionId in refund.completed webhook, skipping to prevent data corruption",
+      );
+      return;
+    }
+
+    if (!status || typeof status !== "string") {
+      this.logger.warn(
+        "Missing or invalid status in refund.completed webhook, skipping to prevent errors",
+        { transactionId: TransactionId, status },
       );
       return;
     }

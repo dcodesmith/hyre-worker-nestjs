@@ -8,9 +8,38 @@ import type {
   FlutterwaveChargeData,
   FlutterwaveRefundWebhookData,
   FlutterwaveTransferWebhookData,
+  FlutterwaveVerificationData,
 } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PaymentWebhookService } from "./payment-webhook.service";
+
+// Helper to create mock verification data matching webhook charge data
+function createMockVerificationData(
+  chargeData: FlutterwaveChargeData,
+  overrides: Partial<FlutterwaveVerificationData> = {},
+): FlutterwaveVerificationData {
+  return {
+    id: chargeData.id,
+    tx_ref: chargeData.tx_ref,
+    flw_ref: chargeData.flw_ref,
+    device_fingerprint: chargeData.device_fingerprint,
+    amount: chargeData.amount,
+    currency: chargeData.currency,
+    charged_amount: chargeData.charged_amount,
+    app_fee: chargeData.app_fee,
+    merchant_fee: chargeData.merchant_fee,
+    processor_response: chargeData.processor_response,
+    auth_model: chargeData.auth_model,
+    ip: chargeData.ip,
+    narration: chargeData.narration,
+    status: chargeData.status,
+    payment_type: chargeData.payment_type,
+    created_at: chargeData.created_at,
+    account_id: chargeData.account_id,
+    customer: chargeData.customer,
+    ...overrides,
+  };
+}
 
 // Helper to create mock Payment objects with only required fields for testing
 function createMockPayment(overrides: Partial<Payment>): Payment {
@@ -137,7 +166,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
         message: "Transaction verified",
-        data: {},
+        data: createMockVerificationData(mockChargeData),
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
@@ -159,7 +188,7 @@ describe("PaymentWebhookService", () => {
       });
     });
 
-    it("should update payment status to FAILED when charge fails", async () => {
+    it("should update payment status to FAILED when verified status is failed", async () => {
       const failedChargeData = { ...mockChargeData, status: "failed" };
       const mockPayment = createMockPayment({
         id: "payment-123",
@@ -170,7 +199,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
         message: "Transaction verified",
-        data: {},
+        data: createMockVerificationData(failedChargeData, { status: "failed" }),
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
       vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
@@ -195,7 +224,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
         message: "Transaction verified",
-        data: {},
+        data: createMockVerificationData(mockChargeData),
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
 
@@ -214,7 +243,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
         message: "Transaction verified",
-        data: {},
+        data: createMockVerificationData(mockChargeData),
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
 
@@ -241,7 +270,7 @@ describe("PaymentWebhookService", () => {
         vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
-          data: {},
+          data: createMockVerificationData(mockChargeData),
         });
         vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
 
@@ -267,7 +296,7 @@ describe("PaymentWebhookService", () => {
       vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
         status: "success",
         message: "Transaction verified",
-        data: {},
+        data: createMockVerificationData(mockChargeData),
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
@@ -304,6 +333,86 @@ describe("PaymentWebhookService", () => {
       expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
       expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
       expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when verification data is missing", async () => {
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: undefined,
+      });
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when verification tx_ref does not match webhook", async () => {
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData, { tx_ref: "different-tx-ref" }),
+      });
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when verification transaction ID does not match webhook", async () => {
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData, { id: 99999 }),
+      });
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when verification charged_amount does not match webhook", async () => {
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(mockChargeData, { charged_amount: 99999 }),
+      });
+
+      await service.handleWebhook({ event: "charge.completed", data: mockChargeData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should use verified status (not webhook status) for payment state", async () => {
+      // Webhook claims "successful" but verification shows "failed"
+      const webhookWithWrongStatus = { ...mockChargeData, status: "successful" };
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.PENDING,
+      });
+
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "Transaction verified",
+        data: createMockVerificationData(webhookWithWrongStatus, { status: "failed" }),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(mockPayment);
+      vi.mocked(databaseService.payment.update).mockResolvedValueOnce(mockPayment);
+
+      await service.handleWebhook({ event: "charge.completed", data: webhookWithWrongStatus });
+
+      // Should use verified status "failed", not webhook status "successful"
+      expect(databaseService.payment.update).toHaveBeenCalledWith({
+        where: { id: "payment-123" },
+        data: expect.objectContaining({
+          status: "FAILED",
+        }),
+      });
     });
   });
 
@@ -407,6 +516,33 @@ describe("PaymentWebhookService", () => {
 
     it("should skip processing when reference is empty string to prevent data corruption", async () => {
       const malformedData = { ...mockTransferData, reference: "" };
+
+      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
+
+      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when status is undefined to prevent TypeError", async () => {
+      const malformedData = { ...mockTransferData, status: undefined as unknown as string };
+
+      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
+
+      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when status is null to prevent TypeError", async () => {
+      const malformedData = { ...mockTransferData, status: null as unknown as string };
+
+      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
+
+      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when status is not a string to prevent TypeError", async () => {
+      const malformedData = { ...mockTransferData, status: 123 as unknown as string };
 
       await service.handleWebhook({ event: "transfer.completed", data: malformedData });
 
@@ -565,6 +701,33 @@ describe("PaymentWebhookService", () => {
           status: "PARTIALLY_REFUNDED",
         }),
       });
+    });
+
+    it("should skip processing when status is undefined to prevent TypeError", async () => {
+      const malformedData = { ...mockRefundData, status: undefined as unknown as string };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when status is null to prevent TypeError", async () => {
+      const malformedData = { ...mockRefundData, status: null as unknown as string };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("should skip processing when status is not a string to prevent TypeError", async () => {
+      const malformedData = { ...mockRefundData, status: 123 as unknown as string };
+
+      await service.handleWebhook({ event: "refund.completed", data: malformedData });
+
+      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
   });
 });

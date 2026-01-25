@@ -121,6 +121,51 @@ export interface FlutterwaveRefundData {
   created_at: string;
 }
 
+/**
+ * Data returned from transaction verification endpoint
+ * @see https://developer.flutterwave.com/v3.0/reference/verify-transaction
+ *
+ * Note: Some fields may be absent depending on the payment type.
+ * The critical fields for validation (id, tx_ref, status, charged_amount) are always present.
+ */
+export interface FlutterwaveVerificationData {
+  id: number;
+  tx_ref: string;
+  flw_ref: string;
+  /** Transaction status: "successful", "failed", "pending" - always present */
+  status: string;
+  charged_amount: number;
+  amount: number;
+  currency: string;
+  app_fee?: number;
+  merchant_fee?: number;
+  processor_response?: string;
+  auth_model?: string;
+  ip?: string;
+  narration?: string;
+  payment_type?: string;
+  device_fingerprint?: string;
+  created_at: string;
+  account_id?: number;
+  customer?: {
+    id: number;
+    name: string;
+    phone_number: string | null;
+    email: string;
+    created_at: string;
+  };
+  meta?: Record<string, unknown>;
+  card?: {
+    first_6digits?: string;
+    last_4digits?: string;
+    issuer?: string;
+    country?: string;
+    type?: string;
+    token?: string;
+    expiry?: string;
+  };
+}
+
 export class FlutterwaveError extends Error {
   constructor(
     message: string,
