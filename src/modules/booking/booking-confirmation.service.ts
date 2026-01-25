@@ -9,6 +9,7 @@ import { DatabaseService } from "../database/database.service";
 import {
   CLIENT_RECIPIENT_TYPE,
   DEFAULT_CHANNELS,
+  FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
 import { NotificationType, type NotificationJobData } from "../notification/notification.interface";
@@ -113,11 +114,33 @@ export class BookingConfirmationService {
     try {
       const bookingDetails = normaliseBookingDetails(booking);
 
+      // Queue customer notification
+      await this.queueCustomerNotification(booking.id, bookingDetails);
+
+      // Queue fleet owner notification
+      await this.queueFleetOwnerNotification(booking, bookingDetails);
+    } catch (error) {
+      // Log but don't throw - notification failure shouldn't fail the confirmation
+      this.logger.error("Failed to queue booking notifications", {
+        bookingId: booking.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Queue notification to the customer about their confirmed booking.
+   */
+  private async queueCustomerNotification(
+    bookingId: string,
+    bookingDetails: ReturnType<typeof normaliseBookingDetails>,
+  ): Promise<void> {
+    try {
       const jobData: NotificationJobData = {
-        id: `booking-confirmed-${booking.id}-${Date.now()}`,
+        id: `booking-confirmed-${bookingId}-${Date.now()}`,
         type: NotificationType.BOOKING_CONFIRMED,
         channels: DEFAULT_CHANNELS,
-        bookingId: booking.id,
+        bookingId,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {
             email: bookingDetails.customerEmail,
@@ -133,13 +156,68 @@ export class BookingConfirmationService {
       await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
 
       this.logger.log("Queued booking confirmation notification", {
-        bookingId: booking.id,
+        bookingId,
         notificationId: jobData.id,
       });
     } catch (error) {
       // Log but don't throw - notification failure shouldn't fail the confirmation
       this.logger.error("Failed to queue booking confirmation notification", {
+        bookingId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Queue notification to the fleet owner about the new booking.
+   * Fleet owner needs to assign a chauffeur for the booking.
+   */
+  private async queueFleetOwnerNotification(
+    booking: BookingWithRelations,
+    bookingDetails: ReturnType<typeof normaliseBookingDetails>,
+  ): Promise<void> {
+    const ownerEmail = booking.car?.owner?.email;
+    const ownerPhone = booking.car?.owner?.phoneNumber;
+
+    // Skip if fleet owner has no contact info
+    if (!ownerEmail && !ownerPhone) {
+      this.logger.warn("Fleet owner has no contact info, skipping notification", {
         bookingId: booking.id,
+        ownerId: booking.car?.owner?.id,
+      });
+      return;
+    }
+
+    try {
+      const jobData: NotificationJobData = {
+        id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
+        type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+        channels: DEFAULT_CHANNELS,
+        bookingId: booking.id,
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            email: ownerEmail ?? undefined,
+            phoneNumber: ownerPhone ?? undefined,
+          },
+        },
+        templateData: {
+          ...bookingDetails,
+          subject: "New Booking Alert",
+        },
+      };
+
+      await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
+
+      this.logger.log("Queued fleet owner new booking notification", {
+        bookingId: booking.id,
+        notificationId: jobData.id,
+        ownerId: booking.car?.owner?.id,
+      });
+    } catch (error) {
+      // Log but don't throw - notification failure shouldn't fail the confirmation
+      this.logger.error("Failed to queue fleet owner notification", {
+        bookingId: booking.id,
+        ownerId: booking.car?.owner?.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }

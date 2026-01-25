@@ -10,6 +10,9 @@ vi.mock("../src/templates/emails", () => ({
   renderBookingStatusUpdateEmail: vi.fn().mockResolvedValue("<html>Mocked status update</html>"),
   renderBookingReminderEmail: vi.fn().mockResolvedValue("<html>Mocked reminder</html>"),
   renderAuthOTPEmail: vi.fn().mockResolvedValue("<html>Mocked OTP email</html>"),
+  renderFleetOwnerNewBookingEmail: vi
+    .fn()
+    .mockResolvedValue("<html>Mocked fleet owner notification</html>"),
 }));
 
 // Mock the EmailService to prevent actual API calls to Resend during e2e tests

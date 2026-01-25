@@ -332,3 +332,39 @@ export async function renderAuthOTPEmail({ otp }: AuthOTPEmailProps) {
     </EmailTemplate>,
   );
 }
+
+export async function renderFleetOwnerNewBookingEmail(booking: NormalisedBookingDetails) {
+  const previewText = "New Booking Alert - Action Required";
+  const dashboardUrl = `${WEBSITE_URL}/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(booking.startDate)}`;
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="New Booking Notification">
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        New Booking Alert - Action Required
+      </Heading>
+      <Text className="mb-3">Hello {booking.ownerName},</Text>
+      <Text className="mb-3">
+        A new booking has been made for your{" "}
+        <span className="font-semibold">{booking.carName}</span>. Please{" "}
+        <Link href={dashboardUrl} className="text-blue-600 underline">
+          assign a chauffeur
+        </Link>{" "}
+        for this booking as soon as possible.
+      </Text>
+      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
+        <Text className="font-semibold mb-2 underline">Booking Details</Text>
+        <DetailListItem label="Customer" value={booking.customerName} />
+        <DetailListItem label="Start Date & Time" value={booking.startDate} />
+        <DetailListItem label="End Date & Time" value={booking.endDate} />
+        <DetailListItem label="Car" value={booking.carName} />
+        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
+        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
+        <Hr className="my-2 border-gray-300" />
+        <DetailListItem label="Total Amount" value={booking.totalAmount} />
+      </Section>
+      <Text className="mt-4 text-sm text-gray-600">
+        If you have any questions, feel free to contact us.
+      </Text>
+    </EmailTemplate>,
+  );
+}
