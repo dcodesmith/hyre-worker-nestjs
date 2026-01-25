@@ -1,6 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { BookingStatus, PaymentStatus, type Payment } from "@prisma/client";
+import { BookingStatus, PaymentStatus, Status, type Payment } from "@prisma/client";
 import { Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { normaliseBookingDetails } from "../../shared/helper";
@@ -100,10 +100,40 @@ export class BookingConfirmationService {
       txRef,
     });
 
+    // Update car status to BOOKED to prevent double-booking
+    await this.updateCarStatusToBooked(updatedBooking.carId, bookingId);
+
     // Queue notification asynchronously (don't block webhook response)
     await this.queueBookingConfirmedNotification(updatedBooking);
 
     return true;
+  }
+
+  /**
+   * Update the car status to BOOKED to prevent double-booking.
+   * This is a non-blocking operation - car status update failure should not fail the confirmation.
+   */
+  private async updateCarStatusToBooked(carId: string, bookingId: string): Promise<void> {
+    try {
+      await this.databaseService.car.update({
+        where: { id: carId },
+        data: { status: Status.BOOKED },
+      });
+
+      this.logger.log("Car status updated to BOOKED", {
+        carId,
+        bookingId,
+        newStatus: Status.BOOKED,
+      });
+    } catch (error) {
+      // Log but don't throw - car status update failure shouldn't fail the confirmation
+      // The booking is already confirmed, and the car can be manually updated if needed
+      this.logger.error("Failed to update car status to BOOKED", {
+        carId,
+        bookingId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
