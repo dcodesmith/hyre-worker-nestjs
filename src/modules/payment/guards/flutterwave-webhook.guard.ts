@@ -5,12 +5,6 @@ import type { Request } from "express";
 import { EnvConfig } from "src/config/env.config";
 
 /**
- * HMAC key used for constant-time signature comparison.
- * This ensures comparison time is independent of input length.
- */
-const HMAC_KEY = "flutterwave-webhook-comparison";
-
-/**
  * Guard to verify Flutterwave webhook signatures.
  *
  * Flutterwave sends a `verif-hash` header with each webhook request
@@ -22,9 +16,13 @@ const HMAC_KEY = "flutterwave-webhook-comparison";
 export class FlutterwaveWebhookGuard implements CanActivate {
   private readonly logger = new Logger(FlutterwaveWebhookGuard.name);
   private readonly webhookSecret: string;
+  private readonly hmacKey: string;
 
   constructor(private readonly configService: ConfigService<EnvConfig>) {
     this.webhookSecret = this.configService.get("FLUTTERWAVE_WEBHOOK_SECRET", {
+      infer: true,
+    });
+    this.hmacKey = this.configService.get("HMAC_KEY", {
       infer: true,
     });
   }
@@ -67,8 +65,8 @@ export class FlutterwaveWebhookGuard implements CanActivate {
   private verifySignature(received: string, expected: string): boolean {
     // Hash both values to get fixed-length outputs for comparison
     // This prevents length-based timing attacks
-    const receivedHash = createHmac("sha256", HMAC_KEY).update(received).digest();
-    const expectedHash = createHmac("sha256", HMAC_KEY).update(expected).digest();
+    const receivedHash = createHmac("sha256", this.hmacKey).update(received).digest();
+    const expectedHash = createHmac("sha256", this.hmacKey).update(expected).digest();
 
     return timingSafeEqual(receivedHash, expectedHash);
   }

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { Booking, Payment } from "@prisma/client";
 import { BookingStatus, PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { DatabaseService } from "../database/database.service";
@@ -76,165 +77,12 @@ export class PaymentWebhookService {
       chargedAmount: charged_amount,
     });
 
-    // Validate required fields to prevent Prisma from matching any record
-    // when undefined values cause where conditions to be ignored
-    if (!tx_ref) {
-      this.logger.warn(
-        "Missing tx_ref in charge.completed webhook, skipping to prevent data corruption",
-      );
+    if (!this.validateChargeWebhookFields(tx_ref, transactionId)) {
       return;
     }
 
-    if (transactionId == null) {
-      this.logger.warn(
-        "Missing id in charge.completed webhook, skipping to prevent data corruption",
-        { txRef: tx_ref },
-      );
-      return;
-    }
-
-    // Verify the transaction with Flutterwave to ensure webhook authenticity
     try {
-      const verification = await this.flutterwaveService.verifyTransaction(
-        transactionId.toString(),
-      );
-
-      if (verification.status !== "success") {
-        this.logger.warn("Transaction verification failed", {
-          txRef: tx_ref,
-          transactionId,
-          verificationStatus: verification.status,
-        });
-        return;
-      }
-
-      // Validate that verification data exists and matches webhook data
-      // This prevents spoofed webhooks with valid signatures but manipulated data
-      const verificationData = verification.data;
-      if (!verificationData) {
-        this.logger.warn("Transaction verification returned no data", {
-          txRef: tx_ref,
-          transactionId,
-        });
-        return;
-      }
-
-      // Validate tx_ref matches to ensure webhook corresponds to correct payment
-      if (verificationData.tx_ref !== tx_ref) {
-        this.logger.warn("Transaction verification tx_ref mismatch", {
-          webhookTxRef: tx_ref,
-          verifiedTxRef: verificationData.tx_ref,
-          transactionId,
-        });
-        return;
-      }
-
-      // Validate transaction ID matches
-      if (verificationData.id !== transactionId) {
-        this.logger.warn("Transaction verification id mismatch", {
-          webhookTransactionId: transactionId,
-          verifiedTransactionId: verificationData.id,
-          txRef: tx_ref,
-        });
-        return;
-      }
-
-      // Validate charged amount matches (optional but recommended for extra security)
-      if (verificationData.charged_amount !== charged_amount) {
-        this.logger.warn("Transaction verification charged_amount mismatch", {
-          txRef: tx_ref,
-          transactionId,
-          webhookChargedAmount: charged_amount,
-          verifiedChargedAmount: verificationData.charged_amount,
-        });
-        return;
-      }
-
-      // Use verified status for payment state (trust server-side verification over webhook)
-      // Validate status exists and is a string before calling toLowerCase()
-      const verifiedStatus = verificationData.status;
-      if (!verifiedStatus || typeof verifiedStatus !== "string") {
-        this.logger.warn(
-          "Missing or invalid status in transaction verification, skipping to prevent errors",
-          { txRef: tx_ref, transactionId, status: verifiedStatus },
-        );
-        return;
-      }
-
-      // Find the payment record with booking relation (needed for idempotency recovery check)
-      const payment = await this.databaseService.payment.findFirst({
-        where: { txRef: tx_ref },
-        include: { booking: true },
-      });
-
-      if (!payment) {
-        this.logger.warn("Payment not found for webhook", { txRef: tx_ref });
-        return;
-      }
-
-      // Determine payment status from verified data (not webhook data)
-      // Flutterwave transaction status "successful" maps to our "SUCCESSFUL"
-      // Use case-insensitive comparison to handle potential API inconsistencies
-      const newPaymentStatus =
-        verifiedStatus.toLowerCase() === "successful"
-          ? PaymentAttemptStatus.SUCCESSFUL
-          : PaymentAttemptStatus.FAILED;
-
-      // Idempotency check with recovery logic
-      // If payment is already in a terminal state, check if we need to retry booking confirmation
-      if (payment.status !== PaymentAttemptStatus.PENDING) {
-        // Recovery case: Payment is SUCCESSFUL but booking is still PENDING
-        // This can happen if payment update succeeded but booking confirmation failed on a previous attempt
-        // In this case, we should retry the booking confirmation to recover from the inconsistent state
-        if (
-          payment.status === PaymentAttemptStatus.SUCCESSFUL &&
-          payment.booking?.status === BookingStatus.PENDING
-        ) {
-          this.logger.log(
-            "Payment already SUCCESSFUL but booking still PENDING, retrying confirmation for recovery",
-            {
-              txRef: tx_ref,
-              paymentStatus: payment.status,
-              bookingStatus: payment.booking.status,
-              bookingId: payment.booking.id,
-            },
-          );
-          await this.bookingConfirmationService.confirmFromPayment(payment);
-          return;
-        }
-
-        // Normal idempotency: payment is already processed and booking is not in PENDING state
-        // Skip to prevent duplicate processing or overwriting refund states
-        this.logger.log("Payment already processed, skipping", {
-          txRef: tx_ref,
-          currentStatus: payment.status,
-          bookingStatus: payment.booking?.status,
-        });
-        return;
-      }
-
-      // Update payment status
-      await this.databaseService.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: newPaymentStatus,
-          flutterwaveTransactionId: transactionId.toString(),
-          amountCharged: verificationData.charged_amount,
-          confirmedAt: new Date(),
-        },
-      });
-
-      this.logger.log("Payment status updated from webhook", {
-        txRef: tx_ref,
-        paymentId: payment.id,
-        newStatus: newPaymentStatus,
-        verifiedStatus,
-      });
-
-      // Activate booking if payment was successful
-      if (newPaymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
-        await this.bookingConfirmationService.confirmFromPayment(payment);
-      }
+      await this.processVerifiedCharge(tx_ref, transactionId, charged_amount);
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
         txRef: tx_ref,
@@ -243,6 +91,199 @@ export class PaymentWebhookService {
       });
       throw error;
     }
+  }
+
+  private validateChargeWebhookFields(
+    txRef: string | undefined,
+    transactionId: number | undefined,
+  ): txRef is string {
+    if (!txRef) {
+      this.logger.warn(
+        "Missing tx_ref in charge.completed webhook, skipping to prevent data corruption",
+      );
+      return false;
+    }
+
+    if (transactionId == null) {
+      this.logger.warn(
+        "Missing id in charge.completed webhook, skipping to prevent data corruption",
+        { txRef },
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  private async processVerifiedCharge(
+    txRef: string,
+    transactionId: number,
+    chargedAmount: number,
+  ): Promise<void> {
+    const verification = await this.flutterwaveService.verifyTransaction(transactionId.toString());
+
+    const verificationData = this.validateVerification(
+      verification,
+      txRef,
+      transactionId,
+      chargedAmount,
+    );
+    if (!verificationData) {
+      return;
+    }
+
+    const payment = await this.databaseService.payment.findFirst({
+      where: { txRef },
+      include: { booking: true },
+    });
+
+    if (!payment) {
+      this.logger.warn("Payment not found for webhook", { txRef });
+      return;
+    }
+
+    const newPaymentStatus =
+      verificationData.status.toLowerCase() === "successful"
+        ? PaymentAttemptStatus.SUCCESSFUL
+        : PaymentAttemptStatus.FAILED;
+
+    if (await this.handleIdempotencyOrRecovery(payment, txRef)) {
+      return;
+    }
+
+    await this.updatePaymentFromCharge(
+      payment.id,
+      newPaymentStatus,
+      transactionId,
+      verificationData,
+    );
+
+    this.logger.log("Payment status updated from webhook", {
+      txRef,
+      paymentId: payment.id,
+      newStatus: newPaymentStatus,
+      verifiedStatus: verificationData.status,
+    });
+
+    if (newPaymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
+      await this.bookingConfirmationService.confirmFromPayment(payment);
+    }
+  }
+
+  private validateVerification(
+    verification: Awaited<ReturnType<typeof this.flutterwaveService.verifyTransaction>>,
+    txRef: string,
+    transactionId: number,
+    chargedAmount: number,
+  ): { status: string; charged_amount: number } | null {
+    if (verification.status !== "success") {
+      this.logger.warn("Transaction verification failed", {
+        txRef,
+        transactionId,
+        verificationStatus: verification.status,
+      });
+      return null;
+    }
+
+    const data = verification.data;
+    if (!data) {
+      this.logger.warn("Transaction verification returned no data", { txRef, transactionId });
+      return null;
+    }
+
+    if (data.tx_ref !== txRef) {
+      this.logger.warn("Transaction verification tx_ref mismatch", {
+        webhookTxRef: txRef,
+        verifiedTxRef: data.tx_ref,
+        transactionId,
+      });
+      return null;
+    }
+
+    if (data.id !== transactionId) {
+      this.logger.warn("Transaction verification id mismatch", {
+        webhookTransactionId: transactionId,
+        verifiedTransactionId: data.id,
+        txRef,
+      });
+      return null;
+    }
+
+    if (data.charged_amount !== chargedAmount) {
+      this.logger.warn("Transaction verification charged_amount mismatch", {
+        txRef,
+        transactionId,
+        webhookChargedAmount: chargedAmount,
+        verifiedChargedAmount: data.charged_amount,
+      });
+      return null;
+    }
+
+    if (!data.status || typeof data.status !== "string") {
+      this.logger.warn(
+        "Missing or invalid status in transaction verification, skipping to prevent errors",
+        { txRef, transactionId, status: data.status },
+      );
+      return null;
+    }
+
+    return { status: data.status, charged_amount: data.charged_amount };
+  }
+
+  /**
+   * Handle idempotency check with recovery logic.
+   * Returns true if processing should stop (already handled or recovered).
+   */
+  private async handleIdempotencyOrRecovery(
+    payment: Payment & { booking: Booking | null },
+    txRef: string,
+  ): Promise<boolean> {
+    if (payment.status === PaymentAttemptStatus.PENDING) {
+      return false;
+    }
+
+    // Recovery case: Payment is SUCCESSFUL but booking is still PENDING
+    if (
+      payment.status === PaymentAttemptStatus.SUCCESSFUL &&
+      payment.booking?.status === BookingStatus.PENDING
+    ) {
+      this.logger.log(
+        "Payment already SUCCESSFUL but booking still PENDING, retrying confirmation for recovery",
+        {
+          txRef,
+          paymentStatus: payment.status,
+          bookingStatus: payment.booking.status,
+          bookingId: payment.booking.id,
+        },
+      );
+      await this.bookingConfirmationService.confirmFromPayment(payment);
+      return true;
+    }
+
+    // Normal idempotency: skip duplicate processing
+    this.logger.log("Payment already processed, skipping", {
+      txRef,
+      currentStatus: payment.status,
+      bookingStatus: payment.booking?.status,
+    });
+    return true;
+  }
+
+  private async updatePaymentFromCharge(
+    paymentId: string,
+    status: PaymentAttemptStatus,
+    transactionId: number,
+    verificationData: { charged_amount: number },
+  ): Promise<void> {
+    await this.databaseService.payment.update({
+      where: { id: paymentId },
+      data: {
+        status,
+        flutterwaveTransactionId: transactionId.toString(),
+        amountCharged: verificationData.charged_amount,
+        confirmedAt: new Date(),
+      },
+    });
   }
 
   /**

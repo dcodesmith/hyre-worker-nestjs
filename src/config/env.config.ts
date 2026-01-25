@@ -42,6 +42,8 @@ export const envSchema = z.object({
   FLUTTERWAVE_WEBHOOK_SECRET: z.string().min(1, "FLUTTERWAVE_WEBHOOK_SECRET is required"),
   FLUTTERWAVE_WEBHOOK_URL: z.url("FLUTTERWAVE_WEBHOOK_URL must be a valid URL"),
 
+  HMAC_KEY: z.string().min(1, "HMAC_KEY is required"),
+
   ENABLE_MANUAL_TRIGGERS: z
     .union([z.boolean(), z.string()])
     .transform((val) => {
