@@ -145,6 +145,23 @@ describe("RatesService", () => {
 
       vi.useRealTimers();
     });
+
+    it("should re-fetch rates after cache TTL expires", async () => {
+      vi.useFakeTimers();
+
+      // First call - fetches from database
+      await service.getRates();
+      expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
+
+      // Advance time past TTL (5 minutes + 1ms)
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+      // Third call - should re-fetch due to TTL expiration
+      await service.getRates();
+      expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(2);
+
+      vi.useRealTimers();
+    });
   });
 
   describe("clearCache", () => {
