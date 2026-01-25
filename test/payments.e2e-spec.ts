@@ -334,10 +334,38 @@ describe("Payments E2E Tests", () => {
       });
 
       it("should accept request with valid verif-hash header", async () => {
+        const webhookData = {
+          id: 12345,
+          tx_ref: "non-existent-tx-ref",
+          status: "successful",
+          charged_amount: 50000,
+          flw_ref: "FLW-TEST-REF",
+          device_fingerprint: "test-device",
+          amount: 50000,
+          currency: "NGN",
+          app_fee: 700,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        // Mock must return verification data that matches webhook data
         vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
-          data: { status: "successful" },
+          data: webhookData,
         });
 
         const response = await request(app.getHttpServer())
@@ -345,12 +373,7 @@ describe("Payments E2E Tests", () => {
           .set("verif-hash", webhookSecret)
           .send({
             event: "charge.completed",
-            data: {
-              id: 12345,
-              tx_ref: "non-existent-tx-ref",
-              status: "successful",
-              charged_amount: 50000,
-            },
+            data: webhookData,
           });
 
         expect(response.status).toBe(HttpStatus.CREATED);
@@ -365,10 +388,38 @@ describe("Payments E2E Tests", () => {
           amountExpected: 50000,
         });
 
+        const webhookData = {
+          id: 99999,
+          tx_ref: payment.txRef,
+          status: "successful",
+          charged_amount: 50000,
+          flw_ref: "FLW-MOCK-REF",
+          device_fingerprint: "device-123",
+          amount: 50000,
+          currency: "NGN",
+          app_fee: 700,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test payment",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        // Mock must return verification data that matches webhook data
         vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
-          data: { status: "successful" },
+          data: webhookData,
         });
 
         const response = await request(app.getHttpServer())
@@ -376,32 +427,7 @@ describe("Payments E2E Tests", () => {
           .set("verif-hash", webhookSecret)
           .send({
             event: "charge.completed",
-            data: {
-              id: 99999,
-              tx_ref: payment.txRef,
-              status: "successful",
-              charged_amount: 50000,
-              flw_ref: "FLW-MOCK-REF",
-              device_fingerprint: "device-123",
-              amount: 50000,
-              currency: "NGN",
-              app_fee: 700,
-              merchant_fee: 0,
-              processor_response: "Approved",
-              auth_model: "PIN",
-              ip: "127.0.0.1",
-              narration: "Test payment",
-              payment_type: "card",
-              created_at: new Date().toISOString(),
-              account_id: 123,
-              customer: {
-                id: 456,
-                name: "Test User",
-                phone_number: null,
-                email: "test@example.com",
-                created_at: new Date().toISOString(),
-              },
-            },
+            data: webhookData,
           });
 
         expect(response.status).toBe(HttpStatus.CREATED);
@@ -424,10 +450,38 @@ describe("Payments E2E Tests", () => {
           confirmedAt: new Date(Date.now() - 60000), // Set 1 minute ago
         });
 
+        const webhookData = {
+          id: 88888,
+          tx_ref: payment.txRef,
+          status: "successful",
+          charged_amount: 50000,
+          flw_ref: "FLW-MOCK-REF",
+          device_fingerprint: "device-123",
+          amount: 50000,
+          currency: "NGN",
+          app_fee: 700,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test payment",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        // Mock must return verification data that matches webhook data
         vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
-          data: { status: "successful" },
+          data: webhookData,
         });
 
         const response = await request(app.getHttpServer())
@@ -435,32 +489,7 @@ describe("Payments E2E Tests", () => {
           .set("verif-hash", webhookSecret)
           .send({
             event: "charge.completed",
-            data: {
-              id: 88888,
-              tx_ref: payment.txRef,
-              status: "successful",
-              charged_amount: 50000,
-              flw_ref: "FLW-MOCK-REF",
-              device_fingerprint: "device-123",
-              amount: 50000,
-              currency: "NGN",
-              app_fee: 700,
-              merchant_fee: 0,
-              processor_response: "Approved",
-              auth_model: "PIN",
-              ip: "127.0.0.1",
-              narration: "Test payment",
-              payment_type: "card",
-              created_at: new Date().toISOString(),
-              account_id: 123,
-              customer: {
-                id: 456,
-                name: "Test User",
-                phone_number: null,
-                email: "test@example.com",
-                created_at: new Date().toISOString(),
-              },
-            },
+            data: webhookData,
           });
 
         expect(response.status).toBe(HttpStatus.CREATED);
