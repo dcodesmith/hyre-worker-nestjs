@@ -3,18 +3,36 @@ import { Test, TestingModule } from "@nestjs/testing";
 import type { Payment } from "@prisma/client";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
-import { Queue } from "bullmq";
+import type { Job, Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
   createBooking,
   createCar,
+  createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
+import type { NotificationJobData } from "../notification/notification.interface";
 import { NotificationType } from "../notification/notification.interface";
 import { BookingConfirmationService } from "./booking-confirmation.service";
+
+// Minimal mock Job object for queue.add() return value
+const createMockJob = (): Job<NotificationJobData> =>
+  ({
+    id: "mock-job-id",
+    name: "send-notification",
+    data: {} as NotificationJobData,
+    opts: {},
+    progress: 0,
+    returnvalue: null,
+    stacktrace: [],
+    attemptsMade: 0,
+    attemptsStarted: 0,
+    timestamp: Date.now(),
+    queueQualifiedName: `bull:${NOTIFICATIONS_QUEUE}`,
+  }) as Job<NotificationJobData>;
 
 // Helper to create mock Payment objects with required fields for testing
 function createMockPayment(overrides: Partial<Payment>): Payment {
@@ -110,7 +128,7 @@ describe("BookingConfirmationService", () => {
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       // Fetch updated booking with relations
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(notificationQueue.add).mockResolvedValueOnce({} as any);
+      vi.mocked(notificationQueue.add).mockResolvedValueOnce(createMockJob());
 
       const result = await service.confirmFromPayment(mockPayment);
 
@@ -145,7 +163,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(notificationQueue.add).mockResolvedValueOnce({} as any);
+      vi.mocked(notificationQueue.add).mockResolvedValueOnce(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
 
@@ -250,6 +268,146 @@ describe("BookingConfirmationService", () => {
 
       expect(result).toBe(true);
       expect(databaseService.booking.updateMany).toHaveBeenCalled();
+    });
+
+    it("should queue fleet owner notification when owner has email", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        car: createCar({
+          owner: createOwner({
+            email: "owner@example.com",
+            phoneNumber: null,
+          }),
+        }),
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      // Should queue both customer and fleet owner notifications
+      expect(notificationQueue.add).toHaveBeenCalledTimes(2);
+
+      // Check fleet owner notification
+      expect(notificationQueue.add).toHaveBeenCalledWith(
+        "send-notification",
+        expect.objectContaining({
+          type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+          bookingId: "booking-123",
+          recipients: expect.objectContaining({
+            fleetOwner: expect.objectContaining({
+              email: "owner@example.com",
+            }),
+          }),
+          templateData: expect.objectContaining({
+            subject: "New Booking Alert",
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should queue fleet owner notification when owner has phone number", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        car: createCar({
+          owner: createOwner({
+            email: null,
+            phoneNumber: "+2348012345678",
+          }),
+        }),
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      // Should queue both customer and fleet owner notifications
+      expect(notificationQueue.add).toHaveBeenCalledTimes(2);
+
+      // Check fleet owner notification has phone number
+      expect(notificationQueue.add).toHaveBeenCalledWith(
+        "send-notification",
+        expect.objectContaining({
+          type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+          recipients: expect.objectContaining({
+            fleetOwner: expect.objectContaining({
+              phoneNumber: "+2348012345678",
+            }),
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should not queue fleet owner notification when owner has no contact info", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        car: createCar({
+          owner: createOwner({
+            email: null,
+            phoneNumber: null,
+          }),
+        }),
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      // Should only queue customer notification, not fleet owner
+      expect(notificationQueue.add).toHaveBeenCalledTimes(1);
+      expect(notificationQueue.add).toHaveBeenCalledWith(
+        "send-notification",
+        expect.objectContaining({
+          type: NotificationType.BOOKING_CONFIRMED,
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should not fail confirmation if fleet owner notification queueing fails", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      // First call (customer notification) succeeds, second call (fleet owner) fails
+      vi.mocked(notificationQueue.add)
+        .mockResolvedValueOnce(createMockJob())
+        .mockRejectedValueOnce(new Error("Queue connection failed"));
+
+      // Should not throw, should still return true
+      const result = await service.confirmFromPayment(mockPayment);
+
+      expect(result).toBe(true);
     });
   });
 });

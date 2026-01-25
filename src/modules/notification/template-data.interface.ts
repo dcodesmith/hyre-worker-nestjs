@@ -2,7 +2,11 @@ import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../typ
 
 export const CLIENT_RECIPIENT_TYPE = "client" as const;
 export const CHAUFFEUR_RECIPIENT_TYPE = "chauffeur" as const;
-export type RecipientType = typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;
+export const FLEET_OWNER_RECIPIENT_TYPE = "fleetOwner" as const;
+export type RecipientType =
+  | typeof CLIENT_RECIPIENT_TYPE
+  | typeof CHAUFFEUR_RECIPIENT_TYPE
+  | typeof FLEET_OWNER_RECIPIENT_TYPE;
 
 /**
  * Base template data that all notification templates can use

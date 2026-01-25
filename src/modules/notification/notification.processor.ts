@@ -6,9 +6,14 @@ import {
   renderBookingConfirmationEmail,
   renderBookingReminderEmail,
   renderBookingStatusUpdateEmail,
+  renderFleetOwnerNewBookingEmail,
 } from "../../templates/emails";
 import { EmailService } from "./email.service";
-import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  FLEET_OWNER_RECIPIENT_TYPE,
+} from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -28,6 +33,7 @@ import {
   BookingReminderStartMapper,
   BookingStatusMapper,
   FallbackTemplateMapper,
+  FleetOwnerNewBookingMapper,
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -47,6 +53,7 @@ export class NotificationProcessor extends WorkerHost {
     // Initialize template mappers in order of specificity
     this.templateMappers = [
       new BookingConfirmedMapper(),
+      new FleetOwnerNewBookingMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
       new BookingReminderEndMapper(),
@@ -141,10 +148,12 @@ export class NotificationProcessor extends WorkerHost {
   ): Promise<NotificationResult | null> {
     const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
     const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
+    const fleetOwnerRecipient = recipients[FLEET_OWNER_RECIPIENT_TYPE];
     const clientEmail = clientRecipient?.email;
     const chauffeurEmail = chauffeurRecipient?.email;
+    const fleetOwnerEmail = fleetOwnerRecipient?.email;
 
-    if (!clientEmail && !chauffeurEmail) {
+    if (!clientEmail && !chauffeurEmail && !fleetOwnerEmail) {
       return null;
     }
 
@@ -159,6 +168,11 @@ export class NotificationProcessor extends WorkerHost {
               return renderBookingConfirmationEmail(templateData);
             }
             throw new Error("Invalid template data for booking confirmation");
+          case NotificationType.FLEET_OWNER_NEW_BOOKING:
+            if (isBookingConfirmedTemplateData(templateData)) {
+              return renderFleetOwnerNewBookingEmail(templateData);
+            }
+            throw new Error("Invalid template data for fleet owner booking notification");
           case NotificationType.BOOKING_STATUS_CHANGE:
             if (isBookingStatusTemplateData(templateData)) {
               // Status email currently targets the client. If chauffeur delivery is desired,
@@ -169,6 +183,10 @@ export class NotificationProcessor extends WorkerHost {
           case NotificationType.BOOKING_REMINDER_START:
           case NotificationType.BOOKING_REMINDER_END:
             if (isBookingReminderTemplateData(templateData)) {
+              // Booking reminders are only sent to clients and chauffeurs, not fleet owners
+              if (recipient !== CLIENT_RECIPIENT_TYPE && recipient !== CHAUFFEUR_RECIPIENT_TYPE) {
+                throw new Error(`Booking reminders cannot be sent to recipient type: ${recipient}`);
+              }
               return renderBookingReminderEmail(
                 templateData,
                 recipient,
@@ -198,6 +216,15 @@ export class NotificationProcessor extends WorkerHost {
         });
       }
 
+      // Send to fleet owner if available
+      if (fleetOwnerEmail) {
+        await this.emailService.sendEmail({
+          to: fleetOwnerEmail,
+          subject,
+          html: await buildHtml(FLEET_OWNER_RECIPIENT_TYPE),
+        });
+      }
+
       return {
         channel: NotificationChannel.EMAIL,
         success: true,
@@ -224,10 +251,12 @@ export class NotificationProcessor extends WorkerHost {
   ): Promise<NotificationResult | null> {
     const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
     const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
+    const fleetOwnerRecipient = recipients[FLEET_OWNER_RECIPIENT_TYPE];
     const clientPhone = clientRecipient?.phoneNumber;
     const chauffeurPhone = chauffeurRecipient?.phoneNumber;
+    const fleetOwnerPhone = fleetOwnerRecipient?.phoneNumber;
 
-    if (!clientPhone && !chauffeurPhone) {
+    if (!clientPhone && !chauffeurPhone && !fleetOwnerPhone) {
       return null;
     }
 
@@ -264,6 +293,23 @@ export class NotificationProcessor extends WorkerHost {
             to: chauffeurPhone,
             variables: chauffeurVariables,
             templateKey: chauffeurTemplateKey,
+          });
+        }
+      }
+
+      // Send to fleet owner if available
+      if (fleetOwnerPhone) {
+        const fleetOwnerTemplateKey = this.getWhatsAppTemplateKey(type, FLEET_OWNER_RECIPIENT_TYPE);
+        if (fleetOwnerTemplateKey) {
+          const fleetOwnerVariables = this.buildWhatsAppVariables(
+            templateData,
+            type,
+            FLEET_OWNER_RECIPIENT_TYPE,
+          );
+          await this.whatsAppService.sendMessage({
+            to: fleetOwnerPhone,
+            variables: fleetOwnerVariables,
+            templateKey: fleetOwnerTemplateKey,
           });
         }
       }
