@@ -1,7 +1,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Payment } from "@prisma/client";
-import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import type { Job, Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,6 +86,9 @@ describe("BookingConfirmationService", () => {
               findUnique: vi.fn(),
               updateMany: vi.fn(),
             },
+            car: {
+              update: vi.fn(),
+            },
           },
         },
         {
@@ -123,6 +126,7 @@ describe("BookingConfirmationService", () => {
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       // Fetch updated booking with relations
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       const result = await service.confirmFromPayment(mockPayment);
@@ -158,6 +162,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
@@ -251,6 +256,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockRejectedValue(new Error("Queue connection failed"));
 
       // Should not throw, should still return true
@@ -278,6 +284,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
@@ -322,6 +329,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
@@ -362,6 +370,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
@@ -389,6 +398,7 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       // First call (customer notification) succeeds, second call (fleet owner) fails
       vi.mocked(notificationQueue.add)
         .mockResolvedValueOnce(createMockJob())
@@ -398,6 +408,53 @@ describe("BookingConfirmationService", () => {
       const result = await service.confirmFromPayment(mockPayment);
 
       expect(result).toBe(true);
+    });
+
+    it("should update car status to BOOKED after booking confirmation", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        carId: "car-456",
+        status: BookingStatus.CONFIRMED,
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce({ ...mockBooking.car, status: Status.BOOKED });
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      expect(databaseService.car.update).toHaveBeenCalledWith({
+        where: { id: mockBooking.carId },
+        data: { status: Status.BOOKED },
+      });
+    });
+
+    it("should not fail confirmation if car status update fails", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockRejectedValueOnce(new Error("Car update failed"));
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      // Should not throw, should still return true
+      const result = await service.confirmFromPayment(mockPayment);
+
+      expect(result).toBe(true);
+      // Notifications should still be queued
+      expect(notificationQueue.add).toHaveBeenCalled();
     });
   });
 });
