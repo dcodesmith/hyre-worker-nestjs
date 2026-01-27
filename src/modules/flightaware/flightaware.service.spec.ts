@@ -32,6 +32,7 @@ describe("FlightAwareService", () => {
   const mockConfigService = {
     get: vi.fn((key: string) => {
       if (key === "FLIGHTAWARE_API_KEY") return "test-api-key";
+      if (key === "TZ") return "Africa/Lagos";
       return undefined;
     }),
   };
@@ -452,7 +453,23 @@ describe("FlightAwareService", () => {
         flightDate: new Date("2025-12-25"),
       });
 
-      expect(mockDatabaseService.$executeRaw).toHaveBeenCalled();
+      // Verify both lock and unlock were called
+      expect(mockDatabaseService.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it("should throw error if flight does not exist in database without calling external API", async () => {
+      // Flight doesn't exist in database
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getOrCreateFlightAlert("non-existent-flight-id", {
+          flightNumber: "BA74",
+          flightDate: new Date("2025-12-25"),
+        }),
+      ).rejects.toThrow("Flight with id non-existent-flight-id not found in database");
+
+      // Verify external API was NOT called (prevents orphaned alerts)
+      expect(mockHttpClient.post).not.toHaveBeenCalled();
     });
   });
 

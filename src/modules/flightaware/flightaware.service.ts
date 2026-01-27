@@ -24,6 +24,7 @@ import type {
 export class FlightAwareService implements OnModuleDestroy {
   private readonly logger = new Logger(FlightAwareService.name);
   private readonly apiKey: string;
+  private readonly timezone: string;
   private readonly baseUrl = "https://aeroapi.flightaware.com/aeroapi";
   private readonly httpClient: AxiosInstance;
   private readonly cleanupIntervalId: NodeJS.Timeout;
@@ -41,6 +42,7 @@ export class FlightAwareService implements OnModuleDestroy {
     private readonly httpClientService: HttpClientService,
   ) {
     this.apiKey = this.configService.get("FLIGHTAWARE_API_KEY", { infer: true });
+    this.timezone = this.configService.get("TZ", { infer: true });
 
     this.httpClient = this.httpClientService.createClient({
       baseURL: this.baseUrl,
@@ -198,8 +200,11 @@ export class FlightAwareService implements OnModuleDestroy {
     });
 
     // Use advisory lock to prevent race conditions
-    const lockId =
-      Array.from(flightId).reduce((acc, char) => acc + (char.codePointAt(0) ?? 0), 0) % 2147483647;
+    // Simple hash with position weighting to reduce collisions
+    const lockId = Array.from(flightId).reduce(
+      (acc, char) => (acc * 31 + (char.codePointAt(0) ?? 0)) % 2147483647,
+      0,
+    );
 
     return this.databaseService.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_lock(${lockId})`;
@@ -210,7 +215,12 @@ export class FlightAwareService implements OnModuleDestroy {
           select: { alertId: true, alertEnabled: true },
         });
 
-        if (flight?.alertId && flight.alertEnabled) {
+        // Verify flight exists before making external API call to prevent orphaned alerts
+        if (!flight) {
+          throw new Error(`Flight with id ${flightId} not found in database`);
+        }
+
+        if (flight.alertId && flight.alertEnabled) {
           this.logger.log("Flight already has active alert, reusing", {
             flightId,
             alertId: flight.alertId,
@@ -280,12 +290,14 @@ export class FlightAwareService implements OnModuleDestroy {
       return;
     }
 
-    await this.disableFlightAlert(flight.alertId);
-
-    await this.databaseService.flight.update({
-      where: { id: flightId },
-      data: { alertEnabled: false },
-    });
+    try {
+      await this.disableFlightAlert(flight.alertId);
+    } finally {
+      await this.databaseService.flight.update({
+        where: { id: flightId },
+        data: { alertEnabled: false },
+      });
+    }
 
     this.logger.log("Flight alert cleaned up", { flightId, alertId: flight.alertId });
   }
@@ -468,9 +480,9 @@ export class FlightAwareService implements OnModuleDestroy {
     for (const flight of flights) {
       const arrivalTimeUTC = flight.actual_on || flight.estimated_on || flight.scheduled_on;
       const arrivalDate = new Date(arrivalTimeUTC);
-      const lagosDateStr = this.toLagosDateString(arrivalDate);
+      const localeDateStr = this.toLocaleDateString(arrivalDate);
 
-      if (lagosDateStr === pickupDateStr) {
+      if (localeDateStr === pickupDateStr) {
         if (arrivalDate < now) {
           landedFlight = flight;
         } else {
@@ -478,7 +490,7 @@ export class FlightAwareService implements OnModuleDestroy {
           break;
         }
       } else if (arrivalDate > now && !nextFlightDate) {
-        nextFlightDate = lagosDateStr;
+        nextFlightDate = localeDateStr;
       }
     }
 
@@ -589,7 +601,7 @@ export class FlightAwareService implements OnModuleDestroy {
       return null;
     }
 
-    const landedTime = this.formatLagosTime(
+    const landedTime = this.formatLocaleTime(
       landedFlight.actual_on || landedFlight.estimated_on || landedFlight.scheduled_on,
     );
 
@@ -602,14 +614,19 @@ export class FlightAwareService implements OnModuleDestroy {
     };
   }
 
-  private toLagosDateString(date: Date): string {
-    const lagosTime = new Date(date.toLocaleString("en-US", { timeZone: "Africa/Lagos" }));
-    return `${lagosTime.getFullYear()}-${String(lagosTime.getMonth() + 1).padStart(2, "0")}-${String(lagosTime.getDate()).padStart(2, "0")}`;
+  private toLocaleDateString(date: Date): string {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: this.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return formatter.format(date); // Returns "YYYY-MM-DD"
   }
 
-  private formatLagosTime(timeUTC: string): string {
+  private formatLocaleTime(timeUTC: string): string {
     return new Date(timeUTC).toLocaleTimeString("en-US", {
-      timeZone: "Africa/Lagos",
+      timeZone: this.timezone,
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
