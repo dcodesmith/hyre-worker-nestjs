@@ -307,6 +307,31 @@ describe("BookingValidationService", () => {
         }),
       );
     });
+
+    it("should use strict inequality (lt/gt) to allow exactly 2-hour buffer gaps", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
+
+      const startDate = new Date("2025-03-01T14:00:00Z");
+      const endDate = new Date("2025-03-01T18:00:00Z");
+
+      await service.checkCarAvailability({
+        carId: "car-123",
+        startDate,
+        endDate,
+      });
+
+      // Verify strict inequality is used (lt/gt instead of lte/gte)
+      // This allows bookings with exactly 2-hour buffer gap to coexist
+      expect(databaseService.booking.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            startDate: { lt: expect.any(Date) },
+            endDate: { gt: expect.any(Date) },
+          }),
+        }),
+      );
+    });
   });
 
   describe("validateGuestEmail", () => {
@@ -537,7 +562,12 @@ describe("BookingValidationService", () => {
         expect(error).toBeInstanceOf(BadRequestException);
         const response = (error as BadRequestException).getResponse() as { errors: unknown[] };
         // Should have multiple errors: past date, car not found, guest email registered
-        expect(response.errors.length).toBeGreaterThanOrEqual(2);
+
+        expect(response.errors.length).toBeGreaterThanOrEqual(3);
+        const errorFields = response.errors.map((e: { field: string }) => e.field);
+        expect(errorFields).toContain("startDate");
+        expect(errorFields).toContain("carId");
+        expect(errorFields).toContain("guestEmail");
       }
     });
   });

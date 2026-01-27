@@ -141,13 +141,8 @@ export class BookingValidationService {
         // Exclude current booking if this is an update
         ...(excludeBookingId && { id: { not: excludeBookingId } }),
         // Check for overlap with buffer
-        OR: [
-          // New booking starts during existing booking (with buffer)
-          {
-            startDate: { lte: bufferedEnd },
-            endDate: { gte: bufferedStart },
-          },
-        ],
+        startDate: { lt: bufferedEnd },
+        endDate: { gt: bufferedStart },
       },
       select: {
         id: true,
