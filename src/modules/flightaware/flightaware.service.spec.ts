@@ -1,16 +1,16 @@
+import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseService } from "../database/database.service";
 import {
   createAxiosErrorWithResponse,
   createMockAxiosInstance,
   createMockHttpClientService,
 } from "../http-client/http-client.fixtures";
 import { HttpClientService } from "../http-client/http-client.service";
-import { DatabaseService } from "../database/database.service";
-import { FlightAwareService } from "./flightaware.service";
-import { HttpStatus } from "@nestjs/common";
 import type { FlightValidationResult } from "./flightaware.interface";
+import { FlightAwareService } from "./flightaware.service";
 
 // Helper functions for type-safe assertions on discriminated unions
 function assertErrorResult(
@@ -67,11 +67,24 @@ describe("FlightAwareService", () => {
   });
 
   afterEach(() => {
+    // Clean up the interval before switching to real timers
+    service.onModuleDestroy();
     vi.useRealTimers();
   });
 
   it("should be defined", () => {
     expect(service).toBeDefined();
+  });
+
+  describe("lifecycle hooks", () => {
+    it("should clear the cache cleanup interval on module destroy", () => {
+      // Verify onModuleDestroy can be called without errors
+      // This ensures the interval ID is properly stored and can be cleared
+      expect(() => service.onModuleDestroy()).not.toThrow();
+
+      // Call it again to ensure it's idempotent (shouldn't throw even if already cleared)
+      expect(() => service.onModuleDestroy()).not.toThrow();
+    });
   });
 
   describe("isValidFlightNumberFormat", () => {

@@ -1,9 +1,11 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { differenceInDays, format } from "date-fns";
 import { AxiosInstance } from "axios";
+import { differenceInDays, format } from "date-fns";
+import { EnvConfig } from "src/config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
+import { IATA_TO_ICAO_MAP } from "./flightaware.const";
 import type {
   CreateAlertParams,
   FlightAwareAlertResponse,
@@ -13,19 +15,18 @@ import type {
   FlightAwareSchedulesResponse,
   FlightValidationResult,
 } from "./flightaware.interface";
-import { EnvConfig } from "src/config/env.config";
-import { IATA_TO_ICAO_MAP } from "./flightaware.const";
 
 /**
  * Service for interacting with FlightAware AeroAPI
  * Handles flight validation and alert management
  */
 @Injectable()
-export class FlightAwareService {
+export class FlightAwareService implements OnModuleDestroy {
   private readonly logger = new Logger(FlightAwareService.name);
   private readonly apiKey: string;
   private readonly baseUrl = "https://aeroapi.flightaware.com/aeroapi";
   private readonly httpClient: AxiosInstance;
+  private readonly cleanupIntervalId: NodeJS.Timeout;
 
   /** In-memory cache for flight validation results */
   private readonly flightCache = new Map<
@@ -52,7 +53,7 @@ export class FlightAwareService {
     });
 
     // Start periodic cache cleanup
-    setInterval(() => this.cleanupExpiredCacheEntries(), 60 * 60 * 1000); // Every hour
+    this.cleanupIntervalId = setInterval(() => this.cleanupExpiredCacheEntries(), 60 * 60 * 1000);
   }
 
   /**
@@ -554,7 +555,8 @@ export class FlightAwareService {
         scheduledFlight.destination,
       );
     } catch {
-      // Ignore airport fetch errors
+      // Fallback to destination code if airport API fails (consistent with buildSuccessResult)
+      arrivalAddress = this.buildArrivalAddress(undefined, undefined, scheduledFlight.destination);
     }
 
     return {
@@ -680,5 +682,9 @@ export class FlightAwareService {
         remainingCount: this.flightCache.size,
       });
     }
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.cleanupIntervalId);
   }
 }

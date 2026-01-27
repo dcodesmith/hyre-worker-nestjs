@@ -174,23 +174,19 @@ export class FlutterwaveService {
         transactionId,
       });
 
-      // FlutterwaveError with a response means the API explicitly rejected the refund
+      // Handle error to extract proper error message and code from HTTP responses
+      const handledError = this.handleError(error, "initiateRefund");
+
       // Re-throw network/unexpected errors so caller can distinguish uncertain states
-      if (error instanceof FlutterwaveError) {
-        if (error.code === "NETWORK_ERROR" || error.code === "UNEXPECTED_ERROR") {
-          throw error;
-        }
-        return {
-          success: false,
-          error: error.message,
-        };
+      if (handledError.code === "NETWORK_ERROR" || handledError.code === "UNEXPECTED_ERROR") {
+        throw handledError;
       }
 
-      // Unknown error type - wrap and throw for caller to handle as uncertain state
-      throw new FlutterwaveError(
-        error instanceof Error ? error.message : "Unknown error initiating refund",
-        "UNEXPECTED_ERROR",
-      );
+      // Return API errors (like "Transaction not found") as failure response
+      return {
+        success: false,
+        error: handledError.message,
+      };
     }
   }
 

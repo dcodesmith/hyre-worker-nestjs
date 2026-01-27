@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createAxiosErrorWithResponse,
   createMockAxiosInstance,
   createMockHttpClientService,
 } from "../http-client/http-client.fixtures";
@@ -545,6 +546,24 @@ describe("FlutterwaveService", () => {
       await expect(service.initiateRefund(validRefundOptions)).rejects.toMatchObject({
         message: expect.stringContaining("Something unexpected happened"),
         code: "UNEXPECTED_ERROR",
+      });
+    });
+
+    it("should return HTTP errors from Flutterwave API as failure response", async () => {
+      // HTTP errors (like 404 "Transaction not found") should be handled by handleError
+      // and returned as {success: false, error: "..."} instead of being thrown
+      const httpError = createAxiosErrorWithResponse(404, {
+        status: "error",
+        message: "Transaction not found",
+        data: null,
+      });
+      mockAxiosInstance.post.mockRejectedValueOnce(httpError);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result).toEqual({
+        success: false,
+        error: "Transaction not found",
       });
     });
   });
