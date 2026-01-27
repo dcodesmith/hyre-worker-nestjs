@@ -1,4 +1,4 @@
-import type { BookingStatus, Prisma } from "@prisma/client";
+import type { BookingStatus, BookingType, Prisma } from "@prisma/client";
 
 export interface CreateBookingResponse {
   bookingId: string;
@@ -65,4 +65,27 @@ export interface CarAvailabilityResult {
     startDate: Date;
     endDate: Date;
   }>;
+}
+
+export interface DateValidationInput {
+  startDate: Date;
+  endDate: Date;
+  bookingType: BookingType;
+}
+
+export interface CarAvailabilityInput {
+  carId: string;
+  startDate: Date;
+  endDate: Date;
+  excludeBookingId?: string;
+}
+
+export interface ValidationError {
+  field: string;
+  message: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
 }
