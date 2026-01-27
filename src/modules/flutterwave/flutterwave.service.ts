@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
+import { AxiosError, AxiosInstance } from "axios";
+import { EnvConfig } from "src/config/env.config";
+import { HttpClientService } from "../../shared/http-client.service";
 import {
   FlutterwaveConfig,
   FlutterwaveError,
@@ -23,26 +25,27 @@ export class FlutterwaveService {
   private readonly config: FlutterwaveConfig;
   private readonly httpClient: AxiosInstance;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly httpClientService: HttpClientService,
+  ) {
     // Environment variables are validated at startup, so we can safely use them
     this.config = {
-      secretKey: this.configService.get<string>("FLUTTERWAVE_SECRET_KEY"),
-      publicKey: this.configService.get<string>("FLUTTERWAVE_PUBLIC_KEY"),
-      baseUrl: this.configService.get<string>("FLUTTERWAVE_BASE_URL"),
-      webhookSecret: this.configService.get<string>("FLUTTERWAVE_WEBHOOK_SECRET"),
-      webhookUrl: this.configService.get<string>("FLUTTERWAVE_WEBHOOK_URL"),
+      secretKey: this.configService.get("FLUTTERWAVE_SECRET_KEY", { infer: true }),
+      publicKey: this.configService.get("FLUTTERWAVE_PUBLIC_KEY", { infer: true }),
+      baseUrl: this.configService.get("FLUTTERWAVE_BASE_URL", { infer: true }),
+      webhookSecret: this.configService.get("FLUTTERWAVE_WEBHOOK_SECRET", { infer: true }),
+      webhookUrl: this.configService.get("FLUTTERWAVE_WEBHOOK_URL", { infer: true }),
     };
 
-    this.httpClient = axios.create({
+    this.httpClient = this.httpClientService.createClient({
       baseURL: this.config.baseUrl,
-      timeout: 30000, // 30 seconds
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${this.config.secretKey}`,
       },
+      serviceName: "Flutterwave",
     });
 
-    this.setupInterceptors();
     this.logger.log("Flutterwave client initialized successfully");
   }
 
@@ -65,7 +68,9 @@ export class FlutterwaveService {
         payload: { ...payload, account_number: "***" }, // Mask account number in logs
       });
 
-      const response = await this.post<FlutterwaveTransferData>("/v3/transfers", payload);
+      const { data: response } = await this.httpClient.post<
+        FlutterwaveResponse<FlutterwaveTransferData>
+      >("/v3/transfers", payload);
 
       this.logger.log("Flutterwave transfer initiation response", {
         status: response.status,
@@ -109,16 +114,16 @@ export class FlutterwaveService {
     transactionId: string,
   ): Promise<FlutterwaveResponse<FlutterwaveVerificationData>> {
     try {
-      const response = await this.get<FlutterwaveVerificationData>(
-        `/v3/transactions/${transactionId}/verify`,
-      );
+      const { data: response } = await this.httpClient.get<
+        FlutterwaveResponse<FlutterwaveVerificationData>
+      >(`/v3/transactions/${transactionId}/verify`);
       return response;
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
         error: String(error),
         transactionId,
       });
-      throw error;
+      throw this.handleError(error, "verifyTransaction");
     }
   }
 
@@ -140,15 +145,13 @@ export class FlutterwaveService {
         idempotencyKey,
       });
 
-      const response = await this.post<FlutterwaveRefundData>(
-        `/v3/transactions/${transactionId}/refund`,
-        payload,
-        {
-          headers: {
-            "X-Idempotency-Key": idempotencyKey,
-          },
+      const { data: response } = await this.httpClient.post<
+        FlutterwaveResponse<FlutterwaveRefundData>
+      >(`/v3/transactions/${transactionId}/refund`, payload, {
+        headers: {
+          "X-Idempotency-Key": idempotencyKey,
         },
-      );
+      });
 
       if (response.status === "success" && response.data) {
         this.logger.log("Refund initiated successfully", {
@@ -227,7 +230,9 @@ export class FlutterwaveService {
         transactionType: options.transactionType,
       });
 
-      const response = await this.post<FlutterwavePaymentLinkData>("/v3/payments", payload);
+      const { data: response } = await this.httpClient.post<
+        FlutterwaveResponse<FlutterwavePaymentLinkData>
+      >("/v3/payments", payload);
 
       if (response.status === "success" && response.data?.link) {
         this.logger.log("Payment intent created successfully", {
@@ -255,51 +260,7 @@ export class FlutterwaveService {
         throw error;
       }
 
-      throw new FlutterwaveError(
-        error instanceof Error ? error.message : "Unknown error creating payment intent",
-        "PAYMENT_INTENT_ERROR",
-      );
-    }
-  }
-
-  /**
-   * Make a POST request to Flutterwave API
-   */
-  private async post<T>(
-    endpoint: string,
-    data: unknown,
-    config?: AxiosRequestConfig,
-  ): Promise<FlutterwaveResponse<T>> {
-    try {
-      this.logger.log(`Making POST request to Flutterwave: ${endpoint}`);
-
-      const response = await this.httpClient.post<FlutterwaveResponse<T>>(endpoint, data, config);
-
-      this.logger.log(`Flutterwave POST response: ${endpoint} - Status: ${response.data.status}`);
-
-      return response.data;
-    } catch (error) {
-      throw this.handleError(error, `POST ${endpoint}`);
-    }
-  }
-
-  /**
-   * Make a GET request to Flutterwave API
-   */
-  private async get<T>(
-    endpoint: string,
-    config?: AxiosRequestConfig,
-  ): Promise<FlutterwaveResponse<T>> {
-    try {
-      this.logger.log(`Making GET request to Flutterwave: ${endpoint}`);
-
-      const response = await this.httpClient.get<FlutterwaveResponse<T>>(endpoint, config);
-
-      this.logger.log(`Flutterwave GET response: ${endpoint} - Status: ${response.data.status}`);
-
-      return response.data;
-    } catch (error) {
-      throw this.handleError(error, `GET ${endpoint}`);
+      throw this.handleError(error, "createPaymentIntent");
     }
   }
 
@@ -322,51 +283,14 @@ export class FlutterwaveService {
     return this.config.publicKey;
   }
 
-  private setupInterceptors(): void {
-    // Request interceptor to log requests (with sensitive data masked)
-    this.httpClient.interceptors.request.use(
-      (config) => {
-        this.logger.log(`Flutterwave request: ${config.method?.toUpperCase()} ${config.url}`);
-        return config;
-      },
-      (error) => {
-        this.logger.error(`Flutterwave request error: ${error.message}`);
-        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
-
-    // Response interceptor to log responses
-    this.httpClient.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        this.logger.error(`Flutterwave response error: ${error.message}`);
-        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
-  }
-
   private handleError(error: unknown, operation: string): FlutterwaveError {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-
-    this.logger.error(`Flutterwave ${operation} failed: ${errorMessage}`);
-
     // Pass through existing FlutterwaveError instances unchanged
     if (error instanceof FlutterwaveError) {
       return error;
     }
 
-    if (error instanceof AxiosError && error.response) {
-      const { status, data } = error.response;
-
-      return new FlutterwaveError(
-        data?.message || `HTTP ${status}: ${error.response.statusText}`,
-        data?.data?.code,
-        status,
-        data,
-      );
-    }
-
-    if (error instanceof AxiosError && error.request) {
+    // Handle network errors (request made but no response)
+    if (error instanceof AxiosError && error.request && !error.response) {
       return new FlutterwaveError(
         "Network error: Unable to reach Flutterwave servers",
         "NETWORK_ERROR",
@@ -375,10 +299,25 @@ export class FlutterwaveService {
       );
     }
 
+    const errorInfo = this.httpClientService.handleError(error, operation, "Flutterwave");
+
+    // Extract Flutterwave-specific error details if available
+    if (error instanceof AxiosError && error.response) {
+      const { status, data } = error.response;
+      const flutterwaveData = data as { message?: string; data?: { code?: string } };
+
+      return new FlutterwaveError(
+        flutterwaveData?.message || errorInfo.message,
+        flutterwaveData?.data?.code || errorInfo.code,
+        status,
+        data,
+      );
+    }
+
     return new FlutterwaveError(
-      `Unexpected error: ${errorMessage}`,
-      "UNEXPECTED_ERROR",
-      undefined,
+      errorInfo.message,
+      errorInfo.code || "UNEXPECTED_ERROR",
+      errorInfo.status,
       error,
     );
   }

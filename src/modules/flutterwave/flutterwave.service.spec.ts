@@ -2,21 +2,17 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createMockAxiosInstance,
+  createMockHttpClientService,
+} from "../../shared/http-client.fixtures";
+import { HttpClientService } from "../../shared/http-client.service";
 import { FlutterwaveError, PaymentIntentOptions, RefundOptions } from "./flutterwave.interface";
 import { FlutterwaveService } from "./flutterwave.service";
 
-vi.mock("axios");
-
 describe("FlutterwaveService", () => {
   let service: FlutterwaveService;
-  let mockAxiosInstance: {
-    post: ReturnType<typeof vi.fn>;
-    get: ReturnType<typeof vi.fn>;
-    interceptors: {
-      request: { use: ReturnType<typeof vi.fn> };
-      response: { use: ReturnType<typeof vi.fn> };
-    };
-  };
+  let mockAxiosInstance: ReturnType<typeof createMockAxiosInstance>;
 
   const mockConfig = {
     FLUTTERWAVE_SECRET_KEY: "test-secret-key",
@@ -27,18 +23,8 @@ describe("FlutterwaveService", () => {
   };
 
   beforeEach(async () => {
-    mockAxiosInstance = {
-      post: vi.fn(),
-      get: vi.fn(),
-      interceptors: {
-        request: { use: vi.fn() },
-        response: { use: vi.fn() },
-      },
-    };
-
-    vi.mocked(axios.create).mockReturnValue(
-      mockAxiosInstance as unknown as ReturnType<typeof axios.create>,
-    );
+    mockAxiosInstance = createMockAxiosInstance();
+    const mockHttpClientService = createMockHttpClientService(mockAxiosInstance);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,6 +35,7 @@ describe("FlutterwaveService", () => {
             get: vi.fn((key: string) => mockConfig[key as keyof typeof mockConfig]),
           },
         },
+        { provide: HttpClientService, useValue: mockHttpClientService },
       ],
     }).compile();
 
@@ -108,7 +95,6 @@ describe("FlutterwaveService", () => {
             description: "Payment for car booking",
           },
         }),
-        undefined,
       );
     });
 
@@ -138,7 +124,6 @@ describe("FlutterwaveService", () => {
         expect.objectContaining({
           tx_ref: "custom-tx-ref-123",
         }),
-        undefined,
       );
     });
 
@@ -170,7 +155,6 @@ describe("FlutterwaveService", () => {
             description: "Payment for booking extension",
           },
         }),
-        undefined,
       );
     });
 
@@ -203,7 +187,6 @@ describe("FlutterwaveService", () => {
             name: "Customer",
           }),
         }),
-        undefined,
       );
     });
 
@@ -241,13 +224,16 @@ describe("FlutterwaveService", () => {
     });
 
     it("should handle network errors", async () => {
-      const networkError = new Error("Network Error");
+      const networkError = new axios.AxiosError("Network Error");
+      networkError.request = {};
       mockAxiosInstance.post.mockRejectedValue(networkError);
 
       await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
 
       mockAxiosInstance.post.mockRejectedValue(networkError);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow("Network Error");
+      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
+        "Network error: Unable to reach Flutterwave servers",
+      );
     });
 
     it("should include metadata in request payload", async () => {
@@ -283,7 +269,6 @@ describe("FlutterwaveService", () => {
             userId: "user-789",
           }),
         }),
-        undefined,
       );
     });
   });
@@ -317,10 +302,7 @@ describe("FlutterwaveService", () => {
         }),
       });
 
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
-        "/v3/transactions/12345/verify",
-        undefined,
-      );
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/transactions/12345/verify");
     });
 
     it("should throw error when verification fails", async () => {
@@ -372,7 +354,6 @@ describe("FlutterwaveService", () => {
           currency: "NGN",
           reference: "payout-ref-123",
         }),
-        undefined,
       );
     });
 

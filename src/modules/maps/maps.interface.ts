@@ -1,0 +1,15 @@
+export interface GoogleRoutesResponse {
+  routes: Array<{
+    duration: string; // e.g., "3600s"
+    distanceMeters: number;
+    polyline?: {
+      encodedPolyline: string;
+    };
+  }>;
+}
+
+export interface DriveTimeResult {
+  durationMinutes: number;
+  distanceMeters: number;
+  isEstimate: boolean;
+}
