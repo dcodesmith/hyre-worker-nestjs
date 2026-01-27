@@ -5,11 +5,25 @@ import {
   createAxiosErrorWithResponse,
   createMockAxiosInstance,
   createMockHttpClientService,
-} from "../../shared/http-client.fixtures";
-import { HttpClientService } from "../../shared/http-client.service";
+} from "../http-client/http-client.fixtures";
+import { HttpClientService } from "../http-client/http-client.service";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareService } from "./flightaware.service";
 import { HttpStatus } from "@nestjs/common";
+import type { FlightValidationResult } from "./flightaware.interface";
+
+// Helper functions for type-safe assertions on discriminated unions
+function assertErrorResult(
+  result: FlightValidationResult,
+): asserts result is Extract<FlightValidationResult, { type: "error" }> {
+  expect(result.type).toBe("error");
+}
+
+function assertSuccessResult(
+  result: FlightValidationResult,
+): asserts result is Extract<FlightValidationResult, { type: "success" }> {
+  expect(result.type).toBe("success");
+}
 
 describe("FlightAwareService", () => {
   let service: FlightAwareService;
@@ -96,10 +110,8 @@ describe("FlightAwareService", () => {
     it("should return error for invalid flight number format", async () => {
       const result = await service.validateFlight("INVALID", "2025-12-25");
 
-      expect(result.type).toBe("error");
-      if (result.type === "error") {
-        expect(result.message).toContain("Invalid flight number format");
-      }
+      assertErrorResult(result);
+      expect(result.message).toContain("Invalid flight number format");
     });
 
     it("should return cached result on cache hit", async () => {
@@ -158,10 +170,8 @@ describe("FlightAwareService", () => {
 
       // validateFlight catches errors and returns an error result
       const result = await service.validateFlight("BA74", "2025-12-25");
-      expect(result.type).toBe("error");
-      if (result.type === "error") {
-        expect(result.message).toBe("FlightAware API authentication failed");
-      }
+      assertErrorResult(result);
+      expect(result.message).toBe("FlightAware API authentication failed");
     });
 
     it("should return error result for API rate limit errors", async () => {
@@ -174,10 +184,8 @@ describe("FlightAwareService", () => {
 
       // validateFlight catches errors and returns an error result
       const result = await service.validateFlight("BA74", "2025-12-25");
-      expect(result.type).toBe("error");
-      if (result.type === "error") {
-        expect(result.message).toBe("FlightAware API rate limit exceeded");
-      }
+      assertErrorResult(result);
+      expect(result.message).toBe("FlightAware API rate limit exceeded");
     });
 
     it("should use schedules API for flights more than 2 days in future", async () => {
@@ -210,6 +218,87 @@ describe("FlightAwareService", () => {
 
       // Verify schedules API was called
       expect(mockHttpClient.get).toHaveBeenCalledWith(expect.stringContaining("/schedules/"));
+    });
+
+    it("should handle undefined destination name and city without showing 'undefined'", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-123",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "LOS", code_iata: "LOS" }, // name and city are undefined
+              scheduled_on: "2025-12-25T14:00:00Z",
+              estimated_on: "2025-12-25T14:30:00Z",
+              status: "En Route",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.validateFlight("BA74", "2025-12-25");
+      assertSuccessResult(result);
+      // arrivalAddress should fall back to code when name and city are undefined
+      expect(result.flight.arrivalAddress).toBe("LOS");
+    });
+
+    it("should handle partial destination info (only city)", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-123",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "LOS", code_iata: "LOS", city: "Lagos" }, // name is undefined
+              scheduled_on: "2025-12-25T14:00:00Z",
+              estimated_on: "2025-12-25T14:30:00Z",
+              status: "En Route",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.validateFlight("BA74", "2025-12-25");
+      assertSuccessResult(result);
+      // Should only show city, not "undefined, Lagos"
+      expect(result.flight.arrivalAddress).toBe("Lagos");
+    });
+
+    it("should handle undefined airport info in scheduled flights", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          scheduled: [
+            {
+              ident: "BA74",
+              ident_iata: "BA74",
+              fa_flight_id: "BA74-scheduled",
+              origin: "LHR",
+              origin_iata: "LHR",
+              destination: "LOS",
+              destination_iata: "LOS",
+              scheduled_in: "2025-12-30T14:00:00Z",
+            },
+          ],
+        },
+      });
+
+      // Mock airport info fetch returning undefined fields
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {}, // Empty response or missing name/city
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.validateFlight("BA74", "2025-12-30");
+      assertSuccessResult(result);
+      // arrivalAddress should fall back to code when airport info is not available
+      expect(result.flight.arrivalAddress).toBe("LOS");
     });
   });
 

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
+import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
 
 export interface HttpClientConfig {
   baseURL?: string;
@@ -73,17 +73,18 @@ export class HttpClientService {
 
     this.logger.error(`${serviceName} ${operation} failed: ${errorMessage}`);
 
-    if (error instanceof AxiosError && error.response) {
+    if (axios.isAxiosError(error) && error.response) {
       const { status, data } = error.response;
       return {
-        message: (data as { message?: string })?.message || `HTTP ${status}: ${error.response.statusText}`,
+        message:
+          (data as { message?: string })?.message || `HTTP ${status}: ${error.response.statusText}`,
         status,
         code: (data as { code?: string })?.code,
         isNetworkError: false,
       };
     }
 
-    if (error instanceof AxiosError && error.request) {
+    if (axios.isAxiosError(error) && error.request) {
       return {
         message: "Network error: Unable to reach server",
         code: "NETWORK_ERROR",

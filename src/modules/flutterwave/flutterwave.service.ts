@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosError, AxiosInstance } from "axios";
 import { EnvConfig } from "src/config/env.config";
-import { HttpClientService } from "../../shared/http-client.service";
+import { HttpClientService } from "../http-client/http-client.service";
 import {
   FlutterwaveConfig,
   FlutterwaveError,
@@ -96,16 +96,11 @@ export class FlutterwaveService {
         bookingReference,
       });
 
-      if (error instanceof FlutterwaveError) {
-        return {
-          success: false,
-          data: { message: error.message },
-        };
-      }
+      const handledError = this.handleError(error, "initiatePayout");
 
       return {
         success: false,
-        data: { message: "An unknown error occurred" },
+        data: { message: handledError.message },
       };
     }
   }

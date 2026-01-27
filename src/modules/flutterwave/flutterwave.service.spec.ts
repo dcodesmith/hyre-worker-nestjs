@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createMockAxiosInstance,
   createMockHttpClientService,
-} from "../../shared/http-client.fixtures";
-import { HttpClientService } from "../../shared/http-client.service";
+} from "../http-client/http-client.fixtures";
+import { HttpClientService } from "../http-client/http-client.service";
 import { FlutterwaveError, PaymentIntentOptions, RefundOptions } from "./flutterwave.interface";
 import { FlutterwaveService } from "./flutterwave.service";
 
@@ -201,12 +201,10 @@ describe("FlutterwaveService", () => {
 
       mockAxiosInstance.post.mockResolvedValue(mockResponse);
 
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
-
-      mockAxiosInstance.post.mockResolvedValue(mockResponse);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
-        "Invalid customer email",
-      );
+      await expect(service.createPaymentIntent(validOptions)).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        message: "Invalid customer email",
+      });
     });
 
     it("should throw FlutterwaveError when API returns success but no link", async () => {
@@ -228,12 +226,10 @@ describe("FlutterwaveService", () => {
       networkError.request = {};
       mockAxiosInstance.post.mockRejectedValue(networkError);
 
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
-
-      mockAxiosInstance.post.mockRejectedValue(networkError);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
-        "Network error: Unable to reach Flutterwave servers",
-      );
+      await expect(service.createPaymentIntent(validOptions)).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        message: "Network error: Unable to reach Flutterwave servers",
+      });
     });
 
     it("should include metadata in request payload", async () => {

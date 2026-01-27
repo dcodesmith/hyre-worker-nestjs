@@ -2,9 +2,9 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
 import { EnvConfig } from "src/config/env.config";
-import { HttpClientService } from "../../shared/http-client.service";
+import { HttpClientService } from "../http-client/http-client.service";
 import { FALLBACK_DURATION_MINUTES, LAGOS_AIRPORT_COORDS } from "./maps.const";
-import type { DriveTimeResult, GoogleRoutesResponse } from "./maps.interface";
+import type { DriveTimeResult, GoogleRoutesOrigin, GoogleRoutesResponse } from "./maps.interface";
 
 @Injectable()
 export class MapsService {
@@ -37,64 +37,11 @@ export class MapsService {
    * @returns Drive time result with duration in minutes
    */
   async calculateAirportTripDuration(destinationAddress: string): Promise<DriveTimeResult> {
-    try {
-      const { data } = await this.httpClient.post<GoogleRoutesResponse>(this.baseUrl, {
-        origin: {
-          location: {
-            latLng: LAGOS_AIRPORT_COORDS,
-          },
-        },
-        destination: {
-          address: destinationAddress,
-        },
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_AWARE",
-        departureTime: this.getNextDepartureTime(),
-      });
-
-      if (!data.routes || data.routes.length === 0) {
-        this.logger.warn("No routes found", { destinationAddress });
-        return {
-          durationMinutes: FALLBACK_DURATION_MINUTES,
-          distanceMeters: 0,
-          isEstimate: true,
-        };
-      }
-
-      const route = data.routes[0];
-      const durationSeconds = Number.parseInt(route.duration.replace("s", ""), 10);
-      const durationMinutes = Math.ceil(durationSeconds / 60);
-
-      this.logger.debug("Drive time calculated", {
-        destinationAddress,
-        durationMinutes,
-        distanceMeters: route.distanceMeters,
-      });
-
-      return {
-        durationMinutes,
-        distanceMeters: route.distanceMeters,
-        isEstimate: false,
-      };
-    } catch (error) {
-      const errorInfo = this.httpClientService.handleError(
-        error,
-        "calculateAirportTripDuration",
-        "GoogleMaps",
-      );
-
-      this.logger.error("Google Routes API error", {
-        status: errorInfo.status,
-        error: errorInfo.message,
-        destinationAddress,
-      });
-
-      return {
-        durationMinutes: FALLBACK_DURATION_MINUTES,
-        distanceMeters: 0,
-        isEstimate: true,
-      };
-    }
+    return this.computeRoute(
+      { location: { latLng: LAGOS_AIRPORT_COORDS } },
+      destinationAddress,
+      "calculateAirportTripDuration",
+    );
   }
 
   /**
@@ -108,26 +55,31 @@ export class MapsService {
     originAddress: string,
     destinationAddress: string,
   ): Promise<DriveTimeResult> {
+    return this.computeRoute({ address: originAddress }, destinationAddress, "calculateDriveTime");
+  }
+
+  /**
+   * Core route computation logic shared by all drive time methods
+   */
+  private async computeRoute(
+    origin: GoogleRoutesOrigin,
+    destinationAddress: string,
+    methodName: string,
+  ): Promise<DriveTimeResult> {
+    const logContext = "address" in origin ? { originAddress: origin.address } : {};
+
     try {
       const { data } = await this.httpClient.post<GoogleRoutesResponse>(this.baseUrl, {
-        origin: {
-          address: originAddress,
-        },
-        destination: {
-          address: destinationAddress,
-        },
+        origin,
+        destination: { address: destinationAddress },
         travelMode: "DRIVE",
         routingPreference: "TRAFFIC_AWARE",
         departureTime: this.getNextDepartureTime(),
       });
 
       if (!data.routes || data.routes.length === 0) {
-        this.logger.warn("No routes found", { originAddress, destinationAddress });
-        return {
-          durationMinutes: FALLBACK_DURATION_MINUTES,
-          distanceMeters: 0,
-          isEstimate: true,
-        };
+        this.logger.warn("No routes found", { ...logContext, destinationAddress });
+        return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
       }
 
       const route = data.routes[0];
@@ -135,7 +87,7 @@ export class MapsService {
       const durationMinutes = Math.ceil(durationSeconds / 60);
 
       this.logger.debug("Drive time calculated", {
-        originAddress,
+        ...logContext,
         destinationAddress,
         durationMinutes,
         distanceMeters: route.distanceMeters,
@@ -147,24 +99,16 @@ export class MapsService {
         isEstimate: false,
       };
     } catch (error) {
-      const errorInfo = this.httpClientService.handleError(
-        error,
-        "calculateDriveTime",
-        "GoogleMaps",
-      );
+      const errorInfo = this.httpClientService.handleError(error, methodName, "GoogleMaps");
 
       this.logger.error("Google Routes API error", {
         status: errorInfo.status,
         error: errorInfo.message,
-        originAddress,
+        ...logContext,
         destinationAddress,
       });
 
-      return {
-        durationMinutes: FALLBACK_DURATION_MINUTES,
-        distanceMeters: 0,
-        isEstimate: true,
-      };
+      return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
     }
   }
 

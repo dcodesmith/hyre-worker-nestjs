@@ -7,8 +7,8 @@ import {
   createAxiosErrorWithResponse,
   createMockAxiosInstance,
   createMockHttpClientService,
-} from "../../shared/http-client.fixtures";
-import { HttpClientService } from "../../shared/http-client.service";
+} from "../http-client/http-client.fixtures";
+import { HttpClientService } from "../http-client/http-client.service";
 import { MapsService } from "./maps.service";
 
 describe("MapsService", () => {
@@ -39,10 +39,6 @@ describe("MapsService", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   describe("MapsService", () => {

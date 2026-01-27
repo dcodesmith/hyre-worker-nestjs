@@ -13,3 +13,7 @@ export interface DriveTimeResult {
   distanceMeters: number;
   isEstimate: boolean;
 }
+
+export type GoogleRoutesOrigin =
+  | { address: string }
+  | { location: { latLng: { latitude: number; longitude: number } } };

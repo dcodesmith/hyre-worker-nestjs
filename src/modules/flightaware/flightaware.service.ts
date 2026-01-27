@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { differenceInDays, format } from "date-fns";
 import { AxiosInstance } from "axios";
 import { DatabaseService } from "../database/database.service";
-import { HttpClientService } from "../../shared/http-client.service";
+import { HttpClientService } from "../http-client/http-client.service";
 import type {
   CreateAlertParams,
   FlightAwareAlertResponse,
@@ -216,18 +216,21 @@ export class FlightAwareService {
           });
           return flight.alertId;
         }
+
+        // Critical section: create alert and update database while holding lock
+        // Lock must be held during both operations to prevent duplicate alerts
+        const alertId = await this.createFlightAlert(params);
+
+        await tx.flight.update({
+          where: { id: flightId },
+          data: { alertId, alertEnabled: true },
+        });
+
+        return alertId;
       } finally {
+        // Release lock after critical section completes (createFlightAlert + tx.flight.update)
         await tx.$executeRaw`SELECT pg_advisory_unlock(${lockId})`;
       }
-
-      const alertId = await this.createFlightAlert(params);
-
-      await tx.flight.update({
-        where: { id: flightId },
-        data: { alertId, alertEnabled: true },
-      });
-
-      return alertId;
     });
   }
 
@@ -515,7 +518,11 @@ export class FlightAwareService {
         status: flight.status,
         aircraftType: flight.aircraft_type,
         delay: flight.delay,
-        arrivalAddress: `${flight.destination.name}, ${flight.destination.city}`,
+        arrivalAddress: this.buildArrivalAddress(
+          flight.destination.name,
+          flight.destination.city,
+          flight.destination.code,
+        ),
         isLive: true,
       },
     };
@@ -538,10 +545,14 @@ export class FlightAwareService {
     // Fetch airport info for arrival address
     let arrivalAddress: string | undefined;
     try {
-      const airportResponse = await this.httpClient.get<{ name: string; city: string }>(
+      const airportResponse = await this.httpClient.get<{ name?: string; city?: string }>(
         `/airports/${scheduledFlight.destination}`,
       );
-      arrivalAddress = `${airportResponse.data.name}, ${airportResponse.data.city}`;
+      arrivalAddress = this.buildArrivalAddress(
+        airportResponse.data.name,
+        airportResponse.data.city,
+        scheduledFlight.destination,
+      );
     } catch {
       // Ignore airport fetch errors
     }
@@ -601,6 +612,22 @@ export class FlightAwareService {
       minute: "2-digit",
       hour12: true,
     });
+  }
+
+  /**
+   * Build arrival address from optional name and city fields
+   * Only includes defined parts, avoiding "undefined" strings
+   * Falls back to code if name and city are not available
+   */
+  private buildArrivalAddress(name?: string, city?: string, code?: string): string | undefined {
+    const parts = [name, city].filter(
+      (part): part is string => part !== undefined && part !== null && part !== "",
+    );
+    if (parts.length > 0) {
+      return parts.join(", ");
+    }
+    // Fallback to code if available, otherwise return undefined
+    return code || undefined;
   }
 
   // Cache methods
