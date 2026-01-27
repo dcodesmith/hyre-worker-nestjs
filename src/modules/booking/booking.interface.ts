@@ -71,7 +71,6 @@ export interface DateValidationInput {
   startDate: Date;
   endDate: Date;
   bookingType: BookingType;
-  pickupTime?: string;
 }
 
 export interface CarAvailabilityInput {

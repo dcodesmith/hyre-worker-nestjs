@@ -59,7 +59,6 @@ describe("BookingValidationService", () => {
         startDate: tomorrow,
         endDate: dayAfterTomorrow,
         bookingType: "DAY",
-        pickupTime: "9 AM",
       });
 
       expect(result.valid).toBe(true);
@@ -77,7 +76,6 @@ describe("BookingValidationService", () => {
         startDate: tomorrow,
         endDate: yesterday,
         bookingType: "DAY",
-        pickupTime: "9 AM",
       });
 
       expect(result.valid).toBe(false);
@@ -97,7 +95,6 @@ describe("BookingValidationService", () => {
         startDate: yesterday,
         endDate: today,
         bookingType: "DAY",
-        pickupTime: "9 AM",
       });
 
       expect(result.valid).toBe(false);
@@ -119,7 +116,6 @@ describe("BookingValidationService", () => {
           startDate: now,
           endDate: now,
           bookingType: "DAY",
-          pickupTime: "1 PM",
         });
 
         expect(result.valid).toBe(false);
@@ -147,7 +143,6 @@ describe("BookingValidationService", () => {
           startDate: laterToday,
           endDate: laterToday,
           bookingType: "DAY",
-          pickupTime: "1 PM",
         });
 
         expect(result.valid).toBe(true);

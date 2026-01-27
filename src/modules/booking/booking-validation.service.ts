@@ -314,7 +314,6 @@ export class BookingValidationService {
       startDate: input.startDate,
       endDate: input.endDate,
       bookingType: input.bookingType,
-      pickupTime: input.pickupTime,
     });
     allErrors.push(...dateResult.errors);
 
