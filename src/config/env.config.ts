@@ -60,6 +60,12 @@ export const envSchema = z.object({
     .min(8, "BULL_BOARD_PASSWORD must be at least 8 characters")
     .optional(),
 
+  // FlightAware configuration (for airport pickup flight validation)
+  FLIGHTAWARE_API_KEY: z.string().min(1, "FLIGHTAWARE_API_KEY is required"),
+
+  // Google Maps configuration (for drive time calculations)
+  GOOGLE_MAPS_API_KEY: z.string().min(1, "GOOGLE_MAPS_API_KEY is required"),
+
   // Auth configuration (optional - only required when AuthModule is used)
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters").optional(),
   AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL").optional(),

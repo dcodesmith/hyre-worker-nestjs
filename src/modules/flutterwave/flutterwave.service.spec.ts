@@ -2,21 +2,18 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createAxiosErrorWithResponse,
+  createMockAxiosInstance,
+  createMockHttpClientService,
+} from "../http-client/http-client.fixtures";
+import { HttpClientService } from "../http-client/http-client.service";
 import { FlutterwaveError, PaymentIntentOptions, RefundOptions } from "./flutterwave.interface";
 import { FlutterwaveService } from "./flutterwave.service";
 
-vi.mock("axios");
-
 describe("FlutterwaveService", () => {
   let service: FlutterwaveService;
-  let mockAxiosInstance: {
-    post: ReturnType<typeof vi.fn>;
-    get: ReturnType<typeof vi.fn>;
-    interceptors: {
-      request: { use: ReturnType<typeof vi.fn> };
-      response: { use: ReturnType<typeof vi.fn> };
-    };
-  };
+  let mockAxiosInstance: ReturnType<typeof createMockAxiosInstance>;
 
   const mockConfig = {
     FLUTTERWAVE_SECRET_KEY: "test-secret-key",
@@ -27,18 +24,8 @@ describe("FlutterwaveService", () => {
   };
 
   beforeEach(async () => {
-    mockAxiosInstance = {
-      post: vi.fn(),
-      get: vi.fn(),
-      interceptors: {
-        request: { use: vi.fn() },
-        response: { use: vi.fn() },
-      },
-    };
-
-    vi.mocked(axios.create).mockReturnValue(
-      mockAxiosInstance as unknown as ReturnType<typeof axios.create>,
-    );
+    mockAxiosInstance = createMockAxiosInstance();
+    const mockHttpClientService = createMockHttpClientService(mockAxiosInstance);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,6 +36,7 @@ describe("FlutterwaveService", () => {
             get: vi.fn((key: string) => mockConfig[key as keyof typeof mockConfig]),
           },
         },
+        { provide: HttpClientService, useValue: mockHttpClientService },
       ],
     }).compile();
 
@@ -108,7 +96,6 @@ describe("FlutterwaveService", () => {
             description: "Payment for car booking",
           },
         }),
-        undefined,
       );
     });
 
@@ -138,7 +125,6 @@ describe("FlutterwaveService", () => {
         expect.objectContaining({
           tx_ref: "custom-tx-ref-123",
         }),
-        undefined,
       );
     });
 
@@ -170,7 +156,6 @@ describe("FlutterwaveService", () => {
             description: "Payment for booking extension",
           },
         }),
-        undefined,
       );
     });
 
@@ -203,7 +188,6 @@ describe("FlutterwaveService", () => {
             name: "Customer",
           }),
         }),
-        undefined,
       );
     });
 
@@ -218,12 +202,10 @@ describe("FlutterwaveService", () => {
 
       mockAxiosInstance.post.mockResolvedValue(mockResponse);
 
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
-
-      mockAxiosInstance.post.mockResolvedValue(mockResponse);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(
-        "Invalid customer email",
-      );
+      await expect(service.createPaymentIntent(validOptions)).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        message: "Invalid customer email",
+      });
     });
 
     it("should throw FlutterwaveError when API returns success but no link", async () => {
@@ -241,13 +223,14 @@ describe("FlutterwaveService", () => {
     });
 
     it("should handle network errors", async () => {
-      const networkError = new Error("Network Error");
+      const networkError = new axios.AxiosError("Network Error");
+      networkError.request = {};
       mockAxiosInstance.post.mockRejectedValue(networkError);
 
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow(FlutterwaveError);
-
-      mockAxiosInstance.post.mockRejectedValue(networkError);
-      await expect(service.createPaymentIntent(validOptions)).rejects.toThrow("Network Error");
+      await expect(service.createPaymentIntent(validOptions)).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        message: "Network error: Unable to reach Flutterwave servers",
+      });
     });
 
     it("should include metadata in request payload", async () => {
@@ -283,7 +266,6 @@ describe("FlutterwaveService", () => {
             userId: "user-789",
           }),
         }),
-        undefined,
       );
     });
   });
@@ -317,10 +299,7 @@ describe("FlutterwaveService", () => {
         }),
       });
 
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
-        "/v3/transactions/12345/verify",
-        undefined,
-      );
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/transactions/12345/verify");
     });
 
     it("should throw error when verification fails", async () => {
@@ -372,7 +351,6 @@ describe("FlutterwaveService", () => {
           currency: "NGN",
           reference: "payout-ref-123",
         }),
-        undefined,
       );
     });
 
@@ -568,6 +546,24 @@ describe("FlutterwaveService", () => {
       await expect(service.initiateRefund(validRefundOptions)).rejects.toMatchObject({
         message: expect.stringContaining("Something unexpected happened"),
         code: "UNEXPECTED_ERROR",
+      });
+    });
+
+    it("should return HTTP errors from Flutterwave API as failure response", async () => {
+      // HTTP errors (like 404 "Transaction not found") should be handled by handleError
+      // and returned as {success: false, error: "..."} instead of being thrown
+      const httpError = createAxiosErrorWithResponse(404, {
+        status: "error",
+        message: "Transaction not found",
+        data: null,
+      });
+      mockAxiosInstance.post.mockRejectedValueOnce(httpError);
+
+      const result = await service.initiateRefund(validRefundOptions);
+
+      expect(result).toEqual({
+        success: false,
+        error: "Transaction not found",
       });
     });
   });

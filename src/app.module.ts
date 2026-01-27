@@ -10,6 +10,7 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
 import { HealthModule } from "./modules/health/health.module";
+import { HttpClientModule } from "./modules/http-client/http-client.module";
 import { JobModule } from "./modules/job/job.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
@@ -66,6 +67,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
       inject: [ConfigService],
     }),
     // Queues are registered in their respective feature modules
+    HttpClientModule,
     DatabaseModule,
     FlutterwaveModule,
     NotificationModule,
