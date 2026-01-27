@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -16,6 +16,7 @@ import {
 } from "./booking.interface";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
+import { maskEmail } from "src/shared/helper";
 
 /**
  * Service for validating booking creation requests.
@@ -114,16 +115,51 @@ export class BookingValidationService {
     const errors: ValidationError[] = [];
     const { carId, startDate, endDate, excludeBookingId } = input;
 
-    // Verify car exists
+    // Verify car exists and is bookable
     const car = await this.databaseService.car.findUnique({
       where: { id: carId },
-      select: { id: true },
+      select: { id: true, status: true, approvalStatus: true },
     });
 
     if (!car) {
       errors.push({
         field: "carId",
         message: "Car not found",
+      });
+      return { valid: false, errors };
+    }
+
+    // Check car approval status - only approved cars can be booked
+    if (car.approvalStatus !== CarApprovalStatus.APPROVED) {
+      this.logger.log("Attempt to book unapproved car", {
+        carId,
+        approvalStatus: car.approvalStatus,
+      });
+
+      errors.push({
+        field: "carId",
+        message: "This vehicle is not available for booking",
+      });
+      return { valid: false, errors };
+    }
+
+    // Check car status - only available cars can be booked
+    if (car.status !== Status.AVAILABLE) {
+      this.logger.log("Attempt to book unavailable car", {
+        carId,
+        status: car.status,
+      });
+
+      const statusMessages: Record<Status, string> = {
+        [Status.AVAILABLE]: "", // Won't be used
+        [Status.BOOKED]: "This vehicle is currently booked",
+        [Status.HOLD]: "This vehicle is temporarily unavailable",
+        [Status.IN_SERVICE]: "This vehicle is currently under maintenance",
+      };
+
+      errors.push({
+        field: "carId",
+        message: statusMessages[car.status] || "This vehicle is not available for booking",
       });
       return { valid: false, errors };
     }
@@ -201,7 +237,7 @@ export class BookingValidationService {
 
     if (existingUser) {
       this.logger.log("Guest email already registered", {
-        email: input.guestEmail.replace(/(.{2}).*(@.*)/, "$1***$2"), // Mask email
+        email: maskEmail(input.guestEmail),
       });
 
       errors.push({

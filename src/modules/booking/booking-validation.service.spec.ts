@@ -1,7 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Booking, Car, User } from "@prisma/client";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
@@ -109,46 +109,52 @@ describe("BookingValidationService", () => {
 
     it("should fail validation for same-day DAY booking after 11 AM", () => {
       // Mock current time to be 11 AM or later
+      vi.useFakeTimers();
       const now = new Date();
       now.setHours(11, 0, 0, 0);
       vi.setSystemTime(now);
 
-      const result = service.validateDates({
-        startDate: now,
-        endDate: now,
-        bookingType: "DAY",
-        pickupTime: "1 PM",
-      });
+      try {
+        const result = service.validateDates({
+          startDate: now,
+          endDate: now,
+          bookingType: "DAY",
+          pickupTime: "1 PM",
+        });
 
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual({
-        field: "startDate",
-        message: "Same-day DAY bookings cannot be made at or after 11 AM",
-      });
-
-      vi.useRealTimers();
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContainEqual({
+          field: "startDate",
+          message: "Same-day DAY bookings cannot be made at or after 11 AM",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should pass validation for same-day DAY booking before 11 AM", () => {
       // Mock current time to be 9 AM
+      vi.useFakeTimers();
       const now = new Date();
       now.setHours(9, 0, 0, 0);
       vi.setSystemTime(now);
 
-      const laterToday = new Date(now);
-      laterToday.setHours(14, 0, 0, 0);
+      try {
+        const laterToday = new Date(now);
+        laterToday.setHours(14, 0, 0, 0);
 
-      const result = service.validateDates({
-        startDate: laterToday,
-        endDate: laterToday,
-        bookingType: "DAY",
-        pickupTime: "1 PM",
-      });
+        const result = service.validateDates({
+          startDate: laterToday,
+          endDate: laterToday,
+          bookingType: "DAY",
+          pickupTime: "1 PM",
+        });
 
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-
-      vi.useRealTimers();
+        expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should fail validation for airport pickup without 1-hour advance notice", () => {
@@ -185,29 +191,38 @@ describe("BookingValidationService", () => {
 
     it("should not apply same-day restriction to NIGHT bookings", () => {
       // Mock current time to be 2 PM
+      vi.useFakeTimers();
       const now = new Date();
       now.setHours(14, 0, 0, 0);
       vi.setSystemTime(now);
 
-      const laterToday = new Date(now);
-      laterToday.setHours(23, 0, 0, 0);
+      try {
+        const laterToday = new Date(now);
+        laterToday.setHours(23, 0, 0, 0);
 
-      const result = service.validateDates({
-        startDate: laterToday,
-        endDate: laterToday,
-        bookingType: "NIGHT",
-      });
+        const result = service.validateDates({
+          startDate: laterToday,
+          endDate: laterToday,
+          bookingType: "NIGHT",
+        });
 
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-
-      vi.useRealTimers();
+        expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
   describe("checkCarAvailability", () => {
-    it("should pass when car exists and no conflicting bookings", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+    it("should pass when car exists, is approved, available, and no conflicting bookings", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       const tomorrow = new Date();
@@ -242,8 +257,130 @@ describe("BookingValidationService", () => {
       });
     });
 
+    it("should fail when car approval status is PENDING", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.PENDING,
+        }),
+      );
+
+      const result = await service.checkCarAvailability({
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(),
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "carId",
+        message: "This vehicle is not available for booking",
+      });
+      // Should not check for conflicting bookings if car is not approved
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
+    it("should fail when car approval status is REJECTED", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.REJECTED,
+        }),
+      );
+
+      const result = await service.checkCarAvailability({
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(),
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "carId",
+        message: "This vehicle is not available for booking",
+      });
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
+    it("should fail when car status is HOLD", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.HOLD,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+
+      const result = await service.checkCarAvailability({
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(),
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "carId",
+        message: "This vehicle is temporarily unavailable",
+      });
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
+    it("should fail when car status is IN_SERVICE", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.IN_SERVICE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+
+      const result = await service.checkCarAvailability({
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(),
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "carId",
+        message: "This vehicle is currently under maintenance",
+      });
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
+    it("should fail when car status is BOOKED", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.BOOKED,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+
+      const result = await service.checkCarAvailability({
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(),
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "carId",
+        message: "This vehicle is currently booked",
+      });
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
     it("should fail when there are conflicting bookings", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
         mockBooking({
           id: "existing-booking",
@@ -268,7 +405,13 @@ describe("BookingValidationService", () => {
     });
 
     it("should exclude specified booking when checking availability", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       const result = await service.checkCarAvailability({
@@ -289,7 +432,13 @@ describe("BookingValidationService", () => {
     });
 
     it("should only check bookings with CONFIRMED/ACTIVE status and PAID payment", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       await service.checkCarAvailability({
@@ -309,7 +458,13 @@ describe("BookingValidationService", () => {
     });
 
     it("should use strict inequality (lt/gt) to allow exactly 2-hour buffer gaps", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       const startDate = new Date("2025-03-01T14:00:00Z");
@@ -475,7 +630,13 @@ describe("BookingValidationService", () => {
     });
 
     it("should not throw when all validations pass", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       const tomorrow = new Date();
@@ -502,7 +663,13 @@ describe("BookingValidationService", () => {
     });
 
     it("should include price validation when serverTotal is provided", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(mockCar({ id: "car-123" }));
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        mockCar({
+          id: "car-123",
+          status: Status.AVAILABLE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       const tomorrow = new Date();
