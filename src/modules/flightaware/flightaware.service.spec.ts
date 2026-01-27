@@ -544,5 +544,40 @@ describe("FlightAwareService", () => {
 
       expect(mockHttpClient.delete).not.toHaveBeenCalled();
     });
+
+    it("should not update database when API call fails", async () => {
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
+        alertId: "alert-123",
+        alertEnabled: true,
+      });
+
+      const axiosError = createAxiosErrorWithResponse(HttpStatus.INTERNAL_SERVER_ERROR, {
+        message: "Server error",
+      });
+      mockHttpClient.delete.mockRejectedValueOnce(axiosError);
+
+      await expect(service.cleanupFlightAlert("flight-id-1")).rejects.toThrow();
+
+      expect(mockHttpClient.delete).toHaveBeenCalledWith("/alerts/alert-123");
+      expect(mockDatabaseService.flight.update).not.toHaveBeenCalled();
+    });
+
+    it("should propagate auth errors without updating database", async () => {
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
+        alertId: "alert-123",
+        alertEnabled: true,
+      });
+
+      const axiosError = createAxiosErrorWithResponse(HttpStatus.UNAUTHORIZED, {
+        message: "Unauthorized",
+      });
+      mockHttpClient.delete.mockRejectedValueOnce(axiosError);
+
+      await expect(service.cleanupFlightAlert("flight-id-1")).rejects.toThrow(
+        "FlightAware API authentication failed",
+      );
+
+      expect(mockDatabaseService.flight.update).not.toHaveBeenCalled();
+    });
   });
 });

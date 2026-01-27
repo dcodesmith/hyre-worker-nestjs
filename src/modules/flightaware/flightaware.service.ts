@@ -290,14 +290,12 @@ export class FlightAwareService implements OnModuleDestroy {
       return;
     }
 
-    try {
-      await this.disableFlightAlert(flight.alertId);
-    } finally {
-      await this.databaseService.flight.update({
-        where: { id: flightId },
-        data: { alertEnabled: false },
-      });
-    }
+    await this.disableFlightAlert(flight.alertId);
+
+    await this.databaseService.flight.update({
+      where: { id: flightId },
+      data: { alertEnabled: false },
+    });
 
     this.logger.log("Flight alert cleaned up", { flightId, alertId: flight.alertId });
   }
