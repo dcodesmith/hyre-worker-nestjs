@@ -118,7 +118,13 @@ function validateFlightNumber(data: { bookingType: BookingType; flightNumber?: s
  * Apply common booking refinements to a schema
  */
 function withBookingRefinements<
-  T extends z.ZodType<{ bookingType: BookingType; pickupTime?: string; flightNumber?: string }>,
+  T extends z.ZodType<{
+    bookingType: BookingType;
+    pickupTime?: string;
+    flightNumber?: string;
+    startDate: Date;
+    endDate: Date;
+  }>,
 >(schema: T) {
   return schema
     .refine(validatePickupTime, {
@@ -128,6 +134,10 @@ function withBookingRefinements<
     .refine(validateFlightNumber, {
       message: "Flight number is required for AIRPORT_PICKUP bookings",
       path: ["flightNumber"],
+    })
+    .refine((data) => data.endDate >= data.startDate, {
+      message: "End date must be on or after start date",
+      path: ["endDate"],
     });
 }
 
