@@ -1,4 +1,64 @@
 import type { BookingStatus, BookingType, Prisma } from "@prisma/client";
+import type { Decimal } from "@prisma/client/runtime/library";
+import type { CarPricing } from "./booking-calculation.interface";
+import type { CreateBookingInput } from "./dto/create-booking.dto";
+
+/**
+ * Input for booking creation with optional user context.
+ */
+export interface BookingCreationInput {
+  /** Booking details from the request */
+  booking: CreateBookingInput;
+  /** Authenticated user info (null for guest bookings) */
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    phoneNumber: string | null;
+    /** User's referrer ID (if they signed up via referral) */
+    referredByUserId: string | null;
+    /** Whether the user has used their referral discount */
+    referralDiscountUsed: boolean;
+  } | null;
+}
+
+/**
+ * Car data with pricing for booking creation.
+ */
+export interface CarWithPricing extends CarPricing {
+  id: string;
+}
+
+/**
+ * Result from referral eligibility check
+ */
+export interface ReferralEligibility {
+  eligible: boolean;
+  referrerUserId: string | null;
+  discountAmount: Decimal;
+}
+
+/**
+ * Flight data needed for booking creation
+ */
+export interface FlightDataForBooking {
+  flightId: string;
+  arrivalTime: Date;
+  destinationIATA: string | undefined;
+  originCode: string | undefined;
+  originCodeIATA: string | undefined;
+  destinationCode: string | undefined;
+  flightNumber: string;
+}
+
+/**
+ * Customer details for payment intent
+ */
+export interface CustomerDetails {
+  email: string;
+  name: string;
+  phoneNumber: string | undefined;
+}
 
 export interface CreateBookingResponse {
   bookingId: string;
