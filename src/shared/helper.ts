@@ -74,8 +74,8 @@ export function formatDate(date: string | Date) {
 
   return formatter
     .format(new Date(date))
-    .replace(/,/g, " @")
-    .replace(/(\d{1,2})(?=\s)/g, replaceWithOrdinalSuffix);
+    .replaceAll(/,/g, " @")
+    .replaceAll(/(\d{1,2})(?=\s)/g, replaceWithOrdinalSuffix);
 }
 
 export const formatCurrency = (amount: number) => {
@@ -183,4 +183,15 @@ export function normaliseBookingLegDetails(
     returnLocation: booking.returnLocation,
     carName,
   };
+}
+
+/**
+ * Generate a unique booking reference.
+ * Format: BK-{timestamp}-{random6chars}
+ * Example: BK-1706540800000-ABC123
+ */
+export function generateBookingReference(): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `BK-${timestamp}-${random}`;
 }
