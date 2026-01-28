@@ -89,3 +89,62 @@ export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
 }
+
+export interface GeneratedLeg {
+  legDate: Date;
+  legStartTime: Date;
+  legEndTime: Date;
+}
+
+/**
+ * Base fields shared by all leg generation inputs
+ */
+interface BaseLegInput {
+  startDate: Date;
+  endDate: Date;
+}
+
+/**
+ * DAY booking leg input - requires pickupTime
+ */
+interface DayLegInput extends BaseLegInput {
+  bookingType: "DAY";
+  pickupTime: string;
+}
+
+/**
+ * NIGHT booking leg input - fixed 23:00-05:00, no pickupTime needed
+ */
+interface NightLegInput extends BaseLegInput {
+  bookingType: "NIGHT";
+}
+
+/**
+ * FULL_DAY booking leg input - requires pickupTime
+ */
+interface FullDayLegInput extends BaseLegInput {
+  bookingType: "FULL_DAY";
+  pickupTime: string;
+}
+
+/**
+ * AIRPORT_PICKUP booking leg input - optional flight arrival and drive time
+ */
+interface AirportPickupLegInput extends BaseLegInput {
+  bookingType: "AIRPORT_PICKUP";
+  flightArrivalTime?: Date;
+  driveTimeMinutes?: number;
+}
+
+/**
+ * Discriminated union for leg generation input.
+ * TypeScript will enforce that:
+ * - DAY and FULL_DAY require pickupTime
+ * - NIGHT requires no additional fields
+ * - AIRPORT_PICKUP optionally accepts flightArrivalTime and driveTimeMinutes
+ */
+export type LegGenerationInput =
+  | DayLegInput
+  | NightLegInput
+  | FullDayLegInput
+  | AirportPickupLegInput;

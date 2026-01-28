@@ -81,7 +81,25 @@ describe("BookingValidationService", () => {
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual({
         field: "endDate",
-        message: "End date must be on or after start date",
+        message: "End date must be after start date",
+      });
+    });
+
+    it("should fail validation when end date equals start date (zero-duration)", () => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(10, 0, 0, 0);
+
+      const result = service.validateDates({
+        startDate: tomorrow,
+        endDate: new Date(tomorrow), // Same time
+        bookingType: "DAY",
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        field: "endDate",
+        message: "End date must be after start date",
       });
     });
 
@@ -112,9 +130,15 @@ describe("BookingValidationService", () => {
       vi.setSystemTime(now);
 
       try {
+        const startDate = new Date(now);
+        startDate.setHours(14, 0, 0, 0); // 2 PM same day
+
+        const endDate = new Date(startDate);
+        endDate.setHours(18, 0, 0, 0); // 6 PM same day
+
         const result = service.validateDates({
-          startDate: now,
-          endDate: now,
+          startDate,
+          endDate,
           bookingType: "DAY",
         });
 
@@ -136,12 +160,15 @@ describe("BookingValidationService", () => {
       vi.setSystemTime(now);
 
       try {
-        const laterToday = new Date(now);
-        laterToday.setHours(14, 0, 0, 0);
+        const startDate = new Date(now);
+        startDate.setHours(14, 0, 0, 0); // 2 PM same day
+
+        const endDate = new Date(startDate);
+        endDate.setHours(18, 0, 0, 0); // 6 PM same day
 
         const result = service.validateDates({
-          startDate: laterToday,
-          endDate: laterToday,
+          startDate,
+          endDate,
           bookingType: "DAY",
         });
 
@@ -155,10 +182,11 @@ describe("BookingValidationService", () => {
     it("should fail validation for airport pickup without 1-hour advance notice", () => {
       const now = new Date();
       const thirtyMinutesFromNow = new Date(now.getTime() + 30 * 60 * 1000);
+      const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
       const result = service.validateDates({
         startDate: thirtyMinutesFromNow,
-        endDate: thirtyMinutesFromNow,
+        endDate: twoHoursFromNow,
         bookingType: "AIRPORT_PICKUP",
       });
 
@@ -192,12 +220,16 @@ describe("BookingValidationService", () => {
       vi.setSystemTime(now);
 
       try {
-        const laterToday = new Date(now);
-        laterToday.setHours(23, 0, 0, 0);
+        const startDate = new Date(now);
+        startDate.setHours(23, 0, 0, 0); // 11 PM same day
+
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + 1);
+        endDate.setHours(5, 0, 0, 0); // 5 AM next day
 
         const result = service.validateDates({
-          startDate: laterToday,
-          endDate: laterToday,
+          startDate,
+          endDate,
           bookingType: "NIGHT",
         });
 

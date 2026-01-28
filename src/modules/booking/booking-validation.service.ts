@@ -51,11 +51,11 @@ export class BookingValidationService {
 
     const { startDate, endDate, bookingType } = input;
 
-    // Rule: End date must be >= start date
-    if (endDate < startDate) {
+    // Rule: End date must be > start date (zero-duration bookings not allowed)
+    if (endDate <= startDate) {
       errors.push({
         field: "endDate",
-        message: "End date must be on or after start date",
+        message: "End date must be after start date",
       });
     }
 
