@@ -33,3 +33,6 @@ export const NIGHT_END_HOUR = 5; // 5 AM
 export const FULL_DAY_DURATION_HOURS = 24;
 export const AIRPORT_PICKUP_BUFFER_MINUTES = 40;
 export const AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER = 1.2;
+
+/** Maximum number of legs eligible for fuel upgrade */
+export const MAX_LEGS_FOR_FUEL_UPGRADE = 2;
