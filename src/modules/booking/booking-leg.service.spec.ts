@@ -337,53 +337,6 @@ describe("BookingLegService", () => {
     });
   });
 
-  describe("parsePickupTime", () => {
-    it("should parse simple AM time", () => {
-      const result = service.parsePickupTime("9 AM");
-      expect(result).toEqual({ hours: 9, minutes: 0 });
-    });
-
-    it("should parse simple PM time", () => {
-      const result = service.parsePickupTime("3 PM");
-      expect(result).toEqual({ hours: 15, minutes: 0 });
-    });
-
-    it("should parse time with minutes", () => {
-      const result = service.parsePickupTime("9:30 AM");
-      expect(result).toEqual({ hours: 9, minutes: 30 });
-    });
-
-    it("should parse 12 PM as noon (12:00)", () => {
-      const result = service.parsePickupTime("12 PM");
-      expect(result).toEqual({ hours: 12, minutes: 0 });
-    });
-
-    it("should parse 12 AM as midnight (00:00)", () => {
-      const result = service.parsePickupTime("12 AM");
-      expect(result).toEqual({ hours: 0, minutes: 0 });
-    });
-
-    it("should handle lowercase am/pm", () => {
-      const result = service.parsePickupTime("9 am");
-      expect(result).toEqual({ hours: 9, minutes: 0 });
-    });
-
-    it("should handle no space before AM/PM", () => {
-      const result = service.parsePickupTime("9AM");
-      expect(result).toEqual({ hours: 9, minutes: 0 });
-    });
-
-    it("should parse 11 PM correctly", () => {
-      const result = service.parsePickupTime("11 PM");
-      expect(result).toEqual({ hours: 23, minutes: 0 });
-    });
-
-    it("should parse 11:45 PM correctly", () => {
-      const result = service.parsePickupTime("11:45 PM");
-      expect(result).toEqual({ hours: 23, minutes: 45 });
-    });
-  });
-
   describe("getEffectiveEndDate (midnight edge case)", () => {
     it("should subtract 1ms from exact midnight", () => {
       const input: LegGenerationInput = {
@@ -411,6 +364,23 @@ describe("BookingLegService", () => {
 
       // Should be 3 days (Mar 1, Mar 2, Mar 3)
       expect(legs).toHaveLength(3);
+    });
+
+    it("should not crash when startDate equals endDate at midnight (defensive)", () => {
+      // This edge case is now blocked by DTO validation (endDate > startDate),
+      // but the service handles it defensively to avoid RangeError from eachDayOfInterval
+      const input: LegGenerationInput = {
+        startDate: new Date("2025-03-01T00:00:00.000Z"),
+        endDate: new Date("2025-03-01T00:00:00.000Z"), // Same as startDate, both midnight
+        bookingType: "DAY",
+        pickupTime: "9 AM",
+      };
+
+      // Should not throw, instead generates 1 leg for that day
+      const legs = service.generateLegs(input);
+
+      expect(legs).toHaveLength(1);
+      expect(legs[0].legDate.toISOString().startsWith("2025-03-01")).toBe(true);
     });
   });
 });

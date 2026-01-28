@@ -135,8 +135,8 @@ function withBookingRefinements<
       message: "Flight number is required for AIRPORT_PICKUP bookings",
       path: ["flightNumber"],
     })
-    .refine((data) => data.endDate >= data.startDate, {
-      message: "End date must be on or after start date",
+    .refine((data) => data.endDate > data.startDate, {
+      message: "End date must be after start date",
       path: ["endDate"],
     });
 }

@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { UTCDate } from "@date-fns/utc";
 import { addDays, addHours, eachDayOfInterval, setHours, setMinutes, setSeconds } from "date-fns";
 import {
   AIRPORT_PICKUP_BUFFER_MINUTES,
@@ -55,16 +56,22 @@ export class BookingLegService {
    * - 12-hour duration starting at the pickup time hour
    * - Example: 9 AM pickup → 9 AM - 9 PM
    *
-   * @param input - Leg generation input with pickupTime
+   * @param input - DAY leg input (pickupTime guaranteed by discriminated union)
    * @returns Array of 12-hour legs, one per day
    */
-  private generateDayLegs(input: LegGenerationInput): GeneratedLeg[] {
+  private generateDayLegs(
+    input: Extract<LegGenerationInput, { bookingType: "DAY" }>,
+  ): GeneratedLeg[] {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = this.getEffectiveEndDate(endDate);
+    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
 
-    const days = eachDayOfInterval({ start: startDate, end: effectiveEndDate });
+    // Convert to UTCDate for timezone-safe operations
+    const utcStart = new UTCDate(startDate);
+    const utcEnd = new UTCDate(effectiveEndDate);
+
+    const days = eachDayOfInterval({ start: utcStart, end: utcEnd });
 
     return days.map((day) => {
       const legStartTime = setSeconds(setMinutes(setHours(day, hours), minutes), 0);
@@ -86,24 +93,29 @@ export class BookingLegService {
    * - One leg per night in the date range
    * - Number of nights = ceil((endDate - startDate) / 24 hours)
    *
-   * @param input - Leg generation input
+   * @param input - NIGHT leg input
    * @returns Array of 6-hour legs from 11 PM to 5 AM
    */
-  private generateNightLegs(input: LegGenerationInput): GeneratedLeg[] {
+  private generateNightLegs(
+    input: Extract<LegGenerationInput, { bookingType: "NIGHT" }>,
+  ): GeneratedLeg[] {
     const { startDate, endDate } = input;
-    const effectiveEndDate = this.getEffectiveEndDate(endDate);
+    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
 
     const legs: GeneratedLeg[] = [];
     const totalHours = (effectiveEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
     const numberOfNights = Math.max(1, Math.ceil(totalHours / 24));
 
-    for (let i = 0; i < numberOfNights; i++) {
-      const nightDate = addDays(startDate, i);
+    // Convert to UTCDate for timezone-safe operations
+    const utcStart = new UTCDate(startDate);
 
-      // Leg starts at 11 PM on the night date
+    for (let i = 0; i < numberOfNights; i++) {
+      const nightDate = addDays(utcStart, i);
+
+      // Leg starts at 11 PM on the night date (UTC)
       const legStartTime = setSeconds(setMinutes(setHours(nightDate, NIGHT_START_HOUR), 0), 0);
 
-      // Leg ends at 5 AM the next day
+      // Leg ends at 5 AM the next day (UTC)
       const nextDay = addDays(nightDate, 1);
       const legEndTime = setSeconds(setMinutes(setHours(nextDay, NIGHT_END_HOUR), 0), 0);
 
@@ -125,17 +137,22 @@ export class BookingLegService {
    * - Number of legs = ceil(totalHours / 24)
    * - Each leg is exactly 24 hours
    *
-   * @param input - Leg generation input with pickupTime
+   * @param input - FULL_DAY leg input (pickupTime guaranteed by discriminated union)
    * @returns Array of 24-hour legs
    */
-  private generateFullDayLegs(input: LegGenerationInput): GeneratedLeg[] {
+  private generateFullDayLegs(
+    input: Extract<LegGenerationInput, { bookingType: "FULL_DAY" }>,
+  ): GeneratedLeg[] {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = this.getEffectiveEndDate(endDate);
+    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
 
-    // Calculate base start time on the start date
-    const baseStartTime = setSeconds(setMinutes(setHours(startDate, hours), minutes), 0);
+    // Convert to UTCDate for timezone-safe operations
+    const utcStart = new UTCDate(startDate);
+
+    // Calculate base start time on the start date (UTC)
+    const baseStartTime = setSeconds(setMinutes(setHours(utcStart, hours), minutes), 0);
 
     // Calculate total hours and number of legs
     const totalMs = effectiveEndDate.getTime() - baseStartTime.getTime();
@@ -167,10 +184,12 @@ export class BookingLegService {
    * - End: start time + (drive time × 1.2 buffer)
    * - Preserves exact minutes from flight arrival
    *
-   * @param input - Leg generation input with flightArrivalTime and driveTimeMinutes
+   * @param input - AIRPORT_PICKUP leg input
    * @returns Single-element array with the airport pickup leg
    */
-  private generateAirportPickupLegs(input: LegGenerationInput): GeneratedLeg[] {
+  private generateAirportPickupLegs(
+    input: Extract<LegGenerationInput, { bookingType: "AIRPORT_PICKUP" }>,
+  ): GeneratedLeg[] {
     const { startDate, flightArrivalTime, driveTimeMinutes } = input;
 
     // If flight arrival time is provided, use it for precise timing
@@ -199,16 +218,13 @@ export class BookingLegService {
   /**
    * Parse pickup time string into hours and minutes.
    *
-   * Accepts formats:
-   * - "9 AM", "9:00 AM"
-   * - "11 PM", "2:30 PM"
-   * - "12 PM" (noon), "12 AM" (midnight)
+   * **Note:** This method assumes pickupTime has been validated by the DTO.
+   * The DTO ensures the format matches: H:MM AM/PM (e.g., "9 AM", "9:30 PM")
    *
-   * @param pickupTime - Time string in H:MM AM/PM format
+   * @param pickupTime - Pre-validated time string in H:MM AM/PM format
    * @returns Object with hours (0-23) and minutes (0-59)
    */
-  parsePickupTime(pickupTime: string): { hours: number; minutes: number } {
-    // Match: "9 AM", "9:00 AM", "11 PM", "2:30 PM"
+  private parsePickupTime(pickupTime: string): { hours: number; minutes: number } {
     const match = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(pickupTime.trim());
 
     const [, hourStr, minuteStr, period] = match;
@@ -229,21 +245,32 @@ export class BookingLegService {
   /**
    * Get effective end date for leg generation.
    *
-   * If endDate is exactly midnight (00:00:00.000), subtract 1ms
+   * If endDate is exactly UTC midnight (00:00:00.000Z), subtract 1ms
    * to avoid off-by-one errors in day boundary calculations.
+   * However, never return a date earlier than startDate to avoid
+   * invalid intervals that would crash eachDayOfInterval.
+   *
+   * Note: Uses UTC methods to ensure consistent behavior regardless of
+   * server timezone (e.g., Africa/Lagos).
    *
    * @param endDate - Original end date
-   * @returns Adjusted end date
+   * @param startDate - Start date to use as minimum bound
+   * @returns Adjusted end date (never earlier than startDate)
    */
-  private getEffectiveEndDate(endDate: Date): Date {
+  private getEffectiveEndDate(endDate: Date, startDate: Date): Date {
     const isMidnight =
-      endDate.getHours() === 0 &&
-      endDate.getMinutes() === 0 &&
-      endDate.getSeconds() === 0 &&
-      endDate.getMilliseconds() === 0;
+      endDate.getUTCHours() === 0 &&
+      endDate.getUTCMinutes() === 0 &&
+      endDate.getUTCSeconds() === 0 &&
+      endDate.getUTCMilliseconds() === 0;
 
     if (isMidnight) {
-      return new Date(endDate.getTime() - 1);
+      const adjusted = new Date(endDate.getTime() - 1);
+      // Don't adjust if it would make end date earlier than start date
+      if (adjusted < startDate) {
+        return startDate;
+      }
+      return adjusted;
     }
 
     return endDate;

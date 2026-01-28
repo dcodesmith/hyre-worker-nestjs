@@ -51,11 +51,11 @@ export class BookingValidationService {
 
     const { startDate, endDate, bookingType } = input;
 
-    // Rule: End date must be >= start date
-    if (endDate < startDate) {
+    // Rule: End date must be > start date (zero-duration bookings not allowed)
+    if (endDate <= startDate) {
       errors.push({
         field: "endDate",
-        message: "End date must be on or after start date",
+        message: "End date must be after start date",
       });
     }
 
@@ -65,7 +65,7 @@ export class BookingValidationService {
       if (startDate < oneHourFromNow) {
         errors.push({
           field: "startDate",
-          message: "Booking start time cannot be in the past",
+          message: "Airport pickup bookings require at least 1 hour advance notice",
         });
       }
     } else {
