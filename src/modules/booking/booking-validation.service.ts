@@ -65,7 +65,7 @@ export class BookingValidationService {
       if (startDate < oneHourFromNow) {
         errors.push({
           field: "startDate",
-          message: "Airport pickup bookings require at least 1 hour advance notice",
+          message: "Booking start time cannot be in the past",
         });
       }
     } else {

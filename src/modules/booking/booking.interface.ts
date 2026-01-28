@@ -89,3 +89,18 @@ export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
 }
+
+export interface GeneratedLeg {
+  legDate: Date;
+  legStartTime: Date;
+  legEndTime: Date;
+}
+
+export interface LegGenerationInput {
+  startDate: Date;
+  endDate: Date;
+  bookingType: BookingType;
+  pickupTime?: string;
+  flightArrivalTime?: Date;
+  driveTimeMinutes?: number;
+}

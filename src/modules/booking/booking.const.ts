@@ -23,3 +23,13 @@ export const AIRPORT_PICKUP_MIN_ADVANCE_MS = 60 * 60 * 1000; // 1 hour
  * Allows for minor rounding differences in Decimal calculations.
  */
 export const PRICE_TOLERANCE = new Decimal("0.01");
+
+/**
+ * Constants for leg generation
+ */
+export const DAY_BOOKING_DURATION_HOURS = 12;
+export const NIGHT_START_HOUR = 23; // 11 PM
+export const NIGHT_END_HOUR = 5; // 5 AM
+export const FULL_DAY_DURATION_HOURS = 24;
+export const AIRPORT_PICKUP_BUFFER_MINUTES = 40;
+export const AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER = 1.2;
