@@ -96,13 +96,16 @@ export class BookingCalculationService {
     const totalAmount = subtotalAfterDiscounts.add(vatAmount);
 
     // 9. Calculate fleet owner commission and payout
+    // Commission is calculated on netTotal only (the rental earnings the fleet owner receives).
+    // Fuel upgrade is excluded because it goes to refueling, not the fleet owner.
+    // Security detail is excluded because it's a pass-through cost.
     const platformFleetOwnerCommissionRatePercent = rates.platformFleetOwnerCommissionRatePercent;
-    const platformFleetOwnerCommissionAmount = platformFeeBase
+    const platformFleetOwnerCommissionAmount = netTotal
       .mul(platformFleetOwnerCommissionRatePercent)
       .div(100);
 
     // Fleet owner gets: netTotal + securityDetail - commission
-    // (fuel upgrade goes to refueling, not fleet owner)
+    // (fuel upgrade goes to refueling, not fleet owner; security is pass-through)
     const fleetOwnerPayoutAmountNet = netTotal
       .add(securityDetailCost)
       .sub(platformFleetOwnerCommissionAmount);

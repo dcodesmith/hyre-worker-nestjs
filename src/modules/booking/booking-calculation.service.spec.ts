@@ -541,7 +541,7 @@ describe("BookingCalculationService", () => {
   });
 
   describe("fleet owner commission and payout", () => {
-    it("should calculate fleet owner commission on platformFeeBase", async () => {
+    it("should calculate fleet owner commission on netTotal only (excludes fuel and security)", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
@@ -552,10 +552,11 @@ describe("BookingCalculationService", () => {
 
       const result = await service.calculateBookingCost(input);
 
-      // Platform fee base: 110,000 (net + fuel, excludes security)
-      // Commission: 110,000 × 5% = 5,500
+      // Net: 100,000
+      // Commission is calculated on netTotal only (not on fuel or security)
+      // Commission: 100,000 × 5% = 5,000
       expect(result.platformFleetOwnerCommissionRatePercent.equals(new Decimal(5))).toBe(true);
-      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5500))).toBe(true);
+      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5000))).toBe(true);
     });
 
     it("should calculate fleet owner payout (netTotal + security - commission)", async () => {
@@ -571,12 +572,12 @@ describe("BookingCalculationService", () => {
 
       // Net: 100,000
       // Security: 10,000
-      // Commission: 5,500
-      // Payout: 100,000 + 10,000 - 5,500 = 104,500
-      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(104500))).toBe(true);
+      // Commission: 100,000 × 5% = 5,000
+      // Payout: 100,000 + 10,000 - 5,000 = 105,000
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(105000))).toBe(true);
     });
 
-    it("should NOT include fuel upgrade in fleet owner payout", async () => {
+    it("should NOT include fuel upgrade in fleet owner payout or commission", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
@@ -588,10 +589,11 @@ describe("BookingCalculationService", () => {
       const result = await service.calculateBookingCost(input);
 
       // Net: 100,000
-      // Fuel: 10,000 (NOT included in payout)
-      // Commission: 110,000 × 5% = 5,500
-      // Payout: 100,000 - 5,500 = 94,500 (fuel NOT included)
-      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(94500))).toBe(true);
+      // Fuel: 10,000 (NOT included in payout or commission)
+      // Commission: 100,000 × 5% = 5,000 (calculated on netTotal only)
+      // Payout: 100,000 - 5,000 = 95,000 (fuel NOT included)
+      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5000))).toBe(true);
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(95000))).toBe(true);
     });
   });
 
@@ -650,10 +652,10 @@ describe("BookingCalculationService", () => {
       expect(result.totalAmount.equals(new Decimal(124700))).toBe(true);
 
       // Step 8: Fleet owner
-      // Commission: 110,000 × 5% = 5,500
-      // Payout: 100,000 + 10,000 - 5,500 = 104,500
-      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5500))).toBe(true);
-      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(104500))).toBe(true);
+      // Commission: 100,000 × 5% = 5,000 (calculated on netTotal only, excludes fuel and security)
+      // Payout: 100,000 + 10,000 - 5,000 = 105,000
+      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5000))).toBe(true);
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(105000))).toBe(true);
     });
   });
 
