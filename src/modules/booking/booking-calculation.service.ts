@@ -9,9 +9,7 @@ import type {
   LegPrice,
 } from "./booking-calculation.interface";
 import type { GeneratedLeg } from "./booking.interface";
-
-/** Maximum number of legs eligible for fuel upgrade */
-const MAX_LEGS_FOR_FUEL_UPGRADE = 2;
+import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
 
 /**
  * Service for calculating booking financials.
