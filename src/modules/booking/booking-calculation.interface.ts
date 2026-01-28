@@ -20,7 +20,6 @@ export type CarPricing = Pick<
   | "nightRate"
   | "fullDayRate"
   | "airportPickupRate"
-  | "hourlyRate"
   | "fuelUpgradeRate"
   | "pricingIncludesFuel"
 >;

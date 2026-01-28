@@ -24,18 +24,30 @@ describe("BookingCalculationService", () => {
     nightRate: 30000, // ₦30,000
     fullDayRate: 80000, // ₦80,000
     airportPickupRate: 25000, // ₦25,000
-    hourlyRate: 5000, // ₦5,000
     fuelUpgradeRate: 10000, // ₦10,000
     pricingIncludesFuel: false,
   };
 
   // Helper to create legs
   const createLegs = (count: number): GeneratedLeg[] => {
-    return Array.from({ length: count }, (_, i) => ({
-      legDate: new Date(`2025-03-0${i + 1}T00:00:00Z`),
-      legStartTime: new Date(`2025-03-0${i + 1}T09:00:00Z`),
-      legEndTime: new Date(`2025-03-0${i + 1}T21:00:00Z`),
-    }));
+    const baseDate = new Date("2025-03-01T00:00:00Z");
+
+    return Array.from({ length: count }, (_, i) => {
+      const legDate = new Date(baseDate);
+      legDate.setUTCDate(baseDate.getUTCDate() + i);
+
+      const legStartTime = new Date(legDate);
+      legStartTime.setUTCHours(9, 0, 0, 0);
+
+      const legEndTime = new Date(legDate);
+      legEndTime.setUTCHours(21, 0, 0, 0);
+
+      return {
+        legDate,
+        legStartTime,
+        legEndTime,
+      };
+    });
   };
 
   beforeEach(async () => {
@@ -231,6 +243,21 @@ describe("BookingCalculationService", () => {
 
       expect(result.fuelUpgradeCost.equals(new Decimal(0))).toBe(true);
     });
+
+    it("should NOT add fuel upgrade when booking has 0 legs", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: [], // Empty legs array
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: true,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      expect(result.fuelUpgradeCost.equals(new Decimal(0))).toBe(true);
+      expect(result.numberOfLegs).toBe(0);
+    });
   });
 
   describe("platform fee calculation", () => {
@@ -416,6 +443,39 @@ describe("BookingCalculationService", () => {
         requiresFullTank: false,
         userCreditsBalance: new Decimal(10000),
         creditsToUse: new Decimal(0),
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      expect(result.creditsUsed.equals(new Decimal(0))).toBe(true);
+    });
+
+    it("should return zero credits when user balance is negative", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        userCreditsBalance: new Decimal(-500), // Corrupted/negative balance
+        creditsToUse: new Decimal(1000),
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      // Should not allow negative balance to increase the subtotal
+      expect(result.creditsUsed.equals(new Decimal(0))).toBe(true);
+    });
+
+    it("should return zero credits when user balance is zero", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        userCreditsBalance: new Decimal(0),
+        creditsToUse: new Decimal(1000),
       };
 
       const result = await service.calculateBookingCost(input);

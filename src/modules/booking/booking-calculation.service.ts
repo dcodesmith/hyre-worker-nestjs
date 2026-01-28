@@ -196,7 +196,7 @@ export class BookingCalculationService {
    * Fuel upgrade applies only if:
    * 1. Car pricing doesn't include fuel
    * 2. Customer requests full tank
-   * 3. Booking has 2 or fewer legs
+   * 3. Booking has at least 1 leg and no more than 2 legs
    *
    * @param car - Car pricing information
    * @param requiresFullTank - Whether customer requests full tank
@@ -211,6 +211,7 @@ export class BookingCalculationService {
     const isEligible =
       !car.pricingIncludesFuel &&
       requiresFullTank &&
+      numberOfLegs > 0 &&
       numberOfLegs <= MAX_LEGS_FOR_FUEL_UPGRADE &&
       car.fuelUpgradeRate !== null &&
       car.fuelUpgradeRate > 0;
@@ -254,7 +255,8 @@ export class BookingCalculationService {
     userBalance: Decimal,
     remainingSubtotal: Decimal,
   ): Decimal {
-    if (creditsToUse.lte(0)) {
+    // Early return if no credits requested or no balance available
+    if (creditsToUse.lte(0) || userBalance.lte(0)) {
       return new Decimal(0);
     }
 
