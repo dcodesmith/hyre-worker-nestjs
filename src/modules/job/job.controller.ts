@@ -1,7 +1,7 @@
 import { Controller, HttpCode, HttpStatus, Param, Post, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ApiKeyGuard } from "./api-key.guard";
-import { JobException } from "./errors";
+import { ManualTriggersDisabledException } from "./errors";
 import { ValidateJobTypePipe } from "./job.dto";
 import { JobType, JobTypeNames } from "./job.schema";
 import { JobService } from "./job.service";
@@ -42,7 +42,7 @@ export class JobController {
   @Post("trigger/:jobType")
   async triggerJob(@Param("jobType", ValidateJobTypePipe) jobType: JobType) {
     if (!this.manualTriggersEnabled) {
-      throw JobException.manualTriggersDisabled();
+      throw new ManualTriggersDisabledException();
     }
 
     // Get the handler for this job type and execute it

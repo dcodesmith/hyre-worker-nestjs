@@ -1,6 +1,6 @@
 import { ExecutionContext, Injectable } from "@nestjs/common";
 import { ThrottlerGuard } from "@nestjs/throttler";
-import { JobException } from "./errors";
+import { JobRateLimitExceededException } from "./errors";
 
 /**
  * Custom throttler guard that includes the jobType parameter in the tracking key
@@ -53,6 +53,6 @@ export class JobThrottlerGuard extends ThrottlerGuard {
     const ttlSeconds = throttlerConfig?.ttl || 3600;
     const retryAfter = Math.ceil(Date.now() / 1000) + ttlSeconds;
 
-    throw JobException.rateLimitExceeded(jobType, retryAfter);
+    throw new JobRateLimitExceededException(jobType, retryAfter);
   }
 }

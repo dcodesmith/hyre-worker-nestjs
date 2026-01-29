@@ -6,6 +6,12 @@ import { EnvConfig } from "src/config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
 import { IATA_TO_ICAO_MAP } from "./flightaware.const";
+import {
+  FlightAlreadyLandedException,
+  FlightAwareApiException,
+  FlightNotFoundException,
+  InvalidFlightNumberException,
+} from "./flightaware.error";
 import type {
   CreateAlertParams,
   FlightAwareAlertResponse,
@@ -13,8 +19,18 @@ import type {
   FlightAwareResponse,
   FlightAwareScheduledFlight,
   FlightAwareSchedulesResponse,
-  FlightValidationResult,
+  ValidatedFlight,
 } from "./flightaware.interface";
+
+/**
+ * Internal result type for flight validation (used for caching and internal processing).
+ * The public API throws exceptions instead of returning this type.
+ */
+type InternalFlightResult =
+  | { type: "success"; flight: ValidatedFlight }
+  | { type: "alreadyLanded"; flightNumber: string; landedTime: string; nextFlightDate?: string }
+  | { type: "notFound" }
+  | { type: "error"; message: string };
 
 /**
  * Service for interacting with FlightAware AeroAPI
@@ -29,10 +45,10 @@ export class FlightAwareService implements OnModuleDestroy {
   private readonly httpClient: AxiosInstance;
   private readonly cleanupIntervalId: NodeJS.Timeout;
 
-  /** In-memory cache for flight validation results */
+  /** In-memory cache for flight validation results (null = not found) */
   private readonly flightCache = new Map<
     string,
-    { data: FlightValidationResult; expiresAt: number }
+    { data: ValidatedFlight | null; expiresAt: number }
   >();
   private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -59,26 +75,31 @@ export class FlightAwareService implements OnModuleDestroy {
   }
 
   /**
-   * Validate and search for a flight using FlightAware AeroAPI
+   * Validate and search for a flight using FlightAware AeroAPI.
    *
    * @param flightNumber - IATA flight number (e.g., "BA74", "AA123")
    * @param pickupDate - ISO date string (e.g., "2025-12-25")
+   * @returns The validated flight data
+   * @throws FlightNotFoundException if the flight is not found
+   * @throws FlightAlreadyLandedException if the flight has already landed
+   * @throws InvalidFlightNumberException if the flight number format is invalid
+   * @throws FlightAwareApiException if there's an API error
    */
-  async validateFlight(flightNumber: string, pickupDate: string): Promise<FlightValidationResult> {
+  async validateFlight(flightNumber: string, pickupDate: string): Promise<ValidatedFlight> {
     // 1. Validate format
     if (!this.isValidFlightNumberFormat(flightNumber)) {
-      return {
-        type: "error",
-        message: `Invalid flight number format: ${flightNumber}. Expected format: 2-3 alphanumeric airline code + 1-5 digits (e.g., BA74, AA123, P47579)`,
-      };
+      throw new InvalidFlightNumberException(flightNumber);
     }
 
     const normalizedFlightNumber = flightNumber.toUpperCase();
 
     // 2. Check cache
     const cached = this.getCachedFlight(normalizedFlightNumber, pickupDate);
-    if (cached) {
+    if (cached !== undefined) {
       this.logger.debug("Flight cache HIT", { flightNumber: normalizedFlightNumber, pickupDate });
+      if (cached === null) {
+        throw new FlightNotFoundException(normalizedFlightNumber, pickupDate);
+      }
       return cached;
     }
 
@@ -102,36 +123,57 @@ export class FlightAwareService implements OnModuleDestroy {
     const diffDays = differenceInDays(startDate, now);
     const useLiveAPI = diffDays < 2;
 
-    try {
-      let result: FlightValidationResult;
+    let result: InternalFlightResult;
 
-      if (useLiveAPI) {
-        const maxEndDate = new Date(now);
-        maxEndDate.setDate(maxEndDate.getDate() + 2);
-        const cappedEndDate = new Date(Math.min(endDate.getTime(), maxEndDate.getTime()));
+    if (useLiveAPI) {
+      const maxEndDate = new Date(now);
+      maxEndDate.setDate(maxEndDate.getDate() + 2);
+      const cappedEndDate = new Date(Math.min(endDate.getTime(), maxEndDate.getTime()));
 
-        result = await this.fetchLiveFlight(
-          normalizedFlightNumber,
-          startDate,
-          cappedEndDate,
-          pickupDate,
+      result = await this.fetchLiveFlight(
+        normalizedFlightNumber,
+        startDate,
+        cappedEndDate,
+        pickupDate,
+      );
+    } else {
+      result = await this.fetchScheduledFlight(normalizedFlightNumber, startDate, endDate);
+    }
+
+    // Convert result to exception or return flight
+    return this.handleFlightResult(result, normalizedFlightNumber, pickupDate);
+  }
+
+  /**
+   * Convert internal flight result to either a ValidatedFlight or throw an exception.
+   */
+  private handleFlightResult(
+    result: InternalFlightResult,
+    flightNumber: string,
+    pickupDate: string,
+  ): ValidatedFlight {
+    switch (result.type) {
+      case "success":
+        // Cache successful result
+        this.setCachedFlight(flightNumber, pickupDate, result.flight);
+        return result.flight;
+
+      case "notFound":
+        // Cache not found result
+        this.setCachedFlight(flightNumber, pickupDate, null);
+        throw new FlightNotFoundException(flightNumber, pickupDate);
+
+      case "alreadyLanded":
+        // Don't cache - time sensitive
+        throw new FlightAlreadyLandedException(
+          result.flightNumber,
+          result.landedTime,
+          result.nextFlightDate,
         );
-      } else {
-        result = await this.fetchScheduledFlight(normalizedFlightNumber, startDate, endDate);
-      }
 
-      // Cache the result (only caches "success" and "notFound")
-      this.setCachedFlight(normalizedFlightNumber, pickupDate, result);
-
-      return result;
-    } catch (error) {
-      this.logger.error(`Error validating flight ${normalizedFlightNumber}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return {
-        type: "error",
-        message: error instanceof Error ? error.message : "An unexpected error occurred",
-      };
+      case "error":
+        // Don't cache errors
+        throw new FlightAwareApiException(result.message);
     }
   }
 
@@ -315,11 +357,11 @@ export class FlightAwareService implements OnModuleDestroy {
     startDate: Date,
     endDate: Date,
     pickupDate: string,
-  ): Promise<FlightValidationResult> {
+  ): Promise<InternalFlightResult> {
     const start = startDate.toISOString();
     const end = endDate.toISOString();
 
-    const tryFlightNumber = async (flightNum: string): Promise<FlightValidationResult | null> => {
+    const tryFlightNumber = async (flightNum: string): Promise<InternalFlightResult | null> => {
       const apiUrl = `/flights/${flightNum}?start=${start}&end=${end}`;
       this.logger.debug("FlightAware LIVE API request", { apiUrl });
 
@@ -369,13 +411,11 @@ export class FlightAwareService implements OnModuleDestroy {
     flightNumber: string,
     startDate: Date,
     endDate: Date,
-  ): Promise<FlightValidationResult> {
+  ): Promise<InternalFlightResult> {
     const startDateStr = startDate.toISOString().split("T")[0];
     const endDateStr = endDate.toISOString().split("T")[0];
 
-    const tryScheduledFlight = async (
-      flightNum: string,
-    ): Promise<FlightValidationResult | null> => {
+    const tryScheduledFlight = async (flightNum: string): Promise<InternalFlightResult | null> => {
       const match2 = /^([A-Z0-9]{2})(\d{1,5})$/i.exec(flightNum);
       const match3 = /^([A-Z0-9]{3})(\d{1,5})$/i.exec(flightNum);
       const match = match2 || match3;
@@ -451,15 +491,22 @@ export class FlightAwareService implements OnModuleDestroy {
     return icaoCode ? `${icaoCode}${flightNum}` : null;
   }
 
-  private handleApiError(error: unknown, flightNum: string): FlightValidationResult {
+  private handleApiError(error: unknown, flightNum: string): InternalFlightResult {
     const errorInfo = this.httpClientService.handleError(error, "fetchLiveFlight", "FlightAware");
     this.logger.warn("FlightAware API error", { status: errorInfo.status, flightNum });
 
     if (errorInfo.status === 404) return { type: "notFound" };
-    if (errorInfo.status === 401) throw new Error("FlightAware API authentication failed");
-    if (errorInfo.status === 429) throw new Error("FlightAware API rate limit exceeded");
+    if (errorInfo.status === 401) {
+      return { type: "error", message: "FlightAware API authentication failed" };
+    }
+    if (errorInfo.status === 429) {
+      return { type: "error", message: "FlightAware API rate limit exceeded" };
+    }
 
-    throw new Error(`FlightAware API error: ${errorInfo.status || errorInfo.message}`);
+    return {
+      type: "error",
+      message: `FlightAware API error: ${errorInfo.status || errorInfo.message}`,
+    };
   }
 
   private findMatchingFlight(
@@ -513,7 +560,7 @@ export class FlightAwareService implements OnModuleDestroy {
   private buildSuccessResult(
     flight: FlightAwareFlightLeg,
     flightNumber: string,
-  ): FlightValidationResult {
+  ): InternalFlightResult {
     return {
       type: "success",
       flight: {
@@ -542,7 +589,7 @@ export class FlightAwareService implements OnModuleDestroy {
   private async buildScheduledSuccessResult(
     scheduledFlight: FlightAwareScheduledFlight,
     flightNumber: string,
-  ): Promise<FlightValidationResult> {
+  ): Promise<InternalFlightResult> {
     const scheduledArrival =
       scheduledFlight.estimated_in ??
       scheduledFlight.scheduled_in ??
@@ -590,9 +637,9 @@ export class FlightAwareService implements OnModuleDestroy {
   private buildAlreadyLandedResult(
     landedFlight: FlightAwareFlightLeg,
     flightNumber: string,
-    pickupDateStr: string,
+    _pickupDateStr: string,
     nextFlightDate: string | null,
-  ): FlightValidationResult | null {
+  ): InternalFlightResult | null {
     const destinationIATA = landedFlight.destination.code_iata;
 
     if (destinationIATA !== "LOS") {
@@ -606,7 +653,6 @@ export class FlightAwareService implements OnModuleDestroy {
     return {
       type: "alreadyLanded",
       flightNumber,
-      requestedDate: pickupDateStr,
       landedTime,
       nextFlightDate: nextFlightDate ?? undefined,
     };
@@ -653,7 +699,12 @@ export class FlightAwareService implements OnModuleDestroy {
     return `flight:${flightNumber.toUpperCase()}:${date}`;
   }
 
-  private getCachedFlight(flightNumber: string, date: string): FlightValidationResult | undefined {
+  /**
+   * Get cached flight result.
+   * @returns ValidatedFlight if found and valid, null if flight was cached as not found,
+   *          undefined if not in cache or expired
+   */
+  private getCachedFlight(flightNumber: string, date: string): ValidatedFlight | null | undefined {
     const key = this.getCacheKey(flightNumber, date);
     const cached = this.flightCache.get(key);
 
@@ -667,12 +718,11 @@ export class FlightAwareService implements OnModuleDestroy {
     return cached.data;
   }
 
-  private setCachedFlight(flightNumber: string, date: string, data: FlightValidationResult): void {
-    // Don't cache time-sensitive results
-    if (data.type === "alreadyLanded" || data.type === "error") {
-      return;
-    }
-
+  /**
+   * Cache a flight result.
+   * @param data - ValidatedFlight for successful lookup, null for not found
+   */
+  private setCachedFlight(flightNumber: string, date: string, data: ValidatedFlight | null): void {
     const key = this.getCacheKey(flightNumber, date);
     this.flightCache.set(key, {
       data,

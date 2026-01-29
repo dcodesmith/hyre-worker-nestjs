@@ -8,6 +8,8 @@ import type {
 /**
  * Error codes for booking-related errors.
  * These are machine-readable codes that can be used by clients.
+ *
+ * Note: Flight-related errors are defined in src/modules/flightaware/flightaware.error.ts
  */
 export const BookingErrorCode = {
   // Validation errors
@@ -24,11 +26,6 @@ export const BookingErrorCode = {
   CAR_NOT_FOUND: "CAR_NOT_FOUND",
   CAR_NOT_AVAILABLE: "CAR_NOT_AVAILABLE",
   CAR_NOT_APPROVED: "CAR_NOT_APPROVED",
-
-  // Flight errors
-  FLIGHT_NOT_FOUND: "FLIGHT_NOT_FOUND",
-  FLIGHT_ALREADY_LANDED: "FLIGHT_ALREADY_LANDED",
-  FLIGHT_VALIDATION_ERROR: "FLIGHT_VALIDATION_ERROR",
 
   // User/guest errors
   GUEST_EMAIL_REGISTERED: "GUEST_EMAIL_REGISTERED",
@@ -99,37 +96,6 @@ export class CarNotFoundException extends BookingException {
       title: "Car Not Found",
       status: HttpStatus.NOT_FOUND,
       detail: `Car with ID ${carId} was not found`,
-    });
-  }
-}
-
-const FLIGHT_ERROR_TITLES: Record<
-  | typeof BookingErrorCode.FLIGHT_NOT_FOUND
-  | typeof BookingErrorCode.FLIGHT_ALREADY_LANDED
-  | typeof BookingErrorCode.FLIGHT_VALIDATION_ERROR,
-  string
-> = {
-  [BookingErrorCode.FLIGHT_NOT_FOUND]: "Flight Not Found",
-  [BookingErrorCode.FLIGHT_ALREADY_LANDED]: "Flight Already Landed",
-  [BookingErrorCode.FLIGHT_VALIDATION_ERROR]: "Flight Validation Error",
-};
-
-/**
- * Exception for flight validation errors.
- */
-export class FlightValidationException extends BookingException {
-  constructor(
-    code:
-      | typeof BookingErrorCode.FLIGHT_NOT_FOUND
-      | typeof BookingErrorCode.FLIGHT_ALREADY_LANDED
-      | typeof BookingErrorCode.FLIGHT_VALIDATION_ERROR,
-    detail: string,
-  ) {
-    super({
-      type: code,
-      title: FLIGHT_ERROR_TITLES[code],
-      status: HttpStatus.BAD_REQUEST,
-      detail,
     });
   }
 }

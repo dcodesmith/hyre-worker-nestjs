@@ -4,18 +4,22 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import type { FlightValidationResult } from "../flightaware/flightaware.interface";
+import {
+  FlightAlreadyLandedException,
+  FlightNotFoundException,
+} from "../flightaware/flightaware.error";
+import type { ValidatedFlight } from "../flightaware/flightaware.interface";
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
 import {
   BookingValidationException,
+  CarNotAvailableException,
   CarNotFoundException,
-  FlightValidationException,
   PaymentIntentFailedException,
 } from "./booking.error";
-import type { BookingCreationInput, ValidationResult } from "./booking.interface";
+import type { BookingCreationInput } from "./booking.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingLegService } from "./booking-leg.service";
@@ -154,12 +158,12 @@ describe("BookingCreationService", () => {
 
   describe("createBooking", () => {
     // Setup common mocks for successful booking flow
+    // Validation methods now return void and throw on failure, so we just mock them to do nothing
     const setupSuccessfulMocks = () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
-      vi.mocked(validationService.validateGuestEmail).mockResolvedValue(validResult);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(validResult);
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -259,9 +263,10 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingValidationException when date validation fails", async () => {
-      vi.mocked(validationService.validateDates).mockReturnValue({
-        valid: false,
-        errors: [{ field: "startDate", message: "Start date cannot be in the past" }],
+      vi.mocked(validationService.validateDates).mockImplementation(() => {
+        throw new BookingValidationException([
+          { field: "startDate", message: "Start date cannot be in the past" },
+        ]);
       });
 
       const booking = createBookingInput();
@@ -274,33 +279,30 @@ describe("BookingCreationService", () => {
       expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
     });
 
-    it("should throw BookingValidationException when car is not available", async () => {
-      vi.mocked(validationService.validateDates).mockReturnValue({ valid: true, errors: [] });
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue({
-        valid: false,
-        errors: [{ field: "carId", message: "Car is not available for the selected dates" }],
-      });
+    it("should throw CarNotAvailableException when car is not available", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockRejectedValue(
+        new CarNotAvailableException("car-123", "Car is not available for the selected dates"),
+      );
 
       const booking = createBookingInput();
       const user = createUserContext();
 
       await expect(service.createBooking({ booking, user })).rejects.toThrow(
-        BookingValidationException,
+        CarNotAvailableException,
       );
 
       expect(databaseService.car.findUnique).not.toHaveBeenCalled();
     });
 
     it("should throw BookingValidationException when guest email is registered", async () => {
-      vi.mocked(validationService.validateDates).mockReturnValue({ valid: true, errors: [] });
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue({
-        valid: true,
-        errors: [],
-      });
-      vi.mocked(validationService.validateGuestEmail).mockResolvedValue({
-        valid: false,
-        errors: [{ field: "guestEmail", message: "This email is already registered" }],
-      });
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validateGuestEmail).mockRejectedValue(
+        new BookingValidationException([
+          { field: "guestEmail", message: "This email is already registered" },
+        ]),
+      );
 
       const booking = createGuestBookingInput();
 
@@ -310,11 +312,8 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw CarNotFoundException when car does not exist", async () => {
-      vi.mocked(validationService.validateDates).mockReturnValue({ valid: true, errors: [] });
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue({
-        valid: true,
-        errors: [],
-      });
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(null);
 
       const booking = createBookingInput();
@@ -324,11 +323,8 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingValidationException when price does not match", async () => {
-      vi.mocked(validationService.validateDates).mockReturnValue({ valid: true, errors: [] });
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue({
-        valid: true,
-        errors: [],
-      });
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
       vi.mocked(legService.generateLegs).mockReturnValue([
         {
@@ -341,9 +337,10 @@ describe("BookingCreationService", () => {
         createBookingFinancials(),
       );
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue({
-        valid: false,
-        errors: [{ field: "clientTotalAmount", message: "Price mismatch" }],
+      vi.mocked(validationService.validatePriceMatch).mockImplementation(() => {
+        throw new BookingValidationException([
+          { field: "clientTotalAmount", message: "Price mismatch" },
+        ]);
       });
 
       const booking = createBookingInput({ clientTotalAmount: "10000" });
@@ -394,26 +391,23 @@ describe("BookingCreationService", () => {
 
   describe("createBooking - Airport Pickup", () => {
     it("should validate flight for airport pickup bookings", async () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(validResult);
+      // Validation methods now return void
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
 
-      const flightValidationResult: FlightValidationResult = {
-        type: "success",
-        flight: {
-          flightNumber: "BA74",
-          flightId: "BA74-20250201",
-          origin: "EGLL",
-          originIATA: "LHR",
-          destination: "DNMM",
-          destinationIATA: "LOS",
-          scheduledArrival: "2025-02-01T14:30:00Z",
-          status: "Scheduled",
-          isLive: true,
-        },
+      const validatedFlight: ValidatedFlight = {
+        flightNumber: "BA74",
+        flightId: "BA74-20250201",
+        origin: "EGLL",
+        originIATA: "LHR",
+        destination: "DNMM",
+        destinationIATA: "LOS",
+        scheduledArrival: "2025-02-01T14:30:00Z",
+        status: "Scheduled",
+        isLive: true,
       };
-      vi.mocked(flightAwareService.validateFlight).mockResolvedValue(flightValidationResult);
+      vi.mocked(flightAwareService.validateFlight).mockResolvedValue(validatedFlight);
 
       vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
         durationMinutes: 60,
@@ -480,14 +474,13 @@ describe("BookingCreationService", () => {
       expect(mapsService.calculateAirportTripDuration).toHaveBeenCalled();
     });
 
-    it("should throw FlightValidationException when flight is not found", async () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
+    it("should throw FlightNotFoundException when flight is not found", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
-      vi.mocked(flightAwareService.validateFlight).mockResolvedValue({
-        type: "notFound",
-      });
+      vi.mocked(flightAwareService.validateFlight).mockRejectedValue(
+        new FlightNotFoundException("INVALID123", "2025-02-01"),
+      );
 
       const booking = createBookingInput({
         bookingType: "AIRPORT_PICKUP",
@@ -497,22 +490,17 @@ describe("BookingCreationService", () => {
       const user = createUserContext();
 
       await expect(service.createBooking({ booking, user })).rejects.toThrow(
-        FlightValidationException,
+        FlightNotFoundException,
       );
     });
 
-    it("should throw FlightValidationException when flight has already landed", async () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
+    it("should throw FlightAlreadyLandedException when flight has already landed", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
-      vi.mocked(flightAwareService.validateFlight).mockResolvedValue({
-        type: "alreadyLanded",
-        flightNumber: "BA74",
-        requestedDate: "2025-02-01",
-        landedTime: "2:30 PM",
-        nextFlightDate: "2025-02-02",
-      });
+      vi.mocked(flightAwareService.validateFlight).mockRejectedValue(
+        new FlightAlreadyLandedException("BA74", "2:30 PM", "2025-02-02"),
+      );
 
       const booking = createBookingInput({
         bookingType: "AIRPORT_PICKUP",
@@ -522,17 +510,16 @@ describe("BookingCreationService", () => {
       const user = createUserContext();
 
       await expect(service.createBooking({ booking, user })).rejects.toThrow(
-        FlightValidationException,
+        FlightAlreadyLandedException,
       );
     });
   });
 
   describe("createBooking - Referral Handling", () => {
     it("should apply referral discount for eligible users", async () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(validResult);
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -611,11 +598,10 @@ describe("BookingCreationService", () => {
     });
 
     it("should not apply referral discount for guest users", async () => {
-      const validResult: ValidationResult = { valid: true, errors: [] };
-      vi.mocked(validationService.validateDates).mockReturnValue(validResult);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(validResult);
-      vi.mocked(validationService.validateGuestEmail).mockResolvedValue(validResult);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(validResult);
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 

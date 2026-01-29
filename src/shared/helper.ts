@@ -74,7 +74,7 @@ export function formatDate(date: string | Date) {
 
   return formatter
     .format(new Date(date))
-    .replaceAll(/,/g, " @")
+    .replaceAll(",", " @")
     .replaceAll(/(\d{1,2})(?=\s)/g, replaceWithOrdinalSuffix);
 }
 
@@ -192,6 +192,6 @@ export function normaliseBookingLegDetails(
  */
 export function generateBookingReference(): string {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, "0");
   return `BK-${timestamp}-${random}`;
 }

@@ -12,7 +12,7 @@ import {
   TRIP_END,
   TRIP_START,
 } from "../../config/constants";
-import { JobException } from "./errors";
+import { JobEnqueueFailedException } from "./errors";
 import { JobService } from "./job.service";
 
 vi.mock("node:crypto", () => ({
@@ -135,12 +135,12 @@ describe("JobService", () => {
     );
   });
 
-  it("should throw JobException when enqueue fails", async () => {
+  it("should throw JobEnqueueFailedException when enqueue fails", async () => {
     const error = new Error("Queue error");
     vi.mocked(reminderQueue.add).mockRejectedValueOnce(error);
 
     await expect(service.triggerStartBookingLegReminders()).rejects.toThrow(
-      JobException.enqueueFailed(BOOKING_LEG_START_REMINDER, "Queue error"),
+      JobEnqueueFailedException,
     );
   });
 });

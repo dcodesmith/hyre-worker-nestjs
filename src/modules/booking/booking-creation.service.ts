@@ -11,16 +11,15 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { format } from "date-fns";
 import { generateBookingReference } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
+import { FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
-  BookingErrorCode,
-  BookingValidationException,
+  BookingException,
   CarNotFoundException,
-  FlightValidationException,
   PaymentIntentFailedException,
 } from "./booking.error";
 import type {
@@ -76,7 +75,8 @@ export class BookingCreationService {
    * @returns Booking ID and checkout URL
    * @throws BookingValidationException for validation errors
    * @throws CarNotFoundException if car not found
-   * @throws FlightValidationException for flight validation errors
+   * @throws CarNotAvailableException if car is not available
+   * @throws FlightAwareException for flight validation errors (from FlightAware module)
    * @throws PaymentIntentFailedException if payment creation fails
    * @throws BookingCreationFailedException for other errors
    */
@@ -92,34 +92,23 @@ export class BookingCreationService {
       userId: user?.id,
     });
 
-    // 1. Validate dates and business rules
-    const dateValidation = this.validationService.validateDates({
+    // 1. Validate dates and business rules (throws BookingValidationException)
+    this.validationService.validateDates({
       startDate: booking.startDate,
       endDate: booking.endDate,
       bookingType: booking.bookingType,
     });
 
-    if (!dateValidation.valid) {
-      throw new BookingValidationException(dateValidation.errors);
-    }
-
-    // 2. Check car availability
-    const availabilityValidation = await this.validationService.checkCarAvailability({
+    // 2. Check car availability (throws CarNotFoundException or CarNotAvailableException)
+    await this.validationService.checkCarAvailability({
       carId: booking.carId,
       startDate: booking.startDate,
       endDate: booking.endDate,
     });
 
-    if (!availabilityValidation.valid) {
-      throw new BookingValidationException(availabilityValidation.errors);
-    }
-
-    // 3. Validate guest email (if guest booking)
+    // 3. Validate guest email if guest booking (throws BookingValidationException)
     if (isGuestBooking(booking)) {
-      const guestValidation = await this.validationService.validateGuestEmail(booking);
-      if (!guestValidation.valid) {
-        throw new BookingValidationException(guestValidation.errors);
-      }
+      await this.validationService.validateGuestEmail(booking);
     }
 
     // 4. Validate flight for airport pickup
@@ -135,10 +124,15 @@ export class BookingCreationService {
     } | null = null;
 
     if (booking.bookingType === "AIRPORT_PICKUP" && booking.flightNumber) {
+      // For AIRPORT_PICKUP: pickupAddress is the airport, dropOffAddress is the customer's destination
+      // Drive time should be calculated from airport to customer's destination
+      const customerDestination =
+        booking.sameLocation === false ? booking.dropOffAddress : booking.pickupAddress;
+
       flightData = await this.validateAndGetFlightData(
         booking.flightNumber,
         booking.startDate,
-        booking.pickupAddress,
+        customerDestination,
       );
     }
 
@@ -164,15 +158,8 @@ export class BookingCreationService {
       referralDiscountAmount: referralEligibility.discountAmount,
     });
 
-    // 9. Validate price match (if client provided total)
-    const priceValidation = this.validationService.validatePriceMatch(
-      booking.clientTotalAmount,
-      financials.totalAmount,
-    );
-
-    if (!priceValidation.valid) {
-      throw new BookingValidationException(priceValidation.errors);
-    }
+    // 9. Validate price match (throws BookingValidationException if mismatch)
+    this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
 
     // 10. Generate booking reference
     const bookingReference = generateBookingReference();
@@ -204,6 +191,7 @@ export class BookingCreationService {
 
   /**
    * Validate flight and get flight data for airport pickup bookings.
+   * FlightAwareService throws FlightAwareException if validation fails.
    */
   private async validateAndGetFlightData(
     flightNumber: string,
@@ -218,41 +206,18 @@ export class BookingCreationService {
     originCodeIATA: string | undefined;
     destinationCode: string | undefined;
     flightNumber: string;
+    driveTimeMinutes?: number;
   }> {
     const pickupDateStr = format(pickupDate, "yyyy-MM-dd");
 
-    const flightResult = await this.flightAwareService.validateFlight(flightNumber, pickupDateStr);
+    // FlightAwareService now throws FlightAwareException on validation errors
+    const flight = await this.flightAwareService.validateFlight(flightNumber, pickupDateStr);
 
-    if (flightResult.type === "notFound") {
-      throw new FlightValidationException(
-        BookingErrorCode.FLIGHT_NOT_FOUND,
-        `Flight ${flightNumber} not found for ${pickupDateStr}. Please verify the flight number and date.`,
-      );
-    }
-
-    if (flightResult.type === "alreadyLanded") {
-      const message = flightResult.nextFlightDate
-        ? `Flight ${flightNumber} has already landed at ${flightResult.landedTime}. The next flight is on ${flightResult.nextFlightDate}.`
-        : `Flight ${flightNumber} has already landed at ${flightResult.landedTime}.`;
-
-      throw new FlightValidationException(BookingErrorCode.FLIGHT_ALREADY_LANDED, message);
-    }
-
-    if (flightResult.type === "error") {
-      throw new FlightValidationException(
-        BookingErrorCode.FLIGHT_VALIDATION_ERROR,
-        flightResult.message,
-      );
-    }
-
-    // Flight validation successful
-    const { flight } = flightResult;
-
-    // Calculate drive time if we have the destination airport
-    let _driveTimeMinutes: number | undefined;
+    // Calculate drive time if we have the drop-off address
+    let driveTimeMinutes: number | undefined;
     if (dropOffAddress) {
       const driveTimeResult = await this.mapsService.calculateAirportTripDuration(dropOffAddress);
-      _driveTimeMinutes = driveTimeResult.durationMinutes;
+      driveTimeMinutes = driveTimeResult.durationMinutes;
     }
 
     // Get the best arrival time
@@ -269,6 +234,7 @@ export class BookingCreationService {
       originCodeIATA: flight.originIATA,
       destinationCode: flight.destination,
       flightNumber: flight.flightNumber,
+      driveTimeMinutes,
     };
   }
 
@@ -304,6 +270,7 @@ export class BookingCreationService {
     flightData: {
       arrivalTime: Date;
       destinationIATA: string | undefined;
+      driveTimeMinutes?: number;
     } | null,
   ): GeneratedLeg[] {
     const { bookingType, startDate, endDate } = booking;
@@ -343,6 +310,7 @@ export class BookingCreationService {
           startDate,
           endDate,
           flightArrivalTime: flightData?.arrivalTime,
+          driveTimeMinutes: flightData?.driveTimeMinutes,
         };
         break;
 
@@ -422,8 +390,8 @@ export class BookingCreationService {
   /**
    * Create the booking record with payment intent.
    *
-   * If payment intent creation fails, the booking is still created
-   * with a flag for audit purposes.
+   * This method wraps booking creation and payment intent in a single transaction.
+   * If payment intent creation fails, the entire transaction rolls back.
    */
   private async createBookingWithPayment(params: {
     booking: CreateBookingInput;
@@ -526,11 +494,10 @@ export class BookingCreationService {
         };
       });
     } catch (error) {
-      // Re-throw booking-specific exceptions
-      if (
-        error instanceof BookingValidationException ||
-        error instanceof PaymentIntentFailedException
-      ) {
+      // Re-throw domain-specific exceptions
+      // - BookingException covers all booking errors (validation, car not found/available, payment)
+      // - FlightAwareException covers flight validation errors
+      if (error instanceof BookingException || error instanceof FlightAwareException) {
         throw error;
       }
 
@@ -791,7 +758,7 @@ export class BookingCreationService {
 
       return paymentResult.checkoutUrl;
     } catch (error) {
-      // Payment intent failed - we keep the booking with UNPAID status for audit
+      // Payment intent failed - transaction will roll back, deleting the booking
       this.logger.error("Payment intent creation failed", {
         bookingId: createdBooking.id,
         bookingReference: createdBooking.bookingReference,

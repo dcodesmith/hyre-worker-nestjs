@@ -24,7 +24,9 @@ export interface ValidatedFlight {
 }
 
 /**
- * Result type for flight validation
+ * Result type for flight validation.
+ * @deprecated The FlightAwareService now throws FlightAwareException instead of returning this type.
+ * This type is kept for backwards compatibility with existing tests.
  */
 export type FlightValidationResult =
   | {

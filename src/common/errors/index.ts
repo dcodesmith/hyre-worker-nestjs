@@ -5,6 +5,7 @@
  * - Status Change errors: src/modules/status-change/errors (StatusChangeException, StatusChangeErrorCodes)
  * - Reminder errors: src/modules/reminder/errors (ReminderException, ReminderErrorCodes)
  * - Booking errors: src/modules/booking/booking.error (BookingException, BookingErrorCode)
+ * - FlightAware errors: src/modules/flightaware/flightaware.error (FlightAwareException, FlightAwareErrorCode)
  */
 export * from "./app.exception";
 export * from "./problem-details.interface";

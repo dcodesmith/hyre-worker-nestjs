@@ -49,6 +49,8 @@ export interface FlightDataForBooking {
   originCodeIATA: string | undefined;
   destinationCode: string | undefined;
   flightNumber: string;
+  /** Drive time from airport to drop-off location in minutes */
+  driveTimeMinutes?: number;
 }
 
 /**
@@ -138,16 +140,6 @@ export interface CarAvailabilityInput {
   startDate: Date;
   endDate: Date;
   excludeBookingId?: string;
-}
-
-export interface ValidationError {
-  field: string;
-  message: string;
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: ValidationError[];
 }
 
 export interface GeneratedLeg {
