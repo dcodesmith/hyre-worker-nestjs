@@ -14,6 +14,7 @@ import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
 import {
+  BookingCreationFailedException,
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -311,6 +312,32 @@ describe("BookingCreationService", () => {
       );
     });
 
+    it("should throw BookingValidationException when user is null but booking lacks guest fields", async () => {
+      // Setup all mocks to get to the getCustomerDetails call
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials(),
+      );
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+
+      // Use a non-guest booking (no guestEmail, guestName, guestPhone)
+      const booking = createBookingInput();
+
+      // Pass user: null with a non-guest booking
+      await expect(service.createBooking({ booking, user: null })).rejects.toThrow(
+        BookingValidationException,
+      );
+    });
+
     it("should throw CarNotFoundException when car does not exist", async () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
@@ -386,6 +413,38 @@ describe("BookingCreationService", () => {
       await expect(service.createBooking({ booking, user })).rejects.toThrow(
         PaymentIntentFailedException,
       );
+    });
+
+    it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+
+      // Return empty legs array (edge case regression scenario)
+      vi.mocked(legService.generateLegs).mockReturnValue([]);
+
+      // BookingCalculationService returns numberOfLegs: 0 for empty legs array
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials({ numberOfLegs: 0, legPrices: [] }),
+      );
+
+      const booking = createBookingInput();
+      const user = createUserContext();
+
+      // Verify it throws BookingCreationFailedException with the correct detail
+      await expect(service.createBooking({ booking, user })).rejects.toBeInstanceOf(
+        BookingCreationFailedException,
+      );
+      await expect(service.createBooking({ booking, user })).rejects.toMatchObject({
+        problemDetails: {
+          detail: "Cannot create booking: number of legs must be greater than zero",
+        },
+      });
+
+      // Ensure transaction was never started (validation happens before)
+      expect(mockTransaction).not.toHaveBeenCalled();
     });
   });
 

@@ -24,31 +24,6 @@ export interface ValidatedFlight {
 }
 
 /**
- * Result type for flight validation.
- * @deprecated The FlightAwareService now throws FlightAwareException instead of returning this type.
- * This type is kept for backwards compatibility with existing tests.
- */
-export type FlightValidationResult =
-  | {
-      type: "success";
-      flight: ValidatedFlight;
-    }
-  | {
-      type: "alreadyLanded";
-      flightNumber: string;
-      requestedDate: string;
-      landedTime: string;
-      nextFlightDate?: string;
-    }
-  | {
-      type: "notFound";
-    }
-  | {
-      type: "error";
-      message: string;
-    };
-
-/**
  * FlightAware API response for real-time flights endpoint
  */
 export interface FlightAwareFlightLeg {

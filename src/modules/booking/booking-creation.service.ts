@@ -19,6 +19,7 @@ import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
   BookingException,
+  BookingValidationException,
   CarNotFoundException,
   PaymentIntentFailedException,
 } from "./booking.error";
@@ -36,7 +37,7 @@ import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingValidationService } from "./booking-validation.service";
-import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
+import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
 // Re-export for consumers of this service
@@ -116,7 +117,6 @@ export class BookingCreationService {
       flightId: string;
       arrivalTime: Date;
       destinationIATA: string | undefined;
-      arrivalAddress: string | undefined;
       originCode: string | undefined;
       originCodeIATA: string | undefined;
       destinationCode: string | undefined;
@@ -349,8 +349,36 @@ export class BookingCreationService {
       return acc;
     }, {});
 
-    const isEnabled = configMap.REFERRAL_ENABLED ?? true;
-    const discountAmount = new Decimal(String(configMap.REFERRAL_DISCOUNT_AMOUNT ?? 0));
+    // Validate and normalize REFERRAL_ENABLED to boolean
+    const rawEnabled = configMap.REFERRAL_ENABLED;
+    let isEnabled: boolean;
+    if (typeof rawEnabled === "boolean") {
+      isEnabled = rawEnabled;
+    } else if (typeof rawEnabled === "string") {
+      isEnabled = rawEnabled.toLowerCase() === "true";
+    } else {
+      // Default to true if not set or invalid type
+      isEnabled = rawEnabled === undefined || rawEnabled === null;
+    }
+
+    // Validate and normalize REFERRAL_DISCOUNT_AMOUNT to Decimal
+    const rawDiscountAmount = configMap.REFERRAL_DISCOUNT_AMOUNT;
+    let discountAmount: Decimal;
+    if (rawDiscountAmount === undefined || rawDiscountAmount === null) {
+      discountAmount = new Decimal(0);
+    } else if (typeof rawDiscountAmount === "number") {
+      discountAmount = new Decimal(rawDiscountAmount);
+    } else if (typeof rawDiscountAmount === "string") {
+      const parsed = Number(rawDiscountAmount);
+      discountAmount = Number.isNaN(parsed) ? new Decimal(0) : new Decimal(parsed);
+    } else {
+      // Invalid type (object, array, etc.) - fallback to 0
+      this.logger.warn("Invalid REFERRAL_DISCOUNT_AMOUNT config value type", {
+        type: typeof rawDiscountAmount,
+        value: rawDiscountAmount,
+      });
+      discountAmount = new Decimal(0);
+    }
 
     if (!isEnabled || discountAmount.lte(0)) {
       return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
@@ -365,6 +393,7 @@ export class BookingCreationService {
 
   /**
    * Get customer details for payment intent.
+   * @throws BookingValidationException if user is null and booking is not a guest booking
    */
   private getCustomerDetails(
     booking: CreateBookingInput,
@@ -378,12 +407,22 @@ export class BookingCreationService {
       };
     }
 
-    // Guest booking
-    const guestBooking = booking as CreateGuestBookingDto;
+    // For guest bookings, validate that required guest fields are present
+    if (!isGuestBooking(booking)) {
+      throw new BookingValidationException(
+        [
+          { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
+          { field: "guestName", message: "Guest name is required for unauthenticated bookings" },
+          { field: "guestPhone", message: "Guest phone is required for unauthenticated bookings" },
+        ],
+        "Guest information is required when booking without authentication",
+      );
+    }
+
     return {
-      email: guestBooking.guestEmail,
-      name: guestBooking.guestName,
-      phoneNumber: guestBooking.guestPhone,
+      email: booking.guestEmail,
+      name: booking.guestName,
+      phoneNumber: booking.guestPhone,
     };
   }
 
@@ -432,6 +471,13 @@ export class BookingCreationService {
       netTotal,
     } = financials;
     const numberOfLegs = financials.numberOfLegs;
+
+    // Guard against division by zero
+    if (!numberOfLegs || numberOfLegs === 0) {
+      throw new BookingCreationFailedException(
+        "Cannot create booking: number of legs must be greater than zero",
+      );
+    }
 
     // Each leg gets proportional commission and earnings
     const commissionPerLeg = platformFleetOwnerCommissionAmount.div(numberOfLegs);
@@ -517,7 +563,7 @@ export class BookingCreationService {
   private async createFlightRecordIfNeeded(
     tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
     booking: CreateBookingInput,
-    flightData: FlightDataForBooking | undefined,
+    flightData: FlightDataForBooking | null,
   ): Promise<string | null> {
     if (!flightData || booking.bookingType !== "AIRPORT_PICKUP") {
       return null;
@@ -706,7 +752,7 @@ export class BookingCreationService {
   private triggerFlightAlertIfNeeded(
     flightRecordId: string | null,
     booking: CreateBookingInput,
-    flightData: FlightDataForBooking | undefined,
+    flightData: FlightDataForBooking | null,
   ): void {
     if (!flightRecordId || !flightData || booking.bookingType !== "AIRPORT_PICKUP") {
       return;
