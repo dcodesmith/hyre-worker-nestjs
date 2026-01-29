@@ -24,15 +24,8 @@ export const BookingErrorCode = {
  * Uses RFC 7807 Problem Details format.
  */
 export class BookingException extends HttpException {
-  constructor(private readonly problemDetails: ProblemDetails | ValidationProblemDetails) {
+  constructor(problemDetails: ProblemDetails | ValidationProblemDetails) {
     super(problemDetails, problemDetails.status);
-  }
-
-  /**
-   * Get the problem details for this error.
-   */
-  getProblemDetails(): ProblemDetails | ValidationProblemDetails {
-    return this.problemDetails;
   }
 }
 

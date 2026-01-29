@@ -17,15 +17,8 @@ export const FlightAwareErrorCode = {
  * Uses RFC 7807 Problem Details format.
  */
 export class FlightAwareException extends HttpException {
-  constructor(private readonly problemDetails: ProblemDetails) {
+  constructor(problemDetails: ProblemDetails) {
     super(problemDetails, problemDetails.status);
-  }
-
-  /**
-   * Get the problem details for this error.
-   */
-  getProblemDetails(): ProblemDetails {
-    return this.problemDetails;
   }
 }
 

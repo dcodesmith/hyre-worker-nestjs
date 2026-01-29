@@ -115,6 +115,21 @@ function validateFlightNumber(data: { bookingType: BookingType; flightNumber?: s
 }
 
 /**
+ * Airport pickup requires a different drop-off location.
+ * When sameLocation is true, drive time would be calculated from airport to airport,
+ * resulting in meaningless duration and incorrect pricing.
+ */
+function validateAirportPickupRequiresDifferentLocation(data: {
+  bookingType: BookingType;
+  sameLocation: boolean;
+}): boolean {
+  if (data.bookingType === "AIRPORT_PICKUP") {
+    return data.sameLocation === false;
+  }
+  return true;
+}
+
+/**
  * Apply common booking refinements to a schema
  */
 function withBookingRefinements<
@@ -124,6 +139,7 @@ function withBookingRefinements<
     flightNumber?: string;
     startDate: Date;
     endDate: Date;
+    sameLocation: boolean;
   }>,
 >(schema: T) {
   return schema
@@ -138,6 +154,10 @@ function withBookingRefinements<
     .refine((data) => data.endDate > data.startDate, {
       message: "End date must be after start date",
       path: ["endDate"],
+    })
+    .refine(validateAirportPickupRequiresDifferentLocation, {
+      message: "Airport pickup bookings require a different drop-off location",
+      path: ["sameLocation"],
     });
 }
 

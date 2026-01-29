@@ -109,16 +109,16 @@ export class BookingCreationService {
     let flightData: FlightDataForBooking | null = null;
 
     if (booking.bookingType === "AIRPORT_PICKUP" && booking.flightNumber) {
-      // For AIRPORT_PICKUP: pickupAddress is the airport, dropOffAddress is the customer's destination
-      // Drive time should be calculated from airport to customer's destination
-      const customerDestination =
-        booking.sameLocation === false ? booking.dropOffAddress : booking.pickupAddress;
-
-      flightData = await this.validateAndGetFlightData(
-        booking.flightNumber,
-        booking.startDate,
-        customerDestination,
-      );
+      // AIRPORT_PICKUP always has sameLocation=false (enforced by DTO validation)
+      // pickupAddress is the airport, dropOffAddress is the customer's destination
+      // Type narrowing: when sameLocation is false, dropOffAddress is guaranteed to exist
+      if (booking.sameLocation === false) {
+        flightData = await this.validateAndGetFlightData(
+          booking.flightNumber,
+          booking.startDate,
+          booking.dropOffAddress,
+        );
+      }
     }
 
     const car = await this.fetchCarWithPricing(booking.carId);
@@ -676,6 +676,10 @@ export class BookingCreationService {
 
   /**
    * Create referral reward if user is eligible.
+   *
+   * IMPORTANT: This also sets user.referralDiscountUsed = true within the transaction
+   * to prevent race conditions where multiple concurrent bookings could all receive
+   * the one-time referral discount before any booking completes.
    */
   private async createReferralRewardIfEligible(
     tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
@@ -686,6 +690,18 @@ export class BookingCreationService {
     if (!referralEligibility.eligible || !referralEligibility.referrerUserId || !user) {
       return;
     }
+
+    // Mark discount as used immediately within the transaction to prevent race conditions.
+    // This ensures concurrent booking requests cannot all receive the one-time discount.
+    await tx.user.update({
+      where: { id: user.id },
+      data: { referralDiscountUsed: true },
+    });
+
+    this.logger.log("Marked referral discount as used", {
+      bookingId,
+      userId: user.id,
+    });
 
     // Get referral reward amount and release condition from config
     const rewardConfigs = await tx.referralProgramConfig.findMany({

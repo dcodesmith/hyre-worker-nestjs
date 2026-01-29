@@ -202,6 +202,7 @@ describe("BookingCreationService", () => {
           referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
         };
 
         return callback(mockTx);
@@ -486,6 +487,7 @@ describe("BookingCreationService", () => {
           referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
         };
 
         return callback(mockTx);
@@ -502,6 +504,8 @@ describe("BookingCreationService", () => {
         bookingType: "AIRPORT_PICKUP",
         flightNumber: "BA74",
         pickupTime: undefined,
+        sameLocation: false as const,
+        dropOffAddress: "Victoria Island, Lagos",
       });
       const user = createUserContext();
 
@@ -509,7 +513,9 @@ describe("BookingCreationService", () => {
 
       expect(result.bookingId).toBe("booking-123");
       expect(flightAwareService.validateFlight).toHaveBeenCalledWith("BA74", "2025-02-01");
-      expect(mapsService.calculateAirportTripDuration).toHaveBeenCalled();
+      expect(mapsService.calculateAirportTripDuration).toHaveBeenCalledWith(
+        "Victoria Island, Lagos",
+      );
     });
 
     it("should throw FlightNotFoundException when flight is not found", async () => {
@@ -524,6 +530,8 @@ describe("BookingCreationService", () => {
         bookingType: "AIRPORT_PICKUP",
         flightNumber: "INVALID123",
         pickupTime: undefined,
+        sameLocation: false as const,
+        dropOffAddress: "Victoria Island, Lagos",
       });
       const user = createUserContext();
 
@@ -544,6 +552,8 @@ describe("BookingCreationService", () => {
         bookingType: "AIRPORT_PICKUP",
         flightNumber: "BA74",
         pickupTime: undefined,
+        sameLocation: false as const,
+        dropOffAddress: "Victoria Island, Lagos",
       });
       const user = createUserContext();
 
@@ -603,6 +613,7 @@ describe("BookingCreationService", () => {
           },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
         };
 
         return callback(mockTx);
@@ -633,6 +644,88 @@ describe("BookingCreationService", () => {
           referralDiscountAmount: new Decimal(5000),
         }),
       );
+    });
+
+    it("should mark referralDiscountUsed=true within the transaction to prevent race conditions", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+
+      // Mock referral config - user is eligible for discount
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
+        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
+        { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
+      ]);
+
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials({ referralDiscountAmount: new Decimal(5000) }),
+      );
+
+      vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
+        "https://api.example.com/api/payments/callback",
+      );
+
+      const mockUserUpdate = vi.fn();
+
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          booking: {
+            create: vi.fn().mockResolvedValue({
+              id: "booking-123",
+              bookingReference: "BK-123456-ABC",
+              totalAmount: new Decimal(51437.5),
+              status: BookingStatus.PENDING,
+            }),
+            update: vi.fn(),
+          },
+          referralProgramConfig: {
+            findMany: vi.fn().mockResolvedValue([
+              { key: "REFERRAL_REWARD_AMOUNT", value: "2500" },
+              { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
+            ]),
+          },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { update: mockUserUpdate },
+        };
+
+        return callback(mockTx);
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValue({
+        paymentIntentId: "pi-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      const booking = createBookingInput();
+      const user: BookingCreationInput["user"] = {
+        id: "user-123",
+        email: "user@example.com",
+        name: "Test User",
+        phoneNumber: "08012345678",
+        referredByUserId: "referrer-123",
+        referralDiscountUsed: false,
+      };
+
+      await service.createBooking({ booking, user });
+
+      // Verify that user.referralDiscountUsed was set to true WITHIN the transaction
+      // This prevents the race condition where concurrent bookings could all receive the discount
+      expect(mockUserUpdate).toHaveBeenCalledWith({
+        where: { id: "user-123" },
+        data: { referralDiscountUsed: true },
+      });
     });
 
     it("should not apply referral discount for guest users", async () => {
@@ -675,6 +768,7 @@ describe("BookingCreationService", () => {
           referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
         };
 
         return callback(mockTx);
