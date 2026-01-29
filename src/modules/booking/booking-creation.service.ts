@@ -28,7 +28,6 @@ import type {
   CarWithPricing,
   CreateBookingResponse,
   CustomerDetails,
-  FlightData,
   FlightDataForBooking,
   GeneratedLeg,
   LegGenerationInput,
@@ -110,7 +109,7 @@ export class BookingCreationService {
       await this.validationService.validateGuestEmail(booking);
     }
 
-    let flightData: FlightData | null = null;
+    let flightData: FlightDataForBooking | null = null;
 
     if (booking.bookingType === "AIRPORT_PICKUP" && booking.flightNumber) {
       // For AIRPORT_PICKUP: pickupAddress is the airport, dropOffAddress is the customer's destination
@@ -178,7 +177,7 @@ export class BookingCreationService {
     flightNumber: string,
     pickupDate: Date,
     dropOffAddress: string,
-  ): Promise<FlightData> {
+  ): Promise<FlightDataForBooking> {
     const pickupDateStr = format(pickupDate, "yyyy-MM-dd");
 
     // FlightAwareService now throws FlightAwareException on validation errors
@@ -200,7 +199,6 @@ export class BookingCreationService {
       flightId: flight.flightId,
       arrivalTime,
       destinationIATA: flight.destinationIATA,
-      arrivalAddress: flight.arrivalAddress,
       originCode: flight.origin,
       originCodeIATA: flight.originIATA,
       destinationCode: flight.destination,
@@ -238,7 +236,7 @@ export class BookingCreationService {
    */
   private generateBookingLegs(
     booking: CreateBookingInput,
-    flightData: FlightData | null,
+    flightData: FlightDataForBooking | null,
   ): GeneratedLeg[] {
     const { bookingType, startDate, endDate } = booking;
 
@@ -451,11 +449,17 @@ export class BookingCreationService {
     const netPerLeg = netTotal.div(numberOfLegs);
     const earningsPerLeg = netPerLeg.sub(commissionPerLeg);
 
+    // Track flight record ID for post-transaction alert creation
+    let flightRecordIdForAlert: string | null = null;
+
     try {
       // Use transaction to ensure atomicity
-      return await this.databaseService.$transaction(async (tx) => {
+      const result = await this.databaseService.$transaction(async (tx) => {
         // 1. Create or get flight record (if airport pickup)
         const flightRecordId = await this.createFlightRecordIfNeeded(tx, booking, flightData);
+
+        // Store for post-transaction use
+        flightRecordIdForAlert = flightRecordId;
 
         // 2. Build booking data and create record
         const bookingData = this.buildBookingData({
@@ -487,10 +491,7 @@ export class BookingCreationService {
         // 3. Create pending referral reward (if eligible)
         await this.createReferralRewardIfEligible(tx, createdBooking.id, referralEligibility, user);
 
-        // 4. Create flight alert asynchronously (if airport pickup)
-        this.triggerFlightAlertIfNeeded(flightRecordId, booking, flightData);
-
-        // 5. Create payment intent
+        // 4. Create payment intent
         const checkoutUrl = await this.createPaymentIntent(
           tx,
           createdBooking,
@@ -506,6 +507,12 @@ export class BookingCreationService {
           status: createdBooking.status,
         };
       });
+
+      // 5. Create flight alert asynchronously AFTER transaction commits
+      // This ensures the flight record is visible to the separate transaction in getOrCreateFlightAlert
+      this.triggerFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
+
+      return result;
     } catch (error) {
       // Re-throw domain-specific exceptions
       // - BookingException covers all booking errors (validation, car not found/available, payment)

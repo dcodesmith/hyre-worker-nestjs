@@ -200,15 +200,3 @@ export type LegGenerationInput =
   | NightLegInput
   | FullDayLegInput
   | AirportPickupLegInput;
-
-export type FlightData = {
-  flightId: string;
-  arrivalTime: Date;
-  destinationIATA: string | undefined;
-  arrivalAddress: string | undefined;
-  originCode: string | undefined;
-  originCodeIATA: string | undefined;
-  destinationCode: string | undefined;
-  flightNumber: string;
-  driveTimeMinutes?: number;
-};
