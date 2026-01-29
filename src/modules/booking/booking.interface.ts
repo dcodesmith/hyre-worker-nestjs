@@ -44,11 +44,21 @@ export interface ReferralEligibility {
 export interface FlightDataForBooking {
   flightId: string;
   arrivalTime: Date;
-  destinationIATA: string | undefined;
-  originCode: string | undefined;
-  originCodeIATA: string | undefined;
-  destinationCode: string | undefined;
   flightNumber: string;
+  /** Origin airport ICAO code (e.g., "EGLL") */
+  originCode: string | undefined;
+  /** Origin airport IATA code (e.g., "LHR") */
+  originCodeIATA: string | undefined;
+  /** Origin airport name (e.g., "London Heathrow") */
+  originName: string | undefined;
+  /** Destination airport ICAO code (e.g., "DNMM") */
+  destinationCode: string | undefined;
+  /** Destination airport IATA code (e.g., "LOS") */
+  destinationIATA: string | undefined;
+  /** Destination airport name (e.g., "Murtala Muhammed International Airport") */
+  destinationName: string | undefined;
+  /** Destination city (e.g., "Lagos") */
+  destinationCity: string | undefined;
   /** Drive time from airport to drop-off location in minutes */
   driveTimeMinutes?: number;
 }

@@ -224,7 +224,7 @@ describe("FlightAwareService", () => {
       expect(mockHttpClient.get).toHaveBeenCalledWith(expect.stringContaining("/schedules/"));
     });
 
-    it("should handle undefined destination name and city without showing 'undefined'", async () => {
+    it("should handle undefined destination name and city", async () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: {
           flights: [
@@ -244,8 +244,10 @@ describe("FlightAwareService", () => {
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
 
       const result: ValidatedFlight = await service.validateFlight("BA74", "2025-12-25");
-      // arrivalAddress should fall back to code when name and city are undefined
-      expect(result.arrivalAddress).toBe("LOS");
+      // destinationName and destinationCity should be undefined when not provided
+      expect(result.destinationName).toBeUndefined();
+      expect(result.destinationCity).toBeUndefined();
+      expect(result.destination).toBe("LOS");
     });
 
     it("should handle partial destination info (only city)", async () => {
@@ -268,8 +270,9 @@ describe("FlightAwareService", () => {
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
 
       const result: ValidatedFlight = await service.validateFlight("BA74", "2025-12-25");
-      // Should only show city, not "undefined, Lagos"
-      expect(result.arrivalAddress).toBe("Lagos");
+      // Should have city but not name
+      expect(result.destinationName).toBeUndefined();
+      expect(result.destinationCity).toBe("Lagos");
     });
 
     it("should handle undefined airport info in scheduled flights", async () => {
@@ -295,11 +298,18 @@ describe("FlightAwareService", () => {
         data: {}, // Empty response or missing name/city
       });
 
+      // Mock origin airport info fetch
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {},
+      });
+
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
 
       const result: ValidatedFlight = await service.validateFlight("BA74", "2025-12-30");
-      // arrivalAddress should fall back to code when airport info is not available
-      expect(result.arrivalAddress).toBe("LOS");
+      // destinationName and destinationCity should be undefined when airport info is not available
+      expect(result.destinationName).toBeUndefined();
+      expect(result.destinationCity).toBeUndefined();
+      expect(result.destination).toBe("LOS");
     });
   });
 

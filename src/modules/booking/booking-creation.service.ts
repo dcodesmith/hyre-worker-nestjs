@@ -198,11 +198,14 @@ export class BookingCreationService {
     return {
       flightId: flight.flightId,
       arrivalTime,
-      destinationIATA: flight.destinationIATA,
+      flightNumber: flight.flightNumber,
       originCode: flight.origin,
       originCodeIATA: flight.originIATA,
+      originName: flight.originName,
       destinationCode: flight.destination,
-      flightNumber: flight.flightNumber,
+      destinationIATA: flight.destinationIATA,
+      destinationName: flight.destinationName,
+      destinationCity: flight.destinationCity,
       driveTimeMinutes,
     };
   }
@@ -394,8 +397,10 @@ export class BookingCreationService {
   /**
    * Create the booking record with payment intent.
    *
-   * This method wraps booking creation and payment intent in a single transaction.
-   * If payment intent creation fails, the entire transaction rolls back.
+   * This method separates DB operations from external HTTP calls:
+   * 1. Transaction: Create booking record, flight record, and referral reward
+   * 2. After commit: Create payment intent (external HTTP call)
+   * 3. Compensation: If payment fails, update booking status to FAILED
    */
   private async createBookingWithPayment(params: {
     booking: CreateBookingInput;
@@ -452,16 +457,20 @@ export class BookingCreationService {
     // Track flight record ID for post-transaction alert creation
     let flightRecordIdForAlert: string | null = null;
 
+    // Step 1: DB Transaction - only database operations
+    let createdBooking: {
+      id: string;
+      bookingReference: string;
+      totalAmount: Decimal;
+      status: BookingStatus;
+    };
+
     try {
-      // Use transaction to ensure atomicity
-      const result = await this.databaseService.$transaction(async (tx) => {
-        // 1. Create or get flight record (if airport pickup)
+      createdBooking = await this.databaseService.$transaction(async (tx) => {
         const flightRecordId = await this.createFlightRecordIfNeeded(tx, booking, flightData);
 
-        // Store for post-transaction use
         flightRecordIdForAlert = flightRecordId;
 
-        // 2. Build booking data and create record
         const bookingData = this.buildBookingData({
           bookingReference,
           car,
@@ -478,7 +487,7 @@ export class BookingCreationService {
           platformFleetOwnerCommissionRatePercent,
         });
 
-        const createdBooking = await tx.booking.create({
+        const bookingRecord = await tx.booking.create({
           data: bookingData,
           select: {
             id: true,
@@ -488,40 +497,17 @@ export class BookingCreationService {
           },
         });
 
-        // 3. Create pending referral reward (if eligible)
-        await this.createReferralRewardIfEligible(tx, createdBooking.id, referralEligibility, user);
+        await this.createReferralRewardIfEligible(tx, bookingRecord.id, referralEligibility, user);
 
-        // 4. Create payment intent
-        const checkoutUrl = await this.createPaymentIntent(
-          tx,
-          createdBooking,
-          financials,
-          customerDetails,
-        );
-
-        return {
-          bookingId: createdBooking.id,
-          bookingReference: createdBooking.bookingReference,
-          checkoutUrl,
-          totalAmount: createdBooking.totalAmount.toString(),
-          status: createdBooking.status,
-        };
+        return bookingRecord;
       });
-
-      // 5. Create flight alert asynchronously AFTER transaction commits
-      // This ensures the flight record is visible to the separate transaction in getOrCreateFlightAlert
-      this.triggerFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
-
-      return result;
     } catch (error) {
       // Re-throw domain-specific exceptions
-      // - BookingException covers all booking errors (validation, car not found/available, payment)
-      // - FlightAwareException covers flight validation errors
       if (error instanceof BookingException || error instanceof FlightAwareException) {
         throw error;
       }
 
-      this.logger.error("Booking creation failed", {
+      this.logger.error("Booking creation transaction failed", {
         bookingReference,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -529,6 +515,39 @@ export class BookingCreationService {
 
       throw new BookingCreationFailedException();
     }
+
+    let checkoutUrl: string;
+    try {
+      checkoutUrl = await this.createPaymentIntent(createdBooking, financials, customerDetails);
+    } catch (error) {
+      // Step 3: Compensation - mark booking as failed if payment creation fails
+      this.logger.warn("Payment intent failed, marking booking as failed", {
+        bookingId: createdBooking.id,
+        bookingReference: createdBooking.bookingReference,
+      });
+
+      await this.databaseService.booking.update({
+        where: { id: createdBooking.id },
+        // change to fail in fast follow PR
+        data: { paymentStatus: PaymentStatus.UNPAID },
+      });
+
+      // Re-throw payment exception
+      if (error instanceof PaymentIntentFailedException) {
+        throw error;
+      }
+      throw new PaymentIntentFailedException();
+    }
+
+    this.triggerFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
+
+    return {
+      bookingId: createdBooking.id,
+      bookingReference: createdBooking.bookingReference,
+      checkoutUrl,
+      totalAmount: createdBooking.totalAmount.toString(),
+      status: createdBooking.status,
+    };
   }
 
   /**
@@ -552,8 +571,11 @@ export class BookingCreationService {
         faFlightId: flightData.flightId,
         originCode: flightData.originCode ?? "UNKNOWN",
         originCodeIATA: flightData.originCodeIATA,
+        originName: flightData.originName,
         destinationCode: flightData.destinationCode ?? "DNMM",
         destinationCodeIATA: flightData.destinationIATA,
+        destinationName: flightData.destinationName,
+        destinationCity: flightData.destinationCity,
         scheduledArrival: flightData.arrivalTime,
         status: FlightStatus.SCHEDULED,
         alertEnabled: false,
@@ -742,10 +764,10 @@ export class BookingCreationService {
   }
 
   /**
-   * Create payment intent and update booking.
+   * Create payment intent and update booking with payment intent ID.
+   * Called after the booking transaction commits.
    */
   private async createPaymentIntent(
-    tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
     createdBooking: { id: string; bookingReference: string },
     financials: BookingFinancials,
     customerDetails: CustomerDetails,
@@ -770,15 +792,14 @@ export class BookingCreationService {
         idempotencyKey: createdBooking.id,
       });
 
-      // Update booking with payment intent ID
-      await tx.booking.update({
+      // Update booking with payment intent ID (outside transaction)
+      await this.databaseService.booking.update({
         where: { id: createdBooking.id },
         data: { paymentIntent: paymentResult.paymentIntentId },
       });
 
       return paymentResult.checkoutUrl;
     } catch (error) {
-      // Payment intent failed - transaction will roll back, deleting the booking
       this.logger.error("Payment intent creation failed", {
         bookingId: createdBooking.id,
         bookingReference: createdBooking.bookingReference,

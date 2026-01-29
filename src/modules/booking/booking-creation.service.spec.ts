@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -378,34 +378,13 @@ describe("BookingCreationService", () => {
       );
     });
 
-    it("should throw PaymentIntentFailedException when payment creation fails", async () => {
+    it("should throw PaymentIntentFailedException and mark booking as FAILED when payment creation fails", async () => {
       setupSuccessfulMocks();
 
-      // Override to throw FlutterwaveError
-      mockTransaction.mockImplementation(async (callback) => {
-        const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
-          booking: {
-            create: vi.fn().mockResolvedValue({
-              id: "booking-123",
-              bookingReference: "BK-123456-ABC",
-              totalAmount: new Decimal(56437.5),
-              status: BookingStatus.PENDING,
-            }),
-            update: vi.fn(),
-          },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
-          referralReward: { create: vi.fn() },
-          userReferralStats: { upsert: vi.fn() },
-        };
-
-        // This callback will call createPaymentIntent which we mock to throw
-        vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValue(
-          new FlutterwaveError("Payment failed", "PAYMENT_FAILED"),
-        );
-
-        return callback(mockTx);
-      });
+      // Override createPaymentIntent to throw after transaction commits
+      vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValue(
+        new FlutterwaveError("Payment failed", "PAYMENT_FAILED"),
+      );
 
       const booking = createBookingInput();
       const user = createUserContext();
@@ -413,6 +392,12 @@ describe("BookingCreationService", () => {
       await expect(service.createBooking({ booking, user })).rejects.toThrow(
         PaymentIntentFailedException,
       );
+
+      // Verify booking was marked as FAILED (compensation logic)
+      expect(databaseService.booking.update).toHaveBeenCalledWith({
+        where: { id: "booking-123" },
+        data: { paymentStatus: PaymentStatus.UNPAID },
+      });
     });
 
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {

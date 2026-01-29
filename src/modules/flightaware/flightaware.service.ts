@@ -568,19 +568,17 @@ export class FlightAwareService implements OnModuleDestroy {
         flightId: flight.fa_flight_id,
         origin: flight.origin.code,
         originIATA: flight.origin.code_iata,
+        originName: flight.origin.name,
         destination: flight.destination.code,
         destinationIATA: flight.destination.code_iata,
+        destinationName: flight.destination.name,
+        destinationCity: flight.destination.city,
         scheduledArrival: flight.scheduled_on,
         estimatedArrival: flight.estimated_in,
         actualArrival: flight.actual_on,
         status: flight.status,
         aircraftType: flight.aircraft_type,
         delay: flight.delay,
-        arrivalAddress: this.buildArrivalAddress(
-          flight.destination.name,
-          flight.destination.city,
-          flight.destination.code,
-        ),
         isLive: true,
       },
     };
@@ -600,20 +598,28 @@ export class FlightAwareService implements OnModuleDestroy {
       return { type: "notFound" };
     }
 
-    // Fetch airport info for arrival address
-    let arrivalAddress: string | undefined;
+    // Fetch airport info for destination details
+    let destinationName: string | undefined;
+    let destinationCity: string | undefined;
     try {
       const airportResponse = await this.httpClient.get<{ name?: string; city?: string }>(
         `/airports/${scheduledFlight.destination}`,
       );
-      arrivalAddress = this.buildArrivalAddress(
-        airportResponse.data.name,
-        airportResponse.data.city,
-        scheduledFlight.destination,
-      );
+      destinationName = airportResponse.data.name;
+      destinationCity = airportResponse.data.city;
     } catch {
-      // Fallback to destination code if airport API fails (consistent with buildSuccessResult)
-      arrivalAddress = this.buildArrivalAddress(undefined, undefined, scheduledFlight.destination);
+      // Destination name/city are optional, continue without them
+    }
+
+    // Fetch origin airport info
+    let originName: string | undefined;
+    try {
+      const originResponse = await this.httpClient.get<{ name?: string }>(
+        `/airports/${scheduledFlight.origin}`,
+      );
+      originName = originResponse.data.name;
+    } catch {
+      // Origin name is optional, continue without it
     }
 
     return {
@@ -623,10 +629,12 @@ export class FlightAwareService implements OnModuleDestroy {
         flightId: scheduledFlight.fa_flight_id || `${flightNumber}-scheduled`,
         origin: scheduledFlight.origin,
         originIATA: scheduledFlight.origin_iata ?? undefined,
+        originName,
         destination: scheduledFlight.destination,
         destinationIATA: scheduledFlight.destination_iata ?? undefined,
+        destinationName,
+        destinationCity,
         scheduledArrival,
-        arrivalAddress,
         status: "Scheduled",
         aircraftType: scheduledFlight.aircraft_type ?? undefined,
         isLive: false,
@@ -675,22 +683,6 @@ export class FlightAwareService implements OnModuleDestroy {
       minute: "2-digit",
       hour12: true,
     });
-  }
-
-  /**
-   * Build arrival address from optional name and city fields
-   * Only includes defined parts, avoiding "undefined" strings
-   * Falls back to code if name and city are not available
-   */
-  private buildArrivalAddress(name?: string, city?: string, code?: string): string | undefined {
-    const parts = [name, city].filter(
-      (part): part is string => part !== undefined && part !== null && part !== "",
-    );
-    if (parts.length > 0) {
-      return parts.join(", ");
-    }
-    // Fallback to code if available, otherwise return undefined
-    return code || undefined;
   }
 
   // Cache methods
