@@ -12,9 +12,6 @@ export const FlightAwareErrorCode = {
   API_ERROR: "FLIGHTAWARE_API_ERROR",
 } as const;
 
-export type FlightAwareErrorCodeType =
-  (typeof FlightAwareErrorCode)[keyof typeof FlightAwareErrorCode];
-
 /**
  * Base exception for FlightAware-related errors.
  * Uses RFC 7807 Problem Details format.

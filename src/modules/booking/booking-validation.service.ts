@@ -141,8 +141,7 @@ export class BookingValidationService {
         status: car.status,
       });
 
-      const statusMessages: Record<Status, string> = {
-        [Status.AVAILABLE]: "", // Won't be used
+      const statusMessages: Record<Exclude<Status, "AVAILABLE">, string> = {
         [Status.BOOKED]: "This vehicle is currently booked",
         [Status.HOLD]: "This vehicle is temporarily unavailable",
         [Status.IN_SERVICE]: "This vehicle is currently under maintenance",

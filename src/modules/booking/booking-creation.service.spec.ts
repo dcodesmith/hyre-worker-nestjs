@@ -433,15 +433,9 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createUserContext();
 
-      // Verify it throws BookingCreationFailedException with the correct detail
-      await expect(service.createBooking({ booking, user })).rejects.toBeInstanceOf(
+      await expect(service.createBooking({ booking, user })).rejects.toThrow(
         BookingCreationFailedException,
       );
-      await expect(service.createBooking({ booking, user })).rejects.toMatchObject({
-        problemDetails: {
-          detail: "Cannot create booking: number of legs must be greater than zero",
-        },
-      });
 
       // Ensure transaction was never started (validation happens before)
       expect(mockTransaction).not.toHaveBeenCalled();

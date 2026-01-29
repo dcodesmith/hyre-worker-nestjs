@@ -19,8 +19,6 @@ export const BookingErrorCode = {
   BOOKING_CREATION_FAILED: "BOOKING_CREATION_FAILED",
 } as const;
 
-export type BookingErrorCodeType = (typeof BookingErrorCode)[keyof typeof BookingErrorCode];
-
 /**
  * Base exception for booking-related errors.
  * Uses RFC 7807 Problem Details format.

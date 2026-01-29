@@ -28,6 +28,7 @@ import type {
   CarWithPricing,
   CreateBookingResponse,
   CustomerDetails,
+  FlightData,
   FlightDataForBooking,
   GeneratedLeg,
   LegGenerationInput,
@@ -93,35 +94,23 @@ export class BookingCreationService {
       userId: user?.id,
     });
 
-    // 1. Validate dates and business rules (throws BookingValidationException)
     this.validationService.validateDates({
       startDate: booking.startDate,
       endDate: booking.endDate,
       bookingType: booking.bookingType,
     });
 
-    // 2. Check car availability (throws CarNotFoundException or CarNotAvailableException)
     await this.validationService.checkCarAvailability({
       carId: booking.carId,
       startDate: booking.startDate,
       endDate: booking.endDate,
     });
 
-    // 3. Validate guest email if guest booking (throws BookingValidationException)
     if (isGuestBooking(booking)) {
       await this.validationService.validateGuestEmail(booking);
     }
 
-    // 4. Validate flight for airport pickup
-    let flightData: {
-      flightId: string;
-      arrivalTime: Date;
-      destinationIATA: string | undefined;
-      originCode: string | undefined;
-      originCodeIATA: string | undefined;
-      destinationCode: string | undefined;
-      flightNumber: string;
-    } | null = null;
+    let flightData: FlightData | null = null;
 
     if (booking.bookingType === "AIRPORT_PICKUP" && booking.flightNumber) {
       // For AIRPORT_PICKUP: pickupAddress is the airport, dropOffAddress is the customer's destination
@@ -136,16 +125,12 @@ export class BookingCreationService {
       );
     }
 
-    // 5. Fetch car with pricing
     const car = await this.fetchCarWithPricing(booking.carId);
 
-    // 6. Generate booking legs
     const legs = this.generateBookingLegs(booking, flightData);
 
-    // 7. Check referral eligibility
     const referralEligibility = await this.checkReferralEligibility(user);
 
-    // 8. Calculate financials
     const financials = await this.calculationService.calculateBookingCost({
       bookingType: booking.bookingType,
       legs,
@@ -158,16 +143,12 @@ export class BookingCreationService {
       referralDiscountAmount: referralEligibility.discountAmount,
     });
 
-    // 9. Validate price match (throws BookingValidationException if mismatch)
     this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
 
-    // 10. Generate booking reference
     const bookingReference = generateBookingReference();
 
-    // 11. Get customer details for payment
     const customerDetails = this.getCustomerDetails(booking, user);
 
-    // 12. Create booking with payment intent
     const result = await this.createBookingWithPayment({
       booking,
       user,
@@ -197,17 +178,7 @@ export class BookingCreationService {
     flightNumber: string,
     pickupDate: Date,
     dropOffAddress: string,
-  ): Promise<{
-    flightId: string;
-    arrivalTime: Date;
-    destinationIATA: string | undefined;
-    arrivalAddress: string | undefined;
-    originCode: string | undefined;
-    originCodeIATA: string | undefined;
-    destinationCode: string | undefined;
-    flightNumber: string;
-    driveTimeMinutes?: number;
-  }> {
+  ): Promise<FlightData> {
     const pickupDateStr = format(pickupDate, "yyyy-MM-dd");
 
     // FlightAwareService now throws FlightAwareException on validation errors
@@ -267,11 +238,7 @@ export class BookingCreationService {
    */
   private generateBookingLegs(
     booking: CreateBookingInput,
-    flightData: {
-      arrivalTime: Date;
-      destinationIATA: string | undefined;
-      driveTimeMinutes?: number;
-    } | null,
+    flightData: FlightData | null,
   ): GeneratedLeg[] {
     const { bookingType, startDate, endDate } = booking;
 

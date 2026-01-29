@@ -2,7 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import type { Booking, Car, User } from "@prisma/client";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import {
   BookingValidationException,
@@ -44,6 +44,10 @@ describe("BookingValidationService", () => {
 
     service = module.get<BookingValidationService>(BookingValidationService);
     databaseService = module.get<DatabaseService>(DatabaseService);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("should be defined", () => {
