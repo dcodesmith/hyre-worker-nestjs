@@ -311,6 +311,40 @@ describe("FlightAwareService", () => {
       expect(result.destinationCity).toBeUndefined();
       expect(result.destination).toBe("LOS");
     });
+
+    it("should throw FlightAwareApiException for schedules API authentication errors (flights > 2 days)", async () => {
+      // Flight > 2 days in future uses schedules API
+      const axiosError = createAxiosErrorWithResponse(HttpStatus.UNAUTHORIZED, {
+        message: "Invalid API key",
+      });
+      mockHttpClient.get.mockRejectedValueOnce(axiosError);
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      await expect(service.validateFlight("BA74", "2025-12-30")).rejects.toThrow(
+        FlightAwareApiException,
+      );
+
+      // Verify schedules API was called (not live API)
+      expect(mockHttpClient.get).toHaveBeenCalledWith(expect.stringContaining("/schedules/"));
+    });
+
+    it("should throw FlightAwareApiException for schedules API rate limit errors (flights > 2 days)", async () => {
+      // Flight > 2 days in future uses schedules API
+      const axiosError = createAxiosErrorWithResponse(HttpStatus.TOO_MANY_REQUESTS, {
+        message: "Rate limit exceeded",
+      });
+      mockHttpClient.get.mockRejectedValueOnce(axiosError);
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      await expect(service.validateFlight("BA74", "2025-12-30")).rejects.toThrow(
+        FlightAwareApiException,
+      );
+
+      // Verify schedules API was called (not live API)
+      expect(mockHttpClient.get).toHaveBeenCalledWith(expect.stringContaining("/schedules/"));
+    });
   });
 
   describe("createFlightAlert", () => {

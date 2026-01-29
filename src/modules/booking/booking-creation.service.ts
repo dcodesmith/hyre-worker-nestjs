@@ -40,9 +40,6 @@ import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
-// Re-export for consumers of this service
-export type { BookingCreationInput } from "./booking.interface";
-
 /**
  * Service for orchestrating the complete booking creation flow.
  *

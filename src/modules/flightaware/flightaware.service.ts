@@ -390,7 +390,7 @@ export class FlightAwareService implements OnModuleDestroy {
 
         return { type: "notFound" };
       } catch (error) {
-        return this.handleApiError(error, flightNum);
+        return this.handleApiError(error, flightNum, "fetchLiveFlight");
       }
     };
 
@@ -441,20 +441,7 @@ export class FlightAwareService implements OnModuleDestroy {
         const scheduledFlight = this.findScheduledFlight(data.scheduled, flightNum);
         return this.buildScheduledSuccessResult(scheduledFlight, flightNumber);
       } catch (error) {
-        const errorInfo = this.httpClientService.handleError(
-          error,
-          "fetchScheduledFlight",
-          "FlightAware",
-        );
-
-        if (errorInfo.status === 404) return { type: "notFound" };
-        if (errorInfo.status === 401) {
-          throw new Error("FlightAware API authentication failed");
-        }
-        if (errorInfo.status === 429) {
-          throw new Error("FlightAware API rate limit exceeded");
-        }
-        throw new Error(`FlightAware API error: ${errorInfo.status || errorInfo.message}`);
+        return this.handleApiError(error, flightNum, "fetchScheduledFlight");
       }
     };
 
@@ -491,9 +478,13 @@ export class FlightAwareService implements OnModuleDestroy {
     return icaoCode ? `${icaoCode}${flightNum}` : null;
   }
 
-  private handleApiError(error: unknown, flightNum: string): InternalFlightResult {
-    const errorInfo = this.httpClientService.handleError(error, "fetchLiveFlight", "FlightAware");
-    this.logger.warn("FlightAware API error", { status: errorInfo.status, flightNum });
+  private handleApiError(
+    error: unknown,
+    flightNum: string,
+    operation = "fetchFlight",
+  ): InternalFlightResult {
+    const errorInfo = this.httpClientService.handleError(error, operation, "FlightAware");
+    this.logger.warn("FlightAware API error", { operation, status: errorInfo.status, flightNum });
 
     if (errorInfo.status === 404) return { type: "notFound" };
     if (errorInfo.status === 401) {
