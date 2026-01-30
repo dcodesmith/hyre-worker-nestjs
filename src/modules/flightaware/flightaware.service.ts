@@ -52,6 +52,7 @@ export class FlightAwareService implements OnModuleDestroy {
   >();
   private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
   private readonly NOT_FOUND_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+  private readonly SUPPORTED_ALREADY_LANDED_DESTINATIONS = ["LOS"];
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
@@ -602,11 +603,11 @@ export class FlightAwareService implements OnModuleDestroy {
     ]);
 
     if (destinationResult.status === "fulfilled") {
-      destinationName = destinationResult.value.data.name;
-      destinationCity = destinationResult.value.data.city;
+      destinationName = destinationResult.value?.data?.name;
+      destinationCity = destinationResult.value?.data?.city;
     }
     if (originResult.status === "fulfilled") {
-      originName = originResult.value.data.name;
+      originName = originResult.value?.data?.name;
     }
 
     return {
@@ -636,7 +637,7 @@ export class FlightAwareService implements OnModuleDestroy {
   ): InternalFlightResult | null {
     const destinationIATA = landedFlight.destination.code_iata;
 
-    if (destinationIATA !== "LOS") {
+    if (!this.SUPPORTED_ALREADY_LANDED_DESTINATIONS.includes(destinationIATA)) {
       return null;
     }
 

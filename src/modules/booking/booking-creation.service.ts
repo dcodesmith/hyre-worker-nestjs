@@ -22,6 +22,7 @@ import {
   BookingValidationException,
   CarNotFoundException,
   PaymentIntentFailedException,
+  ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
 import type {
   BookingCreationInput,
@@ -125,7 +126,9 @@ export class BookingCreationService {
 
     const legs = this.generateBookingLegs(booking, flightData);
 
-    const referralEligibility = await this.checkReferralEligibility(user);
+    // Preliminary eligibility check for price calculation (reads from request context)
+    // Actual eligibility is verified inside the transaction to prevent race conditions
+    const preliminaryReferralEligibility = await this.checkPreliminaryReferralEligibility(user);
 
     const financials = await this.calculationService.calculateBookingCost({
       bookingType: booking.bookingType,
@@ -136,7 +139,7 @@ export class BookingCreationService {
       // Credits not implemented yet - would need to add creditsBalance to User model
       userCreditsBalance: undefined,
       creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
-      referralDiscountAmount: referralEligibility.discountAmount,
+      referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
     });
 
     this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
@@ -154,7 +157,7 @@ export class BookingCreationService {
       bookingReference,
       customerDetails,
       flightData,
-      referralEligibility,
+      preliminaryReferralEligibility,
     });
 
     this.logger.log("Booking created successfully", {
@@ -289,9 +292,16 @@ export class BookingCreationService {
   }
 
   /**
-   * Check if user is eligible for referral discount.
+   * Preliminary check for referral discount eligibility.
+   *
+   * IMPORTANT: This is a preliminary check for pre-transaction price calculation.
+   * It reads from the user object passed in (from request context), NOT from the database.
+   * The actual eligibility is verified inside the transaction with a fresh DB query
+   * to prevent race conditions.
+   *
+   * @see verifyAndClaimReferralDiscountInTransaction for the transaction-safe verification
    */
-  private async checkReferralEligibility(
+  private async checkPreliminaryReferralEligibility(
     user: BookingCreationInput["user"],
   ): Promise<ReferralEligibility> {
     // Guest users are not eligible for referral discounts
@@ -299,12 +309,20 @@ export class BookingCreationService {
       return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
     }
 
-    // User must have been referred and not used their discount yet
+    // Preliminary check based on request context (may be stale)
     if (!user.referredByUserId || user.referralDiscountUsed) {
       return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
     }
 
-    // Get referral program config
+    // Get referral program config (this is safe to read outside transaction)
+    return this.getReferralConfig(user.referredByUserId);
+  }
+
+  /**
+   * Get referral program configuration.
+   * Returns eligibility based on config settings only.
+   */
+  private async getReferralConfig(referrerUserId: string): Promise<ReferralEligibility> {
     const configs = await this.databaseService.referralProgramConfig.findMany({
       where: { key: { in: ["REFERRAL_ENABLED", "REFERRAL_DISCOUNT_AMOUNT"] } },
     });
@@ -351,9 +369,73 @@ export class BookingCreationService {
 
     return {
       eligible: true,
-      referrerUserId: user.referredByUserId,
+      referrerUserId,
       discountAmount,
     };
+  }
+
+  /**
+   * Verify and claim the referral discount inside a transaction.
+   *
+   * This method queries fresh user data from the database to check if the discount
+   * is still available, then immediately marks it as used to prevent race conditions.
+   *
+   * @param tx - Prisma transaction client
+   * @param userId - User ID to verify eligibility for
+   * @param preliminaryEligibility - The preliminary eligibility from pre-transaction check
+   * @returns The verified referral eligibility
+   * @throws ReferralDiscountNoLongerAvailableException if preliminary check was eligible but discount was already used
+   */
+  private async verifyAndClaimReferralDiscountInTransaction(
+    tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
+    userId: string,
+    preliminaryEligibility: ReferralEligibility,
+  ): Promise<ReferralEligibility> {
+    // If preliminary check said not eligible, no need to verify
+    if (!preliminaryEligibility.eligible) {
+      return preliminaryEligibility;
+    }
+
+    // Query fresh user data with pessimistic lock to prevent concurrent modifications
+    // Using a raw query with FOR UPDATE to ensure we have an exclusive lock on the row
+    const users = await tx.$queryRaw<
+      Array<{ id: string; referredByUserId: string | null; referralDiscountUsed: boolean }>
+    >`SELECT id, "referredByUserId", "referralDiscountUsed" FROM "User" WHERE id = ${userId} FOR UPDATE`;
+
+    const freshUser = users[0];
+
+    if (!freshUser) {
+      this.logger.warn("User not found during referral verification", { userId });
+      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
+    }
+
+    // Check if discount was already used (by a concurrent request)
+    if (freshUser.referralDiscountUsed) {
+      this.logger.warn("Referral discount already used (race condition detected)", {
+        userId,
+        preliminaryEligible: preliminaryEligibility.eligible,
+      });
+
+      // The preliminary check thought we were eligible, but the discount was already used
+      // This is a race condition - throw an error so the client can retry without the discount
+      throw new ReferralDiscountNoLongerAvailableException();
+    }
+
+    // Check if user still has a referrer (edge case: referrer could be removed)
+    if (!freshUser.referredByUserId) {
+      this.logger.warn("User no longer has a referrer", { userId });
+      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
+    }
+
+    // Mark discount as used IMMEDIATELY (before booking creation) to prevent race conditions
+    await tx.user.update({
+      where: { id: userId },
+      data: { referralDiscountUsed: true },
+    });
+
+    this.logger.log("Referral discount claimed and marked as used", { userId });
+
+    return preliminaryEligibility;
   }
 
   /**
@@ -395,9 +477,13 @@ export class BookingCreationService {
    * Create the booking record with payment intent.
    *
    * This method separates DB operations from external HTTP calls:
-   * 1. Transaction: Create booking record, flight record, and referral reward
+   * 1. Transaction: Verify referral eligibility, create booking record, flight record, and referral reward
    * 2. After commit: Create payment intent (external HTTP call)
    * 3. Compensation: If payment fails, update booking status to FAILED
+   *
+   * IMPORTANT: Referral eligibility is verified INSIDE the transaction with a fresh DB query
+   * and pessimistic locking to prevent race conditions where concurrent requests could
+   * all receive the one-time discount.
    */
   private async createBookingWithPayment(params: {
     booking: CreateBookingInput;
@@ -408,7 +494,7 @@ export class BookingCreationService {
     bookingReference: string;
     customerDetails: CustomerDetails;
     flightData: FlightDataForBooking | null;
-    referralEligibility: ReferralEligibility;
+    preliminaryReferralEligibility: ReferralEligibility;
   }): Promise<CreateBookingResponse> {
     const {
       booking,
@@ -419,7 +505,7 @@ export class BookingCreationService {
       bookingReference,
       customerDetails,
       flightData,
-      referralEligibility,
+      preliminaryReferralEligibility,
     } = params;
 
     // Build guest user JSON from customerDetails (if guest booking)
@@ -464,6 +550,16 @@ export class BookingCreationService {
 
     try {
       createdBooking = await this.databaseService.$transaction(async (tx) => {
+        // CRITICAL: Verify and claim referral discount FIRST with pessimistic locking
+        // This prevents race conditions where concurrent requests could all receive the one-time discount
+        const verifiedReferralEligibility = user
+          ? await this.verifyAndClaimReferralDiscountInTransaction(
+              tx,
+              user.id,
+              preliminaryReferralEligibility,
+            )
+          : preliminaryReferralEligibility;
+
         const flightRecordId = await this.createFlightRecordIfNeeded(tx, booking, flightData);
 
         flightRecordIdForAlert = flightRecordId;
@@ -475,7 +571,7 @@ export class BookingCreationService {
           guestUser,
           booking,
           financials,
-          referralEligibility,
+          referralEligibility: verifiedReferralEligibility,
           flightRecordId,
           legs,
           netPerLeg,
@@ -494,12 +590,18 @@ export class BookingCreationService {
           },
         });
 
-        await this.createReferralRewardIfEligible(tx, bookingRecord.id, referralEligibility, user);
+        // Create referral reward record (the discount was already claimed above)
+        await this.createReferralRewardIfEligible(
+          tx,
+          bookingRecord.id,
+          verifiedReferralEligibility,
+          user,
+        );
 
         return bookingRecord;
       });
     } catch (error) {
-      // Re-throw domain-specific exceptions
+      // Re-throw domain-specific exceptions (includes ReferralDiscountNoLongerAvailableException)
       if (error instanceof BookingException || error instanceof FlightAwareException) {
         throw error;
       }
@@ -675,11 +777,10 @@ export class BookingCreationService {
   }
 
   /**
-   * Create referral reward if user is eligible.
+   * Create referral reward record if user is eligible.
    *
-   * IMPORTANT: This also sets user.referralDiscountUsed = true within the transaction
-   * to prevent race conditions where multiple concurrent bookings could all receive
-   * the one-time referral discount before any booking completes.
+   * Note: The referralDiscountUsed flag is set earlier in verifyAndClaimReferralDiscountInTransaction
+   * to prevent race conditions. This method only creates the referral reward record.
    */
   private async createReferralRewardIfEligible(
     tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
@@ -691,17 +792,8 @@ export class BookingCreationService {
       return;
     }
 
-    // Mark discount as used immediately within the transaction to prevent race conditions.
-    // This ensures concurrent booking requests cannot all receive the one-time discount.
-    await tx.user.update({
-      where: { id: user.id },
-      data: { referralDiscountUsed: true },
-    });
-
-    this.logger.log("Marked referral discount as used", {
-      bookingId,
-      userId: user.id,
-    });
+    // Note: referralDiscountUsed was already set to true in verifyAndClaimReferralDiscountInTransaction
+    // to prevent race conditions. We don't set it again here.
 
     // Get referral reward amount and release condition from config
     const rewardConfigs = await tx.referralProgramConfig.findMany({

@@ -19,6 +19,7 @@ import {
   CarNotAvailableException,
   CarNotFoundException,
   PaymentIntentFailedException,
+  ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
 import type { BookingCreationInput } from "./booking.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
@@ -595,6 +596,12 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          // Mock for pessimistic locking query - returns fresh user data showing discount not used
+          $queryRaw: vi
+            .fn()
+            .mockResolvedValue([
+              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+            ]),
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
             create: vi.fn().mockResolvedValue({
@@ -679,6 +686,12 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          // Mock for pessimistic locking query - returns fresh user data showing discount not used
+          $queryRaw: vi
+            .fn()
+            .mockResolvedValue([
+              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+            ]),
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
             create: vi.fn().mockResolvedValue({
@@ -726,6 +739,71 @@ describe("BookingCreationService", () => {
         where: { id: "user-123" },
         data: { referralDiscountUsed: true },
       });
+    });
+
+    it("should throw ReferralDiscountNoLongerAvailableException when discount was already used (race condition)", async () => {
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+
+      // Preliminary check: user appears eligible (from request context)
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
+        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
+        { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
+      ]);
+
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials({ referralDiscountAmount: new Decimal(5000) }),
+      );
+
+      vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
+        "https://api.example.com/api/payments/callback",
+      );
+
+      // Simulate race condition: fresh DB query shows discount was already used
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          // Fresh DB query with FOR UPDATE shows discount was already used by concurrent request
+          $queryRaw: vi
+            .fn()
+            .mockResolvedValue([
+              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: true },
+            ]),
+          flight: { upsert: vi.fn() },
+          booking: { create: vi.fn(), update: vi.fn() },
+          referralProgramConfig: { findMany: vi.fn() },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
+        };
+
+        return callback(mockTx);
+      });
+
+      const booking = createBookingInput();
+      const user: BookingCreationInput["user"] = {
+        id: "user-123",
+        email: "user@example.com",
+        name: "Test User",
+        phoneNumber: "08012345678",
+        referredByUserId: "referrer-123",
+        referralDiscountUsed: false, // Preliminary check says eligible
+      };
+
+      // Should throw because fresh DB query shows discount was already used
+      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+        ReferralDiscountNoLongerAvailableException,
+      );
     });
 
     it("should not apply referral discount for guest users", async () => {

@@ -17,6 +17,7 @@ export const BookingErrorCode = {
   CAR_NOT_AVAILABLE: "CAR_NOT_AVAILABLE",
   PAYMENT_INTENT_FAILED: "PAYMENT_INTENT_FAILED",
   BOOKING_CREATION_FAILED: "BOOKING_CREATION_FAILED",
+  REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
 } as const;
 
 /**
@@ -96,6 +97,22 @@ export class BookingCreationFailedException extends BookingException {
       title: "Booking Creation Failed",
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       detail: detail ?? "An unexpected error occurred while creating the booking",
+    });
+  }
+}
+
+/**
+ * Exception when a referral discount is no longer available.
+ * This occurs when concurrent booking requests race to use the same one-time discount.
+ */
+export class ReferralDiscountNoLongerAvailableException extends BookingException {
+  constructor() {
+    super({
+      type: BookingErrorCode.REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE,
+      title: "Referral Discount No Longer Available",
+      status: HttpStatus.CONFLICT,
+      detail:
+        "The referral discount is no longer available. It may have been used in another booking. Please retry without the discount.",
     });
   }
 }
