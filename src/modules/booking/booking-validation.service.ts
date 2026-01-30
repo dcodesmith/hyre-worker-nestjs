@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import type { FieldError } from "src/common/errors/problem-details.interface";
+import { maskEmail } from "src/shared/helper";
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
@@ -9,14 +11,13 @@ import {
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
 import {
-  CarAvailabilityInput,
-  DateValidationInput,
-  ValidationError,
-  ValidationResult,
-} from "./booking.interface";
+  BookingValidationException,
+  CarNotAvailableException,
+  CarNotFoundException,
+} from "./booking.error";
+import type { CarAvailabilityInput, DateValidationInput } from "./booking.interface";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
-import { maskEmail } from "src/shared/helper";
 
 /**
  * Service for validating booking creation requests.
@@ -43,10 +44,10 @@ export class BookingValidationService {
    * - Same-day DAY bookings: not allowed after 11 AM
    *
    * @param input - Date validation input
-   * @returns Validation result with any errors
+   * @throws BookingValidationException if any date rules are violated
    */
-  validateDates(input: DateValidationInput): ValidationResult {
-    const errors: ValidationError[] = [];
+  validateDates(input: DateValidationInput): void {
+    const errors: FieldError[] = [];
     const now = new Date();
 
     const { startDate, endDate, bookingType } = input;
@@ -93,10 +94,9 @@ export class BookingValidationService {
       }
     }
 
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
+    if (errors.length > 0) {
+      throw new BookingValidationException(errors);
+    }
   }
 
   /**
@@ -109,10 +109,10 @@ export class BookingValidationService {
    * A 2-hour buffer is applied between bookings for car preparation.
    *
    * @param input - Car availability check input
-   * @returns Validation result with any conflicts
+   * @throws CarNotFoundException if car does not exist
+   * @throws CarNotAvailableException if car is not approved, not available, or has conflicts
    */
-  async checkCarAvailability(input: CarAvailabilityInput): Promise<ValidationResult> {
-    const errors: ValidationError[] = [];
+  async checkCarAvailability(input: CarAvailabilityInput): Promise<void> {
     const { carId, startDate, endDate, excludeBookingId } = input;
 
     // Verify car exists and is bookable
@@ -122,11 +122,7 @@ export class BookingValidationService {
     });
 
     if (!car) {
-      errors.push({
-        field: "carId",
-        message: "Car not found",
-      });
-      return { valid: false, errors };
+      throw new CarNotFoundException(carId);
     }
 
     // Check car approval status - only approved cars can be booked
@@ -135,12 +131,7 @@ export class BookingValidationService {
         carId,
         approvalStatus: car.approvalStatus,
       });
-
-      errors.push({
-        field: "carId",
-        message: "This vehicle is not available for booking",
-      });
-      return { valid: false, errors };
+      throw new CarNotAvailableException(carId, "This vehicle is not available for booking");
     }
 
     // Check car status - only available cars can be booked
@@ -150,18 +141,16 @@ export class BookingValidationService {
         status: car.status,
       });
 
-      const statusMessages: Record<Status, string> = {
-        [Status.AVAILABLE]: "", // Won't be used
+      const statusMessages: Record<Exclude<Status, "AVAILABLE">, string> = {
         [Status.BOOKED]: "This vehicle is currently booked",
         [Status.HOLD]: "This vehicle is temporarily unavailable",
         [Status.IN_SERVICE]: "This vehicle is currently under maintenance",
       };
 
-      errors.push({
-        field: "carId",
-        message: statusMessages[car.status] || "This vehicle is not available for booking",
-      });
-      return { valid: false, errors };
+      throw new CarNotAvailableException(
+        carId,
+        statusMessages[car.status] || "This vehicle is not available for booking",
+      );
     }
 
     // Calculate buffered time window
@@ -201,17 +190,11 @@ export class BookingValidationService {
         })),
       });
 
-      errors.push({
-        field: "carId",
-        message:
-          "Car is not available for the selected dates. Please choose different dates or another vehicle.",
-      });
+      throw new CarNotAvailableException(
+        carId,
+        "Car is not available for the selected dates. Please choose different dates or another vehicle.",
+      );
     }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
   }
 
   /**
@@ -220,14 +203,12 @@ export class BookingValidationService {
    * This prevents guest bookings from users who should log in instead.
    *
    * @param input - Booking input (guest or authenticated)
-   * @returns Validation result
+   * @throws BookingValidationException if the guest email is already registered
    */
-  async validateGuestEmail(input: CreateBookingInput): Promise<ValidationResult> {
-    const errors: ValidationError[] = [];
-
+  async validateGuestEmail(input: CreateBookingInput): Promise<void> {
     // Only validate if this is a guest booking
     if (!isGuestBooking(input)) {
-      return { valid: true, errors: [] };
+      return;
     }
 
     const existingUser = await this.databaseService.user.findUnique({
@@ -240,16 +221,13 @@ export class BookingValidationService {
         email: maskEmail(input.guestEmail),
       });
 
-      errors.push({
-        field: "guestEmail",
-        message: "This email is already registered. Please log in to make a booking.",
-      });
+      throw new BookingValidationException([
+        {
+          field: "guestEmail",
+          message: "This email is already registered. Please log in to make a booking.",
+        },
+      ]);
     }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
   }
 
   /**
@@ -260,14 +238,12 @@ export class BookingValidationService {
    *
    * @param clientTotal - Total amount sent by client (as string)
    * @param serverTotal - Total amount calculated by server
-   * @returns Validation result
+   * @throws BookingValidationException if prices don't match
    */
-  validatePriceMatch(clientTotal: string | undefined, serverTotal: Decimal): ValidationResult {
-    const errors: ValidationError[] = [];
-
+  validatePriceMatch(clientTotal: string | undefined, serverTotal: Decimal): void {
     // Skip validation if client didn't provide a total
     if (!clientTotal) {
-      return { valid: true, errors: [] };
+      return;
     }
 
     try {
@@ -281,65 +257,58 @@ export class BookingValidationService {
           difference: difference.toString(),
         });
 
-        errors.push({
-          field: "clientTotalAmount",
-          message: "Price mismatch. Please refresh and try again.",
-        });
+        throw new BookingValidationException([
+          {
+            field: "clientTotalAmount",
+            message: "Price mismatch. Please refresh and try again.",
+          },
+        ]);
       }
-    } catch {
-      errors.push({
-        field: "clientTotalAmount",
-        message: "Invalid price format",
-      });
+    } catch (error) {
+      // Re-throw if it's already a BookingValidationException
+      if (error instanceof BookingValidationException) {
+        throw error;
+      }
+      // Otherwise it's an invalid format
+      throw new BookingValidationException([
+        {
+          field: "clientTotalAmount",
+          message: "Invalid price format",
+        },
+      ]);
     }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
   }
 
   /**
-   * Run all validations and throw if any fail.
+   * Run all validations. Each method throws its own exception on failure.
    *
    * @param input - Booking input
    * @param serverTotal - Server-calculated total (optional)
-   * @throws BadRequestException if validation fails
+   * @throws BookingValidationException for validation errors
+   * @throws CarNotFoundException if car doesn't exist
+   * @throws CarNotAvailableException if car is not available
    */
   async validateAll(input: CreateBookingInput, serverTotal?: Decimal): Promise<void> {
-    const allErrors: ValidationError[] = [];
-
-    // Date validation
-    const dateResult = this.validateDates({
+    // Date validation (throws BookingValidationException)
+    this.validateDates({
       startDate: input.startDate,
       endDate: input.endDate,
       bookingType: input.bookingType,
     });
-    allErrors.push(...dateResult.errors);
 
-    // Car availability
-    const availabilityResult = await this.checkCarAvailability({
+    // Car availability (throws CarNotFoundException or CarNotAvailableException)
+    await this.checkCarAvailability({
       carId: input.carId,
       startDate: input.startDate,
       endDate: input.endDate,
     });
-    allErrors.push(...availabilityResult.errors);
 
-    // Guest email validation
-    const guestResult = await this.validateGuestEmail(input);
-    allErrors.push(...guestResult.errors);
+    // Guest email validation (throws BookingValidationException)
+    await this.validateGuestEmail(input);
 
-    // Price validation (if server total provided)
+    // Price validation (throws BookingValidationException)
     if (serverTotal) {
-      const priceResult = this.validatePriceMatch(input.clientTotalAmount, serverTotal);
-      allErrors.push(...priceResult.errors);
-    }
-
-    if (allErrors.length > 0) {
-      throw new BadRequestException({
-        message: "Validation failed",
-        errors: allErrors,
-      });
+      this.validatePriceMatch(input.clientTotalAmount, serverTotal);
     }
   }
 }

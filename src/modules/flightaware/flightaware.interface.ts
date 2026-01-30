@@ -10,41 +10,23 @@ export interface ValidatedFlight {
   flightId: string;
   origin: string;
   originIATA?: string;
+  /** Origin airport name (e.g., "London Heathrow") */
+  originName?: string;
   destination: string;
   destinationIATA?: string;
+  /** Destination airport name (e.g., "Murtala Muhammed International Airport") */
+  destinationName?: string;
+  /** Destination city (e.g., "Lagos") */
+  destinationCity?: string;
   scheduledArrival: string;
   estimatedArrival?: string;
   actualArrival?: string;
   status?: string;
   aircraftType?: string;
   delay?: number;
-  arrivalAddress?: string;
   /** True if from real-time API, false if from schedules */
   isLive?: boolean;
 }
-
-/**
- * Result type for flight validation
- */
-export type FlightValidationResult =
-  | {
-      type: "success";
-      flight: ValidatedFlight;
-    }
-  | {
-      type: "alreadyLanded";
-      flightNumber: string;
-      requestedDate: string;
-      landedTime: string;
-      nextFlightDate?: string;
-    }
-  | {
-      type: "notFound";
-    }
-  | {
-      type: "error";
-      message: string;
-    };
 
 /**
  * FlightAware API response for real-time flights endpoint

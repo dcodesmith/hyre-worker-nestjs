@@ -6,16 +6,17 @@ import {
   ChauffeurApprovalStatus,
   ExtensionEventType,
   FleetOwnerStatus,
+  type Payment,
   PaymentAttemptStatus,
   PaymentStatus,
+  type PayoutTransaction,
   PayoutTransactionStatus,
   ServiceTier,
   Status,
   VehicleType,
-  type Payment,
-  type PayoutTransaction,
 } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import type { BookingFinancials } from "../modules/booking/booking-calculation.interface";
 import { BookingWithRelations, ExtensionWithBookingLeg, PaymentWithRelations } from "../types";
 
 /**
@@ -315,7 +316,9 @@ export function createPaymentRecord(overrides: Partial<Payment> = {}): Payment {
 /**
  * Create a mock PayoutTransaction for testing.
  */
-export function createPayoutTransaction(overrides: Partial<PayoutTransaction> = {}): PayoutTransaction {
+export function createPayoutTransaction(
+  overrides: Partial<PayoutTransaction> = {},
+): PayoutTransaction {
   return {
     id: "payout-123",
     fleetOwnerId: "fleet-owner-123",
@@ -331,6 +334,36 @@ export function createPayoutTransaction(overrides: Partial<PayoutTransaction> = 
     processedAt: null,
     completedAt: null,
     notes: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Create mock booking financials for testing.
+ */
+export function createBookingFinancials(
+  overrides: Partial<BookingFinancials> = {},
+): BookingFinancials {
+  return {
+    legPrices: [{ legDate: new Date("2025-02-01"), price: new Decimal(50000) }],
+    numberOfLegs: 1,
+    netTotal: new Decimal(50000),
+    securityDetailCost: new Decimal(0),
+    fuelUpgradeCost: new Decimal(0),
+    netTotalWithAddons: new Decimal(50000),
+    platformFeeBase: new Decimal(50000),
+    platformCustomerServiceFeeRatePercent: new Decimal(5),
+    platformCustomerServiceFeeAmount: new Decimal(2500),
+    subtotalBeforeDiscounts: new Decimal(52500),
+    referralDiscountAmount: new Decimal(0),
+    creditsUsed: new Decimal(0),
+    subtotalAfterDiscounts: new Decimal(52500),
+    vatRatePercent: new Decimal(7.5),
+    vatAmount: new Decimal(3937.5),
+    totalAmount: new Decimal(56437.5),
+    platformFleetOwnerCommissionRatePercent: new Decimal(15),
+    platformFleetOwnerCommissionAmount: new Decimal(7500),
+    fleetOwnerPayoutAmountNet: new Decimal(42500),
     ...overrides,
   };
 }

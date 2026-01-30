@@ -12,7 +12,7 @@ import {
   TRIP_END,
   TRIP_START,
 } from "../../config/constants";
-import { JobException } from "./errors";
+import { JobEnqueueFailedException } from "./errors";
 
 @Injectable()
 export class JobService {
@@ -58,7 +58,7 @@ export class JobService {
       this.logger.log(`Enqueued ${name} jobId=${jobId}`);
     } catch (error) {
       this.logger.error(`Failed to enqueue ${name}: ${error.message}`, error.stack);
-      throw JobException.enqueueFailed(name, error.message);
+      throw new JobEnqueueFailedException(name, error.message);
     }
   }
 }

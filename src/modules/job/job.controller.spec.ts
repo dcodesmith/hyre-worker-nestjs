@@ -3,7 +3,7 @@ import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ThrottlerStorage } from "@nestjs/throttler";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { JobException } from "./errors";
+import { ManualTriggersDisabledException } from "./errors";
 import { JobController } from "./job.controller";
 import { JobService } from "./job.service";
 import { JobThrottlerGuard } from "./job-throttler.guard";
@@ -99,11 +99,11 @@ describe("JobController", () => {
   }
 
   describe("triggerJob", () => {
-    it("should throw JobException when manual triggers are disabled", async () => {
+    it("should throw ManualTriggersDisabledException when manual triggers are disabled", async () => {
       const disabledController = await createControllerWithConfig(false);
 
       await expect(disabledController.triggerJob("start-reminders")).rejects.toThrow(
-        JobException.manualTriggersDisabled(),
+        ManualTriggersDisabledException,
       );
     });
 

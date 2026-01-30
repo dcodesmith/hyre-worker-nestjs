@@ -1,2 +1,8 @@
 export { JobErrorCodes } from "./job.error-codes";
-export { JobException } from "./job.exception";
+export {
+  InvalidJobTypeException,
+  JobEnqueueFailedException,
+  JobException,
+  JobRateLimitExceededException,
+  ManualTriggersDisabledException,
+} from "./job.exception";

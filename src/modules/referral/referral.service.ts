@@ -138,14 +138,17 @@ export class ReferralService {
           }
         }
 
-        // Mark discount used if not already
+        // Mark discount used if not already.
+        // Note: This is a fallback for bookings created before the race condition fix.
+        // New bookings set referralDiscountUsed=true during booking creation (in the same transaction)
+        // to prevent concurrent bookings from all receiving the one-time discount.
         if (referee && !referee.referralDiscountUsed) {
           await tx.user.update({
             where: { id: booking.userId },
             data: { referralDiscountUsed: true },
           });
 
-          this.logger.log("Referral discount marked as used on completion", {
+          this.logger.log("Referral discount marked as used on completion (fallback)", {
             bookingId: booking.id,
             userId: booking.userId,
           });

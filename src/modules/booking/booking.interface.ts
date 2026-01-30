@@ -1,4 +1,76 @@
 import type { BookingStatus, BookingType, Prisma } from "@prisma/client";
+import type { Decimal } from "@prisma/client/runtime/library";
+import type { CarPricing } from "./booking-calculation.interface";
+import type { CreateBookingInput } from "./dto/create-booking.dto";
+
+/**
+ * Input for booking creation with optional user context.
+ */
+export interface BookingCreationInput {
+  /** Booking details from the request */
+  booking: CreateBookingInput;
+  /** Authenticated user info (null for guest bookings) */
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    phoneNumber: string | null;
+    /** User's referrer ID (if they signed up via referral) */
+    referredByUserId: string | null;
+    /** Whether the user has used their referral discount */
+    referralDiscountUsed: boolean;
+  } | null;
+}
+
+/**
+ * Car data with pricing for booking creation.
+ */
+export interface CarWithPricing extends CarPricing {
+  id: string;
+}
+
+/**
+ * Result from referral eligibility check
+ */
+export interface ReferralEligibility {
+  eligible: boolean;
+  referrerUserId: string | null;
+  discountAmount: Decimal;
+}
+
+/**
+ * Flight data needed for booking creation
+ */
+export interface FlightDataForBooking {
+  flightId: string;
+  arrivalTime: Date;
+  flightNumber: string;
+  /** Origin airport ICAO code (e.g., "EGLL") */
+  originCode: string | undefined;
+  /** Origin airport IATA code (e.g., "LHR") */
+  originCodeIATA: string | undefined;
+  /** Origin airport name (e.g., "London Heathrow") */
+  originName: string | undefined;
+  /** Destination airport ICAO code (e.g., "DNMM") */
+  destinationCode: string | undefined;
+  /** Destination airport IATA code (e.g., "LOS") */
+  destinationIATA: string | undefined;
+  /** Destination airport name (e.g., "Murtala Muhammed International Airport") */
+  destinationName: string | undefined;
+  /** Destination city (e.g., "Lagos") */
+  destinationCity: string | undefined;
+  /** Drive time from airport to drop-off location in minutes */
+  driveTimeMinutes?: number;
+}
+
+/**
+ * Customer details for payment intent
+ */
+export interface CustomerDetails {
+  email: string;
+  name: string;
+  phoneNumber: string | undefined;
+}
 
 export interface CreateBookingResponse {
   bookingId: string;
@@ -78,16 +150,6 @@ export interface CarAvailabilityInput {
   startDate: Date;
   endDate: Date;
   excludeBookingId?: string;
-}
-
-export interface ValidationError {
-  field: string;
-  message: string;
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: ValidationError[];
 }
 
 export interface GeneratedLeg {
