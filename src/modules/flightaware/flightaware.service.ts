@@ -51,6 +51,7 @@ export class FlightAwareService implements OnModuleDestroy {
     { data: ValidatedFlight | null; expiresAt: number }
   >();
   private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private readonly NOT_FOUND_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
@@ -382,7 +383,6 @@ export class FlightAwareService implements OnModuleDestroy {
           const landedResult = this.buildAlreadyLandedResult(
             landedFlight,
             flightNumber,
-            pickupDate,
             nextFlightDate,
           );
           if (landedResult) return landedResult;
@@ -592,25 +592,21 @@ export class FlightAwareService implements OnModuleDestroy {
     // Fetch airport info for destination details
     let destinationName: string | undefined;
     let destinationCity: string | undefined;
-    try {
-      const airportResponse = await this.httpClient.get<{ name?: string; city?: string }>(
-        `/airports/${scheduledFlight.destination}`,
-      );
-      destinationName = airportResponse.data.name;
-      destinationCity = airportResponse.data.city;
-    } catch {
-      // Destination name/city are optional, continue without them
-    }
-
-    // Fetch origin airport info
     let originName: string | undefined;
-    try {
-      const originResponse = await this.httpClient.get<{ name?: string }>(
-        `/airports/${scheduledFlight.origin}`,
-      );
-      originName = originResponse.data.name;
-    } catch {
-      // Origin name is optional, continue without it
+
+    const [destinationResult, originResult] = await Promise.allSettled([
+      this.httpClient.get<{ name?: string; city?: string }>(
+        `/airports/${scheduledFlight.destination}`,
+      ),
+      this.httpClient.get<{ name?: string }>(`/airports/${scheduledFlight.origin}`),
+    ]);
+
+    if (destinationResult.status === "fulfilled") {
+      destinationName = destinationResult.value.data.name;
+      destinationCity = destinationResult.value.data.city;
+    }
+    if (originResult.status === "fulfilled") {
+      originName = originResult.value.data.name;
     }
 
     return {
@@ -636,7 +632,6 @@ export class FlightAwareService implements OnModuleDestroy {
   private buildAlreadyLandedResult(
     landedFlight: FlightAwareFlightLeg,
     flightNumber: string,
-    _pickupDateStr: string,
     nextFlightDate: string | null,
   ): InternalFlightResult | null {
     const destinationIATA = landedFlight.destination.code_iata;
@@ -707,9 +702,11 @@ export class FlightAwareService implements OnModuleDestroy {
    */
   private setCachedFlight(flightNumber: string, date: string, data: ValidatedFlight | null): void {
     const key = this.getCacheKey(flightNumber, date);
+    const ttl = data === null ? this.NOT_FOUND_CACHE_TTL_MS : this.CACHE_TTL_MS;
+
     this.flightCache.set(key, {
       data,
-      expiresAt: Date.now() + this.CACHE_TTL_MS,
+      expiresAt: Date.now() + ttl,
     });
   }
 
