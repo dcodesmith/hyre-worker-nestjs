@@ -1,6 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { BookingStatus, PaymentStatus, Status, type Payment } from "@prisma/client";
+import { BookingStatus, type Payment, PaymentStatus, Status } from "@prisma/client";
 import { Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { normaliseBookingDetails } from "../../shared/helper";
@@ -12,7 +12,7 @@ import {
   FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import { NotificationType, type NotificationJobData } from "../notification/notification.interface";
+import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
 
 /**
  * Service for confirming bookings after successful payment.

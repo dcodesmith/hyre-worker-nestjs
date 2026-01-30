@@ -423,7 +423,10 @@ describe("BookingConfirmationService", () => {
 
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
-      vi.mocked(databaseService.car.update).mockResolvedValueOnce({ ...mockBooking.car, status: Status.BOOKED });
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce({
+        ...mockBooking.car,
+        status: Status.BOOKED,
+      });
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);

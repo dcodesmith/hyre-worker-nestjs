@@ -2,9 +2,9 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RatesService } from "../rates/rates.service";
+import type { GeneratedLeg } from "./booking.interface";
 import type { BookingCalculationInput, CarPricing } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
-import type { GeneratedLeg } from "./booking.interface";
 
 describe("BookingCalculationService", () => {
   let service: BookingCalculationService;

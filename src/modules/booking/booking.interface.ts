@@ -1,4 +1,4 @@
-import type { BookingStatus, BookingType, Prisma } from "@prisma/client";
+import type { BookingType, Prisma } from "@prisma/client";
 import type { Decimal } from "@prisma/client/runtime/library";
 import type { CarPricing } from "./booking-calculation.interface";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
@@ -74,10 +74,7 @@ export interface CustomerDetails {
 
 export interface CreateBookingResponse {
   bookingId: string;
-  bookingReference: string;
   checkoutUrl: string;
-  totalAmount: string;
-  status: BookingStatus;
 }
 
 export type BookingApiResponse = Prisma.BookingGetPayload<{

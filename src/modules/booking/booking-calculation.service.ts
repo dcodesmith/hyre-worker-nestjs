@@ -2,14 +2,14 @@ import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { RatesService } from "../rates/rates.service";
+import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
+import type { GeneratedLeg } from "./booking.interface";
 import type {
   BookingCalculationInput,
   BookingFinancials,
   CarPricing,
   LegPrice,
 } from "./booking-calculation.interface";
-import type { GeneratedLeg } from "./booking.interface";
-import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
 
 /**
  * Service for calculating booking financials.
