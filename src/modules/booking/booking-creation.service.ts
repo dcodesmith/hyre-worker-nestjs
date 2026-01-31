@@ -17,10 +17,6 @@ import { FlightAwareService } from "../flightaware/flightaware.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
-import type { BookingFinancials } from "./booking-calculation.interface";
-import { BookingCalculationService } from "./booking-calculation.service";
-import { BookingLegService } from "./booking-leg.service";
-import { BookingValidationService } from "./booking-validation.service";
 import {
   BookingCreationFailedException,
   BookingException,
@@ -38,6 +34,10 @@ import type {
   LegGenerationInput,
   ReferralEligibility,
 } from "./booking.interface";
+import type { BookingFinancials } from "./booking-calculation.interface";
+import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingLegService } from "./booking-leg.service";
+import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 

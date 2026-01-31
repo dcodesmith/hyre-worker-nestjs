@@ -288,24 +288,22 @@ describe("Helper Functions", () => {
   describe("generateBookingReference", () => {
     it("should generate a reference matching the expected format", () => {
       const ref = generateBookingReference();
-      expect(ref).toMatch(/^BK-\d+-[A-Z0-9]{6}$/);
+      expect(ref).toMatch(/^BK-[A-Z0-9]{8}$/);
     });
 
     it("should generate unique references", () => {
       const ref1 = generateBookingReference();
       const ref2 = generateBookingReference();
+      const ref3 = generateBookingReference();
+
       expect(ref1).not.toBe(ref2);
+      expect(ref2).not.toBe(ref3);
+      expect(ref3).not.toBe(ref1);
     });
 
-    it("should include timestamp in reference", () => {
-      const before = Date.now();
+    it("should use only uppercase letters and numbers", () => {
       const ref = generateBookingReference();
-      const after = Date.now();
-
-      // Extract timestamp from reference (between BK- and the last -)
-      const timestamp = Number(ref.split("-")[1]);
-      expect(timestamp).toBeGreaterThanOrEqual(before);
-      expect(timestamp).toBeLessThanOrEqual(after);
+      expect(ref.slice(3)).toMatch(/^[0-9A-Z]{8}$/);
     });
   });
 });

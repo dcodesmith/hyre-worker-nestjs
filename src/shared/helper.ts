@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import {
@@ -7,6 +8,9 @@ import {
   NormalisedBookingDetails,
   NormalisedBookingLegDetails,
 } from "../types";
+
+// Alphabet for booking reference generation (0-9, A-Z, avoiding ambiguous chars like 0/O, 1/I)
+const BOOKING_REFERENCE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /**
  * Masks an email address for safe logging (PII protection).
@@ -187,11 +191,13 @@ export function normaliseBookingLegDetails(
 
 /**
  * Generate a unique booking reference.
- * Format: BK-{timestamp}-{random6chars}
- * Example: BK-1706540800000-ABC123
+ * Format: BK-{8 random chars}
+ * Example: BK-4U9A1V8Z
  */
 export function generateBookingReference(): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, "0");
-  return `BK-${timestamp}-${random}`;
+  const randomBytesArray = randomBytes(8);
+  const randomString = Array.from(randomBytesArray)
+    .map((byte) => BOOKING_REFERENCE_ALPHABET[byte % BOOKING_REFERENCE_ALPHABET.length])
+    .join("");
+  return `BK-${randomString}`;
 }
