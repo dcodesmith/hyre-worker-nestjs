@@ -23,7 +23,7 @@ jobs:
       - name: Show deployment logs
         run: |
           echo "=== Recent deployment logs ==="
-          flyctl logs --app hyre-worker-nestjs -n 100 || true
+          flyctl logs --app hyre-worker-nestjs -n | head -100 || true
           echo "=== Machine status ==="
           flyctl status --app hyre-worker-nestjs || true
       - name: Verify deployment
@@ -40,13 +40,13 @@ jobs:
             # Show logs every 10 attempts to see progress
             if [ $((i % 10)) -eq 0 ]; then
               echo "=== Recent logs (check $i) ==="
-              flyctl logs --app hyre-worker-nestjs -n 20 || true
+              flyctl logs --app hyre-worker-nestjs -n | head -20 || true
             fi
             sleep 5
           done
           # Final log check
           echo "=== Final logs ==="
-          flyctl logs --app hyre-worker-nestjs -n 50 || true
+          flyctl logs --app hyre-worker-nestjs -n | head -50 || true
           if [ "$DEPLOY_SUCCESS" != "true" ]; then
             echo "Error: Deployment verification timed out - no machines reached 'started' state"
             exit 1
