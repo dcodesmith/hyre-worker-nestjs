@@ -35,9 +35,10 @@ export class InvalidJobTypeException extends JobException {
  */
 export class JobEnqueueFailedException extends JobException {
   constructor(jobName: string, reason?: string) {
+    const reasonSuffix = reason ? `. Reason: ${reason}` : "";
     super(
       JobErrorCodes.ENQUEUE_FAILED,
-      `Failed to enqueue job: ${jobName}${reason ? `. Reason: ${reason}` : ""}`,
+      `Failed to enqueue job: ${jobName}${reasonSuffix}`,
       HttpStatus.INTERNAL_SERVER_ERROR,
       { jobName, reason },
     );

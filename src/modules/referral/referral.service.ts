@@ -85,10 +85,9 @@ export class ReferralService {
     });
 
     if (
-      !booking ||
-      booking.referralStatus !== BookingReferralStatus.APPLIED ||
-      !booking.userId ||
-      !booking.referralReferrerUserId
+      booking?.referralStatus !== BookingReferralStatus.APPLIED ||
+      !booking?.userId ||
+      !booking?.referralReferrerUserId
     ) {
       this.logger.log("Skipping referral completion: booking not eligible", {
         bookingId,
