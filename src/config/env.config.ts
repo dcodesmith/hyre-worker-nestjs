@@ -67,8 +67,8 @@ export const envSchema = z.object({
   GOOGLE_DISTANCE_MATRIX_API_KEY: z.string().min(1, "GOOGLE_DISTANCE_MATRIX_API_KEY is required"),
 
   // Auth configuration (optional - only required when AuthModule is used)
-  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters").optional(),
-  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL").optional(),
+  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
+  AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL"),
   TRUSTED_ORIGINS: z
     .string()
     .min(1, "TRUSTED_ORIGINS is required")
@@ -82,8 +82,7 @@ export const envSchema = z.object({
       z
         .array(z.url("Each TRUSTED_ORIGIN must be a valid URL"))
         .min(1, "At least one valid TRUSTED_ORIGIN is required"),
-    )
-    .optional(),
+    ),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -40,14 +40,6 @@ export class AuthService implements OnModuleInit {
     const trustedOrigins = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
 
-    if (!sessionSecret || !authBaseUrl || !trustedOrigins?.length) {
-      this.logger.warn(
-        "Auth configuration incomplete. AuthService will not be initialized. " +
-          "Set SESSION_SECRET, AUTH_BASE_URL, and TRUSTED_ORIGINS to enable auth.",
-      );
-      return;
-    }
-
     this.trustedOrigins = trustedOrigins;
 
     this._auth = createAuth({
@@ -70,11 +62,6 @@ export class AuthService implements OnModuleInit {
   }
 
   get auth(): Auth {
-    if (!this._auth) {
-      throw new Error(
-        "Auth service not initialized. Ensure SESSION_SECRET, AUTH_BASE_URL, and TRUSTED_ORIGINS are configured.",
-      );
-    }
     return this._auth;
   }
 
@@ -103,7 +90,6 @@ export class AuthService implements OnModuleInit {
     clientType,
     referer,
   }: ValidateRoleForClientParams): boolean {
-    // Mobile app: only user role allowed
     if (clientType === MOBILE) {
       return role === USER;
     }

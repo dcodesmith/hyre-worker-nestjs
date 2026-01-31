@@ -162,9 +162,7 @@ describe("Bookings E2E Tests", () => {
       it("should create a booking for guest user", async () => {
         const payload = createGuestBookingPayload(testCarId);
 
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .send(payload);
+        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
 
         expect(response.status).toBe(HttpStatus.CREATED);
         expect(response.body).toHaveProperty("bookingId");
@@ -175,9 +173,7 @@ describe("Bookings E2E Tests", () => {
         const payload = createValidBookingPayload(testCarId);
         // Not authenticated and no guest fields
 
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .send(payload);
+        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
 
         expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       });
@@ -188,9 +184,7 @@ describe("Bookings E2E Tests", () => {
           guestEmail: "not-an-email",
         };
 
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .send(payload);
+        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
 
         expect(response.status).toBe(HttpStatus.BAD_REQUEST);
         expect(response.body.message).toContain("Validation");
@@ -202,9 +196,7 @@ describe("Bookings E2E Tests", () => {
           guestPhone: "123", // Too short
         };
 
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .send(payload);
+        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
 
         expect(response.status).toBe(HttpStatus.BAD_REQUEST);
         expect(response.body.message).toContain("Validation");
