@@ -187,47 +187,18 @@ export class ReminderService {
 
       let queuedCount = 0;
       for (const leg of legsEndingToday) {
-        let effectiveEndTimeForLeg: Date;
-        const latestActivePaidExtension = leg.extensions?.[0];
-
-        if (latestActivePaidExtension?.extensionEndTime) {
-          effectiveEndTimeForLeg = latestActivePaidExtension.extensionEndTime;
-        } else {
-          const parentBookingEndDate = leg.booking.endDate;
-          effectiveEndTimeForLeg = set(leg.legDate, {
-            hours: getHours(parentBookingEndDate),
-            minutes: getMinutes(parentBookingEndDate),
-            seconds: getSeconds(parentBookingEndDate),
-            milliseconds: getMilliseconds(parentBookingEndDate),
-          });
-        }
-
-        if (!isValid(effectiveEndTimeForLeg)) {
-          this.logger.warn(
-            `Could not determine valid effective end time for leg ${leg.id} of booking ${leg.booking.id}.`,
-          );
-          continue;
-        }
-
-        // Check if this leg's effective end time falls within the reminder window
-        if (!isWithinInterval(effectiveEndTimeForLeg, reminderInterval)) {
+        const effectiveEndTime = this.calculateEffectiveEndTime(leg);
+        if (!effectiveEndTime || !isWithinInterval(effectiveEndTime, reminderInterval)) {
           continue;
         }
 
         this.logger.log(
-          `Processing end reminder for leg ${leg.id} with effective end time: ${effectiveEndTimeForLeg.toISOString()}`,
+          `Processing end reminder for leg ${leg.id} with effective end time: ${effectiveEndTime.toISOString()}`,
         );
 
-        try {
-          // Queue notification instead of sending directly
-          await this.notificationService.queueBookingReminderNotifications(
-            normaliseBookingLegDetails(leg),
-            NotificationType.BOOKING_REMINDER_END,
-          );
+        const queued = await this.queueEndReminderForLeg(leg);
+        if (queued) {
           queuedCount++;
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger.error(`Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`);
         }
       }
 
@@ -238,6 +209,54 @@ export class ReminderService {
         errorDetails: error,
       });
       throw error;
+    }
+  }
+
+  private calculateEffectiveEndTime(leg: {
+    extensions?: Array<{ extensionEndTime: Date | null }>;
+    legDate: Date;
+    booking: { endDate: Date; id: string };
+    id: string;
+  }): Date | null {
+    let effectiveEndTime: Date;
+
+    const latestActivePaidExtension = leg.extensions?.[0];
+
+    if (latestActivePaidExtension?.extensionEndTime) {
+      effectiveEndTime = latestActivePaidExtension.extensionEndTime;
+    } else {
+      const parentBookingEndDate = leg.booking.endDate;
+      effectiveEndTime = set(leg.legDate, {
+        hours: getHours(parentBookingEndDate),
+        minutes: getMinutes(parentBookingEndDate),
+        seconds: getSeconds(parentBookingEndDate),
+        milliseconds: getMilliseconds(parentBookingEndDate),
+      });
+    }
+
+    if (!isValid(effectiveEndTime)) {
+      this.logger.warn(
+        `Could not determine valid effective end time for leg ${leg.id} of booking ${leg.booking.id}.`,
+      );
+      return null;
+    }
+
+    return effectiveEndTime;
+  }
+
+  private async queueEndReminderForLeg(
+    leg: Parameters<typeof normaliseBookingLegDetails>[0],
+  ): Promise<boolean> {
+    try {
+      await this.notificationService.queueBookingReminderNotifications(
+        normaliseBookingLegDetails(leg),
+        NotificationType.BOOKING_REMINDER_END,
+      );
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`);
+      return false;
     }
   }
 }

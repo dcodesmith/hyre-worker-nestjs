@@ -1,7 +1,7 @@
 import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAxiosErrorWithRequest,
   createAxiosErrorWithResponse,
@@ -18,7 +18,7 @@ describe("MapsService", () => {
   const createService = async (apiKey: string | undefined) => {
     const mockConfigService = {
       get: vi.fn((key: string) => {
-        if (key === "GOOGLE_MAPS_API_KEY") return apiKey;
+        if (key === "GOOGLE_DISTANCE_MATRIX_API_KEY") return apiKey;
         return undefined;
       }),
     };

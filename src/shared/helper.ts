@@ -57,20 +57,20 @@ export function getUserDisplayName(
   return "User";
 }
 
+function replaceWithOrdinalSuffix(day: string) {
+  const num = Number.parseInt(day);
+  const suffix = ["th", "st", "nd", "rd"][
+    num % 10 > 3 || (num % 100) - (num % 10) === 10 ? 0 : num % 10
+  ];
+  return `${num}${suffix}`;
+}
+
 export function formatDate(date: string | Date) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
     timeStyle: "short",
     hour12: true,
   });
-
-  function replaceWithOrdinalSuffix(day: string) {
-    const num = Number.parseInt(day);
-    const suffix = ["th", "st", "nd", "rd"][
-      num % 10 > 3 || (num % 100) - (num % 10) === 10 ? 0 : num % 10
-    ];
-    return `${num}${suffix}`;
-  }
 
   return formatter
     .format(new Date(date))
