@@ -873,5 +873,86 @@ describe("BookingCreationService", () => {
         }),
       );
     });
+
+    it("should not apply referral discount when user has already used it (preliminary check)", async () => {
+      // User was referred but already used their one-time discount
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue({
+        id: "user-123",
+        email: "user@example.com",
+        name: "Test User",
+        phoneNumber: "08012345678",
+        referredByUserId: "referrer-123",
+        referralDiscountUsed: true, // ✅ Already used!
+      });
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+
+      // No referral config should be queried since preliminary check fails
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials(),
+      );
+
+      vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
+        "https://api.example.com/api/payments/callback",
+      );
+
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          booking: {
+            create: vi.fn().mockResolvedValue({
+              id: "booking-123",
+              bookingReference: "BK-123456-ABC",
+              totalAmount: new Decimal(56437.5),
+              status: BookingStatus.PENDING,
+            }),
+            update: vi.fn(),
+          },
+          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
+        };
+
+        return callback(mockTx);
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValue({
+        paymentIntentId: "pi-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      const booking = createBookingInput();
+      const user = createSessionUser();
+
+      await service.createBooking(booking, user);
+
+      // CRITICAL: Verify NO discount was applied (user already used it)
+      expect(calculationService.calculateBookingCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referralDiscountAmount: new Decimal(0),
+        }),
+      );
+
+      // Verify referral config was NOT fetched (preliminary check caught it)
+      expect(databaseService.referralProgramConfig.findMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: { in: ["REFERRAL_ENABLED", "REFERRAL_DISCOUNT_AMOUNT"] } },
+        }),
+      );
+    });
   });
 });

@@ -309,12 +309,12 @@ export class BookingCreationService {
    * Preliminary check for referral discount eligibility.
    *
    * IMPORTANT: This is a preliminary check for pre-transaction price calculation.
-   * We cannot check referralDiscountUsed here since session data may be stale.
-   * The actual eligibility is verified inside the transaction with a fresh DB query
-   * and pessimistic locking to prevent race conditions.
+   * We query the database to get fresh referral status (not in session).
+   * The actual eligibility is verified AGAIN inside the transaction with pessimistic
+   * locking to prevent race conditions where the discount could be used concurrently.
    *
-   * For now, we assume eligibility if referral program is enabled and user has a referrer.
-   * The transaction will verify the actual state with FOR UPDATE lock.
+   * This preliminary check ensures users see the correct price upfront, avoiding
+   * surprise errors at checkout if their discount was already used.
    *
    * @see verifyAndClaimReferralDiscountInTransaction for the transaction-safe verification
    */
@@ -326,20 +326,23 @@ export class BookingCreationService {
       return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
     }
 
-    // We need to fetch referredByUserId from database since it's not in session
-    // This is a lightweight query just to check if user was referred
+    // Fetch referral fields from database (not in session)
+    // This is a lightweight query to check current referral status
     const user = await this.databaseService.user.findUnique({
       where: { id: sessionUser.id },
-      select: { referredByUserId: true },
+      select: {
+        referredByUserId: true,
+        referralDiscountUsed: true,
+      },
     });
 
-    if (!user?.referredByUserId) {
+    // Not eligible if: no referrer OR discount already used
+    if (!user?.referredByUserId || user.referralDiscountUsed) {
       return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
     }
 
     // Get referral program config (safe to read outside transaction)
-    // Note: We don't check referralDiscountUsed here because session data may be stale
-    // The transaction will verify with fresh data and FOR UPDATE lock
+    // Note: Transaction will verify eligibility again with FOR UPDATE lock
     return this.getReferralConfig(user.referredByUserId);
   }
 
