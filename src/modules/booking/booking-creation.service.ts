@@ -481,11 +481,11 @@ export class BookingCreationService {
         select: { phoneNumber: true, email: true, name: true },
       });
 
-      return {
-        email: sessionUser.email ?? user.email,
-        name: sessionUser.name ?? user.name,
-        phoneNumber: user?.phoneNumber ?? undefined,
-      };
+      if (!user) {
+        throw new BookingCreationFailedException("User not found for session");
+      }
+
+      return user;
     }
 
     const guestBooking = booking as CreateGuestBookingDto;
