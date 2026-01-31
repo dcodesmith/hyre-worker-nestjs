@@ -16,11 +16,10 @@ export class AuthEmailService {
 
   async sendOTPEmail(email: string, otp: string): Promise<void> {
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
-    console.log({ nodeEnv });
-    const isDev = nodeEnv === "development";
-    const maskedEmail = isDev ? email : maskEmail(email);
+    const isDevelopment = nodeEnv === "development";
+    const maskedEmail = isDevelopment ? email : maskEmail(email);
 
-    if (nodeEnv === "development") {
+    if (isDevelopment) {
       this.logger.log(`Dev OTP for ${maskedEmail}: ${otp}`);
       return;
     }
