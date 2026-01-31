@@ -4,7 +4,9 @@
     "ignoreUnknown": true
   },
   "vcs": {
-    "enabled": false
+    "enabled": false,
+    "clientKind": "git",
+    "useIgnoreFile": true
   },
   "linter": {
     "enabled": true,

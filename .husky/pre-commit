@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Biome check and format on staged files only
+pnpm exec biome check --write --staged
+
+# Type check
+pnpm run type-check
+
+# Run unit tests
+pnpm run test --run
+
+# Run e2e tests
+pnpm run test:e2e
