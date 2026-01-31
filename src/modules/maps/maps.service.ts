@@ -17,7 +17,7 @@ export class MapsService {
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
   ) {
-    this.apiKey = this.configService.get("GOOGLE_MAPS_API_KEY", { infer: true });
+    this.apiKey = this.configService.get("GOOGLE_DISTANCE_MATRIX_API_KEY", { infer: true });
 
     this.httpClient = this.httpClientService.createClient({
       timeout: 30000,

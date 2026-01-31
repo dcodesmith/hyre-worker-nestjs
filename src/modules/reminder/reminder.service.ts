@@ -218,18 +218,21 @@ export class ReminderService {
     booking: { endDate: Date; id: string };
     id: string;
   }): Date | null {
-    const latestActivePaidExtension = leg.extensions?.[0];
-    if (latestActivePaidExtension?.extensionEndTime) {
-      return latestActivePaidExtension.extensionEndTime;
-    }
+    let effectiveEndTime: Date;
 
-    const parentBookingEndDate = leg.booking.endDate;
-    const effectiveEndTime = set(leg.legDate, {
-      hours: getHours(parentBookingEndDate),
-      minutes: getMinutes(parentBookingEndDate),
-      seconds: getSeconds(parentBookingEndDate),
-      milliseconds: getMilliseconds(parentBookingEndDate),
-    });
+    const latestActivePaidExtension = leg.extensions?.[0];
+
+    if (latestActivePaidExtension?.extensionEndTime) {
+      effectiveEndTime = latestActivePaidExtension.extensionEndTime;
+    } else {
+      const parentBookingEndDate = leg.booking.endDate;
+      effectiveEndTime = set(leg.legDate, {
+        hours: getHours(parentBookingEndDate),
+        minutes: getMinutes(parentBookingEndDate),
+        seconds: getSeconds(parentBookingEndDate),
+        milliseconds: getMilliseconds(parentBookingEndDate),
+      });
+    }
 
     if (!isValid(effectiveEndTime)) {
       this.logger.warn(
