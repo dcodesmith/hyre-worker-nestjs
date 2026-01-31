@@ -876,14 +876,12 @@ describe("BookingCreationService", () => {
 
     it("should not apply referral discount when user has already used it (preliminary check)", async () => {
       // User was referred but already used their one-time discount
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue({
-        id: "user-123",
-        email: "user@example.com",
-        name: "Test User",
-        phoneNumber: "08012345678",
-        referredByUserId: "referrer-123",
-        referralDiscountUsed: true, // ✅ Already used!
-      });
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123",
+          referralDiscountUsed: true, // ✅ Already used!
+        }),
+      );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
