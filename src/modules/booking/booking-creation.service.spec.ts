@@ -96,7 +96,7 @@ describe("BookingCreationService", () => {
           useValue: {
             car: { findUnique: vi.fn() },
             user: { findUnique: vi.fn(), update: vi.fn() },
-            booking: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+            booking: { create: vi.fn(), update: vi.fn() },
             flight: { upsert: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn() },
@@ -173,7 +173,6 @@ describe("BookingCreationService", () => {
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(null);
 
       vi.mocked(legService.generateLegs).mockReturnValue([
         {

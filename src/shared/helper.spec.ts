@@ -1,6 +1,12 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { formatCurrency, getCustomerDetails, getUserDisplayName, maskEmail } from "./helper";
+import {
+  formatCurrency,
+  generateBookingReference,
+  getCustomerDetails,
+  getUserDisplayName,
+  maskEmail,
+} from "./helper";
 import {
   createBooking,
   createBookingLeg,
@@ -276,6 +282,28 @@ describe("Helper Functions", () => {
 
       expect(booking.user).toMatchObject({ name: "Regular User" });
       expect(booking.guestUser).toBeNull();
+    });
+  });
+
+  describe("generateBookingReference", () => {
+    it("should generate a reference matching the expected format", () => {
+      const ref = generateBookingReference();
+      expect(ref).toMatch(/^BK-[A-Z0-9]{8}$/);
+    });
+
+    it("should generate unique references", () => {
+      const ref1 = generateBookingReference();
+      const ref2 = generateBookingReference();
+      const ref3 = generateBookingReference();
+
+      expect(ref1).not.toBe(ref2);
+      expect(ref2).not.toBe(ref3);
+      expect(ref3).not.toBe(ref1);
+    });
+
+    it("should use only uppercase letters and numbers", () => {
+      const ref = generateBookingReference();
+      expect(ref.slice(3)).toMatch(/^[0-9A-Z]{8}$/);
     });
   });
 });
