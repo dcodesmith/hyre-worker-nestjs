@@ -1,8 +1,8 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it } from "vitest";
-import { BookingLegService } from "./booking-leg.service";
-import { LegGenerationInput } from "./booking.interface";
 import { AIRPORT_PICKUP_BUFFER_MINUTES } from "./booking.const";
+import { LegGenerationInput } from "./booking.interface";
+import { BookingLegService } from "./booking-leg.service";
 
 describe("BookingLegService", () => {
   let service: BookingLegService;

@@ -309,11 +309,15 @@ export function createAuth(options: AuthConfigOptions) {
       },
     },
     advanced: {
-      cookiePrefix: "", // Web app handles __Host- prefix
+      // Use __Host- prefix in production for enhanced security (prevents subdomain attacks)
+      // In development, use no prefix since __Host- requires HTTPS
+      cookiePrefix: secureCookies ? "__Host-" : "",
       defaultCookieAttributes: {
         httpOnly: true,
         secure: secureCookies,
         sameSite: "lax",
+        // __Host- cookies require path to be "/"
+        ...(secureCookies && { path: "/" }),
       },
     },
   });

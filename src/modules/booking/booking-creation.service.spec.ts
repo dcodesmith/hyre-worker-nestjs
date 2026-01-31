@@ -2,7 +2,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
+import { createBookingFinancials, createCar, createUser } from "../../shared/helper.fixtures";
+import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
   FlightAlreadyLandedException,
@@ -21,7 +22,6 @@ import {
   PaymentIntentFailedException,
   ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
-import type { BookingCreationInput } from "./booking.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingLegService } from "./booking-leg.service";
@@ -58,14 +58,17 @@ const createGuestBookingInput = (
   return { ...base, ...overrides } as CreateGuestBookingDto;
 };
 
-// Helper to create user context
-const createUserContext = (): BookingCreationInput["user"] => ({
+// Helper to create session user context (AuthSession["user"] type from Better Auth)
+const createSessionUser = (overrides: Partial<AuthSession["user"]> = {}): AuthSession["user"] => ({
   id: "user-123",
   email: "user@example.com",
   name: "Test User",
-  phoneNumber: "08012345678",
-  referredByUserId: null,
-  referralDiscountUsed: false,
+  emailVerified: true,
+  image: null,
+  createdAt: new Date("2024-01-01T00:00:00Z"),
+  updatedAt: new Date("2024-01-01T00:00:00Z"),
+  roles: ["user"],
+  ...overrides,
 });
 
 describe("BookingCreationService", () => {
@@ -92,6 +95,7 @@ describe("BookingCreationService", () => {
           provide: DatabaseService,
           useValue: {
             car: { findUnique: vi.fn() },
+            user: { findUnique: vi.fn(), update: vi.fn() },
             booking: { create: vi.fn(), update: vi.fn() },
             flight: { upsert: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
@@ -168,6 +172,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
 
       vi.mocked(legService.generateLegs).mockReturnValue([
         {
@@ -219,16 +224,13 @@ describe("BookingCreationService", () => {
       setupSuccessfulMocks();
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      const result = await service.createBooking({ booking, user });
+      const result = await service.createBooking(booking, user);
 
       expect(result).toEqual({
         bookingId: "booking-123",
-        bookingReference: expect.stringMatching(/^BK-/),
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
-        totalAmount: "56437.5",
-        status: BookingStatus.PENDING,
       });
 
       expect(validationService.validateDates).toHaveBeenCalledWith({
@@ -252,14 +254,11 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      const result = await service.createBooking({ booking, user: null });
+      const result = await service.createBooking(booking, null);
 
       expect(result).toEqual({
         bookingId: "booking-123",
-        bookingReference: expect.stringMatching(/^BK-/),
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
-        totalAmount: "56437.5",
-        status: BookingStatus.PENDING,
       });
 
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
@@ -273,9 +272,9 @@ describe("BookingCreationService", () => {
       });
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
         BookingValidationException,
       );
 
@@ -283,17 +282,16 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw CarNotAvailableException when car is not available", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockRejectedValue(
         new CarNotAvailableException("car-123", "Car is not available for the selected dates"),
       );
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
-        CarNotAvailableException,
-      );
+      await expect(service.createBooking(booking, user)).rejects.toThrow(CarNotAvailableException);
 
       expect(databaseService.car.findUnique).not.toHaveBeenCalled();
     });
@@ -309,7 +307,7 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      await expect(service.createBooking({ booking, user: null })).rejects.toThrow(
+      await expect(service.createBooking(booking, null)).rejects.toThrow(
         BookingValidationException,
       );
     });
@@ -335,23 +333,25 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
 
       // Pass user: null with a non-guest booking
-      await expect(service.createBooking({ booking, user: null })).rejects.toThrow(
+      await expect(service.createBooking(booking, null)).rejects.toThrow(
         BookingValidationException,
       );
     });
 
     it("should throw CarNotFoundException when car does not exist", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(null);
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(CarNotFoundException);
+      await expect(service.createBooking(booking, user)).rejects.toThrow(CarNotFoundException);
     });
 
     it("should throw BookingValidationException when price does not match", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
@@ -373,9 +373,9 @@ describe("BookingCreationService", () => {
       });
 
       const booking = createBookingInput({ clientTotalAmount: "10000" });
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
         BookingValidationException,
       );
     });
@@ -389,9 +389,9 @@ describe("BookingCreationService", () => {
       );
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
         PaymentIntentFailedException,
       );
 
@@ -403,6 +403,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
@@ -418,9 +419,9 @@ describe("BookingCreationService", () => {
       );
 
       const booking = createBookingInput();
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
         BookingCreationFailedException,
       );
 
@@ -431,6 +432,7 @@ describe("BookingCreationService", () => {
 
   describe("createBooking - Airport Pickup", () => {
     it("should validate flight for airport pickup bookings", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       // Validation methods now return void
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
@@ -508,9 +510,9 @@ describe("BookingCreationService", () => {
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
       });
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      const result = await service.createBooking({ booking, user });
+      const result = await service.createBooking(booking, user);
 
       expect(result.bookingId).toBe("booking-123");
       expect(flightAwareService.validateFlight).toHaveBeenCalledWith("BA74", "2025-02-01");
@@ -520,6 +522,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw FlightNotFoundException when flight is not found", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
@@ -534,14 +537,13 @@ describe("BookingCreationService", () => {
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
       });
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
-        FlightNotFoundException,
-      );
+      await expect(service.createBooking(booking, user)).rejects.toThrow(FlightNotFoundException);
     });
 
     it("should throw FlightAlreadyLandedException when flight has already landed", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
@@ -556,9 +558,9 @@ describe("BookingCreationService", () => {
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
       });
-      const user = createUserContext();
+      const user = createSessionUser();
 
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
         FlightAlreadyLandedException,
       );
     });
@@ -566,6 +568,13 @@ describe("BookingCreationService", () => {
 
   describe("createBooking - Referral Handling", () => {
     it("should apply referral discount for eligible users", async () => {
+      // Mock user in database with referral info (fetched for preliminary check)
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123", // User was referred
+          referralDiscountUsed: false, // Discount not yet used
+        }),
+      );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
@@ -632,16 +641,10 @@ describe("BookingCreationService", () => {
       });
 
       const booking = createBookingInput();
-      const user: BookingCreationInput["user"] = {
-        id: "user-123",
-        email: "user@example.com",
-        name: "Test User",
-        phoneNumber: "08012345678",
-        referredByUserId: "referrer-123", // User was referred
-        referralDiscountUsed: false, // Discount not yet used
-      };
+      // Session user only has Better Auth fields, not referral info
+      const sessionUser = createSessionUser();
 
-      const result = await service.createBooking({ booking, user });
+      const result = await service.createBooking(booking, sessionUser);
 
       expect(result.bookingId).toBe("booking-123");
 
@@ -654,6 +657,13 @@ describe("BookingCreationService", () => {
     });
 
     it("should mark referralDiscountUsed=true within the transaction to prevent race conditions", async () => {
+      // Mock user in database with referral info
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123",
+          referralDiscountUsed: false,
+        }),
+      );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
@@ -722,16 +732,10 @@ describe("BookingCreationService", () => {
       });
 
       const booking = createBookingInput();
-      const user: BookingCreationInput["user"] = {
-        id: "user-123",
-        email: "user@example.com",
-        name: "Test User",
-        phoneNumber: "08012345678",
-        referredByUserId: "referrer-123",
-        referralDiscountUsed: false,
-      };
+      // Session user only has Better Auth fields
+      const sessionUser = createSessionUser();
 
-      await service.createBooking({ booking, user });
+      await service.createBooking(booking, sessionUser);
 
       // Verify that user.referralDiscountUsed was set to true WITHIN the transaction
       // This prevents the race condition where concurrent bookings could all receive the discount
@@ -742,6 +746,13 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw ReferralDiscountNoLongerAvailableException when discount was already used (race condition)", async () => {
+      // Mock user in database - preliminary check shows eligible
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123",
+          referralDiscountUsed: false,
+        }),
+      );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
@@ -756,7 +767,7 @@ describe("BookingCreationService", () => {
         },
       ]);
 
-      // Preliminary check: user appears eligible (from request context)
+      // Preliminary check: user appears eligible (from initial DB query)
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
         { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
         { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
@@ -791,17 +802,11 @@ describe("BookingCreationService", () => {
       });
 
       const booking = createBookingInput();
-      const user: BookingCreationInput["user"] = {
-        id: "user-123",
-        email: "user@example.com",
-        name: "Test User",
-        phoneNumber: "08012345678",
-        referredByUserId: "referrer-123",
-        referralDiscountUsed: false, // Preliminary check says eligible
-      };
+      // Session user only has Better Auth fields
+      const sessionUser = createSessionUser();
 
       // Should throw because fresh DB query shows discount was already used
-      await expect(service.createBooking({ booking, user })).rejects.toThrow(
+      await expect(service.createBooking(booking, sessionUser)).rejects.toThrow(
         ReferralDiscountNoLongerAvailableException,
       );
     });
@@ -859,12 +864,91 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      await service.createBooking({ booking, user: null });
+      await service.createBooking(booking, null);
 
       // Verify no referral discount was passed
       expect(calculationService.calculateBookingCost).toHaveBeenCalledWith(
         expect.objectContaining({
           referralDiscountAmount: new Decimal(0),
+        }),
+      );
+    });
+
+    it("should not apply referral discount when user has already used it (preliminary check)", async () => {
+      // User was referred but already used their one-time discount
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123",
+          referralDiscountUsed: true, // ✅ Already used!
+        }),
+      );
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+
+      // No referral config should be queried since preliminary check fails
+      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials(),
+      );
+
+      vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
+        "https://api.example.com/api/payments/callback",
+      );
+
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          booking: {
+            create: vi.fn().mockResolvedValue({
+              id: "booking-123",
+              bookingReference: "BK-123456-ABC",
+              totalAmount: new Decimal(56437.5),
+              status: BookingStatus.PENDING,
+            }),
+            update: vi.fn(),
+          },
+          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
+        };
+
+        return callback(mockTx);
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValue({
+        paymentIntentId: "pi-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      const booking = createBookingInput();
+      const user = createSessionUser();
+
+      await service.createBooking(booking, user);
+
+      // CRITICAL: Verify NO discount was applied (user already used it)
+      expect(calculationService.calculateBookingCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referralDiscountAmount: new Decimal(0),
+        }),
+      );
+
+      // Verify referral config was NOT fetched (preliminary check caught it)
+      expect(databaseService.referralProgramConfig.findMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: { in: ["REFERRAL_ENABLED", "REFERRAL_DISCOUNT_AMOUNT"] } },
         }),
       );
     });

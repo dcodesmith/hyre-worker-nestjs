@@ -224,6 +224,7 @@ export class TestDataFactory {
           options.registrationNumber ??
           `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         status: options.status ?? "AVAILABLE",
+        approvalStatus: options.approvalStatus ?? "APPROVED", // Required for booking
         hourlyRate: options.hourlyRate ?? 5000,
         dayRate: options.dayRate ?? 50000,
         nightRate: options.nightRate ?? 60000,
@@ -357,6 +358,78 @@ export class TestDataFactory {
     return this.prisma.booking.findUnique({
       where: { id: bookingId },
     });
+  }
+
+  /**
+   * Create platform rates required for booking calculations.
+   * Creates platform fee rate, fleet owner commission rate, VAT rate, and security detail addon rate.
+   * Must be called before booking creation tests.
+   */
+  async createPlatformRates(): Promise<void> {
+    const effectiveSince = new Date("2020-01-01");
+
+    await Promise.all([
+      // Platform service fee (10%)
+      this.prisma.platformFeeRate.upsert({
+        where: {
+          feeType_effectiveSince: {
+            feeType: "PLATFORM_SERVICE_FEE",
+            effectiveSince,
+          },
+        },
+        update: {},
+        create: {
+          feeType: "PLATFORM_SERVICE_FEE",
+          ratePercent: 10,
+          effectiveSince,
+          description: "Platform service fee for customers",
+        },
+      }),
+      // Fleet owner commission (15%)
+      this.prisma.platformFeeRate.upsert({
+        where: {
+          feeType_effectiveSince: {
+            feeType: "FLEET_OWNER_COMMISSION",
+            effectiveSince,
+          },
+        },
+        update: {},
+        create: {
+          feeType: "FLEET_OWNER_COMMISSION",
+          ratePercent: 15,
+          effectiveSince,
+          description: "Platform commission from fleet owner earnings",
+        },
+      }),
+      // VAT rate (7.5%)
+      this.prisma.taxRate.upsert({
+        where: {
+          effectiveSince,
+        },
+        update: {},
+        create: {
+          ratePercent: 7.5,
+          effectiveSince,
+          description: "Value Added Tax",
+        },
+      }),
+      // Security detail addon rate
+      this.prisma.addonRate.upsert({
+        where: {
+          addonType_effectiveSince: {
+            addonType: "SECURITY_DETAIL",
+            effectiveSince,
+          },
+        },
+        update: {},
+        create: {
+          addonType: "SECURITY_DETAIL",
+          rateAmount: 15000,
+          effectiveSince,
+          description: "Security detail addon",
+        },
+      }),
+    ]);
   }
 }
 
