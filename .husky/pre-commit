@@ -1,8 +1,10 @@
+set -e
+
 # Biome check and format on staged files only (filter to files Biome can process)
 git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx|json|jsonc)$' | xargs -r pnpm exec biome check --write
 
-# Stage any files that were fixed by biome (so fixes are included in the same commit)
-git diff --cached --name-only | xargs git add
+# Stage any files that were fixed by biome (only re-add files that biome processed)
+git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx|json|jsonc)$' | xargs -r git add
 
 # Type check
 pnpm run type-check
