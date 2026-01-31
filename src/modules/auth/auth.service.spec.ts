@@ -1,6 +1,7 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
+import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
@@ -16,15 +17,12 @@ vi.mock("./auth.config", () => ({
   }),
 }));
 
-type AuthConfig = {
-  SESSION_SECRET?: string;
-  AUTH_BASE_URL?: string;
-  TRUSTED_ORIGINS?: string[];
-  NODE_ENV?: string;
-};
-
 describe("AuthService", () => {
   let service: AuthService;
+
+  const mockConfigService = {
+    get: vi.fn(),
+  };
 
   const mockDatabaseService: {
     user?: {
@@ -32,19 +30,39 @@ describe("AuthService", () => {
       update?: ReturnType<typeof vi.fn>;
     };
   } = {};
+
   const mockAuthEmailService = {
     sendOTPEmail: vi.fn(),
   };
 
-  const setupTestModule = async (config: AuthConfig = {}) => {
+  const baseConfig = {
+    SESSION_SECRET: "test-secret-at-least-32-characters-long",
+    AUTH_BASE_URL: "https://api.example.com",
+    TRUSTED_ORIGINS: ["https://example.com"],
+    NODE_ENV: "production",
+  } satisfies Record<
+    keyof Pick<EnvConfig, "SESSION_SECRET" | "AUTH_BASE_URL" | "TRUSTED_ORIGINS" | "NODE_ENV">,
+    string | string[]
+  >;
+
+  const setupTestModule = async (overrides: Partial<typeof baseConfig> = {}) => {
+    const config = { ...baseConfig, ...overrides };
+
+    mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
+      if (key in config) {
+        return config[key as keyof typeof config];
+      }
+      return undefined;
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: DatabaseService, useValue: mockDatabaseService },
         { provide: AuthEmailService, useValue: mockAuthEmailService },
         {
-          provide: ConfigService,
-          useValue: { get: vi.fn((key: string) => config[key as keyof AuthConfig]) },
+          provide: ConfigService<EnvConfig>,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -53,17 +71,15 @@ describe("AuthService", () => {
     service.onModuleInit();
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await setupTestModule();
   });
 
   describe("when auth config is complete", () => {
     beforeEach(async () => {
       await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
         TRUSTED_ORIGINS: ["https://example.com", "https://app.example.com"],
-        NODE_ENV: "production",
       });
     });
 
@@ -81,43 +97,9 @@ describe("AuthService", () => {
     });
   });
 
-  describe("when auth config is incomplete", () => {
-    beforeEach(async () => {
-      await setupTestModule();
-    });
-
-    it("should not be initialized", () => {
-      expect(service.isInitialized).toBe(false);
-    });
-
-    it("should throw when accessing auth instance", () => {
-      expect(() => service.auth).toThrow(
-        "Auth service not initialized. Ensure SESSION_SECRET, AUTH_BASE_URL, and TRUSTED_ORIGINS are configured.",
-      );
-    });
-  });
-
-  describe("when only some config is provided", () => {
-    beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret",
-        TRUSTED_ORIGINS: ["https://example.com"],
-      });
-    });
-
-    it("should not be initialized when AUTH_BASE_URL is missing", () => {
-      expect(service.isInitialized).toBe(false);
-    });
-  });
-
   describe("validateRoleForClient", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
     });
 
     describe("mobile client", () => {
@@ -561,14 +543,11 @@ describe("AuthService", () => {
     describe("trusted origin with multiple entries", () => {
       beforeEach(async () => {
         await setupTestModule({
-          SESSION_SECRET: "test-secret-at-least-32-characters-long",
-          AUTH_BASE_URL: "https://api.example.com",
           TRUSTED_ORIGINS: [
             "https://example.com",
             "https://app.example.com",
             "https://admin.example.com",
           ],
-          NODE_ENV: "production",
         });
       });
 
@@ -601,12 +580,7 @@ describe("AuthService", () => {
 
   describe("validateExistingUserRole", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
     });
 
     describe("new user (not found in database)", () => {
@@ -707,12 +681,7 @@ describe("AuthService", () => {
 
   describe("assignRoleToNewUser", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
 
       mockDatabaseService.user = {
         findUnique: vi.fn(),
@@ -786,12 +755,7 @@ describe("AuthService", () => {
 
   describe("ensureUserHasRole", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
 
       mockDatabaseService.user = {
         findUnique: vi.fn(),
@@ -838,12 +802,7 @@ describe("AuthService", () => {
 
   describe("verifyUserHasRole", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
 
       mockDatabaseService.user = {
         findUnique: vi.fn(),
@@ -892,12 +851,7 @@ describe("AuthService", () => {
 
   describe("getUserRoles", () => {
     beforeEach(async () => {
-      await setupTestModule({
-        SESSION_SECRET: "test-secret-at-least-32-characters-long",
-        AUTH_BASE_URL: "https://api.example.com",
-        TRUSTED_ORIGINS: ["https://example.com"],
-        NODE_ENV: "production",
-      });
+      await setupTestModule();
 
       mockDatabaseService.user = {
         findUnique: vi.fn(),

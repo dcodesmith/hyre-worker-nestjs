@@ -1,9 +1,10 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
+import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailService } from "../notification/email.service";
 import { AuthEmailService } from "./auth-email.service";
 
-// Mock the email template renderer
 vi.mock("../../templates/emails", () => ({
   renderAuthOTPEmail: vi.fn().mockResolvedValue("<html>OTP Email</html>"),
 }));
@@ -16,8 +17,16 @@ describe("AuthEmailService", () => {
     sendEmail: vi.fn(),
   };
 
+  const mockConfigService = {
+    get: vi.fn(),
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
+      if (key === "NODE_ENV") return "production";
+      return undefined;
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -25,6 +34,10 @@ describe("AuthEmailService", () => {
         {
           provide: EmailService,
           useValue: mockEmailService,
+        },
+        {
+          provide: ConfigService<EnvConfig>,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -72,6 +85,17 @@ describe("AuthEmailService", () => {
       await service.sendOTPEmail(testEmail, testOTP);
 
       expect(renderAuthOTPEmail).toHaveBeenCalledWith({ otp: testOTP });
+    });
+
+    it("should log OTP and skip email in development", async () => {
+      mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
+        if (key === "NODE_ENV") return "development";
+        return undefined;
+      });
+
+      await service.sendOTPEmail(testEmail, testOTP);
+
+      expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
     });
   });
 });

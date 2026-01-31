@@ -18,7 +18,6 @@ describe("Payments E2E Tests", () => {
   let flutterwaveService: FlutterwaveService;
   let factory: TestDataFactory;
 
-  // Test data
   let testUserId: string;
   let testUserCookie: string;
   let otherUserCookie: string;
