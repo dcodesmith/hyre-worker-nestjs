@@ -38,7 +38,7 @@ import type {
   LegGenerationInput,
   ReferralEligibility,
 } from "./booking.interface";
-import type { CreateBookingInput } from "./dto/create-booking.dto";
+import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
 /**
@@ -478,32 +478,22 @@ export class BookingCreationService {
       // Fetch phone number from database (not in session)
       const user = await this.databaseService.user.findUnique({
         where: { id: sessionUser.id },
-        select: { phoneNumber: true },
+        select: { phoneNumber: true, email: true, name: true },
       });
 
       return {
-        email: sessionUser.email ?? "customer@example.com",
-        name: sessionUser.name ?? "Customer",
+        email: sessionUser.email ?? user.email,
+        name: sessionUser.name ?? user.name,
         phoneNumber: user?.phoneNumber ?? undefined,
       };
     }
 
-    // For guest bookings (already validated in createBooking)
-    if (!isGuestBooking(booking)) {
-      throw new BookingValidationException(
-        [
-          { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
-          { field: "guestName", message: "Guest name is required for unauthenticated bookings" },
-          { field: "guestPhone", message: "Guest phone is required for unauthenticated bookings" },
-        ],
-        "Guest information is required when booking without authentication",
-      );
-    }
+    const guestBooking = booking as CreateGuestBookingDto;
 
     return {
-      email: booking.guestEmail,
-      name: booking.guestName,
-      phoneNumber: booking.guestPhone,
+      email: guestBooking.guestEmail,
+      name: guestBooking.guestName,
+      phoneNumber: guestBooking.guestPhone,
     };
   }
 
