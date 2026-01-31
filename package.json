@@ -2,6 +2,7 @@
   "name": "hyre-worker",
   "version": "1.0.0",
   "packageManager": "pnpm@10.20.0",
+  "type": "module",
   "scripts": {
     "build": "npx prisma generate && nest build",
     "format": "biome format --write src",
