@@ -19,7 +19,7 @@ RUN pnpm install --offline --frozen-lockfile
 RUN npx prisma generate
 RUN pnpm build
 # Prune to production deps for runtime image
-RUN pnpm prune --prod && cp -R node_modules /tmp/node_modules_prod
+RUN pnpm prune --prod --ignore-scripts && cp -R node_modules /tmp/node_modules_prod
 
 # Stage 2: Production stage
 FROM node:20-alpine AS production
