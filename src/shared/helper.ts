@@ -184,14 +184,3 @@ export function normaliseBookingLegDetails(
     carName,
   };
 }
-
-/**
- * Generate a unique booking reference.
- * Format: BK-{timestamp}-{random6chars}
- * Example: BK-1706540800000-ABC123
- */
-export function generateBookingReference(): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, "0");
-  return `BK-${timestamp}-${random}`;
-}

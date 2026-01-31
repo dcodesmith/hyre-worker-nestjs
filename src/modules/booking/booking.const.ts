@@ -36,3 +36,5 @@ export const AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER = 1.2;
 
 /** Maximum number of legs eligible for fuel upgrade */
 export const MAX_LEGS_FOR_FUEL_UPGRADE = 2;
+
+export const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";

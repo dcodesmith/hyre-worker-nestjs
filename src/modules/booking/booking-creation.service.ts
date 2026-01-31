@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import {
   BookingReferralStatus,
@@ -9,7 +10,6 @@ import {
 } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { format } from "date-fns";
-import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareException } from "../flightaware/flightaware.error";
@@ -17,10 +17,7 @@ import { FlightAwareService } from "../flightaware/flightaware.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
-import type { BookingFinancials } from "./booking-calculation.interface";
-import { BookingCalculationService } from "./booking-calculation.service";
-import { BookingLegService } from "./booking-leg.service";
-import { BookingValidationService } from "./booking-validation.service";
+import { ALPHABET } from "./booking.const";
 import {
   BookingCreationFailedException,
   BookingException,
@@ -38,6 +35,10 @@ import type {
   LegGenerationInput,
   ReferralEligibility,
 } from "./booking.interface";
+import type { BookingFinancials } from "./booking-calculation.interface";
+import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingLegService } from "./booking-leg.service";
+import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
@@ -160,7 +161,7 @@ export class BookingCreationService {
 
     this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
 
-    const bookingReference = generateBookingReference();
+    const bookingReference = await this.generateUniqueBookingReference();
 
     const customerDetails = await this.getCustomerDetails(booking, sessionUser);
 
@@ -181,6 +182,29 @@ export class BookingCreationService {
     });
 
     return result;
+  }
+
+  private async generateUniqueBookingReference(): Promise<string> {
+    while (true) {
+      const randomBytesArray = randomBytes(8);
+
+      const randomString = Array.from(randomBytesArray)
+        .map((byte) => ALPHABET[byte % ALPHABET.length])
+        .join("");
+
+      const reference = `BK-${randomString}`;
+
+      const existingBooking = await this.databaseService.booking.findUnique({
+        where: { bookingReference: reference },
+        select: { id: true },
+      });
+
+      if (!existingBooking) {
+        return reference;
+      }
+
+      this.logger.log(`Collision detected for reference ${reference}. Regenerating...`);
+    }
   }
 
   /**

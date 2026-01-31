@@ -1,12 +1,6 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import {
-  formatCurrency,
-  generateBookingReference,
-  getCustomerDetails,
-  getUserDisplayName,
-  maskEmail,
-} from "./helper";
+import { formatCurrency, getCustomerDetails, getUserDisplayName, maskEmail } from "./helper";
 import {
   createBooking,
   createBookingLeg,
@@ -282,30 +276,6 @@ describe("Helper Functions", () => {
 
       expect(booking.user).toMatchObject({ name: "Regular User" });
       expect(booking.guestUser).toBeNull();
-    });
-  });
-
-  describe("generateBookingReference", () => {
-    it("should generate a reference matching the expected format", () => {
-      const ref = generateBookingReference();
-      expect(ref).toMatch(/^BK-\d+-[A-Z0-9]{6}$/);
-    });
-
-    it("should generate unique references", () => {
-      const ref1 = generateBookingReference();
-      const ref2 = generateBookingReference();
-      expect(ref1).not.toBe(ref2);
-    });
-
-    it("should include timestamp in reference", () => {
-      const before = Date.now();
-      const ref = generateBookingReference();
-      const after = Date.now();
-
-      // Extract timestamp from reference (between BK- and the last -)
-      const timestamp = Number(ref.split("-")[1]);
-      expect(timestamp).toBeGreaterThanOrEqual(before);
-      expect(timestamp).toBeLessThanOrEqual(after);
     });
   });
 });
