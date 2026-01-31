@@ -20,9 +20,14 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@v1.4
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only
+      - name: Show deployment logs
+        run: |
+          echo "=== Recent deployment logs ==="
+          flyctl logs --app hyre-worker-nestjs -n 100 || true
+          echo "=== Machine status ==="
+          flyctl status --app hyre-worker-nestjs || true
       - name: Verify deployment
         run: |
-          flyctl status
           # Wait for app to be healthy (check if machines are running)
           DEPLOY_SUCCESS=false
           for i in {1..60}; do
@@ -32,9 +37,16 @@ jobs:
               break
             fi
             echo "Waiting for machines to start... (attempt $i/60)"
+            # Show logs every 10 attempts to see progress
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "=== Recent logs (check $i) ==="
+              flyctl logs --app hyre-worker-nestjs -n 20 || true
+            fi
             sleep 5
           done
-          flyctl logs -n | head -50
+          # Final log check
+          echo "=== Final logs ==="
+          flyctl logs --app hyre-worker-nestjs -n 50 || true
           if [ "$DEPLOY_SUCCESS" != "true" ]; then
             echo "Error: Deployment verification timed out - no machines reached 'started' state"
             exit 1
