@@ -17,4 +17,3 @@ pnpm run type-check
 
 # Run unit tests
 pnpm run test --run
-
