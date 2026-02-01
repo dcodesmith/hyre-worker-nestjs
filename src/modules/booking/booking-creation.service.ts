@@ -1,3 +1,4 @@
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import {
   Booking,
@@ -9,12 +10,15 @@ import {
   ReferralRewardStatus,
 } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { Queue } from "bullmq";
 import { format } from "date-fns";
+import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
+import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
@@ -66,6 +70,8 @@ export class BookingCreationService {
     private readonly flutterwaveService: FlutterwaveService,
     private readonly flightAwareService: FlightAwareService,
     private readonly mapsService: MapsService,
+    @InjectQueue(FLIGHT_ALERTS_QUEUE)
+    private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {}
 
   /**
@@ -649,7 +655,7 @@ export class BookingCreationService {
       throw new PaymentIntentFailedException();
     }
 
-    this.triggerFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
+    await this.queueFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
 
     return {
       bookingId: createdBooking.id,
@@ -856,24 +862,40 @@ export class BookingCreationService {
   }
 
   /**
-   * Trigger flight alert creation if this is an airport pickup.
+   * Queue flight alert creation if this is an airport pickup.
    */
-  private triggerFlightAlertIfNeeded(
+  private async queueFlightAlertIfNeeded(
     flightRecordId: string | null,
     booking: CreateBookingInput,
     flightData: FlightDataForBooking | null,
-  ): void {
+  ): Promise<void> {
     if (!flightRecordId || !flightData || booking.bookingType !== "AIRPORT_PICKUP") {
       return;
     }
 
-    // Fire and forget - don't block booking creation
-    this.createFlightAlertAsync(
-      flightRecordId,
-      flightData.flightNumber,
-      flightData.arrivalTime,
-      flightData.destinationIATA,
-    );
+    try {
+      const jobData: FlightAlertJobData = {
+        flightId: flightRecordId,
+        flightNumber: flightData.flightNumber,
+        flightDate: flightData.arrivalTime.toISOString(),
+        destinationIATA: flightData.destinationIATA,
+      };
+
+      await this.flightAlertQueue.add(CREATE_FLIGHT_ALERT_JOB, jobData, {
+        jobId: `flight-alert-${flightRecordId}`,
+      });
+
+      this.logger.log("Queued flight alert creation", {
+        flightId: flightRecordId,
+        flightNumber: flightData.flightNumber,
+      });
+    } catch (error) {
+      this.logger.error("Failed to queue flight alert creation", {
+        flightId: flightRecordId,
+        flightNumber: flightData.flightNumber,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -924,34 +946,5 @@ export class BookingCreationService {
       }
       throw new PaymentIntentFailedException();
     }
-  }
-
-  /**
-   * Create flight alert asynchronously (fire and forget).
-   * This doesn't block booking creation.
-   */
-  private createFlightAlertAsync(
-    flightId: string,
-    flightNumber: string,
-    arrivalDate: Date,
-    destinationIATA: string | undefined,
-  ): void {
-    // Fire and forget - don't await
-    this.flightAwareService
-      .getOrCreateFlightAlert(flightId, {
-        flightNumber,
-        flightDate: arrivalDate,
-        destinationIATA,
-      })
-      .then((alertId) => {
-        this.logger.log("Flight alert created", { flightId, alertId });
-      })
-      .catch((error) => {
-        this.logger.warn("Failed to create flight alert", {
-          flightId,
-          flightNumber,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
   }
 }

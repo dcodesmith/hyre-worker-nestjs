@@ -5,6 +5,8 @@ export const STATUS_UPDATES_QUEUE = "status-updates-queue";
 export const REMINDERS_QUEUE = "reminders-queue";
 export const REFERRAL_QUEUE = "referral-queue";
 export const PAYOUTS_QUEUE = "payouts-queue";
+export const FLIGHT_ALERTS_QUEUE = "flight-alerts-queue";
+export const CREATE_FLIGHT_ALERT_JOB = "create-flight-alert";
 
 export const EVERY_HOUR = "0 * * * *";
 export const CONFIRMED_TO_ACTIVE = "confirmed-to-active";
