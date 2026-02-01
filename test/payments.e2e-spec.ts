@@ -35,7 +35,9 @@ describe("Payments E2E Tests", () => {
       .useValue({ sendOTPEmail: mockSendOTPEmail })
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({
+      logger: false,
+    });
 
     const httpAdapterHost = app.get(HttpAdapterHost);
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));

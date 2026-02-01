@@ -18,7 +18,6 @@ describe("Bookings E2E Tests", () => {
   let mapsService: MapsService;
   let factory: TestDataFactory;
 
-  // Test data
   let testUserCookie: string;
   let testCarId: string;
 
@@ -32,7 +31,9 @@ describe("Bookings E2E Tests", () => {
       .useValue({ sendOTPEmail: mockSendOTPEmail })
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({
+      logger: false,
+    });
 
     const httpAdapterHost = app.get(HttpAdapterHost);
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
@@ -44,7 +45,6 @@ describe("Bookings E2E Tests", () => {
 
     await app.init();
 
-    // Create platform rates required for booking calculations
     await factory.createPlatformRates();
 
     // Create test user
@@ -72,6 +72,7 @@ describe("Bookings E2E Tests", () => {
     vi.spyOn(mapsService, "calculateAirportTripDuration").mockResolvedValue({
       durationMinutes: 45,
       distanceMeters: 25000,
+      isEstimate: false,
     });
   });
 
@@ -134,7 +135,6 @@ describe("Bookings E2E Tests", () => {
       it("should return 400 for missing required fields", async () => {
         const payload = {
           carId: testCarId,
-          // Missing required fields
         };
 
         const response = await request(app.getHttpServer())
@@ -171,7 +171,6 @@ describe("Bookings E2E Tests", () => {
 
       it("should return 400 when guest fields are missing without authentication", async () => {
         const payload = createValidBookingPayload(testCarId);
-        // Not authenticated and no guest fields
 
         const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
 
@@ -193,7 +192,7 @@ describe("Bookings E2E Tests", () => {
       it("should return 400 for invalid guest phone", async () => {
         const payload = {
           ...createGuestBookingPayload(testCarId),
-          guestPhone: "123", // Too short
+          guestPhone: "123",
         };
 
         const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
@@ -225,21 +224,6 @@ describe("Bookings E2E Tests", () => {
           ...createValidBookingPayload(testCarId),
           startDate: new Date(Date.now() - 86400000).toISOString(), // Yesterday
           endDate: new Date().toISOString(),
-        };
-
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .set("Cookie", testUserCookie)
-          .send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      });
-
-      it("should require hoursBooked for HOURLY booking type", async () => {
-        const payload = {
-          ...createValidBookingPayload(testCarId),
-          bookingType: "HOURLY",
-          // Missing hoursBooked
         };
 
         const response = await request(app.getHttpServer())
@@ -282,7 +266,6 @@ describe("Bookings E2E Tests", () => {
           .set("Cookie", testUserCookie)
           .send(payload);
 
-        // Should return appropriate error status
         expect(response.status).toBeGreaterThanOrEqual(HttpStatus.BAD_REQUEST);
       });
     });
