@@ -20,6 +20,17 @@ export type CreatePayoutTransactionOptions = Partial<Prisma.PayoutTransactionUnc
 
 export type AuthRole = "user" | "fleetOwner" | "admin";
 
+export type ClientTypeOption = "mobile" | "web";
+
+/**
+ * Maps auth roles to their corresponding web client referer paths.
+ */
+const WEB_ROLE_PATHS: Record<AuthRole, string> = {
+  user: "/auth",
+  fleetOwner: "/fleet-owner/signup",
+  admin: "/admin/dashboard",
+};
+
 // ============================================================================
 // Test Data Factory
 // ============================================================================
@@ -73,13 +84,36 @@ export class TestDataFactory {
   }
 
   /**
+   * Returns the appropriate auth headers for the given client type and role.
+   * Mobile clients use `X-Client-Type: mobile`.
+   * Web clients use `Origin` + role-aware `Referer` headers.
+   */
+  private getAuthHeaders(clientType: ClientTypeOption, role: AuthRole): Record<string, string> {
+    if (clientType === "mobile") {
+      return { "X-Client-Type": "mobile" };
+    }
+    const path = WEB_ROLE_PATHS[role] ?? "/auth";
+    return {
+      Origin: "http://localhost:3000",
+      Referer: `http://localhost:3000${path}`,
+    };
+  }
+
+  /**
    * Authenticate a user via OTP flow and return the session cookie.
    * Automatically clears rate limits before authentication.
    * Requires the factory to be initialized with an app instance.
    *
+   * @param email - The email address to authenticate
+   * @param role - The role to request during authentication
+   * @param clientType - "mobile" uses X-Client-Type header, "web" uses Origin/Referer headers
    * @throws Error if app instance was not provided to the factory
    */
-  async authenticateAndGetCookie(email: string, role: AuthRole = "user"): Promise<string> {
+  async authenticateAndGetCookie(
+    email: string,
+    role: AuthRole = "user",
+    clientType: ClientTypeOption = "mobile",
+  ): Promise<string> {
     if (!this.app) {
       throw new Error("TestDataFactory requires app instance for authentication methods");
     }
@@ -87,10 +121,12 @@ export class TestDataFactory {
     // Clear rate limits before auth to avoid test interference
     await this.clearRateLimits();
 
+    const authHeaders = this.getAuthHeaders(clientType, role);
+
     // Send OTP
     await request(this.app.getHttpServer())
       .post("/auth/api/email-otp/send-verification-otp")
-      .set("X-Client-Type", "mobile")
+      .set(authHeaders)
       .send({ email, type: "sign-in", role });
 
     // Get OTP from database
@@ -108,7 +144,7 @@ export class TestDataFactory {
     // Verify OTP
     const verifyResponse = await request(this.app.getHttpServer())
       .post("/auth/api/sign-in/email-otp")
-      .set("X-Client-Type", "mobile")
+      .set(authHeaders)
       .send({ email, otp, role });
 
     const cookies = verifyResponse.headers["set-cookie"];
@@ -139,8 +175,9 @@ export class TestDataFactory {
   async authenticateAndGetUser(
     email: string,
     role: AuthRole = "user",
+    clientType: ClientTypeOption = "mobile",
   ): Promise<{ cookie: string; user: { id: string; email: string; name: string | null } }> {
-    const cookie = await this.authenticateAndGetCookie(email, role);
+    const cookie = await this.authenticateAndGetCookie(email, role, clientType);
     const user = await this.getUserByEmail(email);
     if (!user) {
       throw new Error(`User not found after authentication: ${email}`);
@@ -258,6 +295,7 @@ export class TestDataFactory {
         bookingReference:
           options.bookingReference ??
           `BOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ...(options.paymentIntent && { paymentIntent: options.paymentIntent }),
       },
       select: { id: true, bookingReference: true },
     });
@@ -362,6 +400,25 @@ export class TestDataFactory {
   }
 
   /**
+   * Get a car by ID.
+   */
+  async getCarById(carId: string) {
+    return this.prisma.car.findUnique({
+      where: { id: carId },
+    });
+  }
+
+  /**
+   * Get the most recent payment for a booking.
+   */
+  async getPaymentByBookingId(bookingId: string) {
+    return this.prisma.payment.findFirst({
+      where: { bookingId },
+      orderBy: { initiatedAt: "desc" },
+    });
+  }
+
+  /**
    * Create platform rates required for booking calculations.
    * Creates platform fee rate, fleet owner commission rate, VAT rate, and security detail addon rate.
    * Must be called before booking creation tests.
@@ -369,67 +426,83 @@ export class TestDataFactory {
   async createPlatformRates(): Promise<void> {
     const effectiveSince = new Date("2020-01-01");
 
+    // Prisma upsert can race when multiple test files call this concurrently,
+    // causing P2002 (unique constraint) errors. Ignore them since the record already exists.
+    const ignoreP2002 = (error: unknown) => {
+      if (error instanceof Error && "code" in error && (error as { code: string }).code === "P2002")
+        return;
+      throw error;
+    };
+
     await Promise.all([
       // Platform service fee (10%)
-      this.prisma.platformFeeRate.upsert({
-        where: {
-          feeType_effectiveSince: {
+      this.prisma.platformFeeRate
+        .upsert({
+          where: {
+            feeType_effectiveSince: {
+              feeType: "PLATFORM_SERVICE_FEE",
+              effectiveSince,
+            },
+          },
+          update: {},
+          create: {
             feeType: "PLATFORM_SERVICE_FEE",
+            ratePercent: 10,
             effectiveSince,
+            description: "Platform service fee for customers",
           },
-        },
-        update: {},
-        create: {
-          feeType: "PLATFORM_SERVICE_FEE",
-          ratePercent: 10,
-          effectiveSince,
-          description: "Platform service fee for customers",
-        },
-      }),
+        })
+        .catch(ignoreP2002),
       // Fleet owner commission (15%)
-      this.prisma.platformFeeRate.upsert({
-        where: {
-          feeType_effectiveSince: {
+      this.prisma.platformFeeRate
+        .upsert({
+          where: {
+            feeType_effectiveSince: {
+              feeType: "FLEET_OWNER_COMMISSION",
+              effectiveSince,
+            },
+          },
+          update: {},
+          create: {
             feeType: "FLEET_OWNER_COMMISSION",
+            ratePercent: 15,
             effectiveSince,
+            description: "Platform commission from fleet owner earnings",
           },
-        },
-        update: {},
-        create: {
-          feeType: "FLEET_OWNER_COMMISSION",
-          ratePercent: 15,
-          effectiveSince,
-          description: "Platform commission from fleet owner earnings",
-        },
-      }),
+        })
+        .catch(ignoreP2002),
       // VAT rate (7.5%)
-      this.prisma.taxRate.upsert({
-        where: {
-          effectiveSince,
-        },
-        update: {},
-        create: {
-          ratePercent: 7.5,
-          effectiveSince,
-          description: "Value Added Tax",
-        },
-      }),
-      // Security detail addon rate
-      this.prisma.addonRate.upsert({
-        where: {
-          addonType_effectiveSince: {
-            addonType: "SECURITY_DETAIL",
+      this.prisma.taxRate
+        .upsert({
+          where: {
             effectiveSince,
           },
-        },
-        update: {},
-        create: {
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 15000,
-          effectiveSince,
-          description: "Security detail addon",
-        },
-      }),
+          update: {},
+          create: {
+            ratePercent: 7.5,
+            effectiveSince,
+            description: "Value Added Tax",
+          },
+        })
+        .catch(ignoreP2002),
+      // Security detail addon rate
+      this.prisma.addonRate
+        .upsert({
+          where: {
+            addonType_effectiveSince: {
+              addonType: "SECURITY_DETAIL",
+              effectiveSince,
+            },
+          },
+          update: {},
+          create: {
+            addonType: "SECURITY_DETAIL",
+            rateAmount: 15000,
+            effectiveSince,
+            description: "Security detail addon",
+          },
+        })
+        .catch(ignoreP2002),
     ]);
   }
 }

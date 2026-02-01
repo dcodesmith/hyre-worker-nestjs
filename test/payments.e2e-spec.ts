@@ -335,12 +335,13 @@ describe("Payments E2E Tests", () => {
       });
 
       it("should accept request with valid verif-hash header", async () => {
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000);
         const webhookData = {
-          id: 12345,
-          tx_ref: "non-existent-tx-ref",
+          id: uniqueId,
+          tx_ref: `non-existent-tx-ref-${uniqueId}`,
           status: "successful",
           charged_amount: 50000,
-          flw_ref: "FLW-TEST-REF",
+          flw_ref: `FLW-TEST-REF-${uniqueId}`,
           device_fingerprint: "test-device",
           amount: 50000,
           currency: "NGN",
@@ -383,18 +384,26 @@ describe("Payments E2E Tests", () => {
     });
 
     describe("charge.completed", () => {
-      it("should update payment status to SUCCESSFUL when charge is successful", async () => {
-        const payment = await factory.createPayment(testBookingId, {
-          status: PaymentAttemptStatus.PENDING,
-          amountExpected: 50000,
+      it("should create payment with SUCCESSFUL status when charge is successful", async () => {
+        const txRef = `tx-charge-success-${Date.now()}`;
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000);
+
+        // Create a booking with paymentIntent matching the tx_ref
+        const booking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            paymentIntent: txRef,
+            totalAmount: 50000,
+          },
         });
 
         const webhookData = {
-          id: 99999,
-          tx_ref: payment.txRef,
+          id: uniqueId,
+          tx_ref: txRef,
           status: "successful",
           charged_amount: 50000,
-          flw_ref: "FLW-MOCK-REF",
+          flw_ref: `FLW-MOCK-REF-${uniqueId}`,
           device_fingerprint: "device-123",
           amount: 50000,
           currency: "NGN",
@@ -416,7 +425,6 @@ describe("Payments E2E Tests", () => {
           },
         };
 
-        // Mock must return verification data that matches webhook data
         vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
@@ -434,30 +442,34 @@ describe("Payments E2E Tests", () => {
         expect(response.status).toBe(HttpStatus.CREATED);
         expect(response.body.status).toBe("ok");
 
-        // Verify payment was updated in database
-        const updatedPayment = await factory.getPaymentById(payment.id);
-        expect(updatedPayment?.status).toBe("SUCCESSFUL");
-        expect(updatedPayment?.flutterwaveTransactionId).toBe("99999");
-        expect(updatedPayment?.amountCharged?.toNumber()).toBe(50000);
+        // Verify payment was created by the webhook handler
+        const payment = await factory.getPaymentByBookingId(booking.id);
+        expect(payment).toBeDefined();
+        expect(payment?.status).toBe("SUCCESSFUL");
+        expect(payment?.flutterwaveTransactionId).toBe(String(uniqueId));
+        expect(payment?.amountCharged?.toNumber()).toBe(50000);
       });
 
       it("should confirm booking when payment is successful", async () => {
-        // Create a new pending booking for this test
-        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
-          booking: { status: "PENDING", paymentStatus: "UNPAID" },
-        });
+        const txRef = `tx-confirm-${Date.now()}`;
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000) + 1;
 
-        const payment = await factory.createPayment(pendingBooking.id, {
-          status: PaymentAttemptStatus.PENDING,
-          amountExpected: 50000,
+        // Create a new pending booking with paymentIntent
+        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            paymentIntent: txRef,
+            totalAmount: 50000,
+          },
         });
 
         const webhookData = {
-          id: 111111,
-          tx_ref: payment.txRef,
+          id: uniqueId,
+          tx_ref: txRef,
           status: "successful",
           charged_amount: 50000,
-          flw_ref: "FLW-CONFIRM-REF",
+          flw_ref: `FLW-CONFIRM-REF-${uniqueId}`,
           device_fingerprint: "device-confirm",
           amount: 50000,
           currency: "NGN",
@@ -503,22 +515,25 @@ describe("Payments E2E Tests", () => {
       });
 
       it("should not confirm booking when payment fails", async () => {
-        // Create a new pending booking for this test
-        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
-          booking: { status: "PENDING", paymentStatus: "UNPAID" },
-        });
+        const txRef = `tx-failed-${Date.now()}`;
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000) + 2;
 
-        const payment = await factory.createPayment(pendingBooking.id, {
-          status: PaymentAttemptStatus.PENDING,
-          amountExpected: 50000,
+        // Create a new pending booking with paymentIntent
+        const pendingBooking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            paymentIntent: txRef,
+            totalAmount: 50000,
+          },
         });
 
         const webhookData = {
-          id: 222222,
-          tx_ref: payment.txRef,
+          id: uniqueId,
+          tx_ref: txRef,
           status: "failed",
           charged_amount: 50000,
-          flw_ref: "FLW-FAILED-REF",
+          flw_ref: `FLW-FAILED-REF-${uniqueId}`,
           device_fingerprint: "device-failed",
           amount: 50000,
           currency: "NGN",
@@ -563,21 +578,35 @@ describe("Payments E2E Tests", () => {
       });
 
       it("should handle idempotency - skip already processed payment", async () => {
+        const txRef = `tx-idempotent-${Date.now()}`;
         const originalTransactionId = `FLW-IDEMPOTENT-${Date.now()}`;
-        const payment = await factory.createPayment(testBookingId, {
+
+        // Create a booking with paymentIntent and a pre-existing SUCCESSFUL payment
+        const booking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "CONFIRMED",
+            paymentStatus: "PAID",
+            paymentIntent: txRef,
+            totalAmount: 50000,
+          },
+        });
+
+        const payment = await factory.createPayment(booking.id, {
+          txRef,
           status: PaymentAttemptStatus.SUCCESSFUL,
           amountExpected: 50000,
           amountCharged: 50000,
           flutterwaveTransactionId: originalTransactionId,
-          confirmedAt: new Date(Date.now() - 60000), // Set 1 minute ago
+          confirmedAt: new Date(Date.now() - 60000),
         });
 
+        const idempotentId = Date.now() + Math.floor(Math.random() * 100000) + 3;
         const webhookData = {
-          id: 88888,
-          tx_ref: payment.txRef,
+          id: idempotentId,
+          tx_ref: txRef,
           status: "successful",
           charged_amount: 50000,
-          flw_ref: "FLW-MOCK-REF",
+          flw_ref: `FLW-IDEMPOTENT-REF-${idempotentId}`,
           device_fingerprint: "device-123",
           amount: 50000,
           currency: "NGN",
@@ -599,7 +628,6 @@ describe("Payments E2E Tests", () => {
           },
         };
 
-        // Mock must return verification data that matches webhook data
         vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
           status: "success",
           message: "Transaction verified",
@@ -616,7 +644,7 @@ describe("Payments E2E Tests", () => {
 
         expect(response.status).toBe(HttpStatus.CREATED);
 
-        // Verify the payment wasn't modified (idempotency check)
+        // Verify the payment wasn't modified (upsert's update: {} is a no-op)
         // flutterwaveTransactionId should still be the original value, not "88888"
         const unchangedPayment = await factory.getPaymentById(payment.id);
         expect(unchangedPayment?.flutterwaveTransactionId).toBe(originalTransactionId);
