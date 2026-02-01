@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { Booking, Payment } from "@prisma/client";
-import { BookingStatus, PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
+import type { Booking, Payment, Prisma } from "@prisma/client";
+import { PaymentAttemptStatus, PayoutTransactionStatus } from "@prisma/client";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type {
@@ -82,7 +82,7 @@ export class PaymentWebhookService {
     }
 
     try {
-      await this.processVerifiedCharge(tx_ref, transactionId, charged_amount);
+      await this.processVerifiedCharge(data);
     } catch (error) {
       this.logger.error("Failed to verify transaction", {
         txRef: tx_ref,
@@ -115,11 +115,9 @@ export class PaymentWebhookService {
     return true;
   }
 
-  private async processVerifiedCharge(
-    txRef: string,
-    transactionId: number,
-    chargedAmount: number,
-  ): Promise<void> {
+  private async processVerifiedCharge(data: FlutterwaveChargeData): Promise<void> {
+    const { tx_ref: txRef, id: transactionId, charged_amount: chargedAmount } = data;
+
     const verification = await this.flutterwaveService.verifyTransaction(transactionId.toString());
 
     const verificationData = this.validateVerification(
@@ -132,40 +130,26 @@ export class PaymentWebhookService {
       return;
     }
 
-    const payment = await this.databaseService.payment.findFirst({
-      where: { txRef },
-      include: { booking: true },
-    });
-
-    if (!payment) {
-      this.logger.warn("Payment not found for webhook", { txRef });
-      return;
-    }
-
-    const newPaymentStatus =
+    const paymentStatus =
       verificationData.status.toLowerCase() === "successful"
         ? PaymentAttemptStatus.SUCCESSFUL
         : PaymentAttemptStatus.FAILED;
 
-    if (await this.handleIdempotencyOrRecovery(payment, txRef)) {
+    const payment = await this.findOrCreatePayment(data, paymentStatus);
+
+    if (!payment) {
+      this.logger.warn("Payment not found and could not be created for webhook", { txRef });
       return;
     }
 
-    await this.updatePaymentFromCharge(
-      payment.id,
-      newPaymentStatus,
-      transactionId,
-      verificationData,
-    );
-
-    this.logger.log("Payment status updated from webhook", {
+    this.logger.log("Payment created from webhook", {
       txRef,
       paymentId: payment.id,
-      newStatus: newPaymentStatus,
+      status: paymentStatus,
       verifiedStatus: verificationData.status,
     });
 
-    if (newPaymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
+    if (paymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
       await this.bookingConfirmationService.confirmFromPayment(payment);
     }
   }
@@ -219,71 +203,87 @@ export class PaymentWebhookService {
       return null;
     }
 
-    if (!data.status || typeof data.status !== "string") {
-      this.logger.warn(
-        "Missing or invalid status in transaction verification, skipping to prevent errors",
-        { txRef, transactionId, status: data.status },
-      );
-      return null;
-    }
-
     return { status: data.status, charged_amount: data.charged_amount };
   }
 
   /**
-   * Handle idempotency check with recovery logic.
-   * Returns true if processing should stop (already handled or recovered).
+   * Find an existing Payment record for the charge, or create one if it doesn't exist.
+   *
+   * The Booking/Extension creation flow stores the Flutterwave payment intent ID
+   * (tx_ref) on the entity but does not create a Payment record. The Payment record
+   * is created here when the webhook arrives — matching the Remix app's
+   * createOrUpdatePaymentRecord() pattern.
    */
-  private async handleIdempotencyOrRecovery(
-    payment: Payment & { booking: Booking | null },
-    txRef: string,
-  ): Promise<boolean> {
-    if (payment.status === PaymentAttemptStatus.PENDING) {
-      return false;
-    }
-
-    // Recovery case: Payment is SUCCESSFUL but booking is still PENDING
-    if (
-      payment.status === PaymentAttemptStatus.SUCCESSFUL &&
-      payment.booking?.status === BookingStatus.PENDING
-    ) {
-      this.logger.log(
-        "Payment already SUCCESSFUL but booking still PENDING, retrying confirmation for recovery",
-        {
-          txRef,
-          paymentStatus: payment.status,
-          bookingStatus: payment.booking.status,
-          bookingId: payment.booking.id,
-        },
-      );
-      await this.bookingConfirmationService.confirmFromPayment(payment);
-      return true;
-    }
-
-    // Normal idempotency: skip duplicate processing
-    this.logger.log("Payment already processed, skipping", {
-      txRef,
-      currentStatus: payment.status,
-      bookingStatus: payment.booking?.status,
-    });
-    return true;
-  }
-
-  private async updatePaymentFromCharge(
-    paymentId: string,
+  private async findOrCreatePayment(
+    data: FlutterwaveChargeData,
     status: PaymentAttemptStatus,
-    transactionId: number,
-    verificationData: { charged_amount: number },
-  ): Promise<void> {
-    await this.databaseService.payment.update({
-      where: { id: paymentId },
-      data: {
-        status,
-        flutterwaveTransactionId: transactionId.toString(),
-        amountCharged: verificationData.charged_amount,
-        confirmedAt: new Date(),
-      },
+  ): Promise<(Payment & { booking: Booking | null }) | null> {
+    const {
+      tx_ref: txRef,
+      currency = "NGN",
+      id: transactionId,
+      payment_type: paymentMethod,
+      flw_ref: flutterwaveReference,
+      amount: amountExpected,
+      charged_amount: amountCharged,
+    } = data;
+
+    const booking = await this.databaseService.booking.findFirst({
+      where: { paymentIntent: txRef },
+      select: { id: true, totalAmount: true },
     });
+
+    let bookingId: string | undefined;
+    let extensionId: string | undefined;
+
+    if (booking) {
+      bookingId = booking.id;
+    } else {
+      const extension = await this.databaseService.extension.findFirst({
+        where: { paymentIntent: txRef },
+        select: { id: true },
+      });
+
+      if (!extension) {
+        this.logger.error("No booking or extension found for txRef, cannot create payment record", {
+          txRef,
+        });
+        return null;
+      }
+
+      extensionId = extension.id;
+    }
+
+    this.logger.log("Creating payment record from webhook", {
+      txRef,
+      bookingId,
+      extensionId,
+      amountExpected,
+      amountCharged,
+      status,
+    });
+
+    const created = await this.databaseService.payment.upsert({
+      where: { txRef },
+      update: {},
+      create: {
+        txRef,
+        amountExpected,
+        amountCharged,
+        currency,
+        status,
+        flutterwaveTransactionId: String(transactionId),
+        flutterwaveReference,
+        paymentMethod,
+        confirmedAt: new Date(),
+        webhookPayload: data as unknown as Prisma.JsonObject,
+        ...(bookingId && { bookingId }),
+        ...(extensionId && { extensionId }),
+      },
+      include: { booking: true },
+    });
+
+    return created;
   }
 
   /**
