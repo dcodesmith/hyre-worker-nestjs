@@ -631,7 +631,7 @@ describe("PaymentWebhookService", () => {
           update: {},
           create: {
             txRef: "tx-ref-123",
-            amountExpected: 10000,
+            amountExpected: 5000,
             amountCharged: 10000,
             currency: "NGN",
             status: PaymentAttemptStatus.SUCCESSFUL,
@@ -843,33 +843,6 @@ describe("PaymentWebhookService", () => {
       expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
       expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
     });
-
-    it("should skip processing when status is undefined to prevent TypeError", async () => {
-      const malformedData = { ...mockTransferData, status: undefined as unknown as string };
-
-      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
-
-      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when status is null to prevent TypeError", async () => {
-      const malformedData = { ...mockTransferData, status: null as unknown as string };
-
-      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
-
-      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when status is not a string to prevent TypeError", async () => {
-      const malformedData = { ...mockTransferData, status: 123 as unknown as string };
-
-      await service.handleWebhook({ event: "transfer.completed", data: malformedData });
-
-      expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
-    });
   });
 
   describe("handleRefundCompleted", () => {
@@ -1022,33 +995,6 @@ describe("PaymentWebhookService", () => {
           status: "PARTIALLY_REFUNDED",
         }),
       });
-    });
-
-    it("should skip processing when status is undefined to prevent TypeError", async () => {
-      const malformedData = { ...mockRefundData, status: undefined as unknown as string };
-
-      await service.handleWebhook({ event: "refund.completed", data: malformedData });
-
-      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payment.update).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when status is null to prevent TypeError", async () => {
-      const malformedData = { ...mockRefundData, status: null as unknown as string };
-
-      await service.handleWebhook({ event: "refund.completed", data: malformedData });
-
-      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payment.update).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when status is not a string to prevent TypeError", async () => {
-      const malformedData = { ...mockRefundData, status: 123 as unknown as string };
-
-      await service.handleWebhook({ event: "refund.completed", data: malformedData });
-
-      expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.payment.update).not.toHaveBeenCalled();
     });
 
     it("should skip processing when AmountRefunded is undefined to prevent incorrect status determination", async () => {

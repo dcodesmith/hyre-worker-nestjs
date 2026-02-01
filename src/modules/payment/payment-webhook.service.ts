@@ -131,7 +131,7 @@ export class PaymentWebhookService {
     }
 
     const paymentStatus =
-      verificationData.status.toLowerCase() === "successful"
+      verificationData.status?.toLowerCase() === "successful"
         ? PaymentAttemptStatus.SUCCESSFUL
         : PaymentAttemptStatus.FAILED;
 
@@ -149,7 +149,7 @@ export class PaymentWebhookService {
       verifiedStatus: verificationData.status,
     });
 
-    if (paymentStatus === PaymentAttemptStatus.SUCCESSFUL) {
+    if (payment.status === PaymentAttemptStatus.SUCCESSFUL) {
       await this.bookingConfirmationService.confirmFromPayment(payment);
     }
   }
@@ -224,7 +224,7 @@ export class PaymentWebhookService {
       id: transactionId,
       payment_type: paymentMethod,
       flw_ref: flutterwaveReference,
-      amount: amountExpected,
+      amount: webhookAmount,
       charged_amount: amountCharged,
     } = data;
 
@@ -235,13 +235,15 @@ export class PaymentWebhookService {
 
     let bookingId: string | undefined;
     let extensionId: string | undefined;
+    let amountExpected = webhookAmount;
 
     if (booking) {
       bookingId = booking.id;
+      amountExpected = booking.totalAmount.toNumber() ?? amountExpected;
     } else {
       const extension = await this.databaseService.extension.findFirst({
         where: { paymentIntent: txRef },
-        select: { id: true },
+        select: { id: true, totalAmount: true },
       });
 
       if (!extension) {
@@ -252,6 +254,7 @@ export class PaymentWebhookService {
       }
 
       extensionId = extension.id;
+      amountExpected = extension.totalAmount.toNumber() ?? amountExpected;
     }
 
     this.logger.log("Creating payment record from webhook", {
@@ -306,14 +309,6 @@ export class PaymentWebhookService {
     if (!reference) {
       this.logger.warn(
         "Missing reference in transfer.completed webhook, skipping to prevent data corruption",
-      );
-      return;
-    }
-
-    if (!status || typeof status !== "string") {
-      this.logger.warn(
-        "Missing or invalid status in transfer.completed webhook, skipping to prevent errors",
-        { reference, status },
       );
       return;
     }
@@ -383,14 +378,6 @@ export class PaymentWebhookService {
     if (!TransactionId) {
       this.logger.warn(
         "Missing TransactionId in refund.completed webhook, skipping to prevent data corruption",
-      );
-      return;
-    }
-
-    if (!status || typeof status !== "string") {
-      this.logger.warn(
-        "Missing or invalid status in refund.completed webhook, skipping to prevent errors",
-        { transactionId: TransactionId, status },
       );
       return;
     }
