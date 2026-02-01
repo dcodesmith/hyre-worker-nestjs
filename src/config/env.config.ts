@@ -83,6 +83,7 @@ export const envSchema = z.object({
         .array(z.url("Each TRUSTED_ORIGIN must be a valid URL"))
         .min(1, "At least one valid TRUSTED_ORIGIN is required"),
     ),
+  SENDER_NAME: z.string().min(2, "SENDER_NAME is required"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

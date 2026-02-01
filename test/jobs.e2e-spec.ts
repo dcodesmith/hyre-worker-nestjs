@@ -14,7 +14,9 @@ describe("Jobs E2E Tests", () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({
+      logger: false,
+    });
 
     // Register global exception filter (same as in main.ts)
     const httpAdapterHost = app.get(HttpAdapterHost);

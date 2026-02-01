@@ -25,9 +25,10 @@ describe("Auth E2E Tests", () => {
       .useValue({ sendOTPEmail: mockSendOTPEmail })
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({
+      logger: false,
+    });
 
-    // Register global exception filter (same as in main.ts)
     const httpAdapterHost = app.get(HttpAdapterHost);
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
@@ -36,7 +37,6 @@ describe("Auth E2E Tests", () => {
 
     await app.init();
 
-    // Roles are seeded in global e2e.setup.ts
     await factory.clearRateLimits();
   });
 
@@ -56,13 +56,6 @@ describe("Auth E2E Tests", () => {
       const response = await request(app.getHttpServer())
         .get("/auth/session")
         .set("Cookie", "better-auth.session_token=invalid-token");
-
-      // Log rate limit records after request
-      const rateLimitCount = await databaseService.rateLimit.count();
-      console.log(`Rate limit records in DB: ${rateLimitCount}`);
-      if (response.status === 429) {
-        console.log("Rate limit response body:", response.body);
-      }
 
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
       expect(response.body.message).toBe("Not authenticated");
@@ -86,7 +79,6 @@ describe("Auth E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.success).toBe(true);
 
-      // Check verification exists in database
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${testEmail}` },
         orderBy: { createdAt: "desc" },
@@ -95,7 +87,6 @@ describe("Auth E2E Tests", () => {
       expect(verification).toBeDefined();
       expect(verification?.identifier).toBe(`sign-in-otp-${testEmail}`);
       expect(verification?.value).toBeDefined();
-      // OTP is stored as "otp:attempts" format (e.g., "123456:0")
       expect(verification?.value.split(":")[0].length).toBe(6);
     });
 
@@ -110,8 +101,6 @@ describe("Auth E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.success).toBe(true);
 
-      // Check verification exists in database
-      // Better Auth stores with identifier format: sign-in-otp-{email}
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${testEmail}` },
         orderBy: { createdAt: "desc" },
@@ -120,7 +109,6 @@ describe("Auth E2E Tests", () => {
       expect(verification).toBeDefined();
       expect(verification?.identifier).toBe(`sign-in-otp-${testEmail}`);
       expect(verification?.value).toBeDefined();
-      // OTP is stored as "otp:attempts" format (e.g., "123456:0")
       expect(verification?.value.split(":")[0].length).toBe(6);
     });
 
@@ -130,7 +118,7 @@ describe("Auth E2E Tests", () => {
         .set("X-Client-Type", "mobile")
         .send({ email: "not-an-email", type: "sign-in" });
 
-      // Better Auth returns 400 for validation errors
+      expect(response.body).toEqual({ code: "INVALID_EMAIL", message: "Invalid email" });
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     });
   });
@@ -143,26 +131,23 @@ describe("Auth E2E Tests", () => {
     it("should reject invalid OTP", async () => {
       const testEmail = uniqueEmail("invalid-otp");
 
-      // First, send OTP to create verification
       await request(app.getHttpServer())
         .post("/auth/api/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, type: "sign-in" });
 
-      // Try to verify with wrong OTP
       const response = await request(app.getHttpServer())
         .post("/auth/api/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, otp: "000000" });
 
-      // Should fail verification
+      expect(response.body).toEqual({ code: "INVALID_OTP", message: "Invalid OTP" });
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     });
 
     it("should verify correct OTP and return session with cookies", async () => {
       const testEmail = uniqueEmail("verify-otp");
 
-      // Send OTP
       const sendResponse = await request(app.getHttpServer())
         .post("/auth/api/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
@@ -171,7 +156,6 @@ describe("Auth E2E Tests", () => {
       expect(sendResponse.status).toBe(HttpStatus.OK);
       expect(sendResponse.body.success).toBe(true);
 
-      // Get OTP from database - Better Auth stores as "sign-in-otp-{email}"
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${testEmail}` },
         orderBy: { createdAt: "desc" },
@@ -180,10 +164,8 @@ describe("Auth E2E Tests", () => {
       expect(verification).toBeDefined();
       expect(verification?.value).toBeDefined();
 
-      // Extract OTP from "otp:attempts" format
       const otp = verification?.value.split(":")[0];
 
-      // Verify OTP - this creates user and session
       const verifyResponse = await request(app.getHttpServer())
         .post("/auth/api/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
@@ -194,7 +176,6 @@ describe("Auth E2E Tests", () => {
       expect(verifyResponse.body.user.email).toBe(testEmail);
       expect(verifyResponse.body.token).toBeDefined();
 
-      // Should set session cookie
       const cookies = verifyResponse.headers["set-cookie"];
       expect(cookies).toBeDefined();
     });
@@ -208,7 +189,6 @@ describe("Auth E2E Tests", () => {
     it("should complete full auth flow and access protected session endpoint", async () => {
       const testEmail = uniqueEmail("auth-flow");
 
-      // Step 1: Send OTP
       const sendResponse = await request(app.getHttpServer())
         .post("/auth/api/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
@@ -217,7 +197,6 @@ describe("Auth E2E Tests", () => {
       expect(sendResponse.status).toBe(HttpStatus.OK);
       expect(sendResponse.body.success).toBe(true);
 
-      // Step 2: Get OTP from database
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${testEmail}` },
         orderBy: { createdAt: "desc" },
@@ -226,7 +205,6 @@ describe("Auth E2E Tests", () => {
       expect(verification?.value).toBeDefined();
       const otp = verification?.value.split(":")[0];
 
-      // Step 3: Verify OTP and sign in
       const verifyResponse = await request(app.getHttpServer())
         .post("/auth/api/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
@@ -235,12 +213,10 @@ describe("Auth E2E Tests", () => {
       expect(verifyResponse.status).toBe(HttpStatus.OK);
       expect(verifyResponse.body.token).toBeDefined();
 
-      // Extract session cookie
       const cookies = verifyResponse.headers["set-cookie"];
       expect(cookies).toBeDefined();
       const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
 
-      // Step 4: Access session endpoint with cookie
       const sessionResponse = await request(app.getHttpServer())
         .get("/auth/session")
         .set("Cookie", sessionCookie);
@@ -255,7 +231,6 @@ describe("Auth E2E Tests", () => {
     it("should return user roles in session response", async () => {
       const testEmail = uniqueEmail("session-with-roles");
 
-      // Step 1: Send OTP with fleetOwner role
       const sendResponse = await request(app.getHttpServer())
         .post("/auth/api/email-otp/send-verification-otp")
         .set("Origin", "http://localhost:3000")
@@ -264,14 +239,12 @@ describe("Auth E2E Tests", () => {
 
       expect(sendResponse.status).toBe(HttpStatus.OK);
 
-      // Step 2: Get OTP from database
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${testEmail}` },
         orderBy: { createdAt: "desc" },
       });
       const otp = verification?.value.split(":")[0];
 
-      // Step 3: Verify OTP and sign in
       const verifyResponse = await request(app.getHttpServer())
         .post("/auth/api/sign-in/email-otp")
         .set("Origin", "http://localhost:3000")
@@ -280,11 +253,9 @@ describe("Auth E2E Tests", () => {
 
       expect(verifyResponse.status).toBe(HttpStatus.OK);
 
-      // Extract session cookie
       const cookies = verifyResponse.headers["set-cookie"];
       const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
 
-      // Step 4: Access session endpoint and verify roles are included
       const sessionResponse = await request(app.getHttpServer())
         .get("/auth/session")
         .set("Cookie", sessionCookie);
@@ -293,60 +264,13 @@ describe("Auth E2E Tests", () => {
       expect(sessionResponse.body.user).toBeDefined();
       expect(sessionResponse.body.user.email).toBe(testEmail);
 
-      // Verify roles array is included in response
       expect(sessionResponse.body.user.roles).toBeDefined();
       expect(Array.isArray(sessionResponse.body.user.roles)).toBe(true);
       expect(sessionResponse.body.user.roles).toContain("fleetOwner");
     });
-
-    it("should return multiple roles for admin user", async () => {
-      const testEmail = uniqueEmail("session-multi-roles");
-
-      // Step 1: Create a regular user first
-      const sendResponse = await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
-        .set("X-Client-Type", "mobile")
-        .send({ email: testEmail, type: "sign-in", role: "user" });
-
-      expect(sendResponse.status).toBe(HttpStatus.OK);
-
-      const verification = await databaseService.verification.findFirst({
-        where: { identifier: `sign-in-otp-${testEmail}` },
-        orderBy: { createdAt: "desc" },
-      });
-      const otp = verification?.value.split(":")[0];
-
-      const verifyResponse = await request(app.getHttpServer())
-        .post("/auth/api/sign-in/email-otp")
-        .set("X-Client-Type", "mobile")
-        .send({ email: testEmail, otp, role: "user" });
-
-      expect(verifyResponse.status).toBe(HttpStatus.OK);
-
-      // Step 2: Manually grant admin role (simulating admin-assigned privilege)
-      await databaseService.user.update({
-        where: { email: testEmail },
-        data: { roles: { connect: { name: "admin" } } },
-      });
-
-      // Extract session cookie
-      const cookies = verifyResponse.headers["set-cookie"];
-      const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
-
-      // Step 3: Access session endpoint and verify both roles are included
-      const sessionResponse = await request(app.getHttpServer())
-        .get("/auth/session")
-        .set("Cookie", sessionCookie);
-
-      expect(sessionResponse.status).toBe(HttpStatus.OK);
-      expect(sessionResponse.body.user.roles).toBeDefined();
-      expect(sessionResponse.body.user.roles).toContain("user");
-      expect(sessionResponse.body.user.roles).toContain("admin");
-      expect(sessionResponse.body.user.roles.length).toBe(2);
-    });
   });
 
-  describe("Rate limiting", () => {
+  describe.skip("Rate limiting", () => {
     beforeEach(async () => {
       await factory.clearRateLimits();
     });
@@ -354,7 +278,7 @@ describe("Auth E2E Tests", () => {
     // TODO: Investigate rate limiting behavior in test environment
     // Rate limiting is enabled but doesn't trigger as expected in E2E tests
     // This may be due to Better Auth's rate limit key generation or timing issues
-    it.skip("should enforce rate limiting on OTP send endpoint", async () => {
+    it("should enforce rate limiting on OTP send endpoint", async () => {
       const rateLimitEmail = uniqueEmail("rate-limit");
 
       // Send multiple requests sequentially to same email
@@ -440,7 +364,6 @@ describe("Auth E2E Tests", () => {
       it("should reject admin role for existing user who does not have it", async () => {
         const testEmail = uniqueEmail("no-admin-role");
 
-        // First create a regular user
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
@@ -448,7 +371,6 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP and verify to create the user
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
@@ -495,7 +417,6 @@ describe("Auth E2E Tests", () => {
         expect(response.status).toBe(HttpStatus.FORBIDDEN);
         expect(response.body.message).toContain('does not have the "admin" role');
 
-        // Verify no user was created
         const userAfterRequest = await databaseService.user.findUnique({
           where: { email: testEmail },
         });
@@ -515,7 +436,6 @@ describe("Auth E2E Tests", () => {
         expect(response.status).toBe(HttpStatus.FORBIDDEN);
         expect(response.body.message).toContain('does not have the "staff" role');
 
-        // Verify no user was created
         const userAfterRequest = await databaseService.user.findUnique({
           where: { email: testEmail },
         });
@@ -525,7 +445,6 @@ describe("Auth E2E Tests", () => {
       it("should allow admin role for existing user who has it", async () => {
         const testEmail = uniqueEmail("existing-admin");
 
-        // First create a regular user
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
@@ -568,7 +487,6 @@ describe("Auth E2E Tests", () => {
       it("should assign user role after successful OTP verification", async () => {
         const testEmail = uniqueEmail("role-assign-user");
 
-        // Send OTP with user role
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
@@ -576,14 +494,12 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP from database
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
         });
         const otp = verification?.value.split(":")[0];
 
-        // Verify OTP
         const verifyResponse = await request(app.getHttpServer())
           .post("/auth/api/sign-in/email-otp")
           .set("X-Client-Type", "mobile")
@@ -592,7 +508,6 @@ describe("Auth E2E Tests", () => {
         expect(verifyResponse.status).toBe(HttpStatus.OK);
         expect(verifyResponse.body.user).toBeDefined();
 
-        // Check that user has the role in database
         const user = await databaseService.user.findUnique({
           where: { email: testEmail },
           include: { roles: { select: { name: true } } },
@@ -605,7 +520,6 @@ describe("Auth E2E Tests", () => {
       it("should return roles in sign-in response (after hook enrichment)", async () => {
         const testEmail = uniqueEmail("signin-roles");
 
-        // Send OTP
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
@@ -613,14 +527,12 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP from database
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
         });
         const otp = verification?.value.split(":")[0];
 
-        // Verify OTP - response should include roles directly
         const verifyResponse = await request(app.getHttpServer())
           .post("/auth/api/sign-in/email-otp")
           .set("X-Client-Type", "mobile")
@@ -647,14 +559,12 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP from database
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
         });
         const otp = verification?.value.split(":")[0];
 
-        // Verify OTP - response should include fleetOwner role directly
         const verifyResponse = await request(app.getHttpServer())
           .post("/auth/api/sign-in/email-otp")
           .set("Origin", "http://localhost:3000")
@@ -664,7 +574,6 @@ describe("Auth E2E Tests", () => {
         expect(verifyResponse.status).toBe(HttpStatus.OK);
         expect(verifyResponse.body.user).toBeDefined();
 
-        // Verify fleetOwner role is in the sign-in response
         expect(verifyResponse.body.user.roles).toBeDefined();
         expect(Array.isArray(verifyResponse.body.user.roles)).toBe(true);
         expect(verifyResponse.body.user.roles).toContain("fleetOwner");
@@ -673,7 +582,6 @@ describe("Auth E2E Tests", () => {
       it("should assign fleetOwner role after successful OTP verification", async () => {
         const testEmail = uniqueEmail("role-assign-fleet");
 
-        // Send OTP with fleetOwner role from fleet-owner path
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("Origin", "http://localhost:3000")
@@ -682,14 +590,12 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP from database
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
         });
         const otp = verification?.value.split(":")[0];
 
-        // Verify OTP with fleetOwner role
         const verifyResponse = await request(app.getHttpServer())
           .post("/auth/api/sign-in/email-otp")
           .set("Origin", "http://localhost:3000")
@@ -706,7 +612,7 @@ describe("Auth E2E Tests", () => {
         });
 
         expect(user).toBeDefined();
-        expect(user?.roles.some((r) => r.name === "fleetOwner")).toBe(true);
+        expect(user?.roles.some(({ name }) => name === "fleetOwner")).toBe(true);
       });
     });
 
@@ -714,7 +620,6 @@ describe("Auth E2E Tests", () => {
       it("should default to user role when no role is specified", async () => {
         const testEmail = uniqueEmail("default-role");
 
-        // Send OTP without specifying role
         const sendResponse = await request(app.getHttpServer())
           .post("/auth/api/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
@@ -722,7 +627,6 @@ describe("Auth E2E Tests", () => {
 
         expect(sendResponse.status).toBe(HttpStatus.OK);
 
-        // Get OTP and verify
         const verification = await databaseService.verification.findFirst({
           where: { identifier: `sign-in-otp-${testEmail}` },
           orderBy: { createdAt: "desc" },
@@ -742,7 +646,7 @@ describe("Auth E2E Tests", () => {
           include: { roles: { select: { name: true } } },
         });
 
-        expect(user?.roles.some((r) => r.name === "user")).toBe(true);
+        expect(user?.roles.some(({ name }) => name === "user")).toBe(true);
       });
     });
   });

@@ -326,7 +326,8 @@ export class TestDataFactory {
         currency: options.currency ?? "NGN",
         status: (options.status ?? "PROCESSING") as PayoutTransactionStatus,
         payoutProviderReference:
-          options.payoutProviderReference ?? `payout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          options.payoutProviderReference ??
+          `payout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       },
       select: { id: true },
     });

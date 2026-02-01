@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  Booking,
   BookingReferralStatus,
   BookingStatus,
   FlightStatus,
@@ -160,8 +161,6 @@ export class BookingCreationService {
 
     this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
 
-    const bookingReference = generateBookingReference();
-
     const customerDetails = await this.getCustomerDetails(booking, sessionUser);
 
     const result = await this.createBookingWithPayment({
@@ -170,7 +169,6 @@ export class BookingCreationService {
       car,
       legs,
       financials,
-      bookingReference,
       customerDetails,
       flightData,
       preliminaryReferralEligibility,
@@ -515,7 +513,6 @@ export class BookingCreationService {
     car: CarWithPricing;
     legs: GeneratedLeg[];
     financials: BookingFinancials;
-    bookingReference: string;
     customerDetails: CustomerDetails;
     flightData: FlightDataForBooking | null;
     preliminaryReferralEligibility: ReferralEligibility;
@@ -526,7 +523,6 @@ export class BookingCreationService {
       car,
       legs,
       financials,
-      bookingReference,
       customerDetails,
       flightData,
       preliminaryReferralEligibility,
@@ -564,13 +560,9 @@ export class BookingCreationService {
     // Track flight record ID for post-transaction alert creation
     let flightRecordIdForAlert: string | null = null;
 
-    // Step 1: DB Transaction - only database operations
-    let createdBooking: {
-      id: string;
-      bookingReference: string;
-      totalAmount: Decimal;
-      status: BookingStatus;
-    };
+    let createdBooking: Booking;
+
+    const bookingReference = generateBookingReference();
 
     try {
       createdBooking = await this.databaseService.$transaction(async (tx) => {
@@ -606,12 +598,6 @@ export class BookingCreationService {
 
         const bookingRecord = await tx.booking.create({
           data: bookingData,
-          select: {
-            id: true,
-            bookingReference: true,
-            totalAmount: true,
-            status: true,
-          },
         });
 
         // Create referral reward record (the discount was already claimed above)
@@ -640,6 +626,7 @@ export class BookingCreationService {
     }
 
     let checkoutUrl: string;
+
     try {
       checkoutUrl = await this.createPaymentIntent(createdBooking, financials, customerDetails);
     } catch (error) {

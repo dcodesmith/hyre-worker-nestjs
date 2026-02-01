@@ -1,4 +1,4 @@
-import type { BookingType, Prisma } from "@prisma/client";
+import type { BookingType } from "@prisma/client";
 import type { Decimal } from "@prisma/client/runtime/library";
 import type { CarPricing } from "./booking-calculation.interface";
 
@@ -57,52 +57,7 @@ export interface CreateBookingResponse {
   checkoutUrl: string;
 }
 
-export type BookingApiResponse = Prisma.BookingGetPayload<{
-  include: {
-    car: {
-      select: {
-        id: true;
-        make: true;
-        model: true;
-        year: true;
-        plateNumber: true;
-        primaryImageUrl: true;
-      };
-    };
-    user: {
-      select: {
-        id: true;
-        name: true;
-        email: true;
-      };
-    };
-    legs: true;
-  };
-}>;
-
-/**
- * Booking financial breakdown for display (all amounts as strings for Decimal precision)
- */
-export interface BookingFinancialsResponse {
-  netTotal: string;
-  securityDetailCost: string;
-  fuelUpgradeCost: string;
-  netTotalWithAddons: string;
-  platformCustomerServiceFeeRatePercent: string;
-  platformCustomerServiceFeeAmount: string;
-  subtotalBeforeDiscounts: string;
-  referralDiscountAmount: string;
-  creditsUsed: string;
-  subtotalAfterDiscounts: string;
-  vatRatePercent: string;
-  vatAmount: string;
-  totalAmount: string;
-  numberOfLegs: number;
-  legPrices: Array<{
-    legDate: string;
-    price: string;
-  }>;
-}
+// export type Booking = Prisma.BookingGetPayload<null>;
 
 /**
  * Booking availability check result

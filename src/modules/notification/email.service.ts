@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
+import { EnvConfig } from "src/config/env.config";
 import { EmailNotificationData } from "./notification.interface";
 
 @Injectable()
@@ -9,11 +10,11 @@ export class EmailService {
   private readonly resend: Resend;
   private readonly from: string;
 
-  constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>("RESEND_API_KEY");
-    const appName = this.configService.get<string>("APP_NAME");
-    const fromEmail = this.configService.get<string>("RESEND_FROM_EMAIL");
-    const senderName = this.configService.get<string>("SENDER_NAME");
+  constructor(private readonly configService: ConfigService<EnvConfig>) {
+    const apiKey = this.configService.get("RESEND_API_KEY", { infer: true });
+    const appName = this.configService.get("APP_NAME", { infer: true });
+    const fromEmail = this.configService.get("RESEND_FROM_EMAIL", { infer: true });
+    const senderName = this.configService.get("SENDER_NAME", { infer: true });
 
     this.resend = new Resend(apiKey);
     this.from = `${senderName} from ${appName} <${fromEmail}>`;
