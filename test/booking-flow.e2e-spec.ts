@@ -11,7 +11,6 @@ import { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto"
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveChargeData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
-import { MapsService } from "../src/modules/maps/maps.service";
 import type { ClientTypeOption } from "./helpers";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 

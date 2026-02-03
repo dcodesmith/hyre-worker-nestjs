@@ -9,9 +9,7 @@ import { JobService } from "./job.service";
 import { JobThrottlerGuard } from "./job-throttler.guard";
 
 describe("JobController", () => {
-  let controller: JobController;
   let jobService: JobService;
-  let configService: ConfigService;
   let mockConfigGet: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -49,9 +47,7 @@ describe("JobController", () => {
       ],
     }).compile();
 
-    controller = module.get<JobController>(JobController);
     jobService = module.get<JobService>(JobService);
-    configService = module.get<ConfigService>(ConfigService);
   });
   async function createControllerWithConfig(enabled: boolean): Promise<JobController> {
     const configGet = vi.fn((key: string) => {
