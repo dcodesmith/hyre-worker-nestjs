@@ -64,11 +64,6 @@ describe("FlightAwareService", () => {
     service.onModuleDestroy();
     vi.useRealTimers();
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("lifecycle hooks", () => {
     it("should clear the cache cleanup interval on module destroy", () => {
       // Verify onModuleDestroy can be called without errors

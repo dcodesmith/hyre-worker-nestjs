@@ -49,11 +49,6 @@ describe("BookingValidationService", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("validateDates", () => {
     it("should not throw for valid future booking", () => {
       const tomorrow = new Date();

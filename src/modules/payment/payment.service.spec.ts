@@ -70,16 +70,6 @@ describe("PaymentService", () => {
       ),
     });
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have database and flutterwave services injected", () => {
-    expect(databaseService).toBeDefined();
-    expect(flutterwaveService).toBeDefined();
-  });
-
   it("should use a deterministic reference derived from payout transaction id", async () => {
     const booking = createBooking({
       id: "booking-123",

@@ -102,11 +102,6 @@ describe("PaymentWebhookService", () => {
     // Reset mocks between tests
     vi.clearAllMocks();
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("handleChargeCompleted", () => {
     const mockChargeData: FlutterwaveChargeData = {
       id: 12345,

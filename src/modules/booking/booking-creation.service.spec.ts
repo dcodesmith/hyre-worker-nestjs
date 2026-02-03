@@ -165,11 +165,6 @@ describe("BookingCreationService", () => {
     flightAwareService = module.get<FlightAwareService>(FlightAwareService);
     mapsService = module.get<MapsService>(MapsService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("createBooking", () => {
     // Setup common mocks for successful booking flow
     // Validation methods now return void and throw on failure, so we just mock them to do nothing

@@ -45,15 +45,6 @@ describe("EmailService", () => {
     service = module.get<EmailService>(EmailService);
     configService = module.get<ConfigService>(ConfigService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have config service injected", () => {
-    expect(configService).toBeDefined();
-  });
-
   describe("sendEmail", () => {
     const emailData = {
       to: "recipient@example.com",

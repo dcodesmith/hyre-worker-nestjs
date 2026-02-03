@@ -11,7 +11,6 @@ import { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto"
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveChargeData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
-import { MapsService } from "../src/modules/maps/maps.service";
 import type { ClientTypeOption } from "./helpers";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -30,7 +29,6 @@ describe("Booking Flow E2E", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
-  let mapsService: MapsService;
   let factory: TestDataFactory;
   let webhookSecret: string;
 
@@ -56,7 +54,6 @@ describe("Booking Flow E2E", () => {
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
-    mapsService = app.get(MapsService);
     factory = new TestDataFactory(databaseService, app);
 
     const configService = app.get(ConfigService);
@@ -82,13 +79,6 @@ describe("Booking Flow E2E", () => {
         paymentIntentId: uniqueId,
         checkoutUrl: `https://checkout.flutterwave.com/pay/${uniqueId}`,
       };
-    });
-
-    // Mock maps service (not needed for DAY bookings but prevents errors)
-    vi.spyOn(mapsService, "calculateAirportTripDuration").mockResolvedValue({
-      durationMinutes: 45,
-      distanceMeters: 25000,
-      isEstimate: false,
     });
   });
 

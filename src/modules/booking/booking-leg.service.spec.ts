@@ -14,11 +14,6 @@ describe("BookingLegService", () => {
 
     service = module.get<BookingLegService>(BookingLegService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("DAY bookings", () => {
     it("should generate one leg for single-day booking", () => {
       const input: LegGenerationInput = {

@@ -64,19 +64,6 @@ describe("StatusChangeService", () => {
     mockPaymentService = module.get<PaymentService>(PaymentService);
     mockReferralService = module.get<ReferralService>(ReferralService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have all required services injected", () => {
-    expect(service).toBeDefined();
-    expect(mockDatabaseService).toBeDefined();
-    expect(mockNotificationService).toBeDefined();
-    expect(mockPaymentService).toBeDefined();
-    expect(mockReferralService).toBeDefined();
-  });
-
   it("should not update bookings from confirmed to active when no bookings found", async () => {
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([]);
     const result = await service.updateBookingsFromConfirmedToActive();

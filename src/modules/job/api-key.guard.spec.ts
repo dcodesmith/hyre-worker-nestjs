@@ -56,11 +56,6 @@ async function createGuard(apiKey: string | undefined): Promise<ApiKeyGuard> {
 }
 
 describe("ApiKeyGuard", () => {
-  it("should be defined", async () => {
-    const guard = await createGuard(undefined);
-    expect(guard).toBeDefined();
-  });
-
   describe("when API_KEY is not configured", () => {
     it("should allow all requests", async () => {
       const testGuard = await createGuard(undefined);

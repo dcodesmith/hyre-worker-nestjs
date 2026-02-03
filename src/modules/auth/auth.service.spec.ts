@@ -82,11 +82,6 @@ describe("AuthService", () => {
         TRUSTED_ORIGINS: ["https://example.com", "https://app.example.com"],
       });
     });
-
-    it("should be defined", () => {
-      expect(service).toBeDefined();
-    });
-
     it("should be initialized", () => {
       expect(service.isInitialized).toBe(true);
     });

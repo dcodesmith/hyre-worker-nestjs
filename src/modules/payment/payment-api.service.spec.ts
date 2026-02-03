@@ -54,11 +54,6 @@ describe("PaymentApiService", () => {
     databaseService = module.get<DatabaseService>(DatabaseService);
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("initializePayment", () => {
     const validBookingDto = {
       type: "booking" as const,

@@ -54,11 +54,6 @@ describe("JobService", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   it("should enqueue start booking leg reminders", async () => {
     await service.triggerStartBookingLegReminders();
 
