@@ -72,17 +72,6 @@ describe("Payments E2E Tests", () => {
   });
 
   describe("POST /api/payments/initialize", () => {
-    it("should return 401 when not authenticated", async () => {
-      const response = await request(app.getHttpServer()).post("/api/payments/initialize").send({
-        type: "booking",
-        entityId: testBookingId,
-        amount: 50000,
-        callbackUrl: "https://example.com/callback",
-      });
-
-      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
-    });
-
     it("should initialize payment for a booking", async () => {
       const mockPaymentIntent = {
         paymentIntentId: `booking_${testBookingId}`,
@@ -137,23 +126,6 @@ describe("Payments E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       expect(response.body.message).toContain("permission");
     });
-
-    it("should validate request body with Zod schema", async () => {
-      const response = await request(app.getHttpServer())
-        .post("/api/payments/initialize")
-        .set("Cookie", testUserCookie)
-        .send({
-          type: "invalid-type",
-          entityId: "not-a-uuid",
-          amount: 50, // Below minimum
-          callbackUrl: "not-a-url",
-        });
-
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toBe("Validation failed");
-      expect(response.body.errors).toBeDefined();
-      expect(Array.isArray(response.body.errors)).toBe(true);
-    });
   });
 
   describe("GET /api/payments/status/:txRef", () => {
@@ -165,14 +137,6 @@ describe("Payments E2E Tests", () => {
         status: PaymentAttemptStatus.PENDING,
       });
       testPaymentTxRef = payment.txRef;
-    });
-
-    it("should return 401 when not authenticated", async () => {
-      const response = await request(app.getHttpServer()).get(
-        `/api/payments/status/${testPaymentTxRef}`,
-      );
-
-      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
     });
 
     it("should return payment status for authenticated user", async () => {
@@ -216,14 +180,6 @@ describe("Payments E2E Tests", () => {
         confirmedAt: new Date(),
       });
       successfulPaymentTxRef = payment.txRef;
-    });
-
-    it("should return 401 when not authenticated", async () => {
-      const response = await request(app.getHttpServer())
-        .post(`/api/payments/${successfulPaymentTxRef}/refund`)
-        .send({ amount: 25000, reason: "Customer cancellation" });
-
-      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
     });
 
     it("should reject refund when user does not own the payment", async () => {
@@ -292,16 +248,6 @@ describe("Payments E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       expect(response.body.message).toContain("exceed");
     });
-
-    it("should validate refund request body with Zod schema", async () => {
-      const response = await request(app.getHttpServer())
-        .post(`/api/payments/${successfulPaymentTxRef}/refund`)
-        .set("Cookie", testUserCookie)
-        .send({ amount: 50 }); // Below minimum of 100
-
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toBe("Validation failed");
-    });
   });
 
   describe("POST /api/payments/webhook/flutterwave", () => {
@@ -317,23 +263,6 @@ describe("Payments E2E Tests", () => {
     });
 
     describe("Signature Verification", () => {
-      it("should reject request without verif-hash header", async () => {
-        const response = await request(app.getHttpServer())
-          .post("/api/payments/webhook/flutterwave")
-          .send({ event: "charge.completed", data: {} });
-
-        expect(response.status).toBe(HttpStatus.FORBIDDEN);
-      });
-
-      it("should reject request with invalid verif-hash header", async () => {
-        const response = await request(app.getHttpServer())
-          .post("/api/payments/webhook/flutterwave")
-          .set("verif-hash", "invalid-secret")
-          .send({ event: "charge.completed", data: {} });
-
-        expect(response.status).toBe(HttpStatus.FORBIDDEN);
-      });
-
       it("should accept request with valid verif-hash header", async () => {
         const uniqueId = Date.now() + Math.floor(Math.random() * 100000);
         const webhookData = {

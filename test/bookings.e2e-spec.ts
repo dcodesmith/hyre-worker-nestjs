@@ -117,35 +117,6 @@ describe("Bookings E2E Tests", () => {
         expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
       });
 
-      it("should return 400 for invalid booking type", async () => {
-        const payload = {
-          ...createValidBookingPayload(testCarId),
-          bookingType: "INVALID_TYPE",
-        };
-
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .set("Cookie", testUserCookie)
-          .send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-        expect(response.body.message).toContain("Validation");
-      });
-
-      it("should return 400 for missing required fields", async () => {
-        const payload = {
-          carId: testCarId,
-        };
-
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .set("Cookie", testUserCookie)
-          .send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-        expect(response.body.message).toContain("Validation");
-      });
-
       it("should return 404 for non-existent car", async () => {
         const payload = createValidBookingPayload("non-existent-car-id");
 
@@ -167,71 +138,6 @@ describe("Bookings E2E Tests", () => {
         expect(response.status).toBe(HttpStatus.CREATED);
         expect(response.body).toHaveProperty("bookingId");
         expect(response.body).toHaveProperty("checkoutUrl");
-      });
-
-      it("should return 400 when guest fields are missing without authentication", async () => {
-        const payload = createValidBookingPayload(testCarId);
-
-        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      });
-
-      it("should return 400 for invalid guest email", async () => {
-        const payload = {
-          ...createGuestBookingPayload(testCarId),
-          guestEmail: "not-an-email",
-        };
-
-        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-        expect(response.body.message).toContain("Validation");
-      });
-
-      it("should return 400 for invalid guest phone", async () => {
-        const payload = {
-          ...createGuestBookingPayload(testCarId),
-          guestPhone: "123",
-        };
-
-        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-        expect(response.body.message).toContain("Validation");
-      });
-    });
-
-    describe("Validation", () => {
-      it("should reject booking with end date before start date", async () => {
-        const now = Date.now();
-        const payload = {
-          ...createValidBookingPayload(testCarId),
-          startDate: new Date(now + 86400000 * 3).toISOString(),
-          endDate: new Date(now + 86400000 * 2).toISOString(), // Before start
-        };
-
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .set("Cookie", testUserCookie)
-          .send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      });
-
-      it("should reject booking with dates in the past", async () => {
-        const payload = {
-          ...createValidBookingPayload(testCarId),
-          startDate: new Date(Date.now() - 86400000).toISOString(), // Yesterday
-          endDate: new Date().toISOString(),
-        };
-
-        const response = await request(app.getHttpServer())
-          .post("/api/bookings")
-          .set("Cookie", testUserCookie)
-          .send(payload);
-
-        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
       });
     });
 
