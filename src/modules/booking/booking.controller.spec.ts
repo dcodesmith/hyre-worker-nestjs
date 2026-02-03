@@ -17,10 +17,7 @@ import { BookingZodValidationPipe } from "./pipes/zod-validation.pipe";
 /**
  * Helper function to validate booking input (simulates the decorator behavior)
  */
-function validateBookingInput(
-  rawBody: unknown,
-  isAuthenticated: boolean,
-): CreateBookingInput {
+function validateBookingInput(rawBody: unknown, isAuthenticated: boolean): CreateBookingInput {
   const schema = isAuthenticated ? createBookingSchema : createGuestBookingSchema;
   const pipe = new BookingZodValidationPipe(schema);
   return pipe.transform(rawBody);
@@ -93,11 +90,6 @@ describe("BookingController", () => {
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
   });
-
-  it("should be defined", () => {
-    expect(controller).toBeDefined();
-  });
-
   describe("createBooking", () => {
     describe("authenticated user", () => {
       it("should create a booking for authenticated user", async () => {

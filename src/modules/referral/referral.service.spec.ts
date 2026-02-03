@@ -62,15 +62,6 @@ describe("ReferralService", () => {
     vi.spyOn(service["logger"], "warn").mockImplementation(() => undefined);
     vi.spyOn(service["logger"], "debug").mockImplementation(() => undefined);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have all required services injected", () => {
-    expect(databaseService).toBeDefined();
-  });
-
   describe("processReferralCompletionForBooking - Configuration-Based Early Returns", () => {
     it("should skip processing when REFERRAL_ENABLED is false", async () => {
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([

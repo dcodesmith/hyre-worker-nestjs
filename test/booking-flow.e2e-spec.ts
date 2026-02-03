@@ -30,7 +30,6 @@ describe("Booking Flow E2E", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
-  let mapsService: MapsService;
   let factory: TestDataFactory;
   let webhookSecret: string;
 
@@ -56,7 +55,6 @@ describe("Booking Flow E2E", () => {
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
-    mapsService = app.get(MapsService);
     factory = new TestDataFactory(databaseService, app);
 
     const configService = app.get(ConfigService);
@@ -82,13 +80,6 @@ describe("Booking Flow E2E", () => {
         paymentIntentId: uniqueId,
         checkoutUrl: `https://checkout.flutterwave.com/pay/${uniqueId}`,
       };
-    });
-
-    // Mock maps service (not needed for DAY bookings but prevents errors)
-    vi.spyOn(mapsService, "calculateAirportTripDuration").mockResolvedValue({
-      durationMinutes: 45,
-      distanceMeters: 25000,
-      isEstimate: false,
     });
   });
 

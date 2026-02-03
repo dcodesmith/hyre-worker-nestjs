@@ -104,11 +104,6 @@ describe("BookingConfirmationService", () => {
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationQueue = module.get<Queue>(getQueueToken(NOTIFICATIONS_QUEUE));
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("confirmFromPayment", () => {
     it("should confirm a PENDING booking and update to CONFIRMED", async () => {
       const mockPayment = createMockPayment({

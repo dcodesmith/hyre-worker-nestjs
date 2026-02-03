@@ -42,11 +42,6 @@ describe("FlutterwaveService", () => {
 
     service = module.get<FlutterwaveService>(FlutterwaveService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("createPaymentIntent", () => {
     const validOptions: PaymentIntentOptions = {
       amount: 10000,

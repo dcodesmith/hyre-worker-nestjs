@@ -47,16 +47,6 @@ describe("ReminderService", () => {
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationService = module.get<NotificationService>(NotificationService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have all required services injected", () => {
-    expect(databaseService).toBeDefined();
-    expect(notificationService).toBeDefined();
-  });
-
   describe("sendBookingStartReminderEmails", () => {
     // Use fake timers for time-sensitive tests to avoid flakiness
     // caused by time drift between test setup and service execution

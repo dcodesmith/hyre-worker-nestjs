@@ -32,11 +32,6 @@ describe("ReferralProcessor", () => {
     vi.spyOn(processor["logger"], "warn").mockImplementation(() => undefined);
     vi.spyOn(processor["logger"], "debug").mockImplementation(() => undefined);
   });
-
-  it("should be defined", () => {
-    expect(processor).toBeDefined();
-  });
-
   describe("process", () => {
     it("should process referral completion job successfully", async () => {
       const job = {

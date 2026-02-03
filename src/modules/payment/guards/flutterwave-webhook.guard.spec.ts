@@ -35,11 +35,6 @@ describe("FlutterwaveWebhookGuard", () => {
 
     guard = module.get<FlutterwaveWebhookGuard>(FlutterwaveWebhookGuard);
   });
-
-  it("should be defined", () => {
-    expect(guard).toBeDefined();
-  });
-
   describe("canActivate", () => {
     it("should return true for valid signature", () => {
       const context = createMockExecutionContext({

@@ -34,15 +34,6 @@ describe("ReminderScheduler", () => {
     scheduler = module.get<ReminderScheduler>(ReminderScheduler);
     reminderQueue = module.get<Queue<ReminderJobData>>(getQueueToken(REMINDERS_QUEUE));
   });
-
-  it("should be defined", () => {
-    expect(scheduler).toBeDefined();
-  });
-
-  it("should have reminder queue injected", () => {
-    expect(reminderQueue).toBeDefined();
-  });
-
   describe("scheduleBookingStartReminders", () => {
     it("should add start reminder job to queue", async () => {
       await scheduler.scheduleBookingStartReminders();

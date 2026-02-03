@@ -32,15 +32,6 @@ describe("StatusChangeScheduler", () => {
     scheduler = module.get<StatusChangeScheduler>(StatusChangeScheduler);
     statusUpdateQueue = module.get<Queue<StatusUpdateJobData>>(getQueueToken(STATUS_UPDATES_QUEUE));
   });
-
-  it("should be defined", () => {
-    expect(scheduler).toBeDefined();
-  });
-
-  it("should have status update queue injected", () => {
-    expect(statusUpdateQueue).toBeDefined();
-  });
-
   describe("scheduleConfirmedToActiveUpdates", () => {
     it("should add confirmed to active job to queue", async () => {
       await scheduler.scheduleConfirmedToActiveUpdates();

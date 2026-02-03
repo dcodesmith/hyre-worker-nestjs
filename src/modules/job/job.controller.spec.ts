@@ -53,16 +53,6 @@ describe("JobController", () => {
     jobService = module.get<JobService>(JobService);
     configService = module.get<ConfigService>(ConfigService);
   });
-
-  it("should be defined", () => {
-    expect(controller).toBeDefined();
-  });
-
-  it("should have job service and config service injected", () => {
-    expect(jobService).toBeDefined();
-    expect(configService).toBeDefined();
-  });
-
   async function createControllerWithConfig(enabled: boolean): Promise<JobController> {
     const configGet = vi.fn((key: string) => {
       if (key === "ENABLE_MANUAL_TRIGGERS") return enabled;

@@ -63,11 +63,6 @@ describe("RatesService", () => {
     databaseService.taxRate.findFirst.mockResolvedValue(mockVatRate);
     databaseService.addonRate.findFirst.mockResolvedValue(mockSecurityDetailRate);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("getRates", () => {
     it("should fetch and return all platform rates", async () => {
       const rates = await service.getRates();

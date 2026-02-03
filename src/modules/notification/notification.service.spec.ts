@@ -46,11 +46,6 @@ describe("NotificationService", () => {
 
     service = module.get<NotificationService>(NotificationService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("queueBookingStatusNotifications", () => {
     it("should queue status change notification", async () => {
       const booking = createBooking({
@@ -140,9 +135,5 @@ describe("NotificationService", () => {
         undefined,
       );
     });
-  });
-
-  it("should have queue injected", () => {
-    expect(service).toHaveProperty("notificationQueue");
   });
 });

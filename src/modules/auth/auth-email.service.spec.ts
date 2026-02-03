@@ -45,15 +45,6 @@ describe("AuthEmailService", () => {
     service = module.get<AuthEmailService>(AuthEmailService);
     emailService = module.get<EmailService>(EmailService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
-  it("should have email service injected", () => {
-    expect(emailService).toBeDefined();
-  });
-
   describe("sendOTPEmail", () => {
     const testEmail = "user@example.com";
     const testOTP = "123456";

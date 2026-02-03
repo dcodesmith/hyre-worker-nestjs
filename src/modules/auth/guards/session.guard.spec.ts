@@ -77,11 +77,6 @@ describe("SessionGuard", () => {
     beforeEach(async () => {
       await setupTestModule(true);
     });
-
-    it("should be defined", () => {
-      expect(guard).toBeDefined();
-    });
-
     it("should return true and attach session with roles when valid session exists", async () => {
       mockGetSession.mockResolvedValueOnce(mockSession);
       const context = createMockExecutionContext({ cookie: "session=token-123" });

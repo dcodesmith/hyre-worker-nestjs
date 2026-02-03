@@ -42,11 +42,6 @@ describe("FlightAlertProcessor", () => {
     processor = module.get<FlightAlertProcessor>(FlightAlertProcessor);
     flightAwareService = module.get<FlightAwareService>(FlightAwareService);
   });
-
-  it("should be defined", () => {
-    expect(processor).toBeDefined();
-  });
-
   describe("process", () => {
     it("should call getOrCreateFlightAlert with correct params", async () => {
       const job = {

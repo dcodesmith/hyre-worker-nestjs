@@ -61,11 +61,6 @@ describe("BookingCalculationService", () => {
 
     service = module.get<BookingCalculationService>(BookingCalculationService);
   });
-
-  it("should be defined", () => {
-    expect(service).toBeDefined();
-  });
-
   describe("leg pricing by booking type", () => {
     it("should calculate DAY booking with dayRate", async () => {
       const input: BookingCalculationInput = {

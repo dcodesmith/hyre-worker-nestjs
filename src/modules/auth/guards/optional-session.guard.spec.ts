@@ -74,11 +74,6 @@ describe("OptionalSessionGuard", () => {
     beforeEach(async () => {
       await setupTestModule(true);
     });
-
-    it("should be defined", () => {
-      expect(guard).toBeDefined();
-    });
-
     describe("without auth credentials (intentional guest)", () => {
       it("should allow through as guest when no credentials provided", async () => {
         const context = createMockExecutionContext(); // No headers
@@ -94,7 +89,7 @@ describe("OptionalSessionGuard", () => {
       it("should allow through as guest when only non-auth headers provided", async () => {
         const context = createMockExecutionContext({
           "content-type": "application/json",
-          "accept": "application/json",
+          accept: "application/json",
         });
 
         const result = await guard.canActivate(context);

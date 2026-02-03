@@ -52,11 +52,6 @@ describe("RoleGuard", () => {
     guard = module.get<RoleGuard>(RoleGuard);
     reflector = module.get<Reflector>(Reflector);
   });
-
-  it("should be defined", () => {
-    expect(guard).toBeDefined();
-  });
-
   describe("when no roles are required", () => {
     it("should allow access when @Roles decorator is not present", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(undefined);
