@@ -1,10 +1,28 @@
 import type { ExecutionContext } from "@nestjs/common";
+import { ROUTE_ARGS_METADATA } from "@nestjs/common/constants";
+import type { CustomParamFactory } from "@nestjs/common/interfaces";
 import { describe, expect, it } from "vitest";
 import type { AuthSession } from "../guards/session.guard";
 import { AUTH_SESSION_KEY } from "../guards/session.guard";
 import { CurrentUser } from "./current-user.decorator";
 
+/**
+ * Extracts the factory function from a NestJS param decorator created with createParamDecorator.
+ * Applies the decorator to a dummy method and reads the stored metadata.
+ */
+function getParamDecoratorFactory(decorator: () => ParameterDecorator): CustomParamFactory {
+  class Test {
+    test(@decorator() _value: unknown) {}
+  }
+
+  const metadata = Reflect.getMetadata(ROUTE_ARGS_METADATA, Test, "test");
+  const key = Object.keys(metadata)[0];
+  return metadata[key].factory;
+}
+
 describe("CurrentUser decorator", () => {
+  const factory = getParamDecoratorFactory(CurrentUser);
+
   const mockUser = {
     id: "user-123",
     email: "test@example.com",
@@ -37,21 +55,10 @@ describe("CurrentUser decorator", () => {
       }),
     }) as unknown as ExecutionContext;
 
-  // Access the factory function from the decorator
-  // NestJS createParamDecorator stores the factory on the decorator
-  const extractUser = (data: "user" | "session" | undefined, ctx: ExecutionContext) => {
-    // The factory is stored internally; we replicate the logic to test it
-    const request = ctx.switchToHttp().getRequest<{ [AUTH_SESSION_KEY]?: AuthSession }>();
-    const session = request[AUTH_SESSION_KEY];
-    if (!session) return null;
-    if (data === "session") return session;
-    return session.user;
-  };
-
   it("should return user when no data argument is provided", () => {
     const ctx = createMockExecutionContext(mockAuthSession);
 
-    const result = extractUser(undefined, ctx);
+    const result = factory(undefined, ctx);
 
     expect(result).toEqual(mockUser);
   });
@@ -59,7 +66,7 @@ describe("CurrentUser decorator", () => {
   it("should return full session when data is 'session'", () => {
     const ctx = createMockExecutionContext(mockAuthSession);
 
-    const result = extractUser("session", ctx);
+    const result = factory("session", ctx);
 
     expect(result).toEqual(mockAuthSession);
   });
@@ -67,7 +74,7 @@ describe("CurrentUser decorator", () => {
   it("should return null when no auth session exists on request", () => {
     const ctx = createMockExecutionContext(undefined);
 
-    const result = extractUser(undefined, ctx);
+    const result = factory(undefined, ctx);
 
     expect(result).toBeNull();
   });
@@ -75,13 +82,8 @@ describe("CurrentUser decorator", () => {
   it("should return null for session data when no auth session exists", () => {
     const ctx = createMockExecutionContext(undefined);
 
-    const result = extractUser("session", ctx);
+    const result = factory("session", ctx);
 
     expect(result).toBeNull();
-  });
-
-  it("should be exported as a decorator", () => {
-    expect(CurrentUser).toBeDefined();
-    expect(typeof CurrentUser).toBe("function");
   });
 });
