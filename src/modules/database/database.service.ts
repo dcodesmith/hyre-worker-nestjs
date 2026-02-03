@@ -41,9 +41,7 @@ export class DatabaseService extends PrismaClient implements OnModuleInit, OnMod
 
     this.$on("query", (event: Prisma.QueryEvent) => {
       if (event.duration > slowQueryThresholdMs) {
-        this.logger.warn(
-          `[Prisma] Slow Query (${event.duration}ms): ${event.query} -- Params: ${event.params}`,
-        );
+        this.logger.warn(`[Prisma] Slow Query (${event.duration}ms): ${event.query}`);
       }
     });
   }

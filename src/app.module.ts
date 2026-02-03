@@ -1,11 +1,12 @@
 import { ExpressAdapter } from "@bull-board/express";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
-import { Module } from "@nestjs/common";
+import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-auth.middleware";
-import { validateEnvironment } from "./config/env.config";
+import { RequestIdMiddleware } from "./common/middlewares/request-id.middleware";
+import { EnvConfig, validateEnvironment } from "./config/env.config";
 import { AuthModule } from "./modules/auth/auth.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
@@ -27,8 +28,8 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     ScheduleModule.forRoot(),
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const redisUrl = configService.get<string>("REDIS_URL");
+      useFactory: (configService: ConfigService<EnvConfig>) => {
+        const redisUrl = configService.get("REDIS_URL", { infer: true });
         const url = new URL(redisUrl);
         const isTls = url.protocol === "rediss:";
 
@@ -49,9 +50,9 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     }),
     BullBoardModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const bullBoardUsername = configService.get<string>("BULL_BOARD_USERNAME");
-        const bullBoardPassword = configService.get<string>("BULL_BOARD_PASSWORD");
+      useFactory: (configService: ConfigService<EnvConfig>) => {
+        const bullBoardUsername = configService.get("BULL_BOARD_USERNAME", { infer: true });
+        const bullBoardPassword = configService.get("BULL_BOARD_PASSWORD", { infer: true });
 
         const middleware =
           bullBoardUsername && bullBoardPassword
@@ -80,4 +81,8 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     AuthModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestIdMiddleware).forRoutes("*");
+  }
+}
