@@ -19,9 +19,18 @@ export class RedisHealthIndicator {
 
     try {
       const redisUrl = this.configService.get("REDIS_URL", { infer: true });
+      const url = new URL(redisUrl);
+      const isTls = url.protocol === "rediss:";
+
       redis = new Redis(redisUrl, {
         connectTimeout: 3000,
+        commandTimeout: 3000,
         lazyConnect: true,
+        ...(isTls && {
+          tls: {
+            rejectUnauthorized: false,
+          },
+        }),
       });
 
       await redis.connect();
