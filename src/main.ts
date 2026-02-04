@@ -3,6 +3,7 @@ import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import type { EnvConfig } from "./config/env.config";
@@ -13,7 +14,13 @@ async function bootstrap() {
   try {
     logger.log("Starting application...");
 
-    const app = await NestFactory.create<NestExpressApplication>(AppModule);
+    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+      bufferLogs: true,
+    });
+
+    // Use Pino logger for all application logging
+    // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
+    app.useLogger(app.get(PinoLogger));
 
     const configService = app.get(ConfigService<EnvConfig>);
 
