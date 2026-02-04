@@ -3,6 +3,9 @@ FROM node:22.11.0-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Install openssl so Prisma can detect the correct engine binary
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
 # Update corepack (bundled version has outdated signing keys) and enable pnpm
 RUN npm install -g corepack@latest && corepack enable pnpm
 
