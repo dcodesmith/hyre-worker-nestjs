@@ -3,8 +3,8 @@ FROM node:22.11.0-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Enable pnpm for faster, reliable installs
-RUN corepack enable pnpm
+# Update corepack (bundled version has outdated signing keys) and enable pnpm
+RUN npm install -g corepack@latest && corepack enable pnpm
 
 # Copy only lockfiles first for optimal caching
 COPY package.json pnpm-lock.yaml ./
