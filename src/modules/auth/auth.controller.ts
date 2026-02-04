@@ -8,7 +8,6 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
-import { toNodeHandler } from "better-auth/node";
 import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 
@@ -40,6 +39,7 @@ export class AuthController {
   async handleAuthRequest(@Req() req: Request, @Res() res: Response): Promise<void> {
     this.ensureAuthInitialized();
 
+    const { toNodeHandler } = await import("better-auth/node");
     const handler = toNodeHandler(this.authService.auth);
     await handler(req, res);
   }
