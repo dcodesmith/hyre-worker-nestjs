@@ -57,8 +57,6 @@ export interface CreateBookingResponse {
   checkoutUrl: string;
 }
 
-// export type Booking = Prisma.BookingGetPayload<null>;
-
 /**
  * Booking availability check result
  */

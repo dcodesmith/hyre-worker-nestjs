@@ -1,59 +1,56 @@
-# Dockerfile - Multi-stage build for hyre-worker
-# Stage 1: Build stage
-FROM node:22-alpine AS builder
-# … the rest of your build steps …
-
+# STAGE 1: Build
+FROM node:22.11.0-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Enable pnpm for faster, reliable installs
 RUN corepack enable pnpm
 
-# Copy package files
+# Copy only lockfiles first for optimal caching
 COPY package.json pnpm-lock.yaml ./
 
-RUN pnpm fetch --frozen-lockfile
-# Copy source code and configs
+# Fetch dependencies (can be cached by Docker)
+RUN pnpm fetch
+
+# Copy source and configs
 COPY . .
+
+# Install dependencies offline using the cache
 RUN pnpm install --offline --frozen-lockfile
-# Generate Prisma client and build TypeScript
-RUN npx prisma generate
+
+# Build the NestJS app (prisma generate runs as part of the build script)
 RUN pnpm build
-# Prune to production deps for runtime image
+
+# Prune dev dependencies for a tiny final image
 RUN pnpm prune --prod --ignore-scripts && cp -R node_modules /tmp/node_modules_prod
 
-# Stage 2: Production stage
-FROM node:22-alpine AS production
+
+# STAGE 2: Production
+FROM node:22.11.0-bookworm-slim AS production
 
 WORKDIR /app
 
-RUN corepack enable pnpm
+# Security: Install curl for healthchecks & openssl for Prisma
+RUN apt-get update && apt-get install -y --no-install-recommends curl openssl && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Copy pruned production node_modules from builder stage (optimization)
+# Copy production essentials from builder
+COPY --from=builder /app/package.json ./
 COPY --from=builder /tmp/node_modules_prod ./node_modules
-
-# Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
 
-# Copy Prisma schema
-COPY prisma ./prisma
-
-# Set production environment
+# Environment defaults
 ENV NODE_ENV=production
 
-# Expose health check port
+# Expose the NestJS port
 EXPOSE 3000
 
-# Health check
-# install curl so the HEALTHCHECK works
-RUN apk add --no-cache curl
+# Health check to let Coolify know the app is actually "Ready"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+  CMD curl -fsS http://localhost:3000/health || exit 1
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -fsS --connect-timeout 2 http://localhost:3000/health || exit 1
-
-# Run the worker
+# Security: Run as non-root user 'node'
 USER node
-CMD ["node", "dist/main"]
 
+# Start the application directly with node (not pnpm/npm)
+CMD ["node", "dist/main"]
