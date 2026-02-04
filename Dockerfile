@@ -1,5 +1,5 @@
 # STAGE 1: Build
-FROM node:22.11.0-bookworm-slim AS builder
+FROM node:22.12.0-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ RUN pnpm prune --prod --ignore-scripts && cp -R node_modules /tmp/node_modules_p
 
 
 # STAGE 2: Production
-FROM node:22.11.0-bookworm-slim AS production
+FROM node:22.12.0-bookworm-slim AS production
 
 WORKDIR /app
 
