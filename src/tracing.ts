@@ -1,5 +1,6 @@
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
@@ -48,6 +49,13 @@ const sdk = new NodeSDK({
       // Disable fs instrumentation (too noisy for most apps)
       "@opentelemetry/instrumentation-fs": {
         enabled: false,
+      },
+    }),
+    new PinoInstrumentation({
+      logKeys: {
+        traceId: "trace_id",
+        spanId: "span_id",
+        traceFlags: "trace_flags",
       },
     }),
   ],
