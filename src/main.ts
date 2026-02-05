@@ -1,3 +1,4 @@
+import otelSdk from "./tracing";
 import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -43,6 +44,20 @@ async function bootstrap() {
     app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     app.enableShutdownHooks();
+
+    // Register OpenTelemetry SDK shutdown with NestJS lifecycle
+    const closeApp = app.close.bind(app);
+    app.close = async () => {
+      logger.log("Shutting down OpenTelemetry SDK...");
+      try {
+        await otelSdk.shutdown();
+        logger.log("OpenTelemetry SDK shut down successfully");
+      } catch (error) {
+        logger.error("Error shutting down OpenTelemetry SDK:", error);
+      }
+      return closeApp();
+    };
+
     const port = configService.get("PORT", { infer: true });
     const host = configService.get("HOST", { infer: true });
     const timezone = configService.get("TZ", { infer: true });
