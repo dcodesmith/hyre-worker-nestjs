@@ -19,7 +19,7 @@ const otlpHeaders = otlpHeadersRaw
         .filter(Boolean)
         .map((pair) => {
           const [key, ...rest] = pair.split("=");
-          return [key.trim(), rest.join("=").trim()];
+          return [decodeURIComponent(key.trim()), decodeURIComponent(rest.join("=").trim())];
         })
         .filter(([key, value]) => key && value),
     )
