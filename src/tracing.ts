@@ -4,6 +4,7 @@ import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
+import { parseOtlpHeaders, TRACE_LOG_KEYS } from "./config/tracing.config";
 
 const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
 
@@ -11,26 +12,7 @@ if (!otlpEndpoint) {
   console.warn("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT not set. Tracing disabled.");
 }
 
-const otlpHeadersRaw = process.env.OTEL_EXPORTER_OTLP_HEADERS;
-const otlpHeaders = otlpHeadersRaw
-  ? Object.fromEntries(
-      otlpHeadersRaw
-        .split(",")
-        .map((pair) => pair.trim())
-        .filter(Boolean)
-        .map((pair) => {
-          const [key, ...rest] = pair.split("=");
-          const rawKey = key.trim();
-          const rawValue = rest.join("=").trim();
-          try {
-            return [decodeURIComponent(rawKey), decodeURIComponent(rawValue)];
-          } catch {
-            return [rawKey, rawValue];
-          }
-        })
-        .filter(([key, value]) => key && value),
-    )
-  : undefined;
+const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
 
 // The SDK handles traces, metrics, and logs
 const sdk = new NodeSDK({
@@ -52,11 +34,7 @@ const sdk = new NodeSDK({
       },
     }),
     new PinoInstrumentation({
-      logKeys: {
-        traceId: "trace_id",
-        spanId: "span_id",
-        traceFlags: "trace_flags",
-      },
+      logKeys: TRACE_LOG_KEYS,
     }),
   ],
 });
