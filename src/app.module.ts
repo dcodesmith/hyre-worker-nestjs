@@ -8,6 +8,7 @@ import { LoggerModule } from "nestjs-pino";
 import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-auth.middleware";
 import { RequestIdMiddleware } from "./common/middlewares/request-id.middleware";
 import { EnvConfig, validateEnvironment } from "./config/env.config";
+import { parseOtlpHeaders } from "./config/tracing.config";
 import { AuthModule } from "./modules/auth/auth.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
@@ -31,21 +32,52 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const nodeEnv = configService.get("NODE_ENV", { infer: true });
         const isDev = nodeEnv === "development";
+        const otlpLogsEndpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+        const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
+
+        // Build transport targets array
+        const targets = [];
+
+        if (isDev) {
+          // Development: pretty-print logs to console
+          targets.push({
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              singleLine: true,
+              translateTime: "HH:MM:ss.l",
+              ignore: "pid,hostname",
+            },
+            level: process.env.LOG_LEVEL || "debug",
+          });
+        } else {
+          // Production: send logs to OpenTelemetry collector if configured
+          if (otlpLogsEndpoint) {
+            targets.push({
+              target: "pino-opentelemetry-transport",
+              options: {
+                url: otlpLogsEndpoint,
+                headers: otlpHeaders,
+                resourceAttributes: {
+                  "service.name": process.env.OTEL_SERVICE_NAME || "hyre-worker-nestjs",
+                },
+              },
+              level: process.env.LOG_LEVEL || "info",
+            });
+          }
+
+          // Production: always write JSON logs to stdout as fallback
+          targets.push({
+            target: "pino/file",
+            options: {},
+            level: process.env.LOG_LEVEL || "info",
+          });
+        }
 
         return {
           pinoHttp: {
             level: process.env.LOG_LEVEL || (isDev ? "debug" : "info"),
-            transport: isDev
-              ? {
-                  target: "pino-pretty",
-                  options: {
-                    colorize: true,
-                    singleLine: true,
-                    translateTime: "HH:MM:ss.l",
-                    ignore: "pid,hostname",
-                  },
-                }
-              : undefined,
+            transport: targets.length > 0 ? { targets } : undefined,
             autoLogging: {
               ignore: (req) => req.url === "/health" || req.url?.startsWith("/queues"),
             },
