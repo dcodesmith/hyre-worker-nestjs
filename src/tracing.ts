@@ -33,11 +33,7 @@ const sdk = new NodeSDK({
   traceExporter: otlpEndpoint
     ? new OTLPTraceExporter({
         url: otlpEndpoint,
-        headers: otlpHeaders
-          ? {
-              Authorization: otlpHeaders,
-            }
-          : undefined,
+        headers: otlpHeaders,
       })
     : undefined,
   // Auto-instruments HTTP, Express, NestJS core, Prisma, ioredis, axios
