@@ -5,11 +5,25 @@ import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
 const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-const otlpHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
 
 if (!otlpEndpoint) {
   console.warn("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT not set. Tracing disabled.");
 }
+
+const otlpHeadersRaw = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+const otlpHeaders = otlpHeadersRaw
+  ? Object.fromEntries(
+      otlpHeadersRaw
+        .split(",")
+        .map((pair) => pair.trim())
+        .filter(Boolean)
+        .map((pair) => {
+          const [key, ...rest] = pair.split("=");
+          return [key.trim(), rest.join("=").trim()];
+        })
+        .filter(([key, value]) => key && value),
+    )
+  : undefined;
 
 // The SDK handles traces, metrics, and logs
 const sdk = new NodeSDK({
@@ -41,14 +55,5 @@ const sdk = new NodeSDK({
 if (otlpEndpoint) {
   sdk.start();
 }
-
-// Graceful shutdown
-process.on("SIGTERM", () => {
-  sdk
-    .shutdown()
-    .then(() => console.log("OTel SDK shut down successfully"))
-    .catch((err) => console.error("Error shutting down OTel SDK:", err))
-    .finally(() => process.exit(0));
-});
 
 export default sdk;
