@@ -36,11 +36,22 @@ WORKDIR /app
 # Security: Install curl for healthchecks & openssl for Prisma
 RUN apt-get update && apt-get install -y --no-install-recommends curl openssl && rm -rf /var/lib/apt/lists/*
 
+# Update corepack and enable pnpm for installing prisma CLI
+RUN npm install -g corepack@latest && corepack enable pnpm
+
 # Copy production essentials from builder
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /tmp/node_modules_prod ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+
+# Install prisma CLI (version matches @prisma/client)
+RUN pnpm add -D prisma@6.19.0
+
+# Copy entrypoint script
+COPY --from=builder /app/entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
 # Environment defaults
 ENV NODE_ENV=production
@@ -48,12 +59,12 @@ ENV NODE_ENV=production
 # Expose the NestJS port
 EXPOSE 3000
 
-# Health check to let Coolify know the app is actually "Ready"
+# Health check to let Dokploy know the app is actually "Ready"
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
   CMD curl -fsS http://localhost:3000/health || exit 1
 
 # Security: Run as non-root user 'node'
 USER node
 
-# Start the application directly with node (not pnpm/npm)
-CMD ["node", "dist/main"]
+# Start with entrypoint (runs migrations then starts app)
+CMD ["./entrypoint.sh"]

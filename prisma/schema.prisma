@@ -1,6 +1,5 @@
 generator client {
-  provider              = "prisma-client-js"
-  skipDefaultValidation = true
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -10,33 +9,33 @@ datasource db {
 }
 
 model Car {
-  id                 String             @id @default(cuid())
-  make               String
-  model              String
-  year               Int
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  color              String
-  ownerId            String
-  registrationNumber String
-  status             Status
-  approvalStatus     CarApprovalStatus  @default(PENDING)
-  approvalNotes      String?
-  hourlyRate         Int
-  dayRate            Int
-  nightRate          Int
-  fuelUpgradeRate    Int?
-  fullDayRate        Int
-  airportPickupRate  Int
-  pricingIncludesFuel Boolean           @default(false)
+  id                  String             @id @default(cuid())
+  make                String
+  model               String
+  year                Int
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  color               String
+  ownerId             String
+  registrationNumber  String
+  status              Status
+  approvalStatus      CarApprovalStatus  @default(PENDING)
+  approvalNotes       String?
+  hourlyRate          Int
+  dayRate             Int
+  nightRate           Int
+  fuelUpgradeRate     Int?
+  fullDayRate         Int
+  airportPickupRate   Int
+  pricingIncludesFuel Boolean            @default(false)
   // Vehicle categorization
-  vehicleType        VehicleType        @default(SEDAN)
-  serviceTier        ServiceTier        @default(STANDARD)
-  passengerCapacity  Int                @default(4)
-  bookings           Booking[]
-  owner              User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  documents          DocumentApproval[] @relation("CarDocuments")
-  images             VehicleImage[]
+  vehicleType         VehicleType        @default(SEDAN)
+  serviceTier         ServiceTier        @default(STANDARD)
+  passengerCapacity   Int                @default(4)
+  bookings            Booking[]
+  owner               User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  documents           DocumentApproval[] @relation("CarDocuments")
+  images              VehicleImage[]
 
   @@index([ownerId])
   @@index([ownerId, updatedAt])
