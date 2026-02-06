@@ -62,7 +62,8 @@ export async function resetAndSeedDb() {
           nightRate: 60000,
           fuelUpgradeRate: 10000,
           fullDayRate: 120000,
-          ownerId: fleetOwner.id,
+          airportPickupRate: 50000,
+          owner: { connect: { id: fleetOwner.id } },
         },
       });
 
@@ -80,7 +81,8 @@ export async function resetAndSeedDb() {
           nightRate: 65000,
           fuelUpgradeRate: 10000,
           fullDayRate: 130000,
-          ownerId: fleetOwner.id,
+          airportPickupRate: 55000,
+          owner: { connect: { id: fleetOwner.id } },
         },
       });
 

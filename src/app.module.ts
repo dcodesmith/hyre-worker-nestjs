@@ -32,8 +32,18 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const nodeEnv = configService.get("NODE_ENV", { infer: true });
         const isDev = nodeEnv === "development";
+        const isTest = nodeEnv === "test";
         const otlpLogsEndpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
         const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
+
+        // Disable logging in test environment
+        if (isTest) {
+          return {
+            pinoHttp: {
+              level: "silent",
+            },
+          };
+        }
 
         // Build transport targets array
         const targets = [];
