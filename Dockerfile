@@ -40,15 +40,18 @@ WORKDIR /app
 # Security: Install curl for healthchecks & openssl for Prisma
 RUN apt-get update && apt-get install -y --no-install-recommends curl openssl && rm -rf /var/lib/apt/lists/*
 
+# Update corepack and enable pnpm for installing prisma CLI
+RUN npm install -g corepack@latest && corepack enable pnpm
+
 # Copy production essentials from builder
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /tmp/node_modules_prod ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
-# Copy prisma CLI from builder (preserves exact version match with @prisma/client)
-COPY --from=builder /tmp/prisma_cli ./node_modules/prisma
-COPY --from=builder /tmp/prisma_bin ./node_modules/.bin/prisma
+# Install prisma CLI (version range matches @prisma/client in package.json)
+RUN pnpm add -D prisma@^6.19.0
 
 # Copy entrypoint script
 COPY --from=builder /app/entrypoint.sh ./
