@@ -4,6 +4,8 @@ import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import type { NextFunction, Request, Response } from "express";
+import helmet from "helmet";
 import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
@@ -22,6 +24,18 @@ async function bootstrap() {
     // Use Pino logger for all application logging
     // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
     app.useLogger(app.get(PinoLogger));
+
+    // Security headers
+    app.use(helmet());
+
+    // Bull Board requires inline scripts and styles - apply relaxed CSP
+    app.use("/queues", (_req: Request, res: Response, next: NextFunction) => {
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:",
+      );
+      next();
+    });
 
     const configService = app.get(ConfigService<EnvConfig>);
 
