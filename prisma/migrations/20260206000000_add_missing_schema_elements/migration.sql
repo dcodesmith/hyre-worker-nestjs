@@ -147,9 +147,7 @@ CREATE TABLE "rateLimit" (
 -- CreateIndex Flight
 CREATE UNIQUE INDEX "Flight_alertId_key" ON "Flight"("alertId");
 CREATE UNIQUE INDEX "Flight_flightNumber_flightDate_key" ON "Flight"("flightNumber", "flightDate");
-CREATE INDEX "Flight_flightNumber_flightDate_idx" ON "Flight"("flightNumber", "flightDate");
 CREATE INDEX "Flight_status_idx" ON "Flight"("status");
-CREATE INDEX "Flight_alertId_idx" ON "Flight"("alertId");
 CREATE INDEX "Flight_destinationCodeIATA_flightDate_idx" ON "Flight"("destinationCodeIATA", "flightDate");
 CREATE INDEX "Flight_scheduledArrival_idx" ON "Flight"("scheduledArrival");
 
@@ -177,7 +175,6 @@ CREATE INDEX "Car_serviceTier_vehicleType_idx" ON "Car"("serviceTier", "vehicleT
 -- CreateIndex Session
 CREATE UNIQUE INDEX "session_token_key" ON "session"("token");
 CREATE INDEX "session_userId_idx" ON "session"("userId");
-CREATE INDEX "session_token_idx" ON "session"("token");
 
 -- CreateIndex Verification
 CREATE INDEX "verification_identifier_idx" ON "verification"("identifier");
