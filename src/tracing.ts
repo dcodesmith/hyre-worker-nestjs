@@ -6,9 +6,9 @@ import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import { parseOtlpHeaders, TRACE_LOG_KEYS } from "./config/tracing.config";
 
-const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+const otlpTracesEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
 
-if (!otlpEndpoint) {
+if (!otlpTracesEndpoint) {
   console.warn("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT not set. Tracing disabled.");
 }
 
@@ -19,9 +19,9 @@ const sdk = new NodeSDK({
   resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || "hyre-worker-nestjs",
   }),
-  traceExporter: otlpEndpoint
+  traceExporter: otlpTracesEndpoint
     ? new OTLPTraceExporter({
-        url: otlpEndpoint,
+        url: otlpTracesEndpoint,
         headers: otlpHeaders,
       })
     : undefined,
@@ -40,7 +40,7 @@ const sdk = new NodeSDK({
 });
 
 // Start the SDK only if tracing is configured
-if (otlpEndpoint) {
+if (otlpTracesEndpoint) {
   sdk.start();
 }
 
