@@ -9,6 +9,7 @@ jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
+    if: false  # Temporarily disabled - remove this line to re-enable
     concurrency: deploy-group    # optional: ensure only one action runs at a time
     environment:
       name: production
