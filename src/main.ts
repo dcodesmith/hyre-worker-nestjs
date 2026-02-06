@@ -4,6 +4,7 @@ import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import helmet from "helmet";
 import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
@@ -22,6 +23,9 @@ async function bootstrap() {
     // Use Pino logger for all application logging
     // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
     app.useLogger(app.get(PinoLogger));
+
+    // Security headers
+    app.use(helmet());
 
     const configService = app.get(ConfigService<EnvConfig>);
 

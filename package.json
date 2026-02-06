@@ -51,6 +51,7 @@
     "better-auth": "^1.4.18",
     "bullmq": "^5.63.0",
     "date-fns": "^4.1.0",
+    "helmet": "^8.1.0",
     "ioredis": "^5.7.0",
     "nestjs-pino": "^4.5.0",
     "pino-http": "^11.0.0",
