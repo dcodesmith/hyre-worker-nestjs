@@ -24,10 +24,6 @@ RUN pnpm install --offline --frozen-lockfile
 # Build the NestJS app (prisma generate runs as part of the build script)
 RUN pnpm build
 
-# Copy prisma CLI before pruning (it's a devDependency needed for migrations)
-RUN cp -R node_modules/prisma /tmp/prisma_cli && \
-    cp -R node_modules/.bin/prisma /tmp/prisma_bin
-
 # Prune dev dependencies for a tiny final image
 RUN pnpm prune --prod --ignore-scripts && cp -R node_modules /tmp/node_modules_prod
 
