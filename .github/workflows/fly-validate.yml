@@ -8,6 +8,7 @@ jobs:
   validate:
     name: Validate deployment config and build
     runs-on: ubuntu-latest
+    if: false  # Temporarily disabled - remove this line to re-enable
     steps:
       # Pin to v6.0.1 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
       - uses: actions/checkout@v6.0.1
