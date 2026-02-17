@@ -108,7 +108,7 @@ describe("Reviews E2E Tests", () => {
         });
 
       expect(response.status).toBe(HttpStatus.CONFLICT);
-      expect(response.body.message).toContain("already exists");
+      expect(response.body.detail).toContain("already exists");
     });
 
     it("should require authentication", async () => {
@@ -199,7 +199,7 @@ describe("Reviews E2E Tests", () => {
         .send({ comment: "Should not work" });
 
       expect(response.status).toBe(HttpStatus.FORBIDDEN);
-      expect(response.body.message).toContain("own reviews");
+      expect(response.body.detail).toContain("own reviews");
     });
   });
 

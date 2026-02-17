@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
-import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
 import type {
@@ -28,7 +28,7 @@ export class PaymentController {
   @Post("initialize")
   @UseGuards(SessionGuard)
   async initializePayment(
-    @Body(new ZodValidationPipe(initializePaymentSchema)) dto: InitializePaymentDto,
+    @ZodBody(initializePaymentSchema) dto: InitializePaymentDto,
     @CurrentUser() user: AuthSession["user"],
   ): Promise<PaymentIntentResponse> {
     return this.paymentApiService.initializePayment(dto, {
@@ -58,7 +58,7 @@ export class PaymentController {
   @UseGuards(SessionGuard)
   async initiateRefund(
     @Param("txRef") txRef: string,
-    @Body(new ZodValidationPipe(refundPaymentSchema)) dto: RefundPaymentDto,
+    @ZodBody(refundPaymentSchema) dto: RefundPaymentDto,
     @CurrentUser() user: AuthSession["user"],
   ): Promise<RefundResponse> {
     return this.paymentApiService.initiateRefund(txRef, dto, user.id);
