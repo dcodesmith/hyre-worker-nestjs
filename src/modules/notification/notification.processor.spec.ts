@@ -3,7 +3,7 @@ import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as emailTemplates from "../../templates/emails";
 import { EmailService } from "./email.service";
-import { CLIENT_RECIPIENT_TYPE } from "./notification.const";
+import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -26,6 +26,12 @@ describe("NotificationProcessor", () => {
 
     vi.spyOn(emailTemplates, "renderBookingReminderEmail").mockResolvedValue(
       "<html>Reminder email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderReviewReceivedEmailForOwner").mockResolvedValue(
+      "<html>Owner review email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderReviewReceivedEmailForChauffeur").mockResolvedValue(
+      "<html>Chauffeur review email</html>",
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -407,6 +413,61 @@ describe("NotificationProcessor", () => {
       channel: NotificationChannel.WHATSAPP,
       success: false,
       error: "WhatsApp service unavailable",
+    });
+  });
+
+  it("should normalize serialized reviewDate before rendering review email", async () => {
+    const reviewDateIso = "2026-02-17T00:00:00.000Z";
+    const job = {
+      id: "job-8",
+      name: "send-notification",
+      data: {
+        id: "notification-8",
+        type: NotificationType.REVIEW_RECEIVED,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: "booking-444",
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            email: "owner@example.com",
+          },
+        },
+        templateData: {
+          ownerName: "Fleet Owner",
+          chauffeurName: "Driver Name",
+          customerName: "John Doe",
+          bookingReference: "BK-12345678",
+          carName: "Toyota Camry",
+          overallRating: 5,
+          carRating: 5,
+          chauffeurRating: 5,
+          serviceRating: 5,
+          comment: "Great service",
+          reviewDate: reviewDateIso,
+          subject: "New 5-star review received for Toyota Camry",
+        },
+      },
+    } as Job<NotificationJobData, NotificationResult[], string>;
+
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce(undefined);
+
+    const results = await processor.process(job);
+    const ownerRenderCall = vi.mocked(emailTemplates.renderReviewReceivedEmailForOwner).mock
+      .calls[0];
+    const renderedTemplateData = ownerRenderCall?.[1];
+
+    expect(emailTemplates.renderReviewReceivedEmailForOwner).toHaveBeenCalledTimes(1);
+    expect(renderedTemplateData?.reviewDate).toBeInstanceOf(Date);
+    expect((renderedTemplateData?.reviewDate as Date).toISOString()).toBe(reviewDateIso);
+    expect(emailService.sendEmail).toHaveBeenCalledWith({
+      to: "owner@example.com",
+      subject: "New 5-star review received for Toyota Camry",
+      html: "<html>Owner review email</html>",
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({
+      channel: NotificationChannel.EMAIL,
+      success: true,
+      messageId: "email-sent",
     });
   });
 });

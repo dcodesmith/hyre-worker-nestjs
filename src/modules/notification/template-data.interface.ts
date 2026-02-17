@@ -61,7 +61,7 @@ export interface ReviewReceivedTemplateData {
   chauffeurRating: number;
   serviceRating: number;
   comment: string | null;
-  reviewDate: Date;
+  reviewDate: Date | string;
   subject: string;
 }
 
@@ -116,6 +116,7 @@ export function isReviewReceivedTemplateData(
     "bookingReference" in data &&
     "overallRating" in data &&
     "chauffeurRating" in data &&
-    "reviewDate" in data
+    "reviewDate" in data &&
+    (data.reviewDate instanceof Date || typeof data.reviewDate === "string")
   );
 }

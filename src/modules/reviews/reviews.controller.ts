@@ -11,6 +11,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { ADMIN } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -31,7 +32,6 @@ import {
   type UpdateReviewDto,
   updateReviewSchema,
 } from "./dto/reviews.dto";
-import { ZodValidationPipe } from "./dto/zod-validation.pipe";
 import { ReviewsModerationService } from "./reviews-moderation.service";
 import { ReviewsReadService } from "./reviews-read.service";
 import { ReviewsWriteService } from "./reviews-write.service";

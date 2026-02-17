@@ -28,6 +28,7 @@ import {
   isBookingStatusTemplateData,
   isReviewReceivedTemplateData,
   RecipientType,
+  type ReviewReceivedTemplateData,
   type TemplateData,
 } from "./template-data.interface";
 import {
@@ -267,22 +268,45 @@ export class NotificationProcessor extends WorkerHost {
     if (!isReviewReceivedTemplateData(templateData)) {
       throw new Error("Invalid template data for review received");
     }
+    const normalizedTemplateData = this.normalizeReviewReceivedTemplateData(templateData);
 
     if (recipient === FLEET_OWNER_RECIPIENT_TYPE) {
       return renderReviewReceivedEmailForOwner(
-        templateData.ownerName || "Fleet Owner",
-        templateData,
+        normalizedTemplateData.ownerName || "Fleet Owner",
+        normalizedTemplateData,
       );
     }
 
     if (recipient === CHAUFFEUR_RECIPIENT_TYPE) {
       return renderReviewReceivedEmailForChauffeur(
-        templateData.chauffeurName || "Chauffeur",
-        templateData,
+        normalizedTemplateData.chauffeurName || "Chauffeur",
+        normalizedTemplateData,
       );
     }
 
     throw new Error(`Review notifications cannot be sent to recipient type: ${recipient}`);
+  }
+
+  private normalizeReviewReceivedTemplateData(
+    templateData: ReviewReceivedTemplateData,
+  ): ReviewReceivedTemplateData & { reviewDate: Date } {
+    return {
+      ...templateData,
+      reviewDate: this.normalizeReviewDate(templateData.reviewDate),
+    };
+  }
+
+  private normalizeReviewDate(reviewDate: string | Date): Date {
+    if (reviewDate instanceof Date) {
+      return reviewDate;
+    }
+
+    const parsedDate = new Date(reviewDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new TypeError("Invalid review date in review notification payload");
+    }
+
+    return parsedDate;
   }
 
   private async sendWhatsAppNotification(

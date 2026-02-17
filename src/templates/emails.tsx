@@ -15,6 +15,7 @@ import {
 import { render } from "@react-email/render";
 import { ReactNode } from "react";
 import tailwindConfig from "../email-tailwind.config";
+import type { ReviewReceivedTemplateData } from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
 
 export interface EmailTemplateProps {
@@ -99,6 +100,14 @@ interface DetailListItemProps {
   readonly value: string | number | undefined | null;
   readonly isCurrency?: boolean;
   readonly currencyCode?: string;
+}
+
+function formatReviewDate(reviewDate: Date | string): string {
+  const parsedDate = reviewDate instanceof Date ? reviewDate : new Date(reviewDate);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return String(reviewDate);
+  }
+  return parsedDate.toLocaleString();
 }
 
 function DetailListItem({
@@ -369,18 +378,6 @@ export async function renderFleetOwnerNewBookingEmail(booking: NormalisedBooking
   );
 }
 
-export interface ReviewReceivedTemplateData {
-  readonly customerName: string;
-  readonly bookingReference: string;
-  readonly carName: string;
-  readonly overallRating: number;
-  readonly carRating: number;
-  readonly chauffeurRating: number;
-  readonly serviceRating: number;
-  readonly comment: string | null;
-  readonly reviewDate: Date;
-}
-
 export async function renderReviewReceivedEmailForOwner(
   ownerName: string,
   data: ReviewReceivedTemplateData,
@@ -406,7 +403,7 @@ export async function renderReviewReceivedEmailForOwner(
         <DetailListItem label="Chauffeur Rating" value={`${data.chauffeurRating}/5`} />
         <DetailListItem label="Service Rating" value={`${data.serviceRating}/5`} />
         <DetailListItem label="Comment" value={data.comment || "No comment"} />
-        <DetailListItem label="Review Date" value={data.reviewDate.toLocaleString()} />
+        <DetailListItem label="Review Date" value={formatReviewDate(data.reviewDate)} />
       </Section>
     </EmailTemplate>,
   );
@@ -434,7 +431,7 @@ export async function renderReviewReceivedEmailForChauffeur(
         <DetailListItem label="Your Rating" value={`${data.chauffeurRating}/5`} />
         <DetailListItem label="Overall Rating" value={`${data.overallRating}/5`} />
         <DetailListItem label="Comment" value={data.comment || "No comment"} />
-        <DetailListItem label="Review Date" value={data.reviewDate.toLocaleString()} />
+        <DetailListItem label="Review Date" value={formatReviewDate(data.reviewDate)} />
       </Section>
     </EmailTemplate>,
   );

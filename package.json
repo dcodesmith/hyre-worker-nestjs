@@ -47,7 +47,7 @@
     "@prisma/client": "^6.19.0",
     "@react-email/components": "^0.3.3",
     "@react-email/render": "^1.2.1",
-    "axios": "^1.11.0",
+    "axios": "^1.13.5",
     "better-auth": "^1.4.18",
     "bullmq": "^5.63.0",
     "date-fns": "^4.1.0",

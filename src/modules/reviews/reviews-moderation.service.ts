@@ -33,7 +33,7 @@ export class ReviewsModerationService {
         isVisible: false,
         moderatedAt: new Date(),
         moderatedBy: moderatorId,
-        moderationNotes: moderationNotes || "Review hidden by moderator",
+        moderationNotes: moderationNotes ?? "Review hidden by moderator",
       },
     });
 

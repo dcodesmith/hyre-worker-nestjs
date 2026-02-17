@@ -43,6 +43,14 @@ type ReviewCreationBooking = {
   } | null;
 };
 
+type ReviewCreationBookingWithChauffeur = ReviewCreationBooking & {
+  chauffeur: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+};
+
 @Injectable()
 export class ReviewsWriteService {
   private readonly logger = new Logger(ReviewsWriteService.name);
@@ -110,6 +118,7 @@ export class ReviewsWriteService {
     if (!booking.chauffeur) {
       throw new ReviewBookingChauffeurRequiredException();
     }
+    const bookingWithChauffeur: ReviewCreationBookingWithChauffeur = booking;
 
     const thirtyDaysAgo = subDays(new Date(), 30);
     if (booking.endDate < thirtyDaysAgo) {
@@ -129,9 +138,9 @@ export class ReviewsWriteService {
           isVisible: true,
         },
       });
-      void this.sendReviewNotifications(booking, input).catch((error: unknown) => {
+      void this.sendReviewNotifications(bookingWithChauffeur, input).catch((error: unknown) => {
         this.logger.error("Failed to dispatch review notifications", {
-          bookingReference: booking.bookingReference,
+          bookingReference: bookingWithChauffeur.bookingReference,
           error: error instanceof Error ? error.message : String(error),
         });
       });
@@ -186,7 +195,7 @@ export class ReviewsWriteService {
   }
 
   private async sendReviewNotifications(
-    booking: ReviewCreationBooking,
+    booking: ReviewCreationBookingWithChauffeur,
     input: CreateReviewDto,
   ): Promise<void> {
     const ownerName = booking.car.owner.name || "Fleet Owner";

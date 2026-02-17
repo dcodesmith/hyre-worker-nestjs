@@ -11,6 +11,16 @@ function getWorkerId(): string {
   return process.env.VITEST_POOL_ID ?? process.env.VITEST_WORKER_ID ?? "0";
 }
 
+function parseWorkerId(workerId: string): number {
+  const parsed = Number.parseInt(workerId, 10);
+  if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
+    throw new TypeError(
+      `Invalid Vitest worker id "${workerId}" from VITEST_POOL_ID/VITEST_WORKER_ID; expected numeric string`,
+    );
+  }
+  return parsed;
+}
+
 function withSchema(databaseUrl: string, schema: string): string {
   const url = new URL(databaseUrl);
   url.searchParams.set("schema", schema);
@@ -39,9 +49,10 @@ async function initializeWorkerIsolation(): Promise<void> {
   }
 
   const workerId = getWorkerId();
+  const workerIdNumber = parseWorkerId(workerId);
   const schema = `e2e_w${workerId}`;
   const workerDatabaseUrl = withSchema(baseDatabaseUrl, schema);
-  const workerRedisDb = 10 + Number(workerId);
+  const workerRedisDb = 10 + workerIdNumber;
   const workerRedisUrl = withRedisDb(baseRedisUrl, workerRedisDb);
 
   // Scope each worker to isolated database schema and Redis DB.
@@ -94,6 +105,12 @@ vi.mock("../src/templates/emails", () => ({
   renderFleetOwnerNewBookingEmail: vi
     .fn()
     .mockResolvedValue("<html>Mocked fleet owner notification</html>"),
+  renderReviewReceivedEmailForOwner: vi
+    .fn()
+    .mockResolvedValue("<html>Mocked review received for owner</html>"),
+  renderReviewReceivedEmailForChauffeur: vi
+    .fn()
+    .mockResolvedValue("<html>Mocked review received for chauffeur</html>"),
 }));
 
 // Mock the EmailService to prevent actual API calls to Resend during e2e tests

@@ -360,7 +360,7 @@ export class TestDataFactory {
         carRating: options.carRating ?? 5,
         chauffeurRating: options.chauffeurRating ?? 5,
         serviceRating: options.serviceRating ?? 5,
-        comment: options.comment ?? "Great experience",
+        comment: options.comment === undefined ? "Great experience" : options.comment,
         isVisible: options.isVisible ?? true,
         moderatedAt: options.moderatedAt,
         moderatedBy: options.moderatedBy,

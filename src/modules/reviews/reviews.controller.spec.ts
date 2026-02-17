@@ -1,6 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { AuthService } from "../auth/auth.service";
 import {
   createReviewSchema,
@@ -8,7 +9,6 @@ import {
   reviewQuerySchema,
   updateReviewSchema,
 } from "./dto/reviews.dto";
-import { ZodValidationPipe } from "./dto/zod-validation.pipe";
 import { ReviewsController } from "./reviews.controller";
 import { ReviewsModerationService } from "./reviews-moderation.service";
 import { ReviewsReadService } from "./reviews-read.service";
