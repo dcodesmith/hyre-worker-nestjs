@@ -13,6 +13,10 @@ import {
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
 import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import {
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+} from "../notification/template-data.interface";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -178,6 +182,7 @@ export class BookingConfirmationService {
           },
         },
         templateData: {
+          templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
           ...bookingDetails,
           subject: "Your booking is confirmed!",
         },
@@ -231,6 +236,7 @@ export class BookingConfirmationService {
           },
         },
         templateData: {
+          templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
           ...bookingDetails,
           subject: "New Booking Alert",
         },

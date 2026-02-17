@@ -11,6 +11,7 @@ export enum NotificationType {
   BOOKING_REMINDER_END = "booking-reminder-end",
   BOOKING_CONFIRMED = "booking-confirmed",
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
+  REVIEW_RECEIVED = "review-received",
 }
 
 export interface EmailNotificationData {
@@ -48,4 +49,36 @@ export interface NotificationResult {
   success: boolean;
   messageId?: string;
   error?: string;
+  perRecipientResults?: NotificationRecipientResult[];
+}
+
+export interface NotificationRecipientResult {
+  recipient: RecipientType;
+  email: string;
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+export interface QueueReviewReceivedNotificationParams {
+  bookingId: string;
+  owner: {
+    name: string;
+    email: string;
+  };
+  chauffeur: {
+    name: string;
+    email: string;
+  };
+  review: {
+    customerName: string;
+    bookingReference: string;
+    carName: string;
+    overallRating: number;
+    carRating: number;
+    chauffeurRating: number;
+    serviceRating: number;
+    comment: string | null;
+    reviewDate: Date;
+  };
 }

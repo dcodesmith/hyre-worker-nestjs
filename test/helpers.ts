@@ -18,6 +18,8 @@ export type CreatePaymentOptions = Partial<Prisma.PaymentUncheckedCreateInput>;
 
 export type CreatePayoutTransactionOptions = Partial<Prisma.PayoutTransactionUncheckedCreateInput>;
 
+export type CreateReviewOptions = Partial<Prisma.ReviewUncheckedCreateInput>;
+
 export type AuthRole = "user" | "fleetOwner" | "admin";
 
 export type ClientTypeOption = "mobile" | "web";
@@ -247,6 +249,22 @@ export class TestDataFactory {
   }
 
   /**
+   * Create a chauffeur user directly in the database.
+   * Chauffeur is represented by the User model in booking relations.
+   */
+  async createChauffeur(options: Omit<CreateUserOptions, "roles"> = {}): Promise<{
+    id: string;
+    email: string;
+    name: string | null;
+  }> {
+    return this.createUser({
+      ...options,
+      email: options.email ?? uniqueEmail("chauffeur"),
+      name: options.name ?? "Test Chauffeur",
+    });
+  }
+
+  /**
    * Create a test car in the database.
    */
   async createCar(ownerId: string, options: CreateCarOptions = {}): Promise<{ id: string }> {
@@ -295,6 +313,7 @@ export class TestDataFactory {
         bookingReference:
           options.bookingReference ??
           `BOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ...(options.chauffeurId && { chauffeurId: options.chauffeurId }),
         ...(options.paymentIntent && { paymentIntent: options.paymentIntent }),
       },
       select: { id: true, bookingReference: true },
@@ -326,6 +345,33 @@ export class TestDataFactory {
   }
 
   /**
+   * Create a test review in the database.
+   */
+  async createReview(
+    bookingId: string,
+    userId: string,
+    options: Omit<CreateReviewOptions, "bookingId" | "userId"> = {},
+  ): Promise<{ id: string }> {
+    const review = await this.prisma.review.create({
+      data: {
+        bookingId,
+        userId,
+        overallRating: options.overallRating ?? 5,
+        carRating: options.carRating ?? 5,
+        chauffeurRating: options.chauffeurRating ?? 5,
+        serviceRating: options.serviceRating ?? 5,
+        comment: options.comment === undefined ? "Great experience" : options.comment,
+        isVisible: options.isVisible ?? true,
+        moderatedAt: options.moderatedAt,
+        moderatedBy: options.moderatedBy,
+        moderationNotes: options.moderationNotes,
+      },
+      select: { id: true },
+    });
+    return review;
+  }
+
+  /**
    * Convenience method to create a booking with all its dependencies (fleet owner, car).
    * Use this when you just need a booking for testing and don't need fine-grained control
    * over the intermediate entities.
@@ -346,6 +392,35 @@ export class TestDataFactory {
     const fleetOwner = await this.createFleetOwner(options.fleetOwner);
     const car = await this.createCar(fleetOwner.id, options.car);
     return this.createBooking(userId, car.id, options.booking);
+  }
+
+  /**
+   * Convenience method to create a completed booking with chauffeur assignment.
+   * Useful for review lifecycle E2E tests.
+   */
+  async createCompletedBookingWithChauffeur(
+    userId: string,
+    options: {
+      fleetOwner?: Omit<CreateUserOptions, "roles">;
+      chauffeur?: Omit<CreateUserOptions, "roles">;
+      car?: CreateCarOptions;
+      booking?: CreateBookingOptions;
+    } = {},
+  ): Promise<{ id: string; bookingReference: string; chauffeurId: string; carId: string }> {
+    const fleetOwner = await this.createFleetOwner(options.fleetOwner);
+    const chauffeur = await this.createChauffeur(options.chauffeur);
+    const car = await this.createCar(fleetOwner.id, options.car);
+    const booking = await this.createBooking(userId, car.id, {
+      ...options.booking,
+      status: options.booking?.status ?? "COMPLETED",
+      chauffeurId: options.booking?.chauffeurId ?? chauffeur.id,
+    });
+
+    return {
+      ...booking,
+      chauffeurId: chauffeur.id,
+      carId: car.id,
+    };
   }
 
   /**
@@ -409,6 +484,15 @@ export class TestDataFactory {
   }
 
   /**
+   * Get a review by ID.
+   */
+  async getReviewById(reviewId: string) {
+    return this.prisma.review.findUnique({
+      where: { id: reviewId },
+    });
+  }
+
+  /**
    * Get the most recent payment for a booking.
    */
   async getPaymentByBookingId(bookingId: string) {
@@ -425,84 +509,45 @@ export class TestDataFactory {
    */
   async createPlatformRates(): Promise<void> {
     const effectiveSince = new Date("2020-01-01");
-
-    // Prisma upsert can race when multiple test files call this concurrently,
-    // causing P2002 (unique constraint) errors. Ignore them since the record already exists.
-    const ignoreP2002 = (error: unknown) => {
-      if (error instanceof Error && "code" in error && (error as { code: string }).code === "P2002")
-        return;
-      throw error;
-    };
-
     await Promise.all([
-      // Platform service fee (10%)
-      this.prisma.platformFeeRate
-        .upsert({
-          where: {
-            feeType_effectiveSince: {
-              feeType: "PLATFORM_SERVICE_FEE",
-              effectiveSince,
-            },
-          },
-          update: {},
-          create: {
+      this.prisma.platformFeeRate.createMany({
+        data: [
+          {
             feeType: "PLATFORM_SERVICE_FEE",
             ratePercent: 10,
             effectiveSince,
             description: "Platform service fee for customers",
           },
-        })
-        .catch(ignoreP2002),
-      // Fleet owner commission (15%)
-      this.prisma.platformFeeRate
-        .upsert({
-          where: {
-            feeType_effectiveSince: {
-              feeType: "FLEET_OWNER_COMMISSION",
-              effectiveSince,
-            },
-          },
-          update: {},
-          create: {
+          {
             feeType: "FLEET_OWNER_COMMISSION",
             ratePercent: 15,
             effectiveSince,
             description: "Platform commission from fleet owner earnings",
           },
-        })
-        .catch(ignoreP2002),
-      // VAT rate (7.5%)
-      this.prisma.taxRate
-        .upsert({
-          where: {
-            effectiveSince,
-          },
-          update: {},
-          create: {
+        ],
+        skipDuplicates: true,
+      }),
+      this.prisma.taxRate.createMany({
+        data: [
+          {
             ratePercent: 7.5,
             effectiveSince,
             description: "Value Added Tax",
           },
-        })
-        .catch(ignoreP2002),
-      // Security detail addon rate
-      this.prisma.addonRate
-        .upsert({
-          where: {
-            addonType_effectiveSince: {
-              addonType: "SECURITY_DETAIL",
-              effectiveSince,
-            },
-          },
-          update: {},
-          create: {
+        ],
+        skipDuplicates: true,
+      }),
+      this.prisma.addonRate.createMany({
+        data: [
+          {
             addonType: "SECURITY_DETAIL",
             rateAmount: 15000,
             effectiveSince,
             description: "Security detail addon",
           },
-        })
-        .catch(ignoreP2002),
+        ],
+        skipDuplicates: true,
+      }),
     ]);
   }
 }

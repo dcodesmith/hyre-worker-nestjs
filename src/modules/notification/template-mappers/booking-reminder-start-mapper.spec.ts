@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { NotificationType } from "../notification.interface";
 import {
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  type BookingReminderTemplateData,
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
@@ -66,7 +68,11 @@ describe("BookingReminderStartMapper", () => {
   });
 
   describe("mapVariables", () => {
-    const mockTemplateData = {
+    const mockTemplateData: BookingReminderTemplateData = {
+      templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
+      bookingLegId: "leg-123",
+      bookingId: "booking-123",
+      legDate: "2024-01-15",
       chauffeurName: "John Driver",
       carName: "Toyota Camry (2022)",
       legStartTime: "10:00 AM",
@@ -74,6 +80,7 @@ describe("BookingReminderStartMapper", () => {
       pickupLocation: "Lagos Airport",
       returnLocation: "Victoria Island",
       customerName: "Jane Customer",
+      recipientType: CLIENT_RECIPIENT_TYPE,
       subject: "Booking Reminder",
     };
 
@@ -107,8 +114,14 @@ describe("BookingReminderStartMapper", () => {
 
     it("should return empty string for missing fields", () => {
       const incompleteData = {
+        ...mockTemplateData,
         customerName: "Jane Customer",
         carName: "BMW X5",
+        legStartTime: "",
+        legEndTime: "",
+        pickupLocation: "",
+        returnLocation: "",
+        chauffeurName: "",
       };
 
       const variables = mapper.mapVariables(incompleteData, CLIENT_RECIPIENT_TYPE);

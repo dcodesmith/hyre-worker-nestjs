@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
 import type {
@@ -8,7 +9,6 @@ import type {
 } from "../flutterwave/flutterwave.interface";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
-import { ZodValidationPipe } from "./dto/zod-validation.pipe";
 import { FlutterwaveWebhookGuard } from "./guards/flutterwave-webhook.guard";
 import type { PaymentStatusResponse } from "./payment.interface";
 import { PaymentApiService } from "./payment-api.service";

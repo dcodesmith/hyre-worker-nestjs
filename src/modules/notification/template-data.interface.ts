@@ -1,4 +1,4 @@
-import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../types";
+import type { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../../types";
 
 export const CLIENT_RECIPIENT_TYPE = "client" as const;
 export const CHAUFFEUR_RECIPIENT_TYPE = "chauffeur" as const;
@@ -8,24 +8,23 @@ export type RecipientType =
   | typeof CHAUFFEUR_RECIPIENT_TYPE
   | typeof FLEET_OWNER_RECIPIENT_TYPE;
 
-/**
- * Base template data that all notification templates can use
- */
-export interface BaseTemplateData {
-  customerName?: string;
-  chauffeurName?: string;
-  carName?: string;
-  pickupLocation?: string;
-  returnLocation?: string;
-  bookingId?: string;
-  subject?: string;
-  recipientType?: RecipientType;
-}
+export const BOOKING_STATUS_TEMPLATE_KIND = "bookingStatusChange" as const;
+export const BOOKING_REMINDER_TEMPLATE_KIND = "bookingReminder" as const;
+export const BOOKING_CONFIRMED_TEMPLATE_KIND = "bookingConfirmed" as const;
+export const FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND = "fleetOwnerNewBooking" as const;
+export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
+export type TemplateKind =
+  | typeof BOOKING_STATUS_TEMPLATE_KIND
+  | typeof BOOKING_REMINDER_TEMPLATE_KIND
+  | typeof BOOKING_CONFIRMED_TEMPLATE_KIND
+  | typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
+  | typeof REVIEW_RECEIVED_TEMPLATE_KIND;
 
 /**
  * Template data specific to booking status updates (includes email template fields)
  */
 export interface BookingStatusTemplateData extends NormalisedBookingDetails {
+  templateKind: typeof BOOKING_STATUS_TEMPLATE_KIND;
   subject: string;
   oldStatus: string;
   newStatus: string;
@@ -36,6 +35,7 @@ export interface BookingStatusTemplateData extends NormalisedBookingDetails {
  * Template data specific to booking reminders (includes email template fields)
  */
 export interface BookingReminderTemplateData extends NormalisedBookingLegDetails {
+  templateKind: typeof BOOKING_REMINDER_TEMPLATE_KIND;
   subject: string;
   recipientType: RecipientType;
 }
@@ -44,6 +44,31 @@ export interface BookingReminderTemplateData extends NormalisedBookingLegDetails
  * Template data specific to booking confirmation after payment
  */
 export interface BookingConfirmedTemplateData extends NormalisedBookingDetails {
+  templateKind: typeof BOOKING_CONFIRMED_TEMPLATE_KIND;
+  subject: string;
+}
+
+export interface FleetOwnerNewBookingTemplateData extends NormalisedBookingDetails {
+  templateKind: typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND;
+  subject: string;
+}
+
+/**
+ * Template data for review received notifications (owner/chauffeur).
+ */
+export interface ReviewReceivedTemplateData {
+  templateKind: typeof REVIEW_RECEIVED_TEMPLATE_KIND;
+  ownerName?: string;
+  chauffeurName?: string;
+  customerName: string;
+  bookingReference: string;
+  carName: string;
+  overallRating: number;
+  carRating: number;
+  chauffeurRating: number;
+  serviceRating: number;
+  comment: string | null;
+  reviewDate: Date | string;
   subject: string;
 }
 
@@ -54,35 +79,5 @@ export type TemplateData =
   | BookingStatusTemplateData
   | BookingReminderTemplateData
   | BookingConfirmedTemplateData
-  | BaseTemplateData;
-
-/**
- * Type guard to check if template data is for booking status updates
- */
-export function isBookingStatusTemplateData(data: TemplateData): data is BookingStatusTemplateData {
-  return "title" in data && "status" in data && "totalAmount" in data;
-}
-
-/**
- * Type guard to check if template data is for booking reminders
- */
-export function isBookingReminderTemplateData(
-  data: TemplateData,
-): data is BookingReminderTemplateData {
-  return "legStartTime" in data && "legEndTime" in data && "bookingId" in data;
-}
-
-/**
- * Type guard to check if template data is for booking confirmation
- */
-export function isBookingConfirmedTemplateData(
-  data: TemplateData,
-): data is BookingConfirmedTemplateData {
-  // BookingConfirmedTemplateData has NormalisedBookingDetails fields but no oldStatus/newStatus
-  return (
-    "bookingReference" in data &&
-    "totalAmount" in data &&
-    !("oldStatus" in data) &&
-    !("legStartTime" in data)
-  );
-}
+  | FleetOwnerNewBookingTemplateData
+  | ReviewReceivedTemplateData;

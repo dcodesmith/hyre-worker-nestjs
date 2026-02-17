@@ -24,6 +24,10 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationService } from "./notification.service";
+import {
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  BOOKING_STATUS_TEMPLATE_KIND,
+} from "./template-data.interface";
 
 describe("NotificationService", () => {
   let service: NotificationService;
@@ -67,6 +71,9 @@ describe("NotificationService", () => {
           type: NotificationType.BOOKING_STATUS_CHANGE,
           channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
           bookingId: booking.id,
+          templateData: expect.objectContaining({
+            templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+          }),
           recipients: expect.objectContaining({
             [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
               email: "john@example.com",
@@ -108,6 +115,7 @@ describe("NotificationService", () => {
             }),
           }),
           templateData: expect.objectContaining({
+            templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
             recipientType: CLIENT_RECIPIENT_TYPE,
             subject: "Booking Reminder - Your service starts in approximately 1 hour",
           }),
@@ -128,6 +136,7 @@ describe("NotificationService", () => {
             }),
           }),
           templateData: expect.objectContaining({
+            templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
             recipientType: CHAUFFEUR_RECIPIENT_TYPE,
             subject: "Booking Reminder - You have a service starting in approximately 1 hour",
           }),

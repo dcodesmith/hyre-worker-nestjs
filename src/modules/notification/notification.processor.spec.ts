@@ -3,7 +3,7 @@ import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as emailTemplates from "../../templates/emails";
 import { EmailService } from "./email.service";
-import { CLIENT_RECIPIENT_TYPE } from "./notification.const";
+import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -11,6 +11,11 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationProcessor } from "./notification.processor";
+import {
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  BOOKING_STATUS_TEMPLATE_KIND,
+  REVIEW_RECEIVED_TEMPLATE_KIND,
+} from "./template-data.interface";
 import { WhatsAppService } from "./whatsapp.service";
 
 describe("NotificationProcessor", () => {
@@ -26,6 +31,12 @@ describe("NotificationProcessor", () => {
 
     vi.spyOn(emailTemplates, "renderBookingReminderEmail").mockResolvedValue(
       "<html>Reminder email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderReviewReceivedEmailForOwner").mockResolvedValue(
+      "<html>Owner review email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderReviewReceivedEmailForChauffeur").mockResolvedValue(
+      "<html>Chauffeur review email</html>",
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -66,6 +77,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
           id: "booking-123",
           bookingReference: "BR-123",
           customerName: "John Doe",
@@ -88,7 +100,11 @@ describe("NotificationProcessor", () => {
       },
     } as Job<NotificationJobData, NotificationResult[], string>;
 
-    vi.mocked(emailService.sendEmail).mockResolvedValueOnce(undefined);
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-1" },
+      error: null,
+      headers: {},
+    });
 
     const results = await processor.process(job);
 
@@ -102,6 +118,14 @@ describe("NotificationProcessor", () => {
       channel: NotificationChannel.EMAIL,
       success: true,
       messageId: "email-sent",
+      perRecipientResults: [
+        {
+          recipient: CLIENT_RECIPIENT_TYPE,
+          email: "client@example.com",
+          success: true,
+          messageId: "email-msg-1",
+        },
+      ],
     });
   });
 
@@ -120,6 +144,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
           bookingLegId: "leg-1",
           bookingId: "booking-456",
           customerName: "John Doe",
@@ -178,6 +203,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
           bookingLegId: "leg-1",
           bookingId: "booking-789",
           customerName: "John Doe",
@@ -195,7 +221,11 @@ describe("NotificationProcessor", () => {
       },
     } as Job<NotificationJobData, NotificationResult[], string>;
 
-    vi.mocked(emailService.sendEmail).mockResolvedValueOnce(undefined);
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-2" },
+      error: null,
+      headers: {},
+    });
     vi.mocked(whatsAppService.sendMessage).mockResolvedValueOnce(undefined);
 
     const results = await processor.process(job);
@@ -230,6 +260,7 @@ describe("NotificationProcessor", () => {
         bookingId: "booking-999",
         recipients: {},
         templateData: {
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
           id: "booking-999",
           bookingReference: "BR-999",
           customerName: "John Doe",
@@ -273,6 +304,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
           id: "booking-111",
           bookingReference: "BR-111",
           customerName: "John Doe",
@@ -304,7 +336,15 @@ describe("NotificationProcessor", () => {
     expect(results[0]).toEqual({
       channel: NotificationChannel.EMAIL,
       success: false,
-      error: "Email service unavailable",
+      error: "One or more email recipients failed",
+      perRecipientResults: [
+        {
+          recipient: CLIENT_RECIPIENT_TYPE,
+          email: "client@example.com",
+          success: false,
+          error: "Email service unavailable",
+        },
+      ],
     });
   });
 
@@ -323,6 +363,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
           bookingLegId: "leg-1",
           bookingId: "booking-222",
           customerName: "John Doe",
@@ -369,6 +410,7 @@ describe("NotificationProcessor", () => {
           },
         },
         templateData: {
+          templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
           bookingLegId: "leg-1",
           bookingId: "booking-333",
           customerName: "John Doe",
@@ -386,7 +428,11 @@ describe("NotificationProcessor", () => {
       },
     } as Job<NotificationJobData, NotificationResult[], string>;
 
-    vi.mocked(emailService.sendEmail).mockResolvedValueOnce(undefined);
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-3" },
+      error: null,
+      headers: {},
+    });
     const whatsappError = new Error("WhatsApp service unavailable");
     vi.mocked(whatsAppService.sendMessage).mockRejectedValueOnce(whatsappError);
 
@@ -402,11 +448,160 @@ describe("NotificationProcessor", () => {
       channel: NotificationChannel.EMAIL,
       success: true,
       messageId: "email-sent",
+      perRecipientResults: [
+        {
+          recipient: CLIENT_RECIPIENT_TYPE,
+          email: "client@example.com",
+          success: true,
+          messageId: "email-msg-3",
+        },
+      ],
     });
     expect(results[1]).toEqual({
       channel: NotificationChannel.WHATSAPP,
       success: false,
       error: "WhatsApp service unavailable",
+    });
+  });
+
+  it("should normalize serialized reviewDate before rendering review email", async () => {
+    const reviewDateIso = "2026-02-17T00:00:00.000Z";
+    const job = {
+      id: "job-8",
+      name: "send-notification",
+      data: {
+        id: "notification-8",
+        type: NotificationType.REVIEW_RECEIVED,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: "booking-444",
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            email: "owner@example.com",
+          },
+        },
+        templateData: {
+          templateKind: REVIEW_RECEIVED_TEMPLATE_KIND,
+          ownerName: "Fleet Owner",
+          chauffeurName: "Driver Name",
+          customerName: "John Doe",
+          bookingReference: "BK-12345678",
+          carName: "Toyota Camry",
+          overallRating: 5,
+          carRating: 5,
+          chauffeurRating: 5,
+          serviceRating: 5,
+          comment: "Great service",
+          reviewDate: reviewDateIso,
+          subject: "New 5-star review received for Toyota Camry",
+        },
+      },
+    } as Job<NotificationJobData, NotificationResult[], string>;
+
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-4" },
+      error: null,
+      headers: {},
+    });
+
+    const results = await processor.process(job);
+    const ownerRenderCall = vi.mocked(emailTemplates.renderReviewReceivedEmailForOwner).mock
+      .calls[0];
+    const renderedTemplateData = ownerRenderCall?.[1];
+
+    expect(emailTemplates.renderReviewReceivedEmailForOwner).toHaveBeenCalledTimes(1);
+    expect(renderedTemplateData?.reviewDate).toBeInstanceOf(Date);
+    expect((renderedTemplateData?.reviewDate as Date).toISOString()).toBe(reviewDateIso);
+    expect(emailService.sendEmail).toHaveBeenCalledWith({
+      to: "owner@example.com",
+      subject: "New 5-star review received for Toyota Camry",
+      html: "<html>Owner review email</html>",
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({
+      channel: NotificationChannel.EMAIL,
+      success: true,
+      messageId: "email-sent",
+      perRecipientResults: [
+        {
+          recipient: FLEET_OWNER_RECIPIENT_TYPE,
+          email: "owner@example.com",
+          success: true,
+          messageId: "email-msg-4",
+        },
+      ],
+    });
+  });
+
+  it("should preserve per-recipient results when one recipient fails", async () => {
+    const job = {
+      id: "job-9",
+      name: "send-notification",
+      data: {
+        id: "notification-9",
+        type: NotificationType.BOOKING_STATUS_CHANGE,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: "booking-555",
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: {
+            email: "client@example.com",
+          },
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            email: "owner@example.com",
+          },
+        },
+        templateData: {
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+          id: "booking-555",
+          bookingReference: "BR-555",
+          customerName: "John Doe",
+          ownerName: "Owner Name",
+          chauffeurName: "Chauffeur Name",
+          chauffeurPhoneNumber: "1234567890",
+          carName: "Car Name",
+          pickupLocation: "Pickup Location",
+          returnLocation: "Return Location",
+          startDate: "2024-01-01",
+          endDate: "2024-01-02",
+          totalAmount: "10000",
+          title: "Booking Title",
+          status: "ACTIVE",
+          cancellationReason: "",
+          subject: "Booking Status Update",
+          oldStatus: "CONFIRMED",
+          newStatus: "ACTIVE",
+        },
+      },
+    } as Job<NotificationJobData, NotificationResult[], string>;
+
+    vi.mocked(emailService.sendEmail)
+      .mockResolvedValueOnce({
+        data: { id: "email-msg-client" },
+        error: null,
+        headers: {},
+      })
+      .mockRejectedValueOnce(new Error("Fleet owner mailbox unavailable"));
+
+    const results = await processor.process(job);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({
+      channel: NotificationChannel.EMAIL,
+      success: false,
+      error: "One or more email recipients failed",
+      perRecipientResults: [
+        {
+          recipient: CLIENT_RECIPIENT_TYPE,
+          email: "client@example.com",
+          success: true,
+          messageId: "email-msg-client",
+        },
+        {
+          recipient: FLEET_OWNER_RECIPIENT_TYPE,
+          email: "owner@example.com",
+          success: false,
+          error: "Fleet owner mailbox unavailable",
+        },
+      ],
     });
   });
 });
