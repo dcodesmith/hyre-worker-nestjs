@@ -3,6 +3,9 @@ import { DatabaseService } from "../database/database.service";
 import type { ReviewQueryDto } from "./dto/reviews.dto";
 
 type RatingDistribution = { 1: number; 2: number; 3: number; 4: number; 5: number };
+type EntityReviewsWhereClause =
+  | { isVisible: true; booking: { carId: string } }
+  | { isVisible: true; booking: { chauffeurId: string } };
 
 export type AggregatedRatings = {
   averageRating: number;
@@ -17,110 +20,48 @@ export class ReviewsReadService {
   async getReviewById(reviewId: string) {
     return this.databaseService.review.findFirst({
       where: { id: reviewId, isVisible: true },
-      include: {
-        booking: {
-          include: {
-            car: true,
-            chauffeur: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-      },
+      select: this.reviewDetailsSelect(),
     });
   }
 
   async getReviewByBookingId(bookingId: string) {
     return this.databaseService.review.findFirst({
       where: { bookingId, isVisible: true },
-      include: {
-        booking: {
-          include: {
-            car: true,
-            chauffeur: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-      },
+      select: this.reviewDetailsSelect(),
     });
   }
 
   async getCarReviews(carId: string, query: ReviewQueryDto) {
-    const whereClause = {
-      isVisible: true,
-      booking: { carId },
-    };
-
-    const page = query.page;
-    const limit = query.limit;
-    const skip = (page - 1) * limit;
-
-    const reviewsPromise = this.databaseService.review.findMany({
-      where: whereClause,
-      include: {
-        booking: {
-          select: {
-            id: true,
-            carId: true,
-            chauffeurId: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
+    return this.getEntityReviews({
+      query,
+      whereClause: {
+        isVisible: true,
+        booking: { carId },
       },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: limit,
+      ratingsLoader: () => this.getCarRatings(carId),
     });
-
-    const totalPromise = this.databaseService.review.count({ where: whereClause });
-    const ratingsPromise = query.includeRatings
-      ? this.getCarRatings(carId)
-      : Promise.resolve<AggregatedRatings | null>(null);
-
-    const [reviews, total, ratings] = await Promise.all([
-      reviewsPromise,
-      totalPromise,
-      ratingsPromise,
-    ]);
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      reviews,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
-      },
-      ...(ratings && { ratings }),
-    };
   }
 
   async getChauffeurReviews(chauffeurId: string, query: ReviewQueryDto) {
-    const whereClause = {
-      isVisible: true,
-      booking: { chauffeurId },
-    };
+    return this.getEntityReviews({
+      query,
+      whereClause: {
+        isVisible: true,
+        booking: { chauffeurId },
+      },
+      ratingsLoader: () => this.getChauffeurRatings(chauffeurId),
+    });
+  }
 
+  private async getEntityReviews({
+    query,
+    whereClause,
+    ratingsLoader,
+  }: {
+    query: ReviewQueryDto;
+    whereClause: EntityReviewsWhereClause;
+    ratingsLoader: () => Promise<AggregatedRatings>;
+  }) {
     const page = query.page;
     const limit = query.limit;
     const skip = (page - 1) * limit;
@@ -150,7 +91,7 @@ export class ReviewsReadService {
 
     const totalPromise = this.databaseService.review.count({ where: whereClause });
     const ratingsPromise = query.includeRatings
-      ? this.getChauffeurRatings(chauffeurId)
+      ? ratingsLoader()
       : Promise.resolve<AggregatedRatings | null>(null);
 
     const [reviews, total, ratings] = await Promise.all([
@@ -175,6 +116,8 @@ export class ReviewsReadService {
   }
 
   private async getCarRatings(carId: string): Promise<AggregatedRatings> {
+    // This reads all ratings into memory (O(n)); consider DB-side aggregation
+    // (groupBy/avg/count) or cached aggregates when review volume grows.
     const reviews = await this.databaseService.review.findMany({
       where: {
         isVisible: true,
@@ -189,6 +132,8 @@ export class ReviewsReadService {
   }
 
   private async getChauffeurRatings(chauffeurId: string): Promise<AggregatedRatings> {
+    // This reads all ratings into memory (O(n)); consider DB-side aggregation
+    // (groupBy/avg/count) or cached aggregates when review volume grows.
     const reviews = await this.databaseService.review.findMany({
       where: {
         isVisible: true,
@@ -223,6 +168,55 @@ export class ReviewsReadService {
       averageRating: Math.round((total / ratings.length) * 10) / 10,
       totalReviews: ratings.length,
       ratingDistribution: distribution,
+    };
+  }
+
+  private reviewDetailsSelect() {
+    return {
+      id: true,
+      bookingId: true,
+      userId: true,
+      overallRating: true,
+      carRating: true,
+      chauffeurRating: true,
+      serviceRating: true,
+      comment: true,
+      isVisible: true,
+      moderatedBy: true,
+      moderatedAt: true,
+      moderationNotes: true,
+      createdAt: true,
+      updatedAt: true,
+      booking: {
+        select: {
+          id: true,
+          carId: true,
+          chauffeurId: true,
+          car: {
+            select: {
+              id: true,
+              make: true,
+              model: true,
+              year: true,
+              color: true,
+            },
+          },
+          chauffeur: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+            },
+          },
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          name: true,
+          image: true,
+        },
+      },
     };
   }
 }
