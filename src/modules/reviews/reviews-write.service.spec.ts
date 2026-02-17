@@ -299,5 +299,22 @@ describe("ReviewsWriteService", () => {
         service.updateReview("user-1", "review-1", { overallRating: 4 }),
       ).rejects.toThrow(ReviewOwnershipRequiredException);
     });
+
+    it("throws when review has been hidden by moderation", async () => {
+      vi.mocked(databaseService.review.findUnique).mockResolvedValueOnce({
+        ...createReview({
+          id: "review-1",
+          bookingId: "booking-1",
+          userId: "user-1",
+          createdAt: new Date(),
+        }),
+        isVisible: false,
+      });
+
+      await expect(
+        service.updateReview("user-1", "review-1", { overallRating: 4 }),
+      ).rejects.toThrow(ReviewNotFoundException);
+      expect(databaseService.review.update).not.toHaveBeenCalled();
+    });
   });
 });

@@ -19,14 +19,16 @@ import {
 import {
   NotificationChannel,
   NotificationJobData,
+  NotificationRecipientResult,
   NotificationResult,
   NotificationType,
 } from "./notification.interface";
 import {
-  isBookingConfirmedTemplateData,
-  isBookingReminderTemplateData,
-  isBookingStatusTemplateData,
-  isReviewReceivedTemplateData,
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  BOOKING_STATUS_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
   type ReviewReceivedTemplateData,
   type TemplateData,
@@ -162,27 +164,48 @@ export class NotificationProcessor extends WorkerHost {
     }
 
     try {
-      const subject = templateData.subject || "Booking Notification";
+      const subject = templateData.subject;
       const recipientEmails: Array<{ recipient: RecipientType; email?: string }> = [
         { recipient: CLIENT_RECIPIENT_TYPE, email: clientEmail },
         { recipient: CHAUFFEUR_RECIPIENT_TYPE, email: chauffeurEmail },
         { recipient: FLEET_OWNER_RECIPIENT_TYPE, email: fleetOwnerEmail },
       ];
+      const perRecipientResults: NotificationRecipientResult[] = [];
 
       for (const { recipient, email } of recipientEmails) {
         if (!email) continue;
 
-        await this.emailService.sendEmail({
-          to: email,
-          subject,
-          html: await this.buildEmailHtml(type, templateData, recipient),
-        });
+        try {
+          const html = await this.buildEmailHtml(type, templateData, recipient);
+          const sendResult = await this.emailService.sendEmail({
+            to: email,
+            subject,
+            html,
+          });
+
+          perRecipientResults.push({
+            recipient,
+            email,
+            success: true,
+            messageId: sendResult.data?.id,
+          });
+        } catch (error) {
+          perRecipientResults.push({
+            recipient,
+            email,
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
+      const success = perRecipientResults.every((result) => result.success);
       return {
         channel: NotificationChannel.EMAIL,
-        success: true,
-        messageId: "email-sent",
+        success,
+        messageId: success ? "email-sent" : undefined,
+        error: success ? undefined : "One or more email recipients failed",
+        perRecipientResults,
       };
     } catch (error) {
       this.logger.error("Failed to send email notification", {
@@ -221,21 +244,21 @@ export class NotificationProcessor extends WorkerHost {
   }
 
   private buildBookingConfirmedEmailHtml(templateData: TemplateData): Promise<string> {
-    if (!isBookingConfirmedTemplateData(templateData)) {
+    if (templateData.templateKind !== BOOKING_CONFIRMED_TEMPLATE_KIND) {
       throw new Error("Invalid template data for booking confirmation");
     }
     return renderBookingConfirmationEmail(templateData);
   }
 
   private buildFleetOwnerNewBookingEmailHtml(templateData: TemplateData): Promise<string> {
-    if (!isBookingConfirmedTemplateData(templateData)) {
+    if (templateData.templateKind !== FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND) {
       throw new Error("Invalid template data for fleet owner booking notification");
     }
     return renderFleetOwnerNewBookingEmail(templateData);
   }
 
   private buildBookingStatusEmailHtml(templateData: TemplateData): Promise<string> {
-    if (!isBookingStatusTemplateData(templateData)) {
+    if (templateData.templateKind !== BOOKING_STATUS_TEMPLATE_KIND) {
       throw new Error("Invalid template data for booking status update");
     }
     // Status email currently targets the client. If chauffeur delivery is desired,
@@ -248,7 +271,7 @@ export class NotificationProcessor extends WorkerHost {
     templateData: TemplateData,
     recipient: RecipientType,
   ): Promise<string> {
-    if (!isBookingReminderTemplateData(templateData)) {
+    if (templateData.templateKind !== BOOKING_REMINDER_TEMPLATE_KIND) {
       throw new Error("Invalid template data for booking reminder");
     }
     if (recipient !== CLIENT_RECIPIENT_TYPE && recipient !== CHAUFFEUR_RECIPIENT_TYPE) {
@@ -265,7 +288,7 @@ export class NotificationProcessor extends WorkerHost {
     templateData: TemplateData,
     recipient: RecipientType,
   ): Promise<string> {
-    if (!isReviewReceivedTemplateData(templateData)) {
+    if (templateData.templateKind !== REVIEW_RECEIVED_TEMPLATE_KIND) {
       throw new Error("Invalid template data for review received");
     }
     const normalizedTemplateData = this.normalizeReviewReceivedTemplateData(templateData);

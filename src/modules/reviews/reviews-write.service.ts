@@ -165,11 +165,16 @@ export class ReviewsWriteService {
         id: true,
         bookingId: true,
         userId: true,
+        isVisible: true,
         createdAt: true,
       },
     });
 
     if (!existingReview) {
+      throw new ReviewNotFoundException();
+    }
+
+    if (!existingReview.isVisible) {
       throw new ReviewNotFoundException();
     }
 

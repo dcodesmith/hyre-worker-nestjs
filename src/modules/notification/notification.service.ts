@@ -23,7 +23,12 @@ import {
   NotificationType,
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
-import { RecipientType } from "./template-data.interface";
+import {
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  BOOKING_STATUS_TEMPLATE_KIND,
+  REVIEW_RECEIVED_TEMPLATE_KIND,
+  RecipientType,
+} from "./template-data.interface";
 
 @Injectable()
 export class NotificationService {
@@ -88,6 +93,7 @@ export class NotificationService {
         },
       },
       templateData: {
+        templateKind: REVIEW_RECEIVED_TEMPLATE_KIND,
         ownerName: params.owner.name,
         chauffeurName: params.chauffeur.name,
         ...params.review,
@@ -106,6 +112,7 @@ export class NotificationService {
         },
       },
       templateData: {
+        templateKind: REVIEW_RECEIVED_TEMPLATE_KIND,
         ownerName: params.owner.name,
         chauffeurName: params.chauffeur.name,
         ...params.review,
@@ -144,6 +151,7 @@ export class NotificationService {
         },
       },
       templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
         ...bookingDetails,
         oldStatus,
         newStatus,
@@ -211,6 +219,7 @@ export class NotificationService {
         [recipientType]: { email, phoneNumber },
       },
       templateData: {
+        templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
         ...bookingLegDetails,
         recipientType,
         subject,

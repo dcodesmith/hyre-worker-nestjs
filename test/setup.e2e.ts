@@ -68,10 +68,17 @@ async function initializeWorkerIsolation(): Promise<void> {
   }
 
   const prismaEnv = { ...process.env, DATABASE_URL: workerDatabaseUrl };
-  execSync("npx prisma db push --skip-generate", {
-    env: prismaEnv,
-    stdio: "inherit",
-  });
+  try {
+    execSync("npx prisma db push --skip-generate", {
+      env: prismaEnv,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to initialize e2e worker schema "${schema}" with Prisma db push: ${message}`,
+    );
+  }
 
   const workerPrisma = new PrismaClient({ datasourceUrl: workerDatabaseUrl });
   try {

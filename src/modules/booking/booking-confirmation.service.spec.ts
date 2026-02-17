@@ -11,6 +11,10 @@ import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import type { NotificationJobData } from "../notification/notification.interface";
 import { NotificationType } from "../notification/notification.interface";
+import {
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+} from "../notification/template-data.interface";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 
 // Minimal mock Job object for queue.add() return value
@@ -168,6 +172,7 @@ describe("BookingConfirmationService", () => {
           type: NotificationType.BOOKING_CONFIRMED,
           bookingId: "booking-123",
           templateData: expect.objectContaining({
+            templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
             subject: "Your booking is confirmed!",
           }),
         }),
@@ -299,6 +304,7 @@ describe("BookingConfirmationService", () => {
             }),
           }),
           templateData: expect.objectContaining({
+            templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
             subject: "New Booking Alert",
           }),
         }),

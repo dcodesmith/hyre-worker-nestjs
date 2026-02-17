@@ -148,7 +148,11 @@ export class ReviewsReadService {
   }
 
   private calculateRatings(ratings: number[]): AggregatedRatings {
-    if (ratings.length === 0) {
+    const normalizedRatings = ratings
+      .filter((rating) => typeof rating === "number" && Number.isFinite(rating))
+      .map((rating) => Math.max(1, Math.min(5, Math.round(rating))));
+
+    if (normalizedRatings.length === 0) {
       return {
         averageRating: 0,
         totalReviews: 0,
@@ -156,17 +160,17 @@ export class ReviewsReadService {
       };
     }
 
-    const total = ratings.reduce((sum, rating) => sum + rating, 0);
+    const total = normalizedRatings.reduce((sum, rating) => sum + rating, 0);
     const distribution: RatingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 
-    for (const rating of ratings) {
-      const key = Math.max(1, Math.min(5, rating)) as keyof RatingDistribution;
+    for (const rating of normalizedRatings) {
+      const key = rating as keyof RatingDistribution;
       distribution[key] += 1;
     }
 
     return {
-      averageRating: Math.round((total / ratings.length) * 10) / 10,
-      totalReviews: ratings.length,
+      averageRating: Math.round((total / normalizedRatings.length) * 10) / 10,
+      totalReviews: normalizedRatings.length,
       ratingDistribution: distribution,
     };
   }

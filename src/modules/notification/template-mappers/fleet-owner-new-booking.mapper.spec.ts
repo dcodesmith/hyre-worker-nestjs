@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NotificationType } from "../notification.interface";
+import type { FleetOwnerNewBookingTemplateData } from "../template-data.interface";
+import { FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND } from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { FleetOwnerNewBookingMapper } from "./fleet-owner-new-booking.mapper";
 
@@ -41,8 +43,12 @@ describe("FleetOwnerNewBookingMapper", () => {
   });
 
   describe("mapVariables", () => {
-    const mockTemplateData = {
+    const mockTemplateData: FleetOwnerNewBookingTemplateData = {
+      templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+      bookingReference: "BK-12345678",
       ownerName: "Fleet Owner Name",
+      chauffeurName: "Driver Name",
+      chauffeurPhoneNumber: "+2348012345678",
       carName: "Toyota Camry (2022)",
       customerName: "John Doe",
       startDate: "January 15, 2024 at 10:00 AM",
@@ -50,6 +56,9 @@ describe("FleetOwnerNewBookingMapper", () => {
       pickupLocation: "Lagos Airport",
       returnLocation: "Victoria Island",
       totalAmount: "₦50,000",
+      title: "Airport Transfer",
+      status: "CONFIRMED",
+      cancellationReason: "",
       id: "booking-123",
       subject: "New Booking Alert",
     };
@@ -72,8 +81,16 @@ describe("FleetOwnerNewBookingMapper", () => {
 
     it("should return empty string for missing fields", () => {
       const incompleteData = {
+        ...mockTemplateData,
         ownerName: "Fleet Owner",
         carName: "BMW X5",
+        customerName: "",
+        startDate: "",
+        endDate: "",
+        pickupLocation: "",
+        returnLocation: "",
+        totalAmount: "",
+        id: "",
       };
 
       const variables = mapper.mapVariables(incompleteData, "fleetOwner");

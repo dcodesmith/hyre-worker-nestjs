@@ -49,6 +49,15 @@ export interface NotificationResult {
   success: boolean;
   messageId?: string;
   error?: string;
+  perRecipientResults?: NotificationRecipientResult[];
+}
+
+export interface NotificationRecipientResult {
+  recipient: RecipientType;
+  email: string;
+  success: boolean;
+  messageId?: string;
+  error?: string;
 }
 
 export interface QueueReviewReceivedNotificationParams {
