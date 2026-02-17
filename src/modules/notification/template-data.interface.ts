@@ -48,12 +48,31 @@ export interface BookingConfirmedTemplateData extends NormalisedBookingDetails {
 }
 
 /**
+ * Template data for review received notifications (owner/chauffeur).
+ */
+export interface ReviewReceivedTemplateData {
+  ownerName?: string;
+  chauffeurName?: string;
+  customerName: string;
+  bookingReference: string;
+  carName: string;
+  overallRating: number;
+  carRating: number;
+  chauffeurRating: number;
+  serviceRating: number;
+  comment: string | null;
+  reviewDate: Date;
+  subject: string;
+}
+
+/**
  * Union type for all possible template data structures
  */
 export type TemplateData =
   | BookingStatusTemplateData
   | BookingReminderTemplateData
   | BookingConfirmedTemplateData
+  | ReviewReceivedTemplateData
   | BaseTemplateData;
 
 /**
@@ -84,5 +103,19 @@ export function isBookingConfirmedTemplateData(
     "totalAmount" in data &&
     !("oldStatus" in data) &&
     !("legStartTime" in data)
+  );
+}
+
+/**
+ * Type guard to check if template data is for review received notifications.
+ */
+export function isReviewReceivedTemplateData(
+  data: TemplateData,
+): data is ReviewReceivedTemplateData {
+  return (
+    "bookingReference" in data &&
+    "overallRating" in data &&
+    "chauffeurRating" in data &&
+    "reviewDate" in data
   );
 }

@@ -12,6 +12,7 @@ import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   DEFAULT_CHANNELS,
+  FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
   STATUS_CHANGE_JOB_OPTIONS,
 } from "./notification.const";
@@ -20,6 +21,7 @@ import {
   NotificationJobData,
   NotificationResult,
   NotificationType,
+  QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
 import { RecipientType } from "./template-data.interface";
 
@@ -66,6 +68,57 @@ export class NotificationService {
     await this.queueChauffeurReminder(bookingLegDetails, type);
 
     this.logReminderNotifications(bookingLegDetails, type);
+  }
+
+  /**
+   * Queue review received notifications for both fleet owner and chauffeur.
+   * Email-only for now (no WhatsApp template configured for review notifications).
+   */
+  async queueReviewReceivedNotifications(
+    params: QueueReviewReceivedNotificationParams,
+  ): Promise<void> {
+    const ownerJobData: NotificationJobData = {
+      id: `review-received-owner-${params.bookingId}-${Date.now()}`,
+      type: NotificationType.REVIEW_RECEIVED,
+      channels: [NotificationChannel.EMAIL],
+      bookingId: params.bookingId,
+      recipients: {
+        [FLEET_OWNER_RECIPIENT_TYPE]: {
+          email: params.owner.email,
+        },
+      },
+      templateData: {
+        ownerName: params.owner.name,
+        chauffeurName: params.chauffeur.name,
+        ...params.review,
+        subject: `New ${params.review.overallRating}-star review received for ${params.review.carName}`,
+      },
+    };
+
+    const chauffeurJobData: NotificationJobData = {
+      id: `review-received-chauffeur-${params.bookingId}-${Date.now()}`,
+      type: NotificationType.REVIEW_RECEIVED,
+      channels: [NotificationChannel.EMAIL],
+      bookingId: params.bookingId,
+      recipients: {
+        [CHAUFFEUR_RECIPIENT_TYPE]: {
+          email: params.chauffeur.email,
+        },
+      },
+      templateData: {
+        ownerName: params.owner.name,
+        chauffeurName: params.chauffeur.name,
+        ...params.review,
+        subject: `New ${params.review.chauffeurRating}-star review received for your service`,
+      },
+    };
+
+    await Promise.all([this.addJobToQueue(ownerJobData), this.addJobToQueue(chauffeurJobData)]);
+
+    this.logger.log("Queued review received notifications", {
+      bookingId: params.bookingId,
+      channels: [NotificationChannel.EMAIL],
+    });
   }
 
   private createStatusChangeJobData({

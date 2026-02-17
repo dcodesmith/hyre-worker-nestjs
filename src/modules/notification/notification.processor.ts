@@ -7,6 +7,8 @@ import {
   renderBookingReminderEmail,
   renderBookingStatusUpdateEmail,
   renderFleetOwnerNewBookingEmail,
+  renderReviewReceivedEmailForChauffeur,
+  renderReviewReceivedEmailForOwner,
 } from "../../templates/emails";
 import { EmailService } from "./email.service";
 import {
@@ -24,6 +26,7 @@ import {
   isBookingConfirmedTemplateData,
   isBookingReminderTemplateData,
   isBookingStatusTemplateData,
+  isReviewReceivedTemplateData,
   RecipientType,
   type TemplateData,
 } from "./template-data.interface";
@@ -158,70 +161,20 @@ export class NotificationProcessor extends WorkerHost {
     }
 
     try {
-      // Generate HTML content based on notification type
       const subject = templateData.subject || "Booking Notification";
+      const recipientEmails: Array<{ recipient: RecipientType; email?: string }> = [
+        { recipient: CLIENT_RECIPIENT_TYPE, email: clientEmail },
+        { recipient: CHAUFFEUR_RECIPIENT_TYPE, email: chauffeurEmail },
+        { recipient: FLEET_OWNER_RECIPIENT_TYPE, email: fleetOwnerEmail },
+      ];
 
-      const buildHtml = async (recipient: RecipientType) => {
-        switch (type) {
-          case NotificationType.BOOKING_CONFIRMED:
-            if (isBookingConfirmedTemplateData(templateData)) {
-              return renderBookingConfirmationEmail(templateData);
-            }
-            throw new Error("Invalid template data for booking confirmation");
-          case NotificationType.FLEET_OWNER_NEW_BOOKING:
-            if (isBookingConfirmedTemplateData(templateData)) {
-              return renderFleetOwnerNewBookingEmail(templateData);
-            }
-            throw new Error("Invalid template data for fleet owner booking notification");
-          case NotificationType.BOOKING_STATUS_CHANGE:
-            if (isBookingStatusTemplateData(templateData)) {
-              // Status email currently targets the client. If chauffeur delivery is desired,
-              // a recipient-specific template should be introduced.
-              return renderBookingStatusUpdateEmail(templateData);
-            }
-            throw new Error("Invalid template data for booking status update");
-          case NotificationType.BOOKING_REMINDER_START:
-          case NotificationType.BOOKING_REMINDER_END:
-            if (isBookingReminderTemplateData(templateData)) {
-              // Booking reminders are only sent to clients and chauffeurs, not fleet owners
-              if (recipient !== CLIENT_RECIPIENT_TYPE && recipient !== CHAUFFEUR_RECIPIENT_TYPE) {
-                throw new Error(`Booking reminders cannot be sent to recipient type: ${recipient}`);
-              }
-              return renderBookingReminderEmail(
-                templateData,
-                recipient,
-                type === NotificationType.BOOKING_REMINDER_START,
-              );
-            }
-            throw new Error("Invalid template data for booking reminder");
-          default:
-            throw new Error(`Unknown notification type: ${type}`);
-        }
-      };
-      // Send to customer if available
-      if (clientEmail) {
-        await this.emailService.sendEmail({
-          to: clientEmail,
-          subject,
-          html: await buildHtml(CLIENT_RECIPIENT_TYPE),
-        });
-      }
+      for (const { recipient, email } of recipientEmails) {
+        if (!email) continue;
 
-      // Send to chauffeur if available
-      if (chauffeurEmail) {
         await this.emailService.sendEmail({
-          to: chauffeurEmail,
+          to: email,
           subject,
-          html: await buildHtml(CHAUFFEUR_RECIPIENT_TYPE),
-        });
-      }
-
-      // Send to fleet owner if available
-      if (fleetOwnerEmail) {
-        await this.emailService.sendEmail({
-          to: fleetOwnerEmail,
-          subject,
-          html: await buildHtml(FLEET_OWNER_RECIPIENT_TYPE),
+          html: await this.buildEmailHtml(type, templateData, recipient),
         });
       }
 
@@ -242,6 +195,94 @@ export class NotificationProcessor extends WorkerHost {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private buildEmailHtml(
+    type: NotificationType,
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    switch (type) {
+      case NotificationType.BOOKING_CONFIRMED:
+        return this.buildBookingConfirmedEmailHtml(templateData);
+      case NotificationType.FLEET_OWNER_NEW_BOOKING:
+        return this.buildFleetOwnerNewBookingEmailHtml(templateData);
+      case NotificationType.BOOKING_STATUS_CHANGE:
+        return this.buildBookingStatusEmailHtml(templateData);
+      case NotificationType.BOOKING_REMINDER_START:
+      case NotificationType.BOOKING_REMINDER_END:
+        return this.buildBookingReminderEmailHtml(type, templateData, recipient);
+      case NotificationType.REVIEW_RECEIVED:
+        return this.buildReviewReceivedEmailHtml(templateData, recipient);
+      default:
+        throw new Error(`Unknown notification type: ${type}`);
+    }
+  }
+
+  private buildBookingConfirmedEmailHtml(templateData: TemplateData): Promise<string> {
+    if (!isBookingConfirmedTemplateData(templateData)) {
+      throw new Error("Invalid template data for booking confirmation");
+    }
+    return renderBookingConfirmationEmail(templateData);
+  }
+
+  private buildFleetOwnerNewBookingEmailHtml(templateData: TemplateData): Promise<string> {
+    if (!isBookingConfirmedTemplateData(templateData)) {
+      throw new Error("Invalid template data for fleet owner booking notification");
+    }
+    return renderFleetOwnerNewBookingEmail(templateData);
+  }
+
+  private buildBookingStatusEmailHtml(templateData: TemplateData): Promise<string> {
+    if (!isBookingStatusTemplateData(templateData)) {
+      throw new Error("Invalid template data for booking status update");
+    }
+    // Status email currently targets the client. If chauffeur delivery is desired,
+    // a recipient-specific template should be introduced.
+    return renderBookingStatusUpdateEmail(templateData);
+  }
+
+  private buildBookingReminderEmailHtml(
+    type: NotificationType,
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    if (!isBookingReminderTemplateData(templateData)) {
+      throw new Error("Invalid template data for booking reminder");
+    }
+    if (recipient !== CLIENT_RECIPIENT_TYPE && recipient !== CHAUFFEUR_RECIPIENT_TYPE) {
+      throw new Error(`Booking reminders cannot be sent to recipient type: ${recipient}`);
+    }
+    return renderBookingReminderEmail(
+      templateData,
+      recipient,
+      type === NotificationType.BOOKING_REMINDER_START,
+    );
+  }
+
+  private buildReviewReceivedEmailHtml(
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    if (!isReviewReceivedTemplateData(templateData)) {
+      throw new Error("Invalid template data for review received");
+    }
+
+    if (recipient === FLEET_OWNER_RECIPIENT_TYPE) {
+      return renderReviewReceivedEmailForOwner(
+        templateData.ownerName || "Fleet Owner",
+        templateData,
+      );
+    }
+
+    if (recipient === CHAUFFEUR_RECIPIENT_TYPE) {
+      return renderReviewReceivedEmailForChauffeur(
+        templateData.chauffeurName || "Chauffeur",
+        templateData,
+      );
+    }
+
+    throw new Error(`Review notifications cannot be sent to recipient type: ${recipient}`);
   }
 
   private async sendWhatsAppNotification(

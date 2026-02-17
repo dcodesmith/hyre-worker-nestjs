@@ -11,6 +11,7 @@ import {
   PaymentStatus,
   type PayoutTransaction,
   PayoutTransactionStatus,
+  type Review,
   ServiceTier,
   Status,
   VehicleType,
@@ -309,6 +310,29 @@ export function createPaymentRecord(overrides: Partial<Payment> = {}): Payment {
     webhookPayload: null,
     verificationResponse: null,
     refundIdempotencyKey: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Create a mock Review for testing.
+ */
+export function createReview(overrides: Partial<Review> = {}): Review {
+  return {
+    id: "review-123",
+    bookingId: "booking-123",
+    userId: "user-123",
+    overallRating: 5,
+    carRating: 5,
+    chauffeurRating: 5,
+    serviceRating: 5,
+    comment: "Great experience",
+    isVisible: true,
+    moderatedAt: null,
+    moderatedBy: null,
+    moderationNotes: null,
+    createdAt: new Date("2024-01-01T00:00:00Z"),
+    updatedAt: new Date("2024-01-01T00:00:00Z"),
     ...overrides,
   };
 }

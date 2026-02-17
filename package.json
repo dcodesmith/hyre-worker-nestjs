@@ -18,7 +18,7 @@
     "test:coverage": "vitest --coverage",
     "test:coverage:ci": "vitest --coverage --run && npx nyc report --reporter=lcov --temp-dir=coverage --report-dir=coverage",
     "test:ui": "vitest --ui",
-    "test:e2e": "npx dotenv -e .env.e2e -o -- vitest run --config vitest.e2e.config.mjs test/",
+    "test:e2e": "npx dotenv -e .env.e2e -o -- vitest run --config vitest.e2e.config.mjs",
     "db:generate": "prisma generate",
     "deploy": "pnpm run build && pnpm run db:generate",
     "prepare": "husky",

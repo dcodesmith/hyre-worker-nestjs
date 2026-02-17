@@ -368,3 +368,74 @@ export async function renderFleetOwnerNewBookingEmail(booking: NormalisedBooking
     </EmailTemplate>,
   );
 }
+
+export interface ReviewReceivedTemplateData {
+  readonly customerName: string;
+  readonly bookingReference: string;
+  readonly carName: string;
+  readonly overallRating: number;
+  readonly carRating: number;
+  readonly chauffeurRating: number;
+  readonly serviceRating: number;
+  readonly comment: string | null;
+  readonly reviewDate: Date;
+}
+
+export async function renderReviewReceivedEmailForOwner(
+  ownerName: string,
+  data: ReviewReceivedTemplateData,
+) {
+  return await render(
+    <EmailTemplate
+      previewText={`New ${data.overallRating}-star review received`}
+      pageTitle="New Review Received"
+    >
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        New Review Received
+      </Heading>
+      <Text className="mb-3">Hello {ownerName},</Text>
+      <Text className="mb-3">
+        A customer left a new review for <span className="font-semibold">{data.carName}</span>.
+      </Text>
+      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
+        <Text className="font-semibold mb-2 underline">Review Details</Text>
+        <DetailListItem label="Customer" value={data.customerName} />
+        <DetailListItem label="Booking Reference" value={data.bookingReference} />
+        <DetailListItem label="Overall Rating" value={`${data.overallRating}/5`} />
+        <DetailListItem label="Car Rating" value={`${data.carRating}/5`} />
+        <DetailListItem label="Chauffeur Rating" value={`${data.chauffeurRating}/5`} />
+        <DetailListItem label="Service Rating" value={`${data.serviceRating}/5`} />
+        <DetailListItem label="Comment" value={data.comment || "No comment"} />
+        <DetailListItem label="Review Date" value={data.reviewDate.toLocaleString()} />
+      </Section>
+    </EmailTemplate>,
+  );
+}
+
+export async function renderReviewReceivedEmailForChauffeur(
+  chauffeurName: string,
+  data: ReviewReceivedTemplateData,
+) {
+  return await render(
+    <EmailTemplate
+      previewText={`New ${data.chauffeurRating}-star review received`}
+      pageTitle="New Review Received"
+    >
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        New Review Received
+      </Heading>
+      <Text className="mb-3">Hello {chauffeurName},</Text>
+      <Text className="mb-3">A customer left feedback about your service.</Text>
+      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
+        <Text className="font-semibold mb-2 underline">Review Details</Text>
+        <DetailListItem label="Customer" value={data.customerName} />
+        <DetailListItem label="Booking Reference" value={data.bookingReference} />
+        <DetailListItem label="Car" value={data.carName} />
+        <DetailListItem label="Your Rating" value={`${data.chauffeurRating}/5`} />
+        <DetailListItem label="Overall Rating" value={`${data.overallRating}/5`} />
+        <DetailListItem label="Comment" value={data.comment || "No comment"} />
+        <DetailListItem label="Review Date" value={data.reviewDate.toLocaleString()} />
+      </Section>
+    </EmailTemplate>,
+  );
+}

@@ -19,6 +19,7 @@ import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
+import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
 
 @Module({
@@ -152,6 +153,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     HealthModule,
     JobModule,
     ReferralModule,
+    ReviewsModule,
     AuthModule,
   ],
 })
