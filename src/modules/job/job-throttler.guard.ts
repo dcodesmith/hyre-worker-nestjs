@@ -1,5 +1,6 @@
 import { ExecutionContext, Injectable } from "@nestjs/common";
 import { ThrottlerGuard } from "@nestjs/throttler";
+import { computeRetryAfterEpoch } from "../../common/throttling/throttling.helper";
 import { JobRateLimitExceededException } from "./errors";
 
 /**
@@ -51,7 +52,7 @@ export class JobThrottlerGuard extends ThrottlerGuard {
     // Calculate retryAfter: TTL seconds from now (when rate limit resets)
     // Default to 3600 seconds (1 hour) if not provided
     const ttlSeconds = throttlerConfig?.ttl || 3600;
-    const retryAfter = Math.ceil(Date.now() / 1000) + ttlSeconds;
+    const retryAfter = computeRetryAfterEpoch(ttlSeconds);
 
     throw new JobRateLimitExceededException(jobType, retryAfter);
   }

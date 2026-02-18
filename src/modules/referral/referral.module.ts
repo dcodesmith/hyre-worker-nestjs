@@ -2,14 +2,28 @@ import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { REFERRAL_QUEUE } from "../../config/constants";
+import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
+import { ReferralController } from "./referral.controller";
 import { ReferralProcessor } from "./referral.processor";
 import { ReferralService } from "./referral.service";
+import { ReferralApiService } from "./referral-api.service";
+import { ReferralProcessingService } from "./referral-processing.service";
+import { ReferralThrottlerGuard } from "./referral-throttler.guard";
 
 @Module({
   imports: [
+    AuthModule,
     DatabaseModule,
+    ThrottlerModule.forRoot([
+      {
+        name: "referral-validation",
+        ttl: 3600,
+        limit: 10,
+      },
+    ]),
     BullModule.registerQueue({
       name: REFERRAL_QUEUE,
       defaultJobOptions: {
@@ -27,7 +41,14 @@ import { ReferralService } from "./referral.service";
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [ReferralService, ReferralProcessor],
-  exports: [ReferralService, BullModule],
+  controllers: [ReferralController],
+  providers: [
+    ReferralService,
+    ReferralApiService,
+    ReferralProcessingService,
+    ReferralProcessor,
+    ReferralThrottlerGuard,
+  ],
+  exports: [ReferralService, ReferralApiService, ReferralProcessingService, BullModule],
 })
 export class ReferralModule {}

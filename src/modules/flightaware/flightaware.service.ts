@@ -4,7 +4,12 @@ import { AxiosInstance } from "axios";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
 import { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
-import { FLIGHT_NUMBER_REGEX, IATA_TO_ICAO_MAP } from "./flightaware.const";
+import {
+  FLIGHT_NUMBER_REGEX,
+  IATA_TO_ICAO_MAP,
+  ISO_DATE_ONLY_REGEX,
+  parseIsoDateOnlyToUtc,
+} from "./flightaware.const";
 import {
   FlightAlreadyLandedException,
   FlightAwareApiException,
@@ -30,7 +35,6 @@ type InternalFlightResult =
   | { type: "notFound" }
   | { type: "error"; message: string };
 
-const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 const SUPPORTED_PICKUP_DESTINATIONS = new Set(["LOS"]);
 const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
 
@@ -231,10 +235,13 @@ export class FlightAwareService implements OnModuleDestroy {
   // Private methods
 
   private getPickupSearchWindow(pickupDate: string): { startDate: Date; endDate: Date } {
-    const dateOnlyMatch = ISO_DATE_ONLY_REGEX.exec(pickupDate);
-    const baseUtcDate = dateOnlyMatch
-      ? this.buildUtcDateFromDateOnly(dateOnlyMatch)
-      : this.buildUtcDateFromIsoString(pickupDate);
+    const isDateOnly = ISO_DATE_ONLY_REGEX.test(pickupDate);
+    const dateOnlyUtc = parseIsoDateOnlyToUtc(pickupDate);
+    if (isDateOnly && !dateOnlyUtc) {
+      throw new FlightAwareApiException(`Invalid pickup date: ${pickupDate}`);
+    }
+
+    const baseUtcDate = dateOnlyUtc ?? this.buildUtcDateFromIsoString(pickupDate);
 
     const startDate = new Date(baseUtcDate);
     startDate.setUTCHours(startDate.getUTCHours() - 12, 0, 0, 0);
@@ -244,23 +251,6 @@ export class FlightAwareService implements OnModuleDestroy {
     endDate.setUTCHours(endDate.getUTCHours() + 12, 0, 0, 0);
 
     return { startDate, endDate };
-  }
-
-  private buildUtcDateFromDateOnly(dateMatch: RegExpExecArray): Date {
-    const year = Number.parseInt(dateMatch[1], 10);
-    const month = Number.parseInt(dateMatch[2], 10);
-    const day = Number.parseInt(dateMatch[3], 10);
-    const date = new Date(Date.UTC(year, month - 1, day));
-
-    if (
-      date.getUTCFullYear() !== year ||
-      date.getUTCMonth() !== month - 1 ||
-      date.getUTCDate() !== day
-    ) {
-      throw new FlightAwareApiException(`Invalid pickup date: ${dateMatch[0]}`);
-    }
-
-    return date;
   }
 
   private buildUtcDateFromIsoString(value: string): Date {

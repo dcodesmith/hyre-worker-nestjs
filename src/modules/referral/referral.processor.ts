@@ -3,13 +3,13 @@ import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { REFERRAL_QUEUE } from "../../config/constants";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
-import { ReferralService } from "./referral.service";
+import { ReferralProcessingService } from "./referral-processing.service";
 
 @Processor(REFERRAL_QUEUE)
 export class ReferralProcessor extends WorkerHost {
   private readonly logger = new Logger(ReferralProcessor.name);
 
-  constructor(private readonly referralService: ReferralService) {
+  constructor(private readonly referralProcessingService: ReferralProcessingService) {
     super();
   }
 
@@ -21,7 +21,9 @@ export class ReferralProcessor extends WorkerHost {
 
     try {
       if (job.name === PROCESS_REFERRAL_COMPLETION) {
-        await this.referralService.processReferralCompletionForBooking(job.data.bookingId);
+        await this.referralProcessingService.processReferralCompletionForBooking(
+          job.data.bookingId,
+        );
         this.logger.log(
           `Referral completion processed successfully for booking ${job.data.bookingId}`,
         );

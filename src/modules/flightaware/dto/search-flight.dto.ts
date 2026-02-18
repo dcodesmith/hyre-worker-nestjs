@@ -1,27 +1,13 @@
 import { z } from "zod";
-import { FLIGHT_NUMBER_REGEX } from "../flightaware.const";
+import { FLIGHT_NUMBER_REGEX, parseIsoDateOnlyToUtc } from "../flightaware.const";
 
-const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_DATETIME_WITH_TIMEZONE_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 const parseIsoDateToUtc = (value: string): Date | null => {
-  const dateOnlyMatch = ISO_DATE_ONLY_REGEX.exec(value);
-  if (dateOnlyMatch) {
-    const year = Number.parseInt(dateOnlyMatch[1], 10);
-    const month = Number.parseInt(dateOnlyMatch[2], 10);
-    const day = Number.parseInt(dateOnlyMatch[3], 10);
-    const date = new Date(Date.UTC(year, month - 1, day));
-
-    if (
-      date.getUTCFullYear() !== year ||
-      date.getUTCMonth() !== month - 1 ||
-      date.getUTCDate() !== day
-    ) {
-      return null;
-    }
-
-    return date;
+  const dateOnlyUtc = parseIsoDateOnlyToUtc(value);
+  if (dateOnlyUtc) {
+    return dateOnlyUtc;
   }
 
   if (!ISO_DATETIME_WITH_TIMEZONE_REGEX.test(value)) {
