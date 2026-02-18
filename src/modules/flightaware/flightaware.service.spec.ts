@@ -354,6 +354,30 @@ describe("FlightAwareService", () => {
         FlightAlreadyLandedException,
       );
     });
+
+    it("should treat empty destination IATA as missing and fallback DNMM to LOS for already-landed detection", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-123",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "" },
+              scheduled_on: "2025-12-25T10:00:00Z",
+              actual_on: "2025-12-25T12:00:00Z",
+              status: "Arrived",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T13:00:00Z"));
+
+      await expect(service.validateFlight("BA74", "2025-12-25")).rejects.toThrow(
+        FlightAlreadyLandedException,
+      );
+    });
   });
 
   describe("searchAirportPickupFlight", () => {
@@ -381,6 +405,33 @@ describe("FlightAwareService", () => {
       if (result.flight) {
         expect(result.flight.destination).toBe("DNMM");
         expect(result.flight.destinationIATA).toBeUndefined();
+      }
+    });
+
+    it("should allow pickup when destination IATA is empty and ICAO is DNMM", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-123",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "" },
+              scheduled_on: "2025-12-25T14:00:00Z",
+              estimated_on: "2025-12-25T14:30:00Z",
+              status: "En Route",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.searchAirportPickupFlight("BA74", "2025-12-25");
+      expect(result.flight).not.toBeNull();
+      if (result.flight) {
+        expect(result.flight.destination).toBe("DNMM");
+        expect(result.flight.destinationIATA).toBe("");
       }
     });
   });

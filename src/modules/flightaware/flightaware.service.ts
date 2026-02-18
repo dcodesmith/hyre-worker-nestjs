@@ -579,7 +579,8 @@ export class FlightAwareService implements OnModuleDestroy {
     destinationIATA: string | undefined,
     destinationICAO: string | undefined,
   ): string | undefined {
-    return destinationIATA ?? (destinationICAO === "DNMM" ? "LOS" : undefined);
+    const normalizedIata = destinationIATA?.trim();
+    return normalizedIata || (destinationICAO === "DNMM" ? "LOS" : undefined);
   }
 
   private toLocaleDateString(date: Date): string {
