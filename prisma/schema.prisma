@@ -211,6 +211,7 @@ model FlightStatusEvent {
 
   flight Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
 
+  @@unique([flightId, eventType, eventTime])
   @@index([flightId, eventTime])
   @@index([eventType])
   @@index([processed])

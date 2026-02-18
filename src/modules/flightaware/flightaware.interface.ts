@@ -1,3 +1,5 @@
+import { FlightStatus } from "@prisma/client";
+
 /**
  * FlightAware API Types and Interfaces
  */
@@ -115,3 +117,14 @@ export interface CreateAlertParams {
   destinationIATA?: string;
   events?: string[];
 }
+
+export type SearchFlightResult =
+  | { flight: null; message: string }
+  | { flight: ValidatedFlight; warning?: string };
+
+export type FlightAwareWebhookResult = {
+  duplicate: boolean;
+  flightId: string;
+  bookingCount: number;
+  newStatus: FlightStatus;
+};

@@ -1,9 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { HttpStatus, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
-import { differenceInDays, format } from "date-fns";
+import { differenceInDays, formatDistanceToNow } from "date-fns";
 import { EnvConfig } from "src/config/env.config";
-import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
 import { IATA_TO_ICAO_MAP } from "./flightaware.const";
 import {
@@ -13,12 +12,11 @@ import {
   InvalidFlightNumberException,
 } from "./flightaware.error";
 import type {
-  CreateAlertParams,
-  FlightAwareAlertResponse,
   FlightAwareFlightLeg,
   FlightAwareResponse,
   FlightAwareScheduledFlight,
   FlightAwareSchedulesResponse,
+  SearchFlightResult,
   ValidatedFlight,
 } from "./flightaware.interface";
 
@@ -56,7 +54,6 @@ export class FlightAwareService implements OnModuleDestroy {
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
-    private readonly databaseService: DatabaseService,
     private readonly httpClientService: HttpClientService,
   ) {
     this.apiKey = this.configService.get("FLIGHTAWARE_API_KEY", { infer: true });
@@ -146,6 +143,28 @@ export class FlightAwareService implements OnModuleDestroy {
     return this.handleFlightResult(result, normalizedFlightNumber, pickupDate);
   }
 
+  async searchAirportPickupFlight(
+    flightNumber: string,
+    pickupDate: string,
+  ): Promise<SearchFlightResult> {
+    const flight = await this.validateFlight(flightNumber, pickupDate);
+
+    if (flight.destinationIATA !== "LOS") {
+      const destinationName = flight.destinationIATA || flight.destination;
+      const originName = flight.originIATA || flight.origin;
+
+      return {
+        message: `Flight ${flightNumber.toUpperCase()} flies from ${originName} to ${destinationName}. We only provide airport pickup for flights arriving in Lagos (LOS).`,
+        flight: null,
+      };
+    }
+
+    return {
+      flight,
+      warning: this.getArrivalWarning(flight),
+    };
+  }
+
   /**
    * Convert internal flight result to either a ValidatedFlight or throw an exception.
    */
@@ -179,169 +198,27 @@ export class FlightAwareService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * Create a FlightAware alert for a flight
-   */
-  async createFlightAlert({
-    flightNumber,
-    flightDate,
-    destinationIATA,
-    events = ["arrival", "cancelled", "departure", "diverted"],
-  }: CreateAlertParams): Promise<string> {
-    const dateStr = format(flightDate, "yyyy-MM-dd");
-
-    this.logger.log("Creating FlightAware alert", {
-      flightNumber,
-      flightDate: dateStr,
-      events,
-    });
-
-    const requestBody: Record<string, unknown> = {
-      ident: flightNumber.toUpperCase(),
-      date_start: dateStr,
-      date_end: dateStr,
-      enabled: true,
-      events,
-    };
-
-    if (destinationIATA) {
-      requestBody.destination = destinationIATA;
-    }
-
-    try {
-      const response = await this.httpClient.post<FlightAwareAlertResponse>("/alerts", requestBody);
-
-      this.logger.log("FlightAware alert created", {
-        alertId: response.data.alert_id,
-        flightNumber: response.data.ident,
-      });
-
-      return response.data.alert_id;
-    } catch (error) {
-      const errorInfo = this.httpClientService.handleError(
-        error,
-        "createFlightAlert",
-        "FlightAware",
-      );
-
-      if (errorInfo.status === 401) {
-        throw new Error("FlightAware API authentication failed");
-      }
-      if (errorInfo.status === 429) {
-        throw new Error("FlightAware API rate limit exceeded");
-      }
-      throw new Error(`FlightAware API error: ${errorInfo.status || errorInfo.message}`);
-    }
-  }
-
-  /**
-   * Get or create alert for a flight with deduplication
-   */
-  async getOrCreateFlightAlert(flightId: string, params: CreateAlertParams): Promise<string> {
-    this.logger.log("Getting or creating flight alert", {
-      flightId,
-      flightNumber: params.flightNumber,
-    });
-
-    // Use advisory lock to prevent race conditions
-    // Simple hash with position weighting to reduce collisions
-    const lockId = Array.from(flightId).reduce(
-      (acc, char) => (acc * 31 + (char.codePointAt(0) ?? 0)) % 2147483647,
-      0,
+  private getArrivalWarning(flight: {
+    actualArrival?: string;
+    estimatedArrival?: string;
+    scheduledArrival: string;
+  }): string | undefined {
+    const arrivalTime = new Date(
+      flight.actualArrival ?? flight.estimatedArrival ?? flight.scheduledArrival,
     );
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
 
-    return this.databaseService.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_lock(${lockId})`;
-
-      try {
-        const flight = await tx.flight.findUnique({
-          where: { id: flightId },
-          select: { alertId: true, alertEnabled: true },
-        });
-
-        // Verify flight exists before making external API call to prevent orphaned alerts
-        if (!flight) {
-          throw new Error(`Flight with id ${flightId} not found in database`);
-        }
-
-        if (flight.alertId && flight.alertEnabled) {
-          this.logger.log("Flight already has active alert, reusing", {
-            flightId,
-            alertId: flight.alertId,
-          });
-          return flight.alertId;
-        }
-
-        // Critical section: create alert and update database while holding lock
-        // Lock must be held during both operations to prevent duplicate alerts
-        const alertId = await this.createFlightAlert(params);
-
-        await tx.flight.update({
-          where: { id: flightId },
-          data: { alertId, alertEnabled: true },
-        });
-
-        return alertId;
-      } finally {
-        // Release lock after critical section completes (createFlightAlert + tx.flight.update)
-        await tx.$executeRaw`SELECT pg_advisory_unlock(${lockId})`;
-      }
-    });
-  }
-
-  /**
-   * Disable/delete a FlightAware alert
-   */
-  async disableFlightAlert(alertId: string): Promise<void> {
-    this.logger.log("Disabling FlightAware alert", { alertId });
-
-    try {
-      await this.httpClient.delete(`/alerts/${alertId}`);
-      this.logger.log("FlightAware alert deleted", { alertId });
-    } catch (error) {
-      const errorInfo = this.httpClientService.handleError(
-        error,
-        "disableFlightAlert",
-        "FlightAware",
-      );
-
-      // 404 is acceptable (alert already deleted)
-      if (errorInfo.status === 404) {
-        this.logger.log("FlightAware alert already deleted", { alertId });
-        return;
-      }
-
-      if (errorInfo.status === 401) {
-        throw new Error("FlightAware API authentication failed");
-      }
-      throw new Error(`FlightAware API error: ${errorInfo.status || errorInfo.message}`);
-    }
-  }
-
-  /**
-   * Cleanup alert when flight is completed or all bookings cancelled
-   */
-  async cleanupFlightAlert(flightId: string): Promise<void> {
-    this.logger.log("Cleaning up flight alert", { flightId });
-
-    const flight = await this.databaseService.flight.findUnique({
-      where: { id: flightId },
-      select: { alertId: true, alertEnabled: true },
-    });
-
-    if (!flight?.alertId || !flight.alertEnabled) {
-      this.logger.log("Flight has no active alert to cleanup", { flightId });
-      return;
+    if (arrivalTime < now) {
+      return "This flight has already landed.";
     }
 
-    await this.disableFlightAlert(flight.alertId);
+    if (arrivalTime < oneHourFromNow) {
+      const timeUntilArrival = formatDistanceToNow(arrivalTime, { addSuffix: false });
+      return `This flight arrives in ${timeUntilArrival}. We require at least 1 hour advance notice to arrange an airport pickup. For immediate pickup needs, please contact us directly.`;
+    }
 
-    await this.databaseService.flight.update({
-      where: { id: flightId },
-      data: { alertEnabled: false },
-    });
-
-    this.logger.log("Flight alert cleaned up", { flightId, alertId: flight.alertId });
+    return undefined;
   }
 
   /**
@@ -487,11 +364,13 @@ export class FlightAwareService implements OnModuleDestroy {
     const errorInfo = this.httpClientService.handleError(error, operation, "FlightAware");
     this.logger.warn("FlightAware API error", { operation, status: errorInfo.status, flightNum });
 
-    if (errorInfo.status === 404) return { type: "notFound" };
-    if (errorInfo.status === 401) {
+    if (errorInfo.status === HttpStatus.NOT_FOUND) {
+      return { type: "notFound" };
+    }
+    if (errorInfo.status === HttpStatus.UNAUTHORIZED) {
       return { type: "error", message: "FlightAware API authentication failed" };
     }
-    if (errorInfo.status === 429) {
+    if (errorInfo.status === HttpStatus.TOO_MANY_REQUESTS) {
       return { type: "error", message: "FlightAware API rate limit exceeded" };
     }
 

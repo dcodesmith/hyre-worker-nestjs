@@ -2,14 +2,14 @@ import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
-import { FlightAwareService } from "./flightaware.service";
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
+import { FlightAwareAlertService } from "./flightaware-alert.service";
 
 @Processor(FLIGHT_ALERTS_QUEUE)
 export class FlightAlertProcessor extends WorkerHost {
   private readonly logger = new Logger(FlightAlertProcessor.name);
 
-  constructor(private readonly flightAwareService: FlightAwareService) {
+  constructor(private readonly flightAwareAlertService: FlightAwareAlertService) {
     super();
   }
 
@@ -22,11 +22,14 @@ export class FlightAlertProcessor extends WorkerHost {
 
     try {
       if (job.name === CREATE_FLIGHT_ALERT_JOB) {
-        const alertId = await this.flightAwareService.getOrCreateFlightAlert(job.data.flightId, {
-          flightNumber: job.data.flightNumber,
-          flightDate: new Date(job.data.flightDate),
-          destinationIATA: job.data.destinationIATA,
-        });
+        const alertId = await this.flightAwareAlertService.getOrCreateFlightAlert(
+          job.data.flightId,
+          {
+            flightNumber: job.data.flightNumber,
+            flightDate: new Date(job.data.flightDate),
+            destinationIATA: job.data.destinationIATA,
+          },
+        );
 
         this.logger.log("Flight alert created successfully", {
           flightId: job.data.flightId,
