@@ -49,7 +49,7 @@ describe("Auth E2E Tests", () => {
       const response = await request(app.getHttpServer()).get("/auth/session");
 
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
-      expect(response.body.message).toBe("Not authenticated");
+      expect(response.body.detail).toBe("Not authenticated");
     });
 
     it("should return 401 with invalid cookie", async () => {
@@ -58,7 +58,7 @@ describe("Auth E2E Tests", () => {
         .set("Cookie", "better-auth.session_token=invalid-token");
 
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
-      expect(response.body.message).toBe("Not authenticated");
+      expect(response.body.detail).toBe("Not authenticated");
     });
   });
 

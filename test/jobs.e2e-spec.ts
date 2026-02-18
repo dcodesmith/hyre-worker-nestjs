@@ -51,13 +51,14 @@ describe("Jobs E2E Tests", () => {
 
       const secondResponse = await request(app.getHttpServer()).post(endpoint);
 
-      expect(secondResponse.body).toStrictEqual({
-        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      expect(secondResponse.body).toMatchObject({
+        type: "JOB.RATE_LIMIT.EXCEEDED",
+        title: "Application Error",
+        status: HttpStatus.TOO_MANY_REQUESTS,
         errorCode: "JOB.RATE_LIMIT.EXCEEDED",
-        message: `Rate limit exceeded for job type: ${type}`,
+        detail: `Rate limit exceeded for job type: ${type}`,
         details: { jobType: type, retryAfter: expect.any(Number) },
-        timestamp: expect.any(String),
-        path: endpoint,
+        instance: endpoint,
       });
 
       // Verify retryAfter is approximately 1 hour from now (3600 seconds)

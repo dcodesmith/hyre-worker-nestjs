@@ -109,7 +109,7 @@ describe("Payments E2E Tests", () => {
         });
 
       expect(response.status).toBe(HttpStatus.NOT_FOUND);
-      expect(response.body.message).toBe("Booking not found");
+      expect(response.body.detail).toBe("Booking not found");
     });
 
     it("should reject payment for booking owned by another user", async () => {
@@ -124,7 +124,7 @@ describe("Payments E2E Tests", () => {
         });
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toContain("permission");
+      expect(response.body.detail).toContain("permission");
     });
   });
 
@@ -164,7 +164,7 @@ describe("Payments E2E Tests", () => {
         .set("Cookie", otherUserCookie);
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toContain("permission");
+      expect(response.body.detail).toContain("permission");
     });
   });
 
@@ -189,7 +189,7 @@ describe("Payments E2E Tests", () => {
         .send({ amount: 25000, reason: "Customer cancellation" });
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toContain("permission");
+      expect(response.body.detail).toContain("permission");
     });
 
     it("should initiate refund for booking owner", async () => {
@@ -230,7 +230,7 @@ describe("Payments E2E Tests", () => {
         .send({ amount: 25000, reason: "Customer cancellation" });
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toContain("not successful");
+      expect(response.body.detail).toContain("not successful");
     });
 
     it("should reject refund amount exceeding payment amount", async () => {
@@ -246,7 +246,7 @@ describe("Payments E2E Tests", () => {
         .send({ amount: 100000, reason: "Too much refund" });
 
       expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-      expect(response.body.message).toContain("exceed");
+      expect(response.body.detail).toContain("exceed");
     });
   });
 

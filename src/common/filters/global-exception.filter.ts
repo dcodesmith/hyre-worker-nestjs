@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { AppException } from "../errors/app.exception";
+import type { ProblemDetails } from "../errors/problem-details.interface";
 
 /**
  * Global exception filter that catches all exceptions in the application.
@@ -38,71 +39,153 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const httpStatus =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    // Extract error code and details if this is an AppException
-    let errorCode: string | undefined;
-    let details: Record<string, unknown> | undefined;
-    let errors: unknown[] | undefined;
+    const instance = httpAdapter.getRequestUrl(request);
+    const problem = this.toProblemDetails(exception, httpStatus, instance);
 
-    if (exception instanceof AppException) {
-      errorCode = exception.getErrorCode();
-      details = exception.getDetails();
-    }
-
-    // Extract validation errors from HttpException response
-    if (exception instanceof HttpException) {
-      const response = exception.getResponse();
-      if (typeof response === "object" && response !== null && "errors" in response) {
-        errors = (response as { errors: unknown[] }).errors;
-      }
-    }
-
-    // Determine error message
-    const message = this.extractMessage(exception);
-
-    // Log error with full context (including error code if present)
-    this.logError(exception, request, httpStatus, errorCode);
-
-    // Build error response with error code and details
-    const responseBody = {
-      statusCode: httpStatus,
-      ...(errorCode && { errorCode }), // Include error code if present
-      message,
-      timestamp: new Date().toISOString(),
-      path: httpAdapter.getRequestUrl(request),
-      ...(details && { details }), // Include details if present
-      ...(errors && { errors }), // Include validation errors if present
-    };
-
-    httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+    this.logError(exception, request, httpStatus, problem.errorCode);
+    httpAdapter.reply(ctx.getResponse(), problem, httpStatus);
   }
 
-  private extractMessage(exception: unknown): string {
-    if (!(exception instanceof HttpException)) {
-      return exception instanceof Error ? exception.message : "Internal server error";
+  private toProblemDetails(
+    exception: unknown,
+    httpStatus: number,
+    instance: string,
+  ): ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
+    if (exception instanceof AppException) {
+      return {
+        ...exception.getProblemDetails(),
+        instance,
+      };
     }
 
+    if (exception instanceof HttpException) {
+      return this.toHttpExceptionProblemDetails(exception, httpStatus, instance);
+    }
+
+    return {
+      type: "INTERNAL_SERVER_ERROR",
+      title: "Internal Server Error",
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      detail: exception instanceof Error ? exception.message : "Internal server error",
+      instance,
+    };
+  }
+
+  private toHttpExceptionProblemDetails(
+    exception: HttpException,
+    httpStatus: number,
+    instance: string,
+  ): ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
     const response = exception.getResponse();
-    if (typeof response === "string") {
-      return response;
+    const title = this.httpStatusTitle(httpStatus);
+
+    if (this.isProblemDetailsResponse(response)) {
+      return {
+        ...response,
+        status: httpStatus,
+        instance,
+      };
     }
 
     if (typeof response === "object" && response !== null) {
-      const { message: responseMessage, error } = response as {
-        message?: unknown;
-        error?: unknown;
-      };
-
-      if (typeof responseMessage === "string") return responseMessage;
-      if (Array.isArray(responseMessage)) {
-        return responseMessage
-          .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-          .join(", ");
-      }
-      if (responseMessage !== undefined) return String(responseMessage);
-      if (typeof error === "string") return error;
+      return this.mapHttpObjectResponse(response, httpStatus, instance, title);
     }
 
-    return exception.message;
+    return {
+      type: title,
+      title,
+      status: httpStatus,
+      detail: typeof response === "string" ? response : "HTTP error occurred",
+      instance,
+    };
+  }
+
+  private mapHttpObjectResponse(
+    response: object,
+    httpStatus: number,
+    instance: string,
+    title: string,
+  ): ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
+    const mapped = response as {
+      detail?: unknown;
+      type?: unknown;
+      title?: unknown;
+      message?: unknown;
+      error?: unknown;
+      errors?: unknown[];
+      details?: Record<string, unknown>;
+      errorCode?: string;
+    };
+
+    return {
+      type:
+        (typeof mapped.type === "string" ? mapped.type : undefined) ?? mapped.errorCode ?? title,
+      title: (typeof mapped.title === "string" ? mapped.title : undefined) ?? title,
+      status: httpStatus,
+      detail:
+        (typeof mapped.detail === "string" ? mapped.detail : undefined) ??
+        this.extractDetail(mapped.message, mapped.error),
+      instance,
+      ...(mapped.errorCode && { errorCode: mapped.errorCode }),
+      ...(mapped.errors && { errors: mapped.errors }),
+      ...(mapped.details && { details: mapped.details }),
+    };
+  }
+
+  private isProblemDetailsResponse(response: unknown): response is ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
+    if (typeof response !== "object" || response === null) {
+      return false;
+    }
+
+    return (
+      "type" in response &&
+      typeof response.type === "string" &&
+      "title" in response &&
+      typeof response.title === "string" &&
+      "status" in response &&
+      typeof response.status === "number" &&
+      "detail" in response &&
+      typeof response.detail === "string"
+    );
+  }
+
+  private extractDetail(message?: unknown, error?: unknown): string {
+    if (typeof message === "string") {
+      return message;
+    }
+    if (Array.isArray(message)) {
+      return message
+        .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+        .join(", ");
+    }
+    if (message !== undefined) {
+      return String(message);
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+
+    return "Request failed";
+  }
+
+  private httpStatusTitle(httpStatus: number): string {
+    return HttpStatus[httpStatus] ?? "HTTP Error";
   }
 
   /**

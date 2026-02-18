@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { BookingController } from "./booking.controller";
@@ -12,14 +13,15 @@ import {
   createBookingSchema,
   createGuestBookingSchema,
 } from "./dto/create-booking.dto";
-import { BookingZodValidationPipe } from "./pipes/zod-validation.pipe";
 
 /**
  * Helper function to validate booking input (simulates the decorator behavior)
  */
 function validateBookingInput(rawBody: unknown, isAuthenticated: boolean): CreateBookingInput {
   const schema = isAuthenticated ? createBookingSchema : createGuestBookingSchema;
-  const pipe = new BookingZodValidationPipe(schema);
+  const pipe = new ZodValidationPipe(schema, {
+    exceptionFactory: (errors) => new BookingValidationException(errors),
+  });
   return pipe.transform(rawBody);
 }
 

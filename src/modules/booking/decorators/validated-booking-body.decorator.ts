@@ -1,12 +1,13 @@
 import { createParamDecorator, type ExecutionContext } from "@nestjs/common";
 import type { Request } from "express";
+import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { AUTH_SESSION_KEY, type AuthSession } from "../../auth/guards/session.guard";
+import { BookingValidationException } from "../booking.error";
 import {
   type CreateBookingInput,
   createBookingSchema,
   createGuestBookingSchema,
 } from "../dto/create-booking.dto";
-import { BookingZodValidationPipe } from "../pipes/zod-validation.pipe";
 
 // Extend Express Request type to include custom properties from guards
 interface RequestWithAuthSession extends Request {
@@ -14,8 +15,12 @@ interface RequestWithAuthSession extends Request {
 }
 
 // Reuse pipe instances to avoid creating new objects on every request
-const authenticatedPipe = new BookingZodValidationPipe(createBookingSchema);
-const guestPipe = new BookingZodValidationPipe(createGuestBookingSchema);
+const authenticatedPipe = new ZodValidationPipe(createBookingSchema, {
+  exceptionFactory: (errors) => new BookingValidationException(errors),
+});
+const guestPipe = new ZodValidationPipe(createGuestBookingSchema, {
+  exceptionFactory: (errors) => new BookingValidationException(errors),
+});
 
 /**
  * Custom parameter decorator that validates booking input with the appropriate schema

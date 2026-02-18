@@ -12,7 +12,7 @@ export class JobException extends AppException {
     status: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
     details?: Record<string, unknown>,
   ) {
-    super(errorCode, message, status, details);
+    super(errorCode, message, status, details ? { details } : undefined);
   }
 }
 

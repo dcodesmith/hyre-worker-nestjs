@@ -1,17 +1,14 @@
 import {
-  Body,
   Controller,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
-  Param,
   Post,
   Put,
-  Query,
   UseGuards,
 } from "@nestjs/common";
-import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import { ADMIN } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -48,7 +45,7 @@ export class ReviewsController {
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(SessionGuard)
   async createReview(
-    @Body(new ZodValidationPipe(createReviewSchema)) body: CreateReviewDto,
+    @ZodBody(createReviewSchema) body: CreateReviewDto,
     @CurrentUser() user: AuthSession["user"],
   ) {
     return this.reviewsWriteService.createReview(user.id, body);
@@ -56,39 +53,35 @@ export class ReviewsController {
 
   @Get("car/:carId")
   async getCarReviews(
-    @Param("carId", new ZodValidationPipe(carIdParamSchema)) carId: string,
-    @Query(new ZodValidationPipe(reviewQuerySchema)) query: ReviewQueryDto,
+    @ZodParam("carId", carIdParamSchema) carId: string,
+    @ZodQuery(reviewQuerySchema) query: ReviewQueryDto,
   ) {
     return this.reviewsReadService.getCarReviews(carId, query);
   }
 
   @Get("chauffeur/:chauffeurId")
   async getChauffeurReviews(
-    @Param("chauffeurId", new ZodValidationPipe(chauffeurIdParamSchema)) chauffeurId: string,
-    @Query(new ZodValidationPipe(reviewQuerySchema)) query: ReviewQueryDto,
+    @ZodParam("chauffeurId", chauffeurIdParamSchema) chauffeurId: string,
+    @ZodQuery(reviewQuerySchema) query: ReviewQueryDto,
   ) {
     return this.reviewsReadService.getChauffeurReviews(chauffeurId, query);
   }
 
   @Get("booking/:bookingId")
-  async getReviewByBooking(
-    @Param("bookingId", new ZodValidationPipe(bookingIdParamSchema)) bookingId: string,
-  ) {
+  async getReviewByBooking(@ZodParam("bookingId", bookingIdParamSchema) bookingId: string) {
     return this.reviewsReadService.getReviewByBookingId(bookingId);
   }
 
   @Get(":reviewId")
-  async getReviewById(
-    @Param("reviewId", new ZodValidationPipe(reviewIdParamSchema)) reviewId: string,
-  ) {
+  async getReviewById(@ZodParam("reviewId", reviewIdParamSchema) reviewId: string) {
     return this.reviewsReadService.getReviewById(reviewId);
   }
 
   @Put(":reviewId")
   @UseGuards(SessionGuard)
   async updateReview(
-    @Param("reviewId", new ZodValidationPipe(reviewIdParamSchema)) reviewId: string,
-    @Body(new ZodValidationPipe(updateReviewSchema)) body: UpdateReviewDto,
+    @ZodParam("reviewId", reviewIdParamSchema) reviewId: string,
+    @ZodBody(updateReviewSchema) body: UpdateReviewDto,
     @CurrentUser() user: AuthSession["user"],
   ) {
     return this.reviewsWriteService.updateReview(user.id, reviewId, body);
@@ -98,8 +91,8 @@ export class ReviewsController {
   @UseGuards(SessionGuard, RoleGuard)
   @Roles(ADMIN)
   async hideReview(
-    @Param("reviewId", new ZodValidationPipe(reviewIdParamSchema)) reviewId: string,
-    @Body(new ZodValidationPipe(hideReviewSchema)) body: HideReviewDto,
+    @ZodParam("reviewId", reviewIdParamSchema) reviewId: string,
+    @ZodBody(hideReviewSchema) body: HideReviewDto,
     @CurrentUser() user: AuthSession["user"],
   ) {
     return this.reviewsModerationService.hideReview(reviewId, user.id, body.moderationNotes);
