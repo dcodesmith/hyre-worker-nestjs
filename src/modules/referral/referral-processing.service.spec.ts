@@ -41,6 +41,7 @@ describe("ReferralProcessingService", () => {
             },
             $transaction: vi.fn(),
             userReferralStats: {
+              findUnique: vi.fn(),
               upsert: vi.fn(),
             },
           },
@@ -305,6 +306,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -356,6 +358,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -394,6 +397,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -534,6 +538,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -577,6 +582,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -610,6 +616,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: vi.fn().mockResolvedValue({}),
           },
         };
@@ -678,6 +685,7 @@ describe("ReferralProcessingService", () => {
             update: mockBookingUpdate,
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue(null),
             upsert: mockStatsUpsert,
           },
         };
@@ -712,10 +720,13 @@ describe("ReferralProcessingService", () => {
         },
         update: {
           totalRewardsGranted: { increment: 1000 },
-          totalRewardsPending: { decrement: 1000 },
+          totalRewardsPending: expect.anything(),
           lastReferralAt: expect.any(Date),
         },
       });
+
+      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
+      expect(firstCall.update.totalRewardsPending.toString()).toBe("0");
     });
 
     it("should successfully release reward and update existing referrer stats", async () => {
@@ -745,6 +756,7 @@ describe("ReferralProcessingService", () => {
             update: vi.fn().mockResolvedValue({}),
           },
           userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue({ totalRewardsPending: 1000 }),
             upsert: mockStatsUpsert,
           },
         };
@@ -760,10 +772,55 @@ describe("ReferralProcessingService", () => {
         create: expect.anything(),
         update: {
           totalRewardsGranted: { increment: 500 },
-          totalRewardsPending: { decrement: 500 },
+          totalRewardsPending: expect.anything(),
           lastReferralAt: expect.any(Date),
         },
       });
+
+      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
+      expect(firstCall.update.totalRewardsPending.toString()).toBe("500");
+    });
+
+    it("should clamp totalRewardsPending to zero when pending amount exceeds current stats", async () => {
+      const mockStatsUpsert = vi.fn().mockResolvedValue({});
+
+      const mockTransaction = vi.fn(async (callback) => {
+        const mockTx = {
+          referralReward: {
+            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
+              id: "reward-123",
+              bookingId: "booking-123",
+              referrerUserId: "referrer-123",
+              amount: 500,
+              status: ReferralRewardStatus.PENDING,
+            }),
+            update: vi.fn().mockResolvedValue({}),
+          },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: "user-123",
+              referralSignupAt: new Date(),
+              referralDiscountUsed: true,
+            }),
+            update: vi.fn().mockResolvedValue({}),
+          },
+          booking: {
+            update: vi.fn().mockResolvedValue({}),
+          },
+          userReferralStats: {
+            findUnique: vi.fn().mockResolvedValue({ totalRewardsPending: 100 }),
+            upsert: mockStatsUpsert,
+          },
+        };
+        return callback(mockTx);
+      });
+
+      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
+
+      await service.processReferralCompletionForBooking("booking-123");
+
+      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
+      expect(firstCall.update.totalRewardsPending.toString()).toBe("0");
     });
   });
 

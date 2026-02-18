@@ -1,6 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { BookingReferralStatus, ReferralRewardStatus } from "@prisma/client";
+import { BookingReferralStatus, Prisma, ReferralRewardStatus } from "@prisma/client";
 import { Queue } from "bullmq";
 import { REFERRAL_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
@@ -175,6 +175,14 @@ export class ReferralProcessingService {
           data: { referralStatus: BookingReferralStatus.REWARDED },
         });
 
+        const currentStats = await tx.userReferralStats.findUnique({
+          where: { userId: pendingReward.referrerUserId },
+          select: { totalRewardsPending: true },
+        });
+        const currentPending = new Prisma.Decimal(currentStats?.totalRewardsPending ?? 0);
+        const computedPending = currentPending.minus(pendingReward.amount);
+        const newPending = computedPending.lessThan(0) ? new Prisma.Decimal(0) : computedPending;
+
         await tx.userReferralStats.upsert({
           where: { userId: pendingReward.referrerUserId },
           create: {
@@ -186,7 +194,7 @@ export class ReferralProcessingService {
           },
           update: {
             totalRewardsGranted: { increment: pendingReward.amount },
-            totalRewardsPending: { decrement: pendingReward.amount },
+            totalRewardsPending: newPending,
             lastReferralAt: new Date(),
           },
         });
