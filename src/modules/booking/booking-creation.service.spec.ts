@@ -138,7 +138,6 @@ describe("BookingCreationService", () => {
           provide: FlightAwareService,
           useValue: {
             validateFlight: vi.fn(),
-            getOrCreateFlightAlert: vi.fn(),
           },
         },
         {
@@ -503,8 +502,6 @@ describe("BookingCreationService", () => {
         paymentIntentId: "pi-123",
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
       });
-
-      vi.mocked(flightAwareService.getOrCreateFlightAlert).mockResolvedValue("alert-123");
 
       const booking = createBookingInput({
         bookingType: "AIRPORT_PICKUP",

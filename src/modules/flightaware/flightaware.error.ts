@@ -1,5 +1,5 @@
-import { HttpException, HttpStatus } from "@nestjs/common";
-import type { ProblemDetails } from "src/common/errors/problem-details.interface";
+import { HttpStatus } from "@nestjs/common";
+import { AppException } from "../../common/errors/app.exception";
 
 /**
  * Error codes for FlightAware-related errors.
@@ -10,15 +10,18 @@ export const FlightAwareErrorCode = {
   FLIGHT_ALREADY_LANDED: "FLIGHT_ALREADY_LANDED",
   INVALID_FLIGHT_NUMBER: "INVALID_FLIGHT_NUMBER",
   API_ERROR: "FLIGHTAWARE_API_ERROR",
+  FLIGHT_RECORD_NOT_FOUND: "FLIGHT_RECORD_NOT_FOUND",
 } as const;
 
 /**
  * Base exception for FlightAware-related errors.
- * Uses RFC 7807 Problem Details format.
  */
-export class FlightAwareException extends HttpException {
-  constructor(problemDetails: ProblemDetails) {
-    super(problemDetails, problemDetails.status);
+export class FlightAwareException extends AppException {
+  constructor(errorCode: string, detail: string, status: HttpStatus, title: string) {
+    super(errorCode, detail, status, {
+      type: errorCode,
+      title,
+    });
   }
 }
 
@@ -27,12 +30,12 @@ export class FlightAwareException extends HttpException {
  */
 export class FlightNotFoundException extends FlightAwareException {
   constructor(flightNumber: string, date: string) {
-    super({
-      type: FlightAwareErrorCode.FLIGHT_NOT_FOUND,
-      title: "Flight Not Found",
-      status: HttpStatus.BAD_REQUEST,
-      detail: `Flight ${flightNumber} not found for ${date}. Please verify the flight number and date.`,
-    });
+    super(
+      FlightAwareErrorCode.FLIGHT_NOT_FOUND,
+      `Flight ${flightNumber} not found for ${date}. Please verify the flight number and date.`,
+      HttpStatus.NOT_FOUND,
+      "Flight Not Found",
+    );
   }
 }
 
@@ -45,12 +48,12 @@ export class FlightAlreadyLandedException extends FlightAwareException {
       ? `Flight ${flightNumber} has already landed at ${landedTime}. The next flight is on ${nextFlightDate}.`
       : `Flight ${flightNumber} has already landed at ${landedTime}.`;
 
-    super({
-      type: FlightAwareErrorCode.FLIGHT_ALREADY_LANDED,
-      title: "Flight Already Landed",
-      status: HttpStatus.BAD_REQUEST,
+    super(
+      FlightAwareErrorCode.FLIGHT_ALREADY_LANDED,
       detail,
-    });
+      HttpStatus.CONFLICT,
+      "Flight Already Landed",
+    );
   }
 }
 
@@ -59,12 +62,12 @@ export class FlightAlreadyLandedException extends FlightAwareException {
  */
 export class InvalidFlightNumberException extends FlightAwareException {
   constructor(flightNumber: string) {
-    super({
-      type: FlightAwareErrorCode.INVALID_FLIGHT_NUMBER,
-      title: "Invalid Flight Number",
-      status: HttpStatus.BAD_REQUEST,
-      detail: `Invalid flight number format: ${flightNumber}. Expected format: 2-3 alphanumeric airline code + 1-5 digits (e.g., BA74, AA123)`,
-    });
+    super(
+      FlightAwareErrorCode.INVALID_FLIGHT_NUMBER,
+      `Invalid flight number format: ${flightNumber}. Expected format: 2-3 alphanumeric airline code + 1-5 digits (e.g., BA74, AA123)`,
+      HttpStatus.BAD_REQUEST,
+      "Invalid Flight Number",
+    );
   }
 }
 
@@ -73,11 +76,17 @@ export class InvalidFlightNumberException extends FlightAwareException {
  */
 export class FlightAwareApiException extends FlightAwareException {
   constructor(message: string) {
-    super({
-      type: FlightAwareErrorCode.API_ERROR,
-      title: "Flight Validation Error",
-      status: HttpStatus.BAD_GATEWAY,
-      detail: message,
-    });
+    super(FlightAwareErrorCode.API_ERROR, message, HttpStatus.BAD_GATEWAY, "FlightAware API Error");
+  }
+}
+
+export class FlightRecordNotFoundException extends FlightAwareException {
+  constructor(flightId: string) {
+    super(
+      FlightAwareErrorCode.FLIGHT_RECORD_NOT_FOUND,
+      `Flight with id ${flightId} was not found in the database.`,
+      HttpStatus.NOT_FOUND,
+      "Flight Record Not Found",
+    );
   }
 }

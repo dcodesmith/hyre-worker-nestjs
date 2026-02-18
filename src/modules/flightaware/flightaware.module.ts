@@ -5,8 +5,12 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { DatabaseModule } from "../database/database.module";
+import { FlightAwareController } from "./flightaware.controller";
 import { FlightAwareService } from "./flightaware.service";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
+import { FlightAwareAlertService } from "./flightaware-alert.service";
+import { FlightAwareWebhookService } from "./flightaware-webhook.service";
+import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
 
 @Module({
   imports: [
@@ -29,7 +33,14 @@ import { FlightAlertProcessor } from "./flightaware-alert.processor";
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [FlightAwareService, FlightAlertProcessor],
-  exports: [FlightAwareService, BullModule],
+  controllers: [FlightAwareController],
+  providers: [
+    FlightAwareService,
+    FlightAwareAlertService,
+    FlightAlertProcessor,
+    FlightAwareWebhookService,
+    FlightAwareWebhookGuard,
+  ],
+  exports: [FlightAwareService, FlightAwareAlertService, BullModule],
 })
 export class FlightAwareModule {}

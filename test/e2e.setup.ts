@@ -1,6 +1,6 @@
+import { execSync } from "node:child_process";
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, StartedRedisContainer } from "@testcontainers/redis";
-import { execSync } from "node:child_process";
 
 let pgContainer: StartedPostgreSqlContainer;
 let redisContainer: StartedRedisContainer;
@@ -35,6 +35,7 @@ export async function setup() {
     process.env.SESSION_SECRET = "e2e-test-session-secret-at-least-32-chars";
     process.env.AUTH_BASE_URL = "http://localhost:3000";
     process.env.TRUSTED_ORIGINS = "http://localhost:3000, http://localhost:5173";
+    process.env.FLIGHTAWARE_WEBHOOK_SECRET = "e2e-test-flightaware-webhook-secret";
 
     const prismaEnv = { ...process.env, DATABASE_URL: databaseUrl };
 

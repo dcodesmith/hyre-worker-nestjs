@@ -3,13 +3,13 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CREATE_FLIGHT_ALERT_JOB } from "../../config/constants";
-import { FlightAwareService } from "./flightaware.service";
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
+import { FlightAwareAlertService } from "./flightaware-alert.service";
 
 describe("FlightAlertProcessor", () => {
   let processor: FlightAlertProcessor;
-  let flightAwareService: FlightAwareService;
+  let flightAwareAlertService: FlightAwareAlertService;
 
   beforeAll(() => {
     Logger.overrideLogger([]);
@@ -31,7 +31,7 @@ describe("FlightAlertProcessor", () => {
       providers: [
         FlightAlertProcessor,
         {
-          provide: FlightAwareService,
+          provide: FlightAwareAlertService,
           useValue: {
             getOrCreateFlightAlert: vi.fn(),
           },
@@ -40,7 +40,7 @@ describe("FlightAlertProcessor", () => {
     }).compile();
 
     processor = module.get<FlightAlertProcessor>(FlightAlertProcessor);
-    flightAwareService = module.get<FlightAwareService>(FlightAwareService);
+    flightAwareAlertService = module.get<FlightAwareAlertService>(FlightAwareAlertService);
   });
   describe("process", () => {
     it("should call getOrCreateFlightAlert with correct params", async () => {
@@ -50,12 +50,12 @@ describe("FlightAlertProcessor", () => {
         data: mockJobData,
       } as Job<FlightAlertJobData, void, string>;
 
-      vi.mocked(flightAwareService.getOrCreateFlightAlert).mockResolvedValue("alert-456");
+      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockResolvedValue("alert-456");
 
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
-      expect(flightAwareService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-123", {
+      expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-123", {
         flightNumber: "BA74",
         flightDate: new Date("2025-12-25T10:00:00.000Z"),
         destinationIATA: "LOS",
@@ -75,12 +75,12 @@ describe("FlightAlertProcessor", () => {
         data: jobData,
       } as Job<FlightAlertJobData, void, string>;
 
-      vi.mocked(flightAwareService.getOrCreateFlightAlert).mockResolvedValue("alert-789");
+      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockResolvedValue("alert-789");
 
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
-      expect(flightAwareService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-789", {
+      expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-789", {
         flightNumber: "AA100",
         flightDate: new Date("2025-12-25T10:00:00.000Z"),
         destinationIATA: undefined,
@@ -97,7 +97,7 @@ describe("FlightAlertProcessor", () => {
       await expect(processor.process(job)).rejects.toThrow(
         "Unknown flight alert job type: unknown-job-type",
       );
-      expect(flightAwareService.getOrCreateFlightAlert).not.toHaveBeenCalled();
+      expect(flightAwareAlertService.getOrCreateFlightAlert).not.toHaveBeenCalled();
     });
 
     it("should re-throw errors to trigger retry mechanism", async () => {
@@ -107,7 +107,7 @@ describe("FlightAlertProcessor", () => {
         data: mockJobData,
       } as Job<FlightAlertJobData, void, string>;
 
-      vi.mocked(flightAwareService.getOrCreateFlightAlert).mockRejectedValue(
+      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockRejectedValue(
         new Error("FlightAware API rate limit exceeded"),
       );
 

@@ -62,6 +62,7 @@ export const envSchema = z.object({
 
   // FlightAware configuration (for airport pickup flight validation)
   FLIGHTAWARE_API_KEY: z.string().min(1, "FLIGHTAWARE_API_KEY is required"),
+  FLIGHTAWARE_WEBHOOK_SECRET: z.string().min(1, "FLIGHTAWARE_WEBHOOK_SECRET is required"),
 
   // Google Maps configuration (for drive time calculations)
   GOOGLE_DISTANCE_MATRIX_API_KEY: z.string().min(1, "GOOGLE_DISTANCE_MATRIX_API_KEY is required"),

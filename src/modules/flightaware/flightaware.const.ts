@@ -2,6 +2,8 @@
  * IATA to ICAO airline code mapping for airlines flying to Nigeria
  * Used as fallback when FlightAware doesn't find the flight with IATA code
  */
+export const FLIGHT_NUMBER_REGEX = /^[A-Z0-9]{2,3}\d{1,5}$/i;
+
 export const IATA_TO_ICAO_MAP: Record<string, string> = {
   // International carriers
   AF: "AFR", // Air France
