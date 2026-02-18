@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { FlightStatus, Prisma } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
-import { apEventTypeToStatus, FlightAwareWebhookResult } from "./flightaware.interface";
+import { FlightAwareWebhookResult, MapEventTypeToStatus } from "./flightaware.interface";
 
 @Injectable()
 export class FlightAwareWebhookService {
@@ -157,7 +157,7 @@ export class FlightAwareWebhookService {
     flightId,
     callSign,
     eventTime,
-  }: apEventTypeToStatus): FlightStatus {
+  }: MapEventTypeToStatus): FlightStatus {
     const normalizedEventType = eventType.toLowerCase();
 
     if (normalizedEventType.includes("departure") || normalizedEventType === "departed") {

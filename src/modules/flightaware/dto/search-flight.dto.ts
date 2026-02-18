@@ -1,6 +1,6 @@
 import { z } from "zod";
+import { FLIGHT_NUMBER_REGEX } from "../flightaware.const";
 
-const FLIGHT_NUMBER_REGEX = /^[A-Z0-9]{2,3}\d{1,5}$/i;
 const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_DATETIME_WITH_TIMEZONE_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;

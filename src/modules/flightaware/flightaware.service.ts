@@ -4,7 +4,7 @@ import { AxiosInstance } from "axios";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
 import { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
-import { IATA_TO_ICAO_MAP } from "./flightaware.const";
+import { FLIGHT_NUMBER_REGEX, IATA_TO_ICAO_MAP } from "./flightaware.const";
 import {
   FlightAlreadyLandedException,
   FlightAwareApiException,
@@ -144,8 +144,12 @@ export class FlightAwareService implements OnModuleDestroy {
     pickupDate: string,
   ): Promise<SearchFlightResult> {
     const flight = await this.validateFlight(flightNumber, pickupDate);
+    const destinationCode = this.normalizeDestinationCode(
+      flight.destinationIATA,
+      flight.destination,
+    );
 
-    if (!flight.destinationIATA || !SUPPORTED_PICKUP_DESTINATIONS.has(flight.destinationIATA)) {
+    if (!destinationCode || !SUPPORTED_PICKUP_DESTINATIONS.has(destinationCode)) {
       const destinationName = flight.destinationIATA || flight.destination;
       const originName = flight.originIATA || flight.origin;
 
@@ -221,8 +225,7 @@ export class FlightAwareService implements OnModuleDestroy {
    * Validate flight number format
    */
   isValidFlightNumberFormat(flightNumber: string): boolean {
-    const pattern = /^[a-zA-Z0-9]{2,3}\d{1,5}$/;
-    return pattern.test(flightNumber);
+    return FLIGHT_NUMBER_REGEX.test(flightNumber);
   }
 
   // Private methods
@@ -551,9 +554,12 @@ export class FlightAwareService implements OnModuleDestroy {
     flightNumber: string,
     nextFlightDate: string | null,
   ): InternalFlightResult | null {
-    const destinationIATA = landedFlight.destination.code_iata;
+    const destinationCode = this.normalizeDestinationCode(
+      landedFlight.destination.code_iata,
+      landedFlight.destination.code,
+    );
 
-    if (!SUPPORTED_ALREADY_LANDED_DESTINATIONS.has(destinationIATA)) {
+    if (!destinationCode || !SUPPORTED_ALREADY_LANDED_DESTINATIONS.has(destinationCode)) {
       return null;
     }
 
@@ -567,6 +573,13 @@ export class FlightAwareService implements OnModuleDestroy {
       landedTime,
       nextFlightDate: nextFlightDate ?? undefined,
     };
+  }
+
+  private normalizeDestinationCode(
+    destinationIATA: string | undefined,
+    destinationICAO: string | undefined,
+  ): string | undefined {
+    return destinationIATA ?? (destinationICAO === "DNMM" ? "LOS" : undefined);
   }
 
   private toLocaleDateString(date: Date): string {

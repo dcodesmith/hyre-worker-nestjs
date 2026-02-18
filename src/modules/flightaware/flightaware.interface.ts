@@ -129,7 +129,7 @@ export type FlightAwareWebhookResult = {
   newStatus: FlightStatus;
 };
 
-export type apEventTypeToStatus = {
+export type MapEventTypeToStatus = {
   eventType: string;
   flightStatus?: string;
   flightId?: string;

@@ -28,28 +28,27 @@ describe("FlightAwareWebhookGuard", () => {
     guard = module.get<FlightAwareWebhookGuard>(FlightAwareWebhookGuard);
   });
 
-  const createContext = (url: string): ExecutionContext =>
+  const createContext = (secret?: string): ExecutionContext =>
     ({
       switchToHttp: () => ({
         getRequest: () => ({
-          url,
-          headers: { host: "localhost:3000" },
+          query: secret ? { secret } : {},
         }),
       }),
     }) as ExecutionContext;
 
   it("allows request with valid query secret", () => {
-    const context = createContext("/api/webhooks/flightaware?secret=secret-123");
+    const context = createContext("secret-123");
     expect(guard.canActivate(context)).toBe(true);
   });
 
   it("rejects request with invalid query secret", () => {
-    const context = createContext("/api/webhooks/flightaware?secret=wrong");
+    const context = createContext("wrong");
     expect(guard.canActivate(context)).toBe(false);
   });
 
   it("rejects request when query secret is missing", () => {
-    const context = createContext("/api/webhooks/flightaware");
+    const context = createContext();
     expect(guard.canActivate(context)).toBe(false);
   });
 });

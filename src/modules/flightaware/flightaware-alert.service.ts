@@ -148,14 +148,15 @@ export class FlightAwareAlertService {
         "FlightAware",
       );
 
-      if (errorInfo.status === 404) {
+      if (errorInfo.status === HttpStatus.NOT_FOUND) {
         this.logger.log("FlightAware alert already deleted", { alertId });
         return;
       }
 
-      if (errorInfo.status === 401) {
+      if (errorInfo.status === HttpStatus.UNAUTHORIZED) {
         throw new FlightAwareApiException("FlightAware API authentication failed");
       }
+
       throw new FlightAwareApiException(
         `FlightAware API error: ${errorInfo.status || errorInfo.message}`,
       );

@@ -38,8 +38,8 @@ export class FlightAwareWebhookGuard implements CanActivate {
   }
 
   private readSecretFromQuery(request: Request): string | null {
-    const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
-    return url.searchParams.get("secret");
+    const secretValue = request.query?.secret;
+    return typeof secretValue === "string" ? secretValue : null;
   }
 
   private verifySecret(received: string, expected: string): boolean {
