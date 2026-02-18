@@ -128,3 +128,11 @@ export type FlightAwareWebhookResult = {
   bookingCount: number;
   newStatus: FlightStatus;
 };
+
+export type apEventTypeToStatus = {
+  eventType: string;
+  flightStatus?: string;
+  flightId?: string;
+  callSign?: string;
+  eventTime?: Date;
+};

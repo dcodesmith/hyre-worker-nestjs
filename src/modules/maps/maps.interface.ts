@@ -14,6 +14,6 @@ export interface DriveTimeResult {
   isEstimate: boolean;
 }
 
-export type GoogleRoutesOrigin =
-  | { address: string }
-  | { location: { latLng: { latitude: number; longitude: number } } };
+export type GoogleRoutesOrigin = {
+  location: { latLng: { latitude: number; longitude: number } };
+};

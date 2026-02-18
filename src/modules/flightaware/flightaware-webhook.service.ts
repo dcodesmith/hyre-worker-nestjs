@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { FlightStatus, Prisma } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
-import { FlightAwareWebhookResult } from "./flightaware.interface";
+import { apEventTypeToStatus, FlightAwareWebhookResult } from "./flightaware.interface";
 
 @Injectable()
 export class FlightAwareWebhookService {
@@ -26,13 +26,20 @@ export class FlightAwareWebhookService {
     }
 
     const eventTime = new Date(event_time);
-    const newStatus = this.mapEventTypeToStatus(event_type, flight.status);
+    const newStatus = this.mapEventTypeToStatus({
+      eventType: event_type,
+      flightStatus: flight.status,
+      flightId: flight.fa_flight_id,
+      callSign: flight.ident,
+      eventTime,
+    });
     const oldStatus = flightRecord.status;
     const eventLookup = {
       flightId: flightRecord.id,
       eventType: event_type,
       eventTime,
     };
+    const flightUpdateData = this.buildFlightUpdateData(flight, newStatus);
 
     const txResult = await this.databaseService.$transaction(async (tx) => {
       try {
@@ -53,19 +60,7 @@ export class FlightAwareWebhookService {
 
         await tx.flight.update({
           where: { id: flightRecord.id },
-          data: {
-            status: newStatus,
-            estimatedDeparture: this.parseDate(flight.estimated_off) ?? undefined,
-            estimatedArrival:
-              this.parseDate(flight.estimated_in || flight.estimated_on) ?? undefined,
-            actualDeparture: this.parseDate(flight.actual_off) ?? undefined,
-            actualArrival: this.parseDate(flight.actual_in || flight.actual_on) ?? undefined,
-            delayMinutes: flight.delay_minutes,
-            arrivalGate: flight.gate_destination,
-            departureGate: flight.gate_origin,
-            aircraftType: flight.aircraft_type,
-            registration: flight.registration,
-          },
+          data: flightUpdateData,
         });
 
         await tx.flightStatusEvent.update({
@@ -109,19 +104,7 @@ export class FlightAwareWebhookService {
 
         await tx.flight.update({
           where: { id: flightRecord.id },
-          data: {
-            status: newStatus,
-            estimatedDeparture: this.parseDate(flight.estimated_off) ?? undefined,
-            estimatedArrival:
-              this.parseDate(flight.estimated_in || flight.estimated_on) ?? undefined,
-            actualDeparture: this.parseDate(flight.actual_off) ?? undefined,
-            actualArrival: this.parseDate(flight.actual_in || flight.actual_on) ?? undefined,
-            delayMinutes: flight.delay_minutes,
-            arrivalGate: flight.gate_destination,
-            departureGate: flight.gate_origin,
-            aircraftType: flight.aircraft_type,
-            registration: flight.registration,
-          },
+          data: flightUpdateData,
         });
 
         await tx.flightStatusEvent.update({
@@ -168,7 +151,13 @@ export class FlightAwareWebhookService {
     };
   }
 
-  private mapEventTypeToStatus(eventType: string, flightStatus?: string): FlightStatus {
+  private mapEventTypeToStatus({
+    eventType,
+    flightStatus,
+    flightId,
+    callSign,
+    eventTime,
+  }: apEventTypeToStatus): FlightStatus {
     const normalizedEventType = eventType.toLowerCase();
 
     if (normalizedEventType.includes("departure") || normalizedEventType === "departed") {
@@ -203,6 +192,13 @@ export class FlightAwareWebhookService {
       }
     }
 
+    this.logger.warn("Unknown FlightAware event type, defaulting to SCHEDULED", {
+      eventType,
+      flightId,
+      callSign,
+      eventTime: eventTime?.toISOString(),
+    });
+
     return FlightStatus.SCHEDULED;
   }
 
@@ -213,6 +209,24 @@ export class FlightAwareWebhookService {
 
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private buildFlightUpdateData(
+    flight: FlightAwareWebhookDto["flight"],
+    newStatus: FlightStatus,
+  ): Prisma.FlightUpdateInput {
+    return {
+      status: newStatus,
+      estimatedDeparture: this.parseDate(flight.estimated_off) ?? undefined,
+      estimatedArrival: this.parseDate(flight.estimated_in || flight.estimated_on) ?? undefined,
+      actualDeparture: this.parseDate(flight.actual_off) ?? undefined,
+      actualArrival: this.parseDate(flight.actual_in || flight.actual_on) ?? undefined,
+      delayMinutes: flight.delay_minutes,
+      arrivalGate: flight.gate_destination,
+      departureGate: flight.gate_origin,
+      aircraftType: flight.aircraft_type,
+      registration: flight.registration,
+    };
   }
 
   private isUniqueConstraintError(error: unknown): boolean {

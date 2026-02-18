@@ -1,27 +1,66 @@
 import { z } from "zod";
 
 const FLIGHT_NUMBER_REGEX = /^[A-Z0-9]{2,3}\d{1,5}$/i;
+const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_DATETIME_WITH_TIMEZONE_REGEX =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-const isValidIsoDate = (value: string): boolean => !Number.isNaN(Date.parse(value));
+const parseIsoDateToUtc = (value: string): Date | null => {
+  const dateOnlyMatch = ISO_DATE_ONLY_REGEX.exec(value);
+  if (dateOnlyMatch) {
+    const year = Number.parseInt(dateOnlyMatch[1], 10);
+    const month = Number.parseInt(dateOnlyMatch[2], 10);
+    const day = Number.parseInt(dateOnlyMatch[3], 10);
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return date;
+  }
+
+  if (!ISO_DATETIME_WITH_TIMEZONE_REGEX.test(value)) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isValidIsoDate = (value: string): boolean => parseIsoDateToUtc(value) !== null;
 
 const isPastDate = (value: string): boolean => {
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
 
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
+  const date = parseIsoDateToUtc(value);
+  if (!date) {
+    return false;
+  }
+  date.setUTCHours(0, 0, 0, 0);
 
   return date < today;
 };
 
 const isMoreThanOneYearAhead = (value: string): boolean => {
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
 
   const oneYearFromNow = new Date(today);
-  oneYearFromNow.setFullYear(today.getFullYear() + 1);
+  oneYearFromNow.setUTCFullYear(today.getUTCFullYear() + 1);
 
-  return new Date(value) > oneYearFromNow;
+  const date = parseIsoDateToUtc(value);
+  if (!date) {
+    return false;
+  }
+  date.setUTCHours(0, 0, 0, 0);
+
+  return date > oneYearFromNow;
 };
 
 export const searchFlightQuerySchema = z.object({

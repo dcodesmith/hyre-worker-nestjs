@@ -16,7 +16,6 @@ describe("Maps E2E Tests", () => {
     const mockSendOtpEmail = vi.fn().mockResolvedValue(undefined);
     const mockMapsService = {
       calculateAirportTripDuration: vi.fn(),
-      calculateDriveTime: vi.fn(),
     };
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -61,5 +60,12 @@ describe("Maps E2E Tests", () => {
       distanceMeters: 25000,
       isEstimate: false,
     });
+  });
+
+  it("GET /api/calculate-trip-duration returns 400 when destination is missing", async () => {
+    const response = await request(app.getHttpServer()).get("/api/calculate-trip-duration");
+
+    expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(vi.mocked(mapsService.calculateAirportTripDuration)).not.toHaveBeenCalled();
   });
 });

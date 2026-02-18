@@ -19,6 +19,7 @@ describe("FlightAware E2E Tests", () => {
   let flightAwareService: FlightAwareService;
   let webhookPath: string;
 
+  const originalFlightawareSecret = process.env.FLIGHTAWARE_WEBHOOK_SECRET;
   const webhookSecret = "test-flightaware-webhook-secret";
   const upcomingDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -61,6 +62,13 @@ describe("FlightAware E2E Tests", () => {
 
   afterAll(async () => {
     await app.close();
+
+    if (originalFlightawareSecret === undefined) {
+      delete process.env.FLIGHTAWARE_WEBHOOK_SECRET;
+      return;
+    }
+
+    process.env.FLIGHTAWARE_WEBHOOK_SECRET = originalFlightawareSecret;
   });
 
   it("GET /api/search-flight validates query params", async () => {

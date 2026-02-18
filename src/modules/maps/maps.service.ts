@@ -45,29 +45,13 @@ export class MapsService {
   }
 
   /**
-   * Calculate drive time between two addresses
-   *
-   * @param originAddress - The origin address
-   * @param destinationAddress - The destination address
-   * @returns Drive time result with duration in minutes
-   */
-  async calculateDriveTime(
-    originAddress: string,
-    destinationAddress: string,
-  ): Promise<DriveTimeResult> {
-    return this.computeRoute({ address: originAddress }, destinationAddress, "calculateDriveTime");
-  }
-
-  /**
-   * Core route computation logic shared by all drive time methods
+   * Core route computation logic for airport trip duration
    */
   private async computeRoute(
     origin: GoogleRoutesOrigin,
     destinationAddress: string,
     methodName: string,
   ): Promise<DriveTimeResult> {
-    const logContext = "address" in origin ? { originAddress: origin.address } : {};
-
     try {
       const { data } = await this.httpClient.post<GoogleRoutesResponse>(this.baseUrl, {
         origin,
@@ -78,7 +62,7 @@ export class MapsService {
       });
 
       if (!data.routes || data.routes.length === 0) {
-        this.logger.warn("No routes found", { ...logContext, destinationAddress });
+        this.logger.warn("No routes found", { destinationAddress });
         return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
       }
 
@@ -87,7 +71,6 @@ export class MapsService {
       const durationMinutes = Math.ceil(durationSeconds / 60);
 
       this.logger.debug("Drive time calculated", {
-        ...logContext,
         destinationAddress,
         durationMinutes,
         distanceMeters: route.distanceMeters,
@@ -104,7 +87,6 @@ export class MapsService {
       this.logger.error("Google Routes API error", {
         status: errorInfo.status,
         error: errorInfo.message,
-        ...logContext,
         destinationAddress,
       });
 

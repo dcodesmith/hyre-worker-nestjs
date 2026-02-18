@@ -47,4 +47,9 @@ describe("FlightAwareWebhookGuard", () => {
     const context = createContext("/api/webhooks/flightaware?secret=wrong");
     expect(guard.canActivate(context)).toBe(false);
   });
+
+  it("rejects request when query secret is missing", () => {
+    const context = createContext("/api/webhooks/flightaware");
+    expect(guard.canActivate(context)).toBe(false);
+  });
 });

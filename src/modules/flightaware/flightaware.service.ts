@@ -30,6 +30,10 @@ type InternalFlightResult =
   | { type: "notFound" }
   | { type: "error"; message: string };
 
+const ISO_DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
+const SUPPORTED_PICKUP_DESTINATIONS = new Set(["LOS"]);
+const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
+
 /**
  * Service for interacting with FlightAware AeroAPI
  * Handles flight validation and alert management
@@ -50,7 +54,6 @@ export class FlightAwareService implements OnModuleDestroy {
   >();
   private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
   private readonly NOT_FOUND_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-  private readonly SUPPORTED_ALREADY_LANDED_DESTINATIONS = ["LOS"];
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
@@ -108,14 +111,7 @@ export class FlightAwareService implements OnModuleDestroy {
     });
 
     // 3. Calculate search window
-    const startDate = new Date(pickupDate);
-    startDate.setHours(0, 0, 0, 0);
-    startDate.setHours(startDate.getHours() - 12);
-
-    const endDate = new Date(pickupDate);
-    endDate.setDate(endDate.getDate() + 1);
-    endDate.setHours(0, 0, 0, 0);
-    endDate.setHours(endDate.getHours() + 12);
+    const { startDate, endDate } = this.getPickupSearchWindow(pickupDate);
 
     // Determine which API to use based on how far in the future
     const now = new Date();
@@ -126,7 +122,7 @@ export class FlightAwareService implements OnModuleDestroy {
 
     if (useLiveAPI) {
       const maxEndDate = new Date(now);
-      maxEndDate.setDate(maxEndDate.getDate() + 2);
+      maxEndDate.setUTCDate(maxEndDate.getUTCDate() + 2);
       const cappedEndDate = new Date(Math.min(endDate.getTime(), maxEndDate.getTime()));
 
       result = await this.fetchLiveFlight(
@@ -149,7 +145,7 @@ export class FlightAwareService implements OnModuleDestroy {
   ): Promise<SearchFlightResult> {
     const flight = await this.validateFlight(flightNumber, pickupDate);
 
-    if (flight.destinationIATA !== "LOS") {
+    if (!flight.destinationIATA || !SUPPORTED_PICKUP_DESTINATIONS.has(flight.destinationIATA)) {
       const destinationName = flight.destinationIATA || flight.destination;
       const originName = flight.originIATA || flight.origin;
 
@@ -230,6 +226,47 @@ export class FlightAwareService implements OnModuleDestroy {
   }
 
   // Private methods
+
+  private getPickupSearchWindow(pickupDate: string): { startDate: Date; endDate: Date } {
+    const dateOnlyMatch = ISO_DATE_ONLY_REGEX.exec(pickupDate);
+    const baseUtcDate = dateOnlyMatch
+      ? this.buildUtcDateFromDateOnly(dateOnlyMatch)
+      : this.buildUtcDateFromIsoString(pickupDate);
+
+    const startDate = new Date(baseUtcDate);
+    startDate.setUTCHours(startDate.getUTCHours() - 12, 0, 0, 0);
+
+    const endDate = new Date(baseUtcDate);
+    endDate.setUTCDate(endDate.getUTCDate() + 1);
+    endDate.setUTCHours(endDate.getUTCHours() + 12, 0, 0, 0);
+
+    return { startDate, endDate };
+  }
+
+  private buildUtcDateFromDateOnly(dateMatch: RegExpExecArray): Date {
+    const year = Number.parseInt(dateMatch[1], 10);
+    const month = Number.parseInt(dateMatch[2], 10);
+    const day = Number.parseInt(dateMatch[3], 10);
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      throw new FlightAwareApiException(`Invalid pickup date: ${dateMatch[0]}`);
+    }
+
+    return date;
+  }
+
+  private buildUtcDateFromIsoString(value: string): Date {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new FlightAwareApiException(`Invalid pickup date: ${value}`);
+    }
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+  }
 
   private async fetchLiveFlight(
     flightNumber: string,
@@ -516,7 +553,7 @@ export class FlightAwareService implements OnModuleDestroy {
   ): InternalFlightResult | null {
     const destinationIATA = landedFlight.destination.code_iata;
 
-    if (!this.SUPPORTED_ALREADY_LANDED_DESTINATIONS.includes(destinationIATA)) {
+    if (!SUPPORTED_ALREADY_LANDED_DESTINATIONS.has(destinationIATA)) {
       return null;
     }
 

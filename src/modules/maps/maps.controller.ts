@@ -14,8 +14,6 @@ export class MapsController {
   async calculateTripDuration(
     @ZodQuery(calculateTripDurationQuerySchema) query: CalculateTripDurationQueryDto,
   ) {
-    return query.origin
-      ? await this.mapsService.calculateDriveTime(query.origin, query.destination)
-      : await this.mapsService.calculateAirportTripDuration(query.destination);
+    return this.mapsService.calculateAirportTripDuration(query.destination);
   }
 }
