@@ -20,12 +20,12 @@ import { ReferralThrottlerGuard } from "./referral-throttler.guard";
     ThrottlerModule.forRoot([
       {
         name: "referral-validation",
-        ttl: 3600,
+        ttl: 3600 * 1000,
         limit: 10,
       },
       {
         name: "manual-triggers",
-        ttl: 3600,
+        ttl: 3600 * 1000,
         limit: 1,
       },
     ]),

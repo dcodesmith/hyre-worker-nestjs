@@ -68,8 +68,11 @@ export class ReferralService {
 
   async getCurrentUserReferralInfo(userId: string, request: Request) {
     try {
-      const origin = getRequestOrigin(request);
-      const referralInfo = await this.referralApiService.getUserReferralSummary(userId, origin);
+      const requestOrigin = getRequestOrigin(request);
+      const referralInfo = await this.referralApiService.getUserReferralSummary(
+        userId,
+        requestOrigin,
+      );
 
       if (!referralInfo) {
         throw new ReferralUserNotFoundException();

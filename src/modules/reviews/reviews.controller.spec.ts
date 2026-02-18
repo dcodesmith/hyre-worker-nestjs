@@ -2,7 +2,9 @@ import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { createReview } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
+import type { AuthSession } from "../auth/guards/session.guard";
 import {
   createReviewSchema,
   reviewIdParamSchema,
@@ -20,9 +22,24 @@ describe("ReviewsController", () => {
   let reviewsReadService: ReviewsReadService;
   let reviewsModerationService: ReviewsModerationService;
 
-  const mockUser = {
+  const mockUser: AuthSession["user"] = {
     id: "user-1",
+    name: "Test User",
+    emailVerified: false,
+    createdAt: new Date("2024-01-01T00:00:00Z"),
+    updatedAt: new Date("2024-01-01T00:00:00Z"),
     roles: ["user" as const],
+  };
+  const mockCreatedReview = createReview({ id: "review-1" });
+  const mockUpdatedReview = createReview({ id: "review-1", overallRating: 4 });
+  const mockHiddenReview = createReview({ id: "review-1", isVisible: false });
+  const mockAdminUser: AuthSession["user"] = {
+    id: "admin-1",
+    name: "Admin User",
+    emailVerified: false,
+    createdAt: new Date("2024-01-01T00:00:00Z"),
+    updatedAt: new Date("2024-01-01T00:00:00Z"),
+    roles: ["admin"],
   };
 
   beforeEach(async () => {
@@ -74,7 +91,7 @@ describe("ReviewsController", () => {
   });
 
   it("creates review and returns created review", async () => {
-    vi.mocked(reviewsWriteService.createReview).mockResolvedValueOnce({ id: "review-1" } as never);
+    vi.mocked(reviewsWriteService.createReview).mockResolvedValueOnce(mockCreatedReview);
 
     const body = new ZodValidationPipe(createReviewSchema).transform({
       bookingId: "c123456789012345678901234",
@@ -85,13 +102,13 @@ describe("ReviewsController", () => {
       comment: "Great",
     });
 
-    const result = await controller.createReview(body, mockUser as never);
+    const result = await controller.createReview(body, mockUser);
 
-    expect(result).toEqual({ id: "review-1" });
+    expect(result).toEqual(mockCreatedReview);
   });
 
   it("updates review and returns updated review", async () => {
-    vi.mocked(reviewsWriteService.updateReview).mockResolvedValueOnce({ id: "review-1" } as never);
+    vi.mocked(reviewsWriteService.updateReview).mockResolvedValueOnce(mockUpdatedReview);
 
     const reviewId = new ZodValidationPipe(reviewIdParamSchema).transform(
       "c123456789012345678901234",
@@ -100,9 +117,9 @@ describe("ReviewsController", () => {
       overallRating: 4,
     });
 
-    const result = await controller.updateReview(reviewId, body, mockUser as never);
+    const result = await controller.updateReview(reviewId, body, mockUser);
 
-    expect(result).toEqual({ id: "review-1" });
+    expect(result).toEqual(mockUpdatedReview);
   });
 
   it("returns paginated car reviews", async () => {
@@ -133,16 +150,14 @@ describe("ReviewsController", () => {
   });
 
   it("hides review and returns updated review", async () => {
-    vi.mocked(reviewsModerationService.hideReview).mockResolvedValueOnce({
-      id: "review-1",
-    } as never);
+    vi.mocked(reviewsModerationService.hideReview).mockResolvedValueOnce(mockHiddenReview);
 
     const result = await controller.hideReview(
       "c123456789012345678901234",
       { moderationNotes: "Spam" },
-      { id: "admin-1", roles: ["admin"] } as never,
+      mockAdminUser,
     );
 
-    expect(result).toEqual({ id: "review-1" });
+    expect(result).toEqual(mockHiddenReview);
   });
 });

@@ -1,4 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
+import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ReferralInvalidCodeException,
@@ -93,7 +94,7 @@ describe("ReferralService", () => {
       headers: {},
       protocol: "http",
       get: vi.fn().mockReturnValue("localhost:3000"),
-    } as never;
+    } as unknown as Request;
 
     await expect(service.getCurrentUserReferralInfo("user-1", request)).rejects.toBeInstanceOf(
       ReferralUserNotFoundException,

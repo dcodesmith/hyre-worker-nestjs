@@ -13,6 +13,11 @@ export type ThrottleHitRecord = Awaited<ReturnType<ThrottlerStorage["increment"]
 
 export function getClientIp(request: HttpRequestLike): string {
   const forwardedFor = request.headers?.["x-forwarded-for"];
+
+  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
+    return forwardedFor[0].split(",")[0].trim();
+  }
+
   if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
     return forwardedFor.split(",")[0].trim();
   }
@@ -39,7 +44,12 @@ export function isThrottled(hit: ThrottleHitRecord, limit: number): boolean {
 }
 
 export function getRetryAfterSeconds(hit: ThrottleHitRecord, fallbackSeconds: number): number {
-  return Math.max(1, hit.timeToBlockExpire || hit.timeToExpire || fallbackSeconds);
+  const retryAfterMs = hit.timeToBlockExpire || hit.timeToExpire;
+  const retryAfterSeconds =
+    typeof retryAfterMs === "number" && retryAfterMs > 0
+      ? Math.ceil(retryAfterMs / 1000)
+      : fallbackSeconds;
+  return Math.max(1, retryAfterSeconds);
 }
 
 export function setRateLimitHeaders(

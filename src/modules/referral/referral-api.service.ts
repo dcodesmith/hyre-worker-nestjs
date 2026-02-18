@@ -116,7 +116,7 @@ export class ReferralApiService {
 
   async getUserReferralSummary(
     userId: string,
-    requestOrigin: string,
+    requestOrigin: string | null,
   ): Promise<ReferralUserSummaryResponse | null> {
     const [referralInfo, bookingCredits, config] = await Promise.all([
       this.databaseService.user.findUnique({
@@ -169,9 +169,10 @@ export class ReferralApiService {
       return null;
     }
 
-    const shareLink = referralInfo.referralCode
-      ? `${requestOrigin}/auth?ref=${referralInfo.referralCode}`
-      : null;
+    const shareLink =
+      referralInfo.referralCode && requestOrigin
+        ? `${requestOrigin}/auth?ref=${referralInfo.referralCode}`
+        : null;
 
     const totalRewardsGranted = this.decimalToNumber(
       referralInfo.referralStats?.totalRewardsGranted,

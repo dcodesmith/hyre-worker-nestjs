@@ -1,7 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthService } from "../auth/auth.service";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -137,7 +137,7 @@ describe("ReferralController", () => {
       headers: {},
       protocol: "http",
       get: vi.fn().mockReturnValue("localhost:3000"),
-    } as never;
+    } as unknown as Request;
 
     const result = await controller.getCurrentUserReferralInfo(createMockAuthUser(), request);
 

@@ -49,19 +49,6 @@ export interface ReferralUserSummaryResponse {
   }>;
 }
 
-export interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-export interface RateLimitDecision {
-  allowed: boolean;
-  limit: number;
-  remaining: number;
-  resetAt: number;
-  retryAfterSeconds: number;
-}
-
 export interface ReferralThrottleRequestContext {
   ip?: string;
   headers?: Record<string, string | string[] | undefined>;
