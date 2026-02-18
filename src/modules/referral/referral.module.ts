@@ -23,6 +23,11 @@ import { ReferralThrottlerGuard } from "./referral-throttler.guard";
         ttl: 3600,
         limit: 10,
       },
+      {
+        name: "manual-triggers",
+        ttl: 3600,
+        limit: 1,
+      },
     ]),
     BullModule.registerQueue({
       name: REFERRAL_QUEUE,
