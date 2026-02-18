@@ -1,7 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { ZodValidationPipe } from "./zod-validation.pipe";
+import { mapZodIssuesToFieldErrors, ZodValidationPipe } from "./zod-validation.pipe";
 
 describe("ZodValidationPipe", () => {
   const schema = z.object({
@@ -45,5 +45,23 @@ describe("ZodValidationPipe", () => {
     });
 
     expect(() => pipe.transform({ name: "A" })).toThrow("custom:1");
+  });
+
+  it("maps root-level zod issues to _root field sentinel", () => {
+    const mapped = mapZodIssuesToFieldErrors([
+      {
+        path: [],
+        code: "custom",
+        message: "Payload is invalid",
+      },
+    ]);
+
+    expect(mapped).toEqual([
+      {
+        field: "_root",
+        code: "custom",
+        message: "Payload is invalid",
+      },
+    ]);
   });
 });

@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus } from "@nestjs/common";
-import type { ProblemDetails } from "./problem-details.interface";
+import type { FieldError, ProblemDetails } from "./problem-details.interface";
 
 /**
  * Base exception class for all application-specific errors.
@@ -16,37 +16,47 @@ import type { ProblemDetails } from "./problem-details.interface";
 export class AppException extends HttpException {
   private readonly problemDetails: ProblemDetails & {
     errorCode: string;
+    errors?: FieldError[];
     details?: Record<string, unknown>;
   };
+  private readonly details?: Record<string, unknown>;
+
+  private static hasOwnKeys(value: Record<string, unknown>): boolean {
+    return Object.keys(value).length > 0;
+  }
+
+  static readonly DEFAULT_TITLE = "Application Error";
 
   constructor(
     private readonly errorCode: string,
     message: string,
     status: HttpStatus,
-    private readonly details?: Record<string, unknown>,
+    options?: {
+      type?: string;
+      title?: string;
+      errors?: FieldError[];
+      details?: Record<string, unknown>;
+    },
   ) {
-    const title = typeof details?.title === "string" ? details.title : "Application Error";
-    const type = typeof details?.type === "string" ? details.type : errorCode;
-    const normalizedDetails = details ? { ...details } : undefined;
-
-    if (normalizedDetails) {
-      delete normalizedDetails.title;
-      delete normalizedDetails.type;
-    }
-
-    const problemDetails = {
-      type,
-      title,
+    const problemDetails: ProblemDetails & {
+      errorCode: string;
+      errors?: FieldError[];
+      details?: Record<string, unknown>;
+    } = {
+      type: options?.type ?? errorCode,
+      title: options?.title ?? AppException.DEFAULT_TITLE,
       status,
       detail: message,
       errorCode,
-      ...(normalizedDetails &&
-        Object.keys(normalizedDetails).length > 0 && {
-          details: normalizedDetails,
+      ...(options?.errors && { errors: options.errors }),
+      ...(options?.details &&
+        AppException.hasOwnKeys(options.details) && {
+          details: options.details,
         }),
     };
 
     super(problemDetails, status);
+    this.details = options?.details;
     this.problemDetails = problemDetails;
   }
 
@@ -66,6 +76,7 @@ export class AppException extends HttpException {
 
   getProblemDetails(): ProblemDetails & {
     errorCode: string;
+    errors?: FieldError[];
     details?: Record<string, unknown>;
   } {
     return this.problemDetails;

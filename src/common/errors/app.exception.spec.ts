@@ -10,7 +10,7 @@ describe("AppException", () => {
       HttpStatus.NOT_FOUND,
       {
         title: "Booking Not Found",
-        bookingId: "booking-1",
+        details: { bookingId: "booking-1" },
       },
     );
 
@@ -24,6 +24,29 @@ describe("AppException", () => {
       details: {
         bookingId: "booking-1",
       },
+    });
+  });
+
+  it("keeps validation errors at top-level", () => {
+    const exception = new AppException(
+      "VALIDATION_ERROR",
+      "One or more validation errors occurred",
+      HttpStatus.BAD_REQUEST,
+      {
+        title: "Validation Failed",
+        errors: [{ field: "email", code: "invalid_string", message: "Invalid email" }],
+        details: { source: "schema" },
+      },
+    );
+
+    expect(exception.getResponse()).toEqual({
+      type: "VALIDATION_ERROR",
+      title: "Validation Failed",
+      status: HttpStatus.BAD_REQUEST,
+      detail: "One or more validation errors occurred",
+      errorCode: "VALIDATION_ERROR",
+      errors: [{ field: "email", code: "invalid_string", message: "Invalid email" }],
+      details: { source: "schema" },
     });
   });
 });

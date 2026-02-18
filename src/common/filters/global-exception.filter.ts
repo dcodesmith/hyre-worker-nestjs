@@ -63,46 +63,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     if (exception instanceof HttpException) {
-      const response = exception.getResponse();
-      const title = this.httpStatusTitle(httpStatus);
-
-      if (this.isProblemDetailsResponse(response)) {
-        return {
-          ...response,
-          status: httpStatus,
-          instance,
-        };
-      }
-
-      if (typeof response === "object" && response !== null) {
-        const mapped = response as {
-          message?: unknown;
-          error?: unknown;
-          errors?: unknown[];
-          details?: Record<string, unknown>;
-          errorCode?: string;
-        };
-        const detail = this.extractDetail(mapped.message, mapped.error);
-
-        return {
-          type: mapped.errorCode ?? title,
-          title,
-          status: httpStatus,
-          detail,
-          instance,
-          ...(mapped.errorCode && { errorCode: mapped.errorCode }),
-          ...(mapped.errors && { errors: mapped.errors }),
-          ...(mapped.details && { details: mapped.details }),
-        };
-      }
-
-      return {
-        type: title,
-        title,
-        status: httpStatus,
-        detail: typeof response === "string" ? response : "HTTP error occurred",
-        instance,
-      };
+      return this.toHttpExceptionProblemDetails(exception, httpStatus, instance);
     }
 
     return {
@@ -111,6 +72,75 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       detail: exception instanceof Error ? exception.message : "Internal server error",
       instance,
+    };
+  }
+
+  private toHttpExceptionProblemDetails(
+    exception: HttpException,
+    httpStatus: number,
+    instance: string,
+  ): ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
+    const response = exception.getResponse();
+    const title = this.httpStatusTitle(httpStatus);
+
+    if (this.isProblemDetailsResponse(response)) {
+      return {
+        ...response,
+        status: httpStatus,
+        instance,
+      };
+    }
+
+    if (typeof response === "object" && response !== null) {
+      return this.mapHttpObjectResponse(response, httpStatus, instance, title);
+    }
+
+    return {
+      type: title,
+      title,
+      status: httpStatus,
+      detail: typeof response === "string" ? response : "HTTP error occurred",
+      instance,
+    };
+  }
+
+  private mapHttpObjectResponse(
+    response: object,
+    httpStatus: number,
+    instance: string,
+    title: string,
+  ): ProblemDetails & {
+    errorCode?: string;
+    errors?: unknown[];
+    details?: Record<string, unknown>;
+  } {
+    const mapped = response as {
+      detail?: unknown;
+      type?: unknown;
+      title?: unknown;
+      message?: unknown;
+      error?: unknown;
+      errors?: unknown[];
+      details?: Record<string, unknown>;
+      errorCode?: string;
+    };
+
+    return {
+      type:
+        (typeof mapped.type === "string" ? mapped.type : undefined) ?? mapped.errorCode ?? title,
+      title: (typeof mapped.title === "string" ? mapped.title : undefined) ?? title,
+      status: httpStatus,
+      detail:
+        (typeof mapped.detail === "string" ? mapped.detail : undefined) ??
+        this.extractDetail(mapped.message, mapped.error),
+      instance,
+      ...(mapped.errorCode && { errorCode: mapped.errorCode }),
+      ...(mapped.errors && { errors: mapped.errors }),
+      ...(mapped.details && { details: mapped.details }),
     };
   }
 

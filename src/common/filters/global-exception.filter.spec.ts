@@ -87,4 +87,41 @@ describe("GlobalExceptionFilter", () => {
       HttpStatus.BAD_REQUEST,
     );
   });
+
+  it("preserves explicit detail/type/title from HttpException response object", () => {
+    const { reply, getRequestUrl, response, host } = createHostMocks();
+    const adapterHost = {
+      httpAdapter: {
+        reply,
+        getRequestUrl,
+      },
+    } as unknown as HttpAdapterHost;
+    const filter = new GlobalExceptionFilter(adapterHost);
+    const exception = new BadRequestException({
+      type: "CUSTOM_TYPE",
+      title: "Custom Title",
+      detail: "Custom detail",
+      message: "Fallback message",
+      errorCode: "VALIDATION_ERROR",
+      errors: [{ field: "email", message: "Invalid email" }],
+      details: { source: "validation" },
+    });
+
+    filter.catch(exception, host as unknown as Parameters<GlobalExceptionFilter["catch"]>[1]);
+
+    expect(reply).toHaveBeenCalledWith(
+      response,
+      expect.objectContaining({
+        type: "CUSTOM_TYPE",
+        title: "Custom Title",
+        status: HttpStatus.BAD_REQUEST,
+        detail: "Custom detail",
+        instance: "/api/test",
+        errorCode: "VALIDATION_ERROR",
+        errors: [{ field: "email", message: "Invalid email" }],
+        details: { source: "validation" },
+      }),
+      HttpStatus.BAD_REQUEST,
+    );
+  });
 });

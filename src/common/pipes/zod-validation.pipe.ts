@@ -6,12 +6,13 @@ export type ExceptionFactory = (errors: FieldError[]) => Error;
 export type ZodValidationPipeOptions = {
   exceptionFactory?: ExceptionFactory;
 };
+const ROOT_FIELD_ERROR = "_root";
 
 export function mapZodIssuesToFieldErrors(
   issues: Array<{ path: PropertyKey[]; code?: string; message: string }>,
 ): FieldError[] {
   return issues.map((issue) => ({
-    field: issue.path.join("."),
+    field: issue.path.length > 0 ? issue.path.join(".") : ROOT_FIELD_ERROR,
     code: issue.code,
     message: issue.message,
   }));
