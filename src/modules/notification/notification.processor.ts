@@ -4,6 +4,7 @@ import { Job } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
   renderBookingConfirmationEmail,
+  renderBookingExtensionConfirmationEmail,
   renderBookingReminderEmail,
   renderBookingStatusUpdateEmail,
   renderFleetOwnerNewBookingEmail,
@@ -25,6 +26,7 @@ import {
 } from "./notification.interface";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -229,6 +231,8 @@ export class NotificationProcessor extends WorkerHost {
     switch (type) {
       case NotificationType.BOOKING_CONFIRMED:
         return this.buildBookingConfirmedEmailHtml(templateData);
+      case NotificationType.BOOKING_EXTENSION_CONFIRMED:
+        return this.buildBookingExtensionConfirmedEmailHtml(templateData);
       case NotificationType.FLEET_OWNER_NEW_BOOKING:
         return this.buildFleetOwnerNewBookingEmailHtml(templateData);
       case NotificationType.BOOKING_STATUS_CHANGE:
@@ -255,6 +259,13 @@ export class NotificationProcessor extends WorkerHost {
       throw new Error("Invalid template data for fleet owner booking notification");
     }
     return renderFleetOwnerNewBookingEmail(templateData);
+  }
+
+  private buildBookingExtensionConfirmedEmailHtml(templateData: TemplateData): Promise<string> {
+    if (templateData.templateKind !== BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND) {
+      throw new Error("Invalid template data for booking extension confirmation");
+    }
+    return renderBookingExtensionConfirmationEmail(templateData);
   }
 
   private buildBookingStatusEmailHtml(templateData: TemplateData): Promise<string> {

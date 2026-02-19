@@ -14,6 +14,10 @@ export type CreateCarOptions = Partial<Prisma.CarUncheckedCreateInput>;
 
 export type CreateBookingOptions = Partial<Prisma.BookingUncheckedCreateInput>;
 
+export type CreateBookingLegOptions = Partial<Prisma.BookingLegUncheckedCreateInput>;
+
+export type CreateExtensionOptions = Partial<Prisma.ExtensionUncheckedCreateInput>;
+
 export type CreatePaymentOptions = Partial<Prisma.PaymentUncheckedCreateInput>;
 
 export type CreatePayoutTransactionOptions = Partial<Prisma.PayoutTransactionUncheckedCreateInput>;
@@ -319,6 +323,82 @@ export class TestDataFactory {
       select: { id: true, bookingReference: true },
     });
     return booking;
+  }
+
+  /**
+   * Create a test booking leg in the database.
+   */
+  async createBookingLeg(
+    bookingId: string,
+    options: CreateBookingLegOptions = {},
+  ): Promise<{ id: string }> {
+    const legStartTime = options.legStartTime ?? new Date();
+    const legEndTime = options.legEndTime ?? new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+    const bookingLeg = await this.prisma.bookingLeg.create({
+      data: {
+        bookingId,
+        legDate: options.legDate ?? legStartTime,
+        totalDailyPrice: options.totalDailyPrice ?? 50000,
+        notes: options.notes,
+        legStartTime,
+        legEndTime,
+        fleetOwnerEarningForLeg: options.fleetOwnerEarningForLeg ?? 40000,
+        itemsNetValueForLeg: options.itemsNetValueForLeg ?? 50000,
+        platformCommissionAmountOnLeg: options.platformCommissionAmountOnLeg,
+        platformCommissionRateOnLeg: options.platformCommissionRateOnLeg,
+      },
+      select: { id: true },
+    });
+
+    return bookingLeg;
+  }
+
+  /**
+   * Create a test extension in the database.
+   */
+  async createExtension(
+    bookingLegId: string,
+    options: CreateExtensionOptions = {},
+  ): Promise<{ id: string }> {
+    let extensionStartTime: Date;
+    if (options.extensionStartTime instanceof Date) {
+      extensionStartTime = options.extensionStartTime;
+    } else if (options.extensionStartTime) {
+      extensionStartTime = new Date(options.extensionStartTime);
+    } else {
+      extensionStartTime = new Date();
+    }
+    const extensionEndTime =
+      options.extensionEndTime ?? new Date(extensionStartTime.getTime() + 60 * 60 * 1000);
+
+    const extension = await this.prisma.extension.create({
+      data: {
+        bookingLegId,
+        totalAmount: options.totalAmount ?? 5000,
+        paymentStatus: options.paymentStatus ?? "UNPAID",
+        paymentId: options.paymentId,
+        paymentIntent: options.paymentIntent,
+        status: options.status ?? "PENDING",
+        eventType: options.eventType ?? "HOURLY_ADDITION",
+        extendedDurationHours: options.extendedDurationHours ?? 1,
+        extensionStartTime,
+        extensionEndTime,
+        fleetOwnerPayoutAmountNet: options.fleetOwnerPayoutAmountNet,
+        netTotal: options.netTotal,
+        overallPayoutStatus: options.overallPayoutStatus,
+        platformCustomerServiceFeeAmount: options.platformCustomerServiceFeeAmount,
+        platformCustomerServiceFeeRatePercent: options.platformCustomerServiceFeeRatePercent,
+        platformFleetOwnerCommissionAmount: options.platformFleetOwnerCommissionAmount,
+        platformFleetOwnerCommissionRatePercent: options.platformFleetOwnerCommissionRatePercent,
+        subtotalBeforeVat: options.subtotalBeforeVat,
+        vatAmount: options.vatAmount,
+        vatRatePercent: options.vatRatePercent,
+      },
+      select: { id: true },
+    });
+
+    return extension;
   }
 
   /**

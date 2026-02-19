@@ -15,7 +15,10 @@ import {
 import { render } from "@react-email/render";
 import { ReactNode } from "react";
 import tailwindConfig from "../email-tailwind.config";
-import type { ReviewReceivedTemplateData } from "../modules/notification/template-data.interface";
+import type {
+  BookingExtensionConfirmedTemplateData,
+  ReviewReceivedTemplateData,
+} from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
 
 export interface EmailTemplateProps {
@@ -307,6 +310,34 @@ export async function renderBookingConfirmationEmail(booking: NormalisedBookingD
         Please be at the pickup location on time. You'll be assigned a chauffeur shortly, and we
         will notify you with their details.
       </Text>
+    </EmailTemplate>,
+  );
+}
+
+export async function renderBookingExtensionConfirmationEmail(
+  extension: BookingExtensionConfirmedTemplateData,
+) {
+  const previewText = "Your booking extension is confirmed!";
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="Booking Extension Confirmed">
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        Booking Extension Confirmed
+      </Heading>
+      <Text className="mb-3">Hello {extension.customerName},</Text>
+      <Text className="mb-3">
+        Your booking for <span className="font-semibold">{extension.carName}</span> on{" "}
+        {extension.legDate} has been extended.
+      </Text>
+      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
+        <Text className="font-semibold mb-2 underline">
+          Updated Time ({extension.extensionHours}{" "}
+          {extension.extensionHours === 1 ? "hour" : "hours"} extension)
+        </Text>
+        <DetailListItem label="From" value={extension.from} />
+        <DetailListItem label="To" value={extension.to} />
+      </Section>
+      <Text className="mt-4">Your chauffeur and trip details remain unchanged. Safe travels.</Text>
     </EmailTemplate>,
   );
 }

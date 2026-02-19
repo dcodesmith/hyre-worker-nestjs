@@ -228,7 +228,7 @@ describe("Payments E2E Tests", () => {
         };
 
         // Mock must return verification data that matches webhook data
-        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValue({
           status: "success",
           message: "Transaction verified",
           data: webhookData,
@@ -373,6 +373,206 @@ describe("Payments E2E Tests", () => {
         const unchangedBooking = await factory.getBookingById(pendingBooking.id);
         expect(unchangedBooking?.status).toBe("PENDING");
         expect(unchangedBooking?.paymentStatus).toBe("UNPAID");
+      });
+
+      it("should activate extension when extension payment is successful", async () => {
+        const txRef = `tx-extension-${Date.now()}`;
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000) + 3;
+        const booking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "ACTIVE",
+            paymentStatus: "PAID",
+          },
+        });
+
+        const legStartTime = new Date("2026-01-01T09:00:00.000Z");
+        const legEndTime = new Date("2026-01-01T11:00:00.000Z");
+        const extensionEndTime = new Date("2026-01-01T13:00:00.000Z");
+
+        const bookingLeg = await databaseService.bookingLeg.create({
+          data: {
+            bookingId: booking.id,
+            legDate: new Date("2026-01-01T00:00:00.000Z"),
+            totalDailyPrice: 50000,
+            legStartTime,
+            legEndTime,
+            fleetOwnerEarningForLeg: 40000,
+            itemsNetValueForLeg: 50000,
+          },
+        });
+
+        const extension = await databaseService.extension.create({
+          data: {
+            bookingLegId: bookingLeg.id,
+            paymentIntent: txRef,
+            totalAmount: 5000,
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            eventType: "HOURLY_ADDITION",
+            extendedDurationHours: 2,
+            extensionStartTime: legEndTime,
+            extensionEndTime,
+          },
+        });
+
+        const webhookData = {
+          id: uniqueId,
+          tx_ref: txRef,
+          status: "successful",
+          charged_amount: 5000,
+          flw_ref: `FLW-EXT-REF-${uniqueId}`,
+          device_fingerprint: "device-extension",
+          amount: 5000,
+          currency: "NGN",
+          app_fee: 70,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test payment for extension activation",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+          status: "success",
+          message: "Transaction verified",
+          data: webhookData,
+        });
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: webhookData,
+          });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body.status).toBe("ok");
+
+        const updatedExtension = await databaseService.extension.findUnique({
+          where: { id: extension.id },
+        });
+        expect(updatedExtension?.status).toBe("ACTIVE");
+        expect(updatedExtension?.paymentStatus).toBe("PAID");
+        expect(updatedExtension?.paymentId).toBeTruthy();
+
+        const updatedLeg = await databaseService.bookingLeg.findUnique({
+          where: { id: bookingLeg.id },
+        });
+        expect(updatedLeg?.legEndTime.toISOString()).toBe(extensionEndTime.toISOString());
+      });
+
+      it("should process duplicate extension webhook idempotently", async () => {
+        const txRef = `tx-extension-idempotent-${Date.now()}`;
+        const uniqueId = Date.now() + Math.floor(Math.random() * 100000) + 4;
+        const booking = await factory.createBookingWithDependencies(testUserId, {
+          booking: {
+            status: "ACTIVE",
+            paymentStatus: "PAID",
+          },
+        });
+
+        const legStartTime = new Date("2026-01-02T09:00:00.000Z");
+        const legEndTime = new Date("2026-01-02T11:00:00.000Z");
+        const extensionEndTime = new Date("2026-01-02T12:00:00.000Z");
+
+        const bookingLeg = await databaseService.bookingLeg.create({
+          data: {
+            bookingId: booking.id,
+            legDate: new Date("2026-01-02T00:00:00.000Z"),
+            totalDailyPrice: 50000,
+            legStartTime,
+            legEndTime,
+            fleetOwnerEarningForLeg: 40000,
+            itemsNetValueForLeg: 50000,
+          },
+        });
+
+        const extension = await databaseService.extension.create({
+          data: {
+            bookingLegId: bookingLeg.id,
+            paymentIntent: txRef,
+            totalAmount: 5000,
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            eventType: "HOURLY_ADDITION",
+            extendedDurationHours: 1,
+            extensionStartTime: legEndTime,
+            extensionEndTime,
+          },
+        });
+
+        const webhookData = {
+          id: uniqueId,
+          tx_ref: txRef,
+          status: "successful",
+          charged_amount: 5000,
+          flw_ref: `FLW-EXT-IDEMPOTENT-${uniqueId}`,
+          device_fingerprint: "device-extension-idempotent",
+          amount: 5000,
+          currency: "NGN",
+          app_fee: 70,
+          merchant_fee: 0,
+          processor_response: "Approved",
+          auth_model: "PIN",
+          ip: "127.0.0.1",
+          narration: "Test idempotent extension webhook",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+          account_id: 123,
+          customer: {
+            id: 456,
+            name: "Test User",
+            phone_number: null,
+            email: "test@example.com",
+            created_at: new Date().toISOString(),
+          },
+        };
+
+        vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValue({
+          status: "success",
+          message: "Transaction verified",
+          data: webhookData,
+        });
+
+        const firstResponse = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: webhookData,
+          });
+        expect(firstResponse.status).toBe(HttpStatus.CREATED);
+
+        const secondResponse = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "charge.completed",
+            data: webhookData,
+          });
+        expect(secondResponse.status).toBe(HttpStatus.CREATED);
+
+        const updatedExtension = await databaseService.extension.findUnique({
+          where: { id: extension.id },
+        });
+        expect(updatedExtension?.status).toBe("ACTIVE");
+        expect(updatedExtension?.paymentStatus).toBe("PAID");
+
+        const payments = await databaseService.payment.findMany({
+          where: { txRef },
+        });
+        expect(payments).toHaveLength(1);
       });
     });
 

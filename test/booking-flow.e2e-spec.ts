@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
+import type { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveChargeData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
@@ -91,7 +91,7 @@ describe("Booking Flow E2E", () => {
    * 1. Creates a booking → asserts PENDING state
    * 2. Sends Flutterwave webhook → asserts CONFIRMED state
    */
-  async function runBookingFlow(cookie: string, testCarId: string) {
+  async function runBookingFlow(cookie: string, testCarId: string): Promise<{ bookingId: string }> {
     const bookingPayload: CreateBookingDto = {
       carId: testCarId,
       startDate: new Date(Date.now() + ONE_DAY_MS * 2),
@@ -191,6 +191,111 @@ describe("Booking Flow E2E", () => {
     const bookedCar = await factory.getCarById(testCarId);
     if (!bookedCar) throw new Error("Car not found after webhook");
     expect(bookedCar.status).toBe("BOOKED");
+
+    return { bookingId };
+  }
+
+  /**
+   * Runs the full extension flow after authentication:
+   * 1. Creates and confirms a base booking using the public API
+   * 2. Calls booking extension endpoint
+   * 3. Sends Flutterwave webhook
+   * 4. Asserts extension activation and booking leg update
+   */
+  async function runExtensionFlow(cookie: string, testCarId: string) {
+    const { bookingId } = await runBookingFlow(cookie, testCarId);
+
+    const extendResponse = await request(app.getHttpServer())
+      .post(`/api/bookings/${bookingId}/extensions`)
+      .set("Cookie", cookie)
+      .send({
+        hours: 2,
+        callbackUrl: "https://example.com/extension-payment-status",
+      });
+
+    expect(extendResponse.status).toBe(HttpStatus.CREATED);
+    expect(extendResponse.body).toHaveProperty("extensionId");
+    expect(extendResponse.body).toHaveProperty("paymentIntentId");
+    expect(extendResponse.body.checkoutUrl).toContain("checkout.flutterwave.com");
+
+    const extensionId = extendResponse.body.extensionId as string;
+    const txRef = extendResponse.body.paymentIntentId as string;
+
+    const createdExtension = await databaseService.extension.findUnique({
+      where: { id: extensionId },
+    });
+    if (!createdExtension) {
+      throw new Error("Extension not found right after extension endpoint");
+    }
+    const extensionAmount = createdExtension.totalAmount.toNumber();
+    const extensionEndTime = new Date(createdExtension.extensionEndTime);
+
+    const flwTransactionId = Date.now() + Math.floor(Math.random() * 100000);
+    const webhookData: FlutterwaveChargeData = {
+      id: flwTransactionId,
+      tx_ref: txRef,
+      status: "successful",
+      charged_amount: extensionAmount,
+      flw_ref: `FLW-EXT-FLOW-REF-${Date.now()}`,
+      device_fingerprint: "device-extension-flow",
+      amount: extensionAmount,
+      currency: "NGN",
+      app_fee: 70,
+      merchant_fee: 0,
+      processor_response: "Approved",
+      auth_model: "PIN",
+      ip: "127.0.0.1",
+      narration: "Extension payment",
+      payment_type: "card",
+      created_at: new Date().toISOString(),
+      account_id: 123,
+      customer: {
+        id: 456,
+        name: "Test Customer",
+        phone_number: null,
+        email: "test@example.com",
+        created_at: new Date().toISOString(),
+      },
+    };
+
+    vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+      status: "success",
+      message: "Transaction verified",
+      data: webhookData,
+    });
+
+    const webhookResponse = await request(app.getHttpServer())
+      .post("/api/payments/webhook/flutterwave")
+      .set("verif-hash", webhookSecret)
+      .send({
+        event: "charge.completed",
+        data: webhookData,
+      });
+
+    expect(webhookResponse.status).toBe(HttpStatus.CREATED);
+    expect(webhookResponse.body.status).toBe("ok");
+
+    const updatedExtension = await databaseService.extension.findUnique({
+      where: { id: extensionId },
+    });
+    if (!updatedExtension) throw new Error("Extension not found after webhook");
+    expect(updatedExtension.status).toBe("ACTIVE");
+    expect(updatedExtension.paymentStatus).toBe("PAID");
+    expect(updatedExtension.paymentId).toBeTruthy();
+
+    const updatedLeg = await databaseService.bookingLeg.findUnique({
+      where: { id: createdExtension.bookingLegId },
+    });
+    if (!updatedLeg) throw new Error("Booking leg not found after webhook");
+    expect(updatedLeg.legEndTime.toISOString()).toBe(extensionEndTime.toISOString());
+
+    const extensionPayment = await databaseService.payment.findFirst({
+      where: { txRef },
+    });
+    if (!extensionPayment) throw new Error("Extension payment record not found after webhook");
+    expect(extensionPayment.status).toBe("SUCCESSFUL");
+    expect(extensionPayment.extensionId).toBe(extensionId);
+    expect(extensionPayment.flutterwaveTransactionId).toBe(String(flwTransactionId));
   }
 
   describe.each<{ clientType: ClientTypeOption; label: string }>([
@@ -206,6 +311,14 @@ describe("Booking Flow E2E", () => {
       const { cookie } = await factory.authenticateAndGetUser(email, "user", clientType);
 
       await runBookingFlow(cookie, car.id);
+    });
+
+    it("should initialize extension payment, process webhook, and activate extension", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+
+      const email = uniqueEmail(`extension-flow-${clientType}`);
+      const { cookie } = await factory.authenticateAndGetUser(email, "user", clientType);
+      await runExtensionFlow(cookie, car.id);
     });
   });
 });

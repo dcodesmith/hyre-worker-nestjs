@@ -6,6 +6,7 @@ import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { BookingController } from "./booking.controller";
 import { BookingValidationException } from "./booking.error";
 import { BookingCreationService } from "./booking-creation.service";
+import { BookingExtensionService } from "./booking-extension.service";
 import {
   type CreateBookingDto,
   type CreateBookingInput,
@@ -28,10 +29,16 @@ function validateBookingInput(rawBody: unknown, isAuthenticated: boolean): Creat
 describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
+  let bookingExtensionService: BookingExtensionService;
 
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
     checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+  };
+  const mockCreateExtensionResponse = {
+    extensionId: "extension-123",
+    paymentIntentId: "tx-ext-123",
+    checkoutUrl: "https://checkout.flutterwave.com/pay/ext123",
   };
 
   const mockSessionUser = {
@@ -69,6 +76,9 @@ describe("BookingController", () => {
     const mockBookingCreationService = {
       createBooking: vi.fn().mockResolvedValue(mockCreateBookingResponse),
     };
+    const mockBookingExtensionService = {
+      createExtension: vi.fn().mockResolvedValue(mockCreateExtensionResponse),
+    };
 
     const mockAuthService = {
       isInitialized: true,
@@ -84,6 +94,7 @@ describe("BookingController", () => {
       controllers: [BookingController],
       providers: [
         { provide: BookingCreationService, useValue: mockBookingCreationService },
+        { provide: BookingExtensionService, useValue: mockBookingExtensionService },
         { provide: AuthService, useValue: mockAuthService },
         OptionalSessionGuard,
       ],
@@ -91,6 +102,7 @@ describe("BookingController", () => {
 
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
+    bookingExtensionService = module.get<BookingExtensionService>(BookingExtensionService);
   });
   describe("createBooking", () => {
     describe("authenticated user", () => {
@@ -271,6 +283,29 @@ describe("BookingController", () => {
         // Validation should throw before reaching controller
         expect(() => validateBookingInput(dto, true)).toThrow(BookingValidationException);
       });
+    });
+  });
+
+  describe("createExtension", () => {
+    it("creates extension for authenticated user", async () => {
+      const result = await controller.createExtension(
+        "booking-123",
+        {
+          hours: 2,
+          callbackUrl: "https://example.com/extension-payment-status",
+        },
+        mockSessionUser,
+      );
+
+      expect(result).toEqual(mockCreateExtensionResponse);
+      expect(bookingExtensionService.createExtension).toHaveBeenCalledWith(
+        "booking-123",
+        {
+          hours: 2,
+          callbackUrl: "https://example.com/extension-payment-status",
+        },
+        mockSessionUser,
+      );
     });
   });
 });

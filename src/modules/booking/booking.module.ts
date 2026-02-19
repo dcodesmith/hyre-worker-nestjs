@@ -9,8 +9,10 @@ import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 import { BookingCreationService } from "./booking-creation.service";
+import { BookingExtensionService } from "./booking-extension.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingValidationService } from "./booking-validation.service";
+import { ExtensionConfirmationService } from "./extension-confirmation.service";
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { BookingValidationService } from "./booking-validation.service";
     BookingValidationService,
     BookingCalculationService,
     BookingCreationService,
+    BookingExtensionService,
+    ExtensionConfirmationService,
   ],
   exports: [
     BookingConfirmationService,
@@ -35,6 +39,8 @@ import { BookingValidationService } from "./booking-validation.service";
     BookingValidationService,
     BookingCalculationService,
     BookingCreationService,
+    BookingExtensionService,
+    ExtensionConfirmationService,
   ],
 })
 export class BookingModule {}

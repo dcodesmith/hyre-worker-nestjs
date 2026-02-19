@@ -11,12 +11,14 @@ export type RecipientType =
 export const BOOKING_STATUS_TEMPLATE_KIND = "bookingStatusChange" as const;
 export const BOOKING_REMINDER_TEMPLATE_KIND = "bookingReminder" as const;
 export const BOOKING_CONFIRMED_TEMPLATE_KIND = "bookingConfirmed" as const;
+export const BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND = "bookingExtensionConfirmed" as const;
 export const FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND = "fleetOwnerNewBooking" as const;
 export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
 export type TemplateKind =
   | typeof BOOKING_STATUS_TEMPLATE_KIND
   | typeof BOOKING_REMINDER_TEMPLATE_KIND
   | typeof BOOKING_CONFIRMED_TEMPLATE_KIND
+  | typeof BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND
   | typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
   | typeof REVIEW_RECEIVED_TEMPLATE_KIND;
 
@@ -53,6 +55,15 @@ export interface FleetOwnerNewBookingTemplateData extends NormalisedBookingDetai
   subject: string;
 }
 
+export interface BookingExtensionConfirmedTemplateData extends NormalisedBookingDetails {
+  templateKind: typeof BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND;
+  subject: string;
+  legDate: string;
+  extensionHours: number;
+  from: string;
+  to: string;
+}
+
 /**
  * Template data for review received notifications (owner/chauffeur).
  */
@@ -79,5 +90,6 @@ export type TemplateData =
   | BookingStatusTemplateData
   | BookingReminderTemplateData
   | BookingConfirmedTemplateData
+  | BookingExtensionConfirmedTemplateData
   | FleetOwnerNewBookingTemplateData
   | ReviewReceivedTemplateData;

@@ -7,11 +7,14 @@ import { AuthModule } from "../auth/auth.module";
 import { BookingModule } from "../booking/booking.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
+import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { PaymentController } from "./payment.controller";
 import { PaymentProcessor } from "./payment.processor";
 import { PaymentService } from "./payment.service";
 import { PaymentApiService } from "./payment-api.service";
 import { PaymentWebhookService } from "./payment-webhook.service";
+import { RefundCompletedHandler } from "./refund-completed.handler";
+import { TransferCompletedHandler } from "./transfer-completed.handler";
 
 @Module({
   imports: [
@@ -37,7 +40,15 @@ import { PaymentWebhookService } from "./payment-webhook.service";
     }),
   ],
   controllers: [PaymentController],
-  providers: [PaymentService, PaymentApiService, PaymentWebhookService, PaymentProcessor],
+  providers: [
+    PaymentService,
+    PaymentApiService,
+    PaymentWebhookService,
+    PaymentProcessor,
+    ChargeCompletedHandler,
+    TransferCompletedHandler,
+    RefundCompletedHandler,
+  ],
   exports: [PaymentService, PaymentApiService, PaymentWebhookService],
 })
 export class PaymentModule {}
