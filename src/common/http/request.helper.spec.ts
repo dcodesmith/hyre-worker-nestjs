@@ -36,12 +36,12 @@ describe("getRequestOrigin", () => {
 
   it("uses forwarded proto only when trust proxy is enabled", () => {
     vi.stubEnv("AUTH_BASE_URL", "");
-    vi.stubEnv("TRUSTED_ORIGINS", "https://api.example.com");
+    vi.stubEnv("TRUSTED_ORIGINS", "");
 
     const request = {
       headers: { "x-forwarded-proto": "https" },
       protocol: "http",
-      get: vi.fn().mockReturnValue("api.example.com"),
+      get: vi.fn().mockReturnValue("localhost:3000"),
       app: {
         get: vi
           .fn()
@@ -49,7 +49,7 @@ describe("getRequestOrigin", () => {
       },
     };
 
-    expect(getRequestOrigin(request)).toBe("https://api.example.com");
+    expect(getRequestOrigin(request)).toBe("https://localhost:3000");
   });
 
   it("ignores forwarded proto when trust proxy is disabled", () => {
