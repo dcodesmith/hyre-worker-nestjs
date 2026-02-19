@@ -1,7 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { timingSafeSecretMatch } from "src/common/security/webhook-signature.helper";
 import { EnvConfig } from "src/config/env.config";
 
 /**
@@ -63,11 +63,6 @@ export class FlutterwaveWebhookGuard implements CanActivate {
    * This prevents timing attacks that could leak information about the secret.
    */
   private verifySignature(received: string, expected: string): boolean {
-    // Hash both values to get fixed-length outputs for comparison
-    // This prevents length-based timing attacks
-    const receivedHash = createHmac("sha256", this.hmacKey).update(received).digest();
-    const expectedHash = createHmac("sha256", this.hmacKey).update(expected).digest();
-
-    return timingSafeEqual(receivedHash, expectedHash);
+    return timingSafeSecretMatch(received, expected, this.hmacKey);
   }
 }
