@@ -106,6 +106,9 @@ vi.mock("../src/templates/emails", () => ({
   renderBookingConfirmationEmail: vi
     .fn()
     .mockResolvedValue("<html>Mocked booking confirmation</html>"),
+  renderBookingExtensionConfirmationEmail: vi
+    .fn()
+    .mockResolvedValue("<html>Mocked booking extension confirmation</html>"),
   renderBookingStatusUpdateEmail: vi.fn().mockResolvedValue("<html>Mocked status update</html>"),
   renderBookingReminderEmail: vi.fn().mockResolvedValue("<html>Mocked reminder</html>"),
   renderAuthOTPEmail: vi.fn().mockResolvedValue("<html>Mocked OTP email</html>"),

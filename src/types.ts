@@ -43,6 +43,18 @@ export type NormalisedBookingLegDetails = {
   returnLocation: string;
 };
 
+export type NormalisedExtensionDetails = {
+  bookingId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhoneNumber?: string;
+  carName: string;
+  legDate: string;
+  extensionHours: number;
+  from: string;
+  to: string;
+};
+
 export type BookingWithRelations = Prisma.BookingGetPayload<{
   include: {
     chauffeur: true;

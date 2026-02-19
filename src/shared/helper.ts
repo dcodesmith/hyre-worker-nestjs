@@ -7,6 +7,7 @@ import {
   GuestUserDetails,
   NormalisedBookingDetails,
   NormalisedBookingLegDetails,
+  NormalisedExtensionDetails,
 } from "../types";
 
 // Alphabet for booking reference generation (0-9, A-Z, avoiding ambiguous chars like 0/O, 1/I)
@@ -186,6 +187,39 @@ export function normaliseBookingLegDetails(
     pickupLocation: booking.pickupLocation,
     returnLocation: booking.returnLocation,
     carName,
+  };
+}
+
+export function normaliseExtensionDetails(
+  extension: Prisma.ExtensionGetPayload<{
+    include: {
+      bookingLeg: {
+        include: {
+          booking: {
+            include: {
+              car: { include: { owner: true } };
+              user: true;
+            };
+          };
+        };
+      };
+    };
+  }>,
+): NormalisedExtensionDetails {
+  const { bookingLeg } = extension;
+  const { booking } = bookingLeg;
+  const customerDetails = getCustomerDetails(booking);
+
+  return {
+    bookingId: booking.id,
+    customerName: getUserDisplayName(booking, "user"),
+    customerEmail: customerDetails.email || undefined,
+    customerPhoneNumber: customerDetails.phone_number || undefined,
+    carName: `${booking.car.make} ${booking.car.model} (${booking.car.year})`,
+    legDate: format(bookingLeg.legDate, "PPPP"),
+    extensionHours: extension.extendedDurationHours,
+    from: format(extension.extensionStartTime, "p"),
+    to: format(extension.extensionEndTime, "p"),
   };
 }
 

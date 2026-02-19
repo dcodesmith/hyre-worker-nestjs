@@ -57,6 +57,12 @@ export interface CreateBookingResponse {
   checkoutUrl: string;
 }
 
+export interface CreateExtensionResponse {
+  extensionId: string;
+  paymentIntentId: string;
+  checkoutUrl: string;
+}
+
 /**
  * Booking availability check result
  */
