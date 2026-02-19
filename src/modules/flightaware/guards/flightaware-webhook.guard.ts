@@ -1,7 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { timingSafeSecretMatch } from "src/common/security/webhook-signature.helper";
 import type { EnvConfig } from "src/config/env.config";
 
 @Injectable()
@@ -43,11 +43,6 @@ export class FlightAwareWebhookGuard implements CanActivate {
   }
 
   private verifySecret(received: string, expected: string): boolean {
-    // Hash both values with createHmac(..., this.hmacKey) so timingSafeEqual always compares
-    // fixed-length digests instead of variable-length user input.
-    const receivedHash = createHmac("sha256", this.hmacKey).update(received).digest();
-    const expectedHash = createHmac("sha256", this.hmacKey).update(expected).digest();
-
-    return timingSafeEqual(receivedHash, expectedHash);
+    return timingSafeSecretMatch(received, expected, this.hmacKey);
   }
 }

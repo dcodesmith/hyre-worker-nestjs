@@ -9,12 +9,15 @@ import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-a
 import { RequestIdMiddleware } from "./common/middlewares/request-id.middleware";
 import { EnvConfig, validateEnvironment } from "./config/env.config";
 import { parseOtlpHeaders } from "./config/tracing.config";
+import { AccountModule } from "./modules/account/account.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { DatabaseModule } from "./modules/database/database.module";
+import { DocumentsModule } from "./modules/documents/documents.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
 import { HealthModule } from "./modules/health/health.module";
 import { HttpClientModule } from "./modules/http-client/http-client.module";
 import { JobModule } from "./modules/job/job.module";
+import { MessagingModule } from "./modules/messaging/messaging.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { ReferralModule } from "./modules/referral/referral.module";
@@ -145,7 +148,10 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     // Queues are registered in their respective feature modules
     HttpClientModule,
     DatabaseModule,
+    AccountModule,
     FlutterwaveModule,
+    DocumentsModule,
+    MessagingModule,
     NotificationModule,
     PaymentModule,
     ReminderModule,
