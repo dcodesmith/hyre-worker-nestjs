@@ -218,7 +218,7 @@ export function normaliseExtensionDetails(
     carName: `${booking.car.make} ${booking.car.model} (${booking.car.year})`,
     legDate: format(bookingLeg.legDate, "PPPP"),
     extensionHours: extension.extendedDurationHours,
-    from: format(bookingLeg.legEndTime, "p"),
+    from: format(extension.extensionStartTime, "p"),
     to: format(extension.extensionEndTime, "p"),
   };
 }

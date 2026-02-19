@@ -76,11 +76,19 @@ export class RefundCompletedHandler {
       newStatus = PaymentAttemptStatus.PARTIALLY_REFUNDED;
     }
 
+    const existingWebhookPayload =
+      payment.webhookPayload &&
+      typeof payment.webhookPayload === "object" &&
+      !Array.isArray(payment.webhookPayload)
+        ? payment.webhookPayload
+        : {};
+
     await this.databaseService.payment.update({
       where: { id: payment.id },
       data: {
         status: newStatus,
         webhookPayload: {
+          ...existingWebhookPayload,
           refundAmount: AmountRefunded,
           refundStatus: status,
           refundFlwRef: FlwRef,

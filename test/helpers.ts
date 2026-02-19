@@ -332,8 +332,15 @@ export class TestDataFactory {
     bookingId: string,
     options: CreateBookingLegOptions = {},
   ): Promise<{ id: string }> {
-    const legStartTime = options.legStartTime ?? new Date();
-    const legEndTime = options.legEndTime ?? new Date(Date.now() + 2 * 60 * 60 * 1000);
+    let legStartTime: Date;
+    if (options.legStartTime instanceof Date) {
+      legStartTime = options.legStartTime;
+    } else if (options.legStartTime) {
+      legStartTime = new Date(options.legStartTime);
+    } else {
+      legStartTime = new Date();
+    }
+    const legEndTime = options.legEndTime ?? new Date(legStartTime.getTime() + 2 * 60 * 60 * 1000);
 
     const bookingLeg = await this.prisma.bookingLeg.create({
       data: {

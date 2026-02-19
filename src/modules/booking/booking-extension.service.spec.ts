@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { RatesService } from "../rates/rates.service";
@@ -16,6 +17,7 @@ describe("BookingExtensionService", () => {
     },
     extension: {
       create: vi.fn(),
+      update: vi.fn(),
     },
   };
 
@@ -38,8 +40,12 @@ describe("BookingExtensionService", () => {
     id: "user-1",
     email: "user@example.com",
     name: "Test User",
+    emailVerified: true,
+    image: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
     roles: ["user" as const],
-  };
+  } satisfies AuthSession["user"];
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -82,7 +88,7 @@ describe("BookingExtensionService", () => {
     const result = await service.createExtension(
       "booking-1",
       { hours: 2, callbackUrl: "https://example.com/callback" },
-      authUser as never,
+      authUser,
     );
 
     expect(result).toEqual({
@@ -106,7 +112,7 @@ describe("BookingExtensionService", () => {
       service.createExtension(
         "missing-booking",
         { hours: 1, callbackUrl: "https://example.com/callback" },
-        authUser as never,
+        authUser,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
@@ -133,9 +139,56 @@ describe("BookingExtensionService", () => {
       service.createExtension(
         "booking-1",
         { hours: 1, callbackUrl: "https://example.com/callback" },
-        authUser as never,
+        authUser,
       ),
     ).rejects.toThrow("Only DAY bookings can be extended");
+  });
+
+  it("updates existing pending unpaid extension when start time matches", async () => {
+    const now = new Date();
+    const legEndTime = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const pendingExtensionEnd = new Date(legEndTime.getTime() + 1 * 60 * 60 * 1000);
+
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      status: BookingStatus.ACTIVE,
+      type: BookingType.DAY,
+      car: { hourlyRate: 10000 },
+      legs: [
+        {
+          id: "leg-1",
+          legDate: now,
+          legEndTime,
+          extensions: [
+            {
+              id: "ext-pending-1",
+              extensionStartTime: legEndTime,
+              extensionEndTime: pendingExtensionEnd,
+              status: "PENDING",
+              paymentStatus: PaymentStatus.UNPAID,
+            },
+          ],
+        },
+      ],
+    });
+    databaseServiceMock.extension.update.mockResolvedValueOnce({ id: "ext-pending-1" });
+
+    await service.createExtension(
+      "booking-1",
+      { hours: 2, callbackUrl: "https://example.com/callback" },
+      authUser,
+    );
+
+    expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+    expect(databaseServiceMock.extension.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ext-pending-1" },
+      }),
+    );
+    const updateCall = databaseServiceMock.extension.update.mock.calls[0][0];
+    const startTime = new Date(updateCall.data.extensionStartTime);
+    expect(startTime.getTime()).toBe(legEndTime.getTime());
   });
 
   it("throws when requested extension exceeds today's max hours", async () => {
@@ -172,7 +225,7 @@ describe("BookingExtensionService", () => {
       service.createExtension(
         "booking-1",
         { hours: 3, callbackUrl: "https://example.com/callback" },
-        authUser as never,
+        authUser,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });

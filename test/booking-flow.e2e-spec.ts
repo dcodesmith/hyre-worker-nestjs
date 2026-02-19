@@ -80,6 +80,7 @@ describe("Booking Flow E2E", () => {
         checkoutUrl: `https://checkout.flutterwave.com/pay/${uniqueId}`,
       };
     });
+    vi.spyOn(flutterwaveService, "verifyTransaction");
   });
 
   afterAll(async () => {
@@ -157,7 +158,7 @@ describe("Booking Flow E2E", () => {
       },
     };
 
-    vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
       status: "success",
       message: "Transaction verified",
       data: webhookData,
@@ -258,7 +259,7 @@ describe("Booking Flow E2E", () => {
       },
     };
 
-    vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
       status: "success",
       message: "Transaction verified",
       data: webhookData,

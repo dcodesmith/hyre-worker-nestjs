@@ -573,6 +573,11 @@ describe("Payments E2E Tests", () => {
           where: { txRef },
         });
         expect(payments).toHaveLength(1);
+
+        const updatedLeg = await databaseService.bookingLeg.findUnique({
+          where: { id: bookingLeg.id },
+        });
+        expect(updatedLeg?.legEndTime.toISOString()).toBe(extensionEndTime.toISOString());
       });
     });
 

@@ -61,9 +61,12 @@ describe("TransferCompletedHandler", () => {
 
     await handler.handle(mockTransferData);
 
+    expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
+      where: { payoutProviderReference: mockTransferData.reference },
+    });
     expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
       where: { id: "payout-123" },
-      data: { status: "PAID_OUT", completedAt: expect.any(Date) },
+      data: { status: PayoutTransactionStatus.PAID_OUT, completedAt: expect.any(Date) },
     });
   });
 
@@ -77,9 +80,12 @@ describe("TransferCompletedHandler", () => {
 
     await handler.handle({ ...mockTransferData, status: "FAILED" });
 
+    expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
+      where: { payoutProviderReference: mockTransferData.reference },
+    });
     expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
       where: { id: "payout-123" },
-      data: { status: "FAILED", completedAt: expect.any(Date) },
+      data: { status: PayoutTransactionStatus.FAILED, completedAt: expect.any(Date) },
     });
   });
 

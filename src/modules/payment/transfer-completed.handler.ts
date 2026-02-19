@@ -45,8 +45,17 @@ export class TransferCompletedHandler {
       return;
     }
 
+    const normalizedStatus = typeof status === "string" ? status.trim().toUpperCase() : "";
+    if (!normalizedStatus) {
+      this.logger.warn(
+        "Missing or invalid status in transfer.completed webhook, marking as failed",
+        {
+          reference,
+        },
+      );
+    }
     const newStatus =
-      status.toUpperCase() === "SUCCESSFUL"
+      normalizedStatus === "SUCCESSFUL"
         ? PayoutTransactionStatus.PAID_OUT
         : PayoutTransactionStatus.FAILED;
 

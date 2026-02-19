@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { UTCDate } from "@date-fns/utc";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { BookingStatus, BookingType, ExtensionEventType, PaymentStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
@@ -71,11 +72,12 @@ export class BookingExtensionService {
         extension.status === "ACTIVE" && extension.paymentStatus === PaymentStatus.PAID,
     );
 
-    const extensionStartTime = latestPaidActiveExtension
-      ? new Date(latestPaidActiveExtension.extensionEndTime)
-      : new Date(bookingLeg.legEndTime);
-    const midnight = startOfDay(addDays(bookingLeg.legDate, 1));
-    const maxHours = differenceInHours(midnight, extensionStartTime);
+    const extensionStartTimeUTC = latestPaidActiveExtension?.extensionEndTime
+      ? new UTCDate(latestPaidActiveExtension.extensionEndTime)
+      : new UTCDate(bookingLeg.legEndTime);
+    const nextDayUTC = addDays(new UTCDate(bookingLeg.legDate), 1);
+    const midnightUTC = startOfDay(new UTCDate(nextDayUTC));
+    const maxHours = differenceInHours(midnightUTC, extensionStartTimeUTC);
 
     if (maxHours < 1) {
       throw new BadRequestException("Booking can no longer be extended today");
@@ -113,32 +115,45 @@ export class BookingExtensionService {
       idempotencyKey: `ext-${booking.id}-${randomUUID()}`,
     });
 
-    const extensionEndTime = addHours(extensionStartTime, body.hours);
-    const extension = await this.databaseService.extension.create({
-      data: {
-        bookingLegId: bookingLeg.id,
-        extensionStartTime,
-        extensionEndTime,
-        extendedDurationHours: body.hours,
-        eventType: ExtensionEventType.HOURLY_ADDITION,
-        status: "PENDING",
-        paymentStatus: PaymentStatus.UNPAID,
-        totalAmount,
-        netTotal: baseAmount,
-        paymentIntent: paymentIntent.paymentIntentId,
-        platformCustomerServiceFeeAmount: customerServiceFee,
-        platformCustomerServiceFeeRatePercent: rates.platformCustomerServiceFeeRatePercent,
-        subtotalBeforeVat: subTotal,
-        vatAmount,
-        vatRatePercent: rates.vatRatePercent,
-        platformFleetOwnerCommissionAmount: fleetFee,
-        platformFleetOwnerCommissionRatePercent: rates.platformFleetOwnerCommissionRatePercent,
-        fleetOwnerPayoutAmountNet: fleetPayout,
-      },
-      select: {
-        id: true,
-      },
-    });
+    const extensionEndTime = addHours(extensionStartTimeUTC, body.hours);
+    const extensionPayload = {
+      bookingLegId: bookingLeg.id,
+      extensionStartTime: extensionStartTimeUTC,
+      extensionEndTime,
+      extendedDurationHours: body.hours,
+      eventType: ExtensionEventType.HOURLY_ADDITION,
+      status: "PENDING" as const,
+      paymentStatus: PaymentStatus.UNPAID,
+      totalAmount,
+      netTotal: baseAmount,
+      paymentIntent: paymentIntent.paymentIntentId,
+      platformCustomerServiceFeeAmount: customerServiceFee,
+      platformCustomerServiceFeeRatePercent: rates.platformCustomerServiceFeeRatePercent,
+      subtotalBeforeVat: subTotal,
+      vatAmount,
+      vatRatePercent: rates.vatRatePercent,
+      platformFleetOwnerCommissionAmount: fleetFee,
+      platformFleetOwnerCommissionRatePercent: rates.platformFleetOwnerCommissionRatePercent,
+      fleetOwnerPayoutAmountNet: fleetPayout,
+    };
+
+    const existingPendingUnpaidForSameStart = bookingLeg.extensions.find(
+      (extension) =>
+        extension.status === "PENDING" &&
+        extension.paymentStatus === PaymentStatus.UNPAID &&
+        new UTCDate(extension.extensionStartTime).getTime() === extensionStartTimeUTC.getTime(),
+    );
+
+    const extension = existingPendingUnpaidForSameStart
+      ? await this.databaseService.extension.update({
+          where: { id: existingPendingUnpaidForSameStart.id },
+          data: extensionPayload,
+          select: { id: true },
+        })
+      : await this.databaseService.extension.create({
+          data: extensionPayload,
+          select: { id: true },
+        });
 
     return {
       extensionId: extension.id,

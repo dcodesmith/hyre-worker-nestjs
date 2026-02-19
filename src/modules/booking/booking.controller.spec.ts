@@ -1,3 +1,4 @@
+import { UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
@@ -298,6 +299,48 @@ describe("BookingController", () => {
       );
 
       expect(result).toEqual(mockCreateExtensionResponse);
+      expect(bookingExtensionService.createExtension).toHaveBeenCalledWith(
+        "booking-123",
+        {
+          hours: 2,
+          callbackUrl: "https://example.com/extension-payment-status",
+        },
+        mockSessionUser,
+      );
+    });
+
+    it("rejects createExtension when session user is missing", async () => {
+      for (const sessionUser of [null, undefined]) {
+        await expect(
+          controller.createExtension(
+            "booking-123",
+            {
+              hours: 2,
+              callbackUrl: "https://example.com/extension-payment-status",
+            },
+            sessionUser,
+          ),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
+      }
+      expect(bookingExtensionService.createExtension).not.toHaveBeenCalled();
+    });
+
+    it("propagates service error for invalid booking id", async () => {
+      vi.mocked(bookingExtensionService.createExtension).mockRejectedValueOnce(
+        new Error("Invalid booking id"),
+      );
+
+      await expect(
+        controller.createExtension(
+          "booking-123",
+          {
+            hours: 2,
+            callbackUrl: "https://example.com/extension-payment-status",
+          },
+          mockSessionUser,
+        ),
+      ).rejects.toThrow("Invalid booking id");
+
       expect(bookingExtensionService.createExtension).toHaveBeenCalledWith(
         "booking-123",
         {

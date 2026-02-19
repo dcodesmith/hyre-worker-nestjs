@@ -226,6 +226,8 @@ export class ChargeCompletedHandler {
 
     return this.databaseService.payment.upsert({
       where: { txRef },
+      // Intentionally keep update empty for idempotency:
+      // once a txRef is recorded, retries should not mutate the existing payment row.
       update: {},
       create: {
         txRef,

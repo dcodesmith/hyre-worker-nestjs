@@ -1,4 +1,11 @@
-import { Controller, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
 import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
@@ -57,8 +64,11 @@ export class BookingController {
   async createExtension(
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
     @ZodBody(createExtensionBodySchema) body: CreateExtensionBodyDto,
-    @CurrentUser() sessionUser: AuthSession["user"],
+    @CurrentUser() sessionUser: AuthSession["user"] | null | undefined,
   ): Promise<CreateExtensionResponse> {
+    if (!sessionUser) {
+      throw new UnauthorizedException("Invalid or expired session");
+    }
     return this.bookingExtensionService.createExtension(bookingId, body, sessionUser);
   }
 }

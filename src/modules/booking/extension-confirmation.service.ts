@@ -45,10 +45,6 @@ export class ExtensionConfirmationService {
         },
       });
 
-      if (updateResult.count === 0) {
-        return null;
-      }
-
       const extension = await tx.extension.findUnique({
         where: { id: payment.extensionId },
         include: {
@@ -71,8 +67,17 @@ export class ExtensionConfirmationService {
         return null;
       }
 
-      await tx.bookingLeg.update({
-        where: { id: extension.bookingLegId },
+      if (updateResult.count === 0 && extension.status !== "ACTIVE") {
+        return null;
+      }
+
+      // Advance legEndTime only if this extension pushes the window forward.
+      // Using updateMany with a time guard keeps this safe under concurrent confirmations.
+      await tx.bookingLeg.updateMany({
+        where: {
+          id: extension.bookingLegId,
+          legEndTime: { lt: extension.extensionEndTime },
+        },
         data: { legEndTime: extension.extensionEndTime },
       });
 
@@ -90,27 +95,32 @@ export class ExtensionConfirmationService {
     const bookingDetails = normaliseBookingDetails(updatedExtension.bookingLeg.booking);
     const extensionDetails = normaliseExtensionDetails(updatedExtension);
 
-    await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, {
-      id: `booking-extension-confirmed-${updatedExtension.id}-${Date.now()}`,
-      type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-      channels: [NotificationChannel.EMAIL],
-      bookingId: updatedExtension.bookingLeg.booking.id,
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          email: bookingDetails.customerEmail,
-          phoneNumber: bookingDetails.customerPhone,
+    const notificationJobId = `booking-extension-confirmed-${updatedExtension.id}`;
+    await this.notificationQueue.add(
+      SEND_NOTIFICATION_JOB_NAME,
+      {
+        id: notificationJobId,
+        type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: updatedExtension.bookingLeg.booking.id,
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: {
+            email: bookingDetails.customerEmail,
+            phoneNumber: bookingDetails.customerPhone,
+          },
+        },
+        templateData: {
+          templateKind: BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
+          ...bookingDetails,
+          legDate: extensionDetails.legDate,
+          extensionHours: extensionDetails.extensionHours,
+          from: extensionDetails.from,
+          to: extensionDetails.to,
+          subject: "Booking Extension Confirmed",
         },
       },
-      templateData: {
-        templateKind: BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
-        ...bookingDetails,
-        legDate: extensionDetails.legDate,
-        extensionHours: extensionDetails.extensionHours,
-        from: extensionDetails.from,
-        to: extensionDetails.to,
-        subject: "Booking Extension Confirmed",
-      },
-    });
+      { jobId: notificationJobId },
+    );
 
     this.logger.log("Extension confirmed after payment", {
       extensionId: updatedExtension.id,
