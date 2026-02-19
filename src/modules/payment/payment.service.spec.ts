@@ -1,4 +1,5 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PayoutTransactionStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
@@ -69,6 +70,9 @@ describe("PaymentService", () => {
           callback(databaseService),
       ),
     });
+
+    // Suppress logger noise for expected error-path tests
+    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
   });
   it("should use a deterministic reference derived from payout transaction id", async () => {
     const booking = createBooking({

@@ -95,5 +95,10 @@
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch": "10.2.1"
+    }
   }
 }

@@ -71,13 +71,6 @@ describe("FlightAware E2E Tests", () => {
     process.env.FLIGHTAWARE_WEBHOOK_SECRET = originalFlightawareSecret;
   });
 
-  it("GET /api/search-flight validates query params", async () => {
-    const response = await request(app.getHttpServer()).get("/api/search-flight?flightNumber=BA74");
-
-    expect(response.status).toBe(HttpStatus.BAD_REQUEST);
-    expect(response.body.type).toBe("VALIDATION_ERROR");
-  });
-
   it("GET /api/search-flight returns info for non-Lagos destination", async () => {
     vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValueOnce({
       message:

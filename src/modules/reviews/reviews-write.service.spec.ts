@@ -1,7 +1,13 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking, createReview } from "../../shared/helper.fixtures";
+import {
+  createBooking,
+  createCar,
+  createChauffeur,
+  createReview,
+  createUser,
+} from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import {
@@ -58,36 +64,48 @@ describe("ReviewsWriteService", () => {
       serviceRating: 5,
       comment: "Great service",
     };
+    const createReviewBookingMock = (
+      overrides: Partial<{
+        id: string;
+        userId: string;
+        status: BookingStatus;
+        endDate: Date;
+        chauffeurId: string | null;
+        bookingReference: string;
+      }> = {},
+    ) => {
+      const car = createCar({
+        make: "Toyota",
+        model: "Camry",
+        year: 2023,
+      });
+      const chauffeur = createChauffeur({
+        id: "chauffeur-1",
+        name: "Driver",
+        email: "driver@example.com",
+      });
+      const user = createUser({
+        name: "Customer",
+        email: "customer@example.com",
+      });
 
-    it("creates review for eligible booking", async () => {
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce({
+      return createBooking({
         id: input.bookingId,
         userId: "user-1",
         status: BookingStatus.COMPLETED,
         endDate: new Date(),
         chauffeurId: "chauffeur-1",
         bookingReference: "BK-12345678",
-        car: {
-          make: "Toyota",
-          model: "Camry",
-          year: 2023,
-          owner: {
-            id: "owner-1",
-            name: "Fleet Owner",
-            email: "owner@example.com",
-          },
-        },
-        chauffeur: {
-          id: "chauffeur-1",
-          name: "Driver",
-          email: "driver@example.com",
-        },
-        user: {
-          name: "Customer",
-          email: "customer@example.com",
-        },
+        car,
+        chauffeur,
+        user,
         deletedAt: null,
-      } as never);
+        ...overrides,
+      });
+    };
+
+    it("creates review for eligible booking", async () => {
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(createReviewBookingMock());
 
       vi.mocked(databaseService.review.create).mockResolvedValueOnce(
         createReview({
@@ -155,34 +173,7 @@ describe("ReviewsWriteService", () => {
     });
 
     it("throws when review already exists", async () => {
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce({
-        id: input.bookingId,
-        userId: "user-1",
-        status: BookingStatus.COMPLETED,
-        endDate: new Date(),
-        chauffeurId: "chauffeur-1",
-        bookingReference: "BK-12345678",
-        car: {
-          make: "Toyota",
-          model: "Camry",
-          year: 2023,
-          owner: {
-            id: "owner-1",
-            name: "Fleet Owner",
-            email: "owner@example.com",
-          },
-        },
-        chauffeur: {
-          id: "chauffeur-1",
-          name: "Driver",
-          email: "driver@example.com",
-        },
-        user: {
-          name: "Customer",
-          email: "customer@example.com",
-        },
-        deletedAt: null,
-      } as never);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(createReviewBookingMock());
 
       vi.mocked(databaseService.review.create).mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError("Unique failed", {
@@ -198,34 +189,7 @@ describe("ReviewsWriteService", () => {
     });
 
     it("does not fail review creation when notification queueing fails", async () => {
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce({
-        id: input.bookingId,
-        userId: "user-1",
-        status: BookingStatus.COMPLETED,
-        endDate: new Date(),
-        chauffeurId: "chauffeur-1",
-        bookingReference: "BK-12345678",
-        car: {
-          make: "Toyota",
-          model: "Camry",
-          year: 2023,
-          owner: {
-            id: "owner-1",
-            name: "Fleet Owner",
-            email: "owner@example.com",
-          },
-        },
-        chauffeur: {
-          id: "chauffeur-1",
-          name: "Driver",
-          email: "driver@example.com",
-        },
-        user: {
-          name: "Customer",
-          email: "customer@example.com",
-        },
-        deletedAt: null,
-      } as never);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(createReviewBookingMock());
 
       vi.mocked(databaseService.review.create).mockResolvedValueOnce(
         createReview({

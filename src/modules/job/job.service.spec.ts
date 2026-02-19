@@ -1,4 +1,5 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,9 +50,13 @@ describe("JobService", () => {
     service = module.get<JobService>(JobService);
     reminderQueue = module.get<Queue>(getQueueToken(REMINDERS_QUEUE));
     statusUpdateQueue = module.get<Queue>(getQueueToken(STATUS_UPDATES_QUEUE));
+
+    // Suppress logger noise for expected error-path tests
+    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
   it("should enqueue start booking leg reminders", async () => {

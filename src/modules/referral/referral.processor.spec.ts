@@ -4,18 +4,18 @@ import { Job } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 import { ReferralProcessor } from "./referral.processor";
-import { ReferralService } from "./referral.service";
+import { ReferralProcessingService } from "./referral-processing.service";
 
 describe("ReferralProcessor", () => {
   let processor: ReferralProcessor;
-  let referralService: ReferralService;
+  let referralProcessingService: ReferralProcessingService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReferralProcessor,
         {
-          provide: ReferralService,
+          provide: ReferralProcessingService,
           useValue: {
             processReferralCompletionForBooking: vi.fn(),
           },
@@ -24,7 +24,7 @@ describe("ReferralProcessor", () => {
     }).compile();
 
     processor = module.get<ReferralProcessor>(ReferralProcessor);
-    referralService = module.get<ReferralService>(ReferralService);
+    referralProcessingService = module.get<ReferralProcessingService>(ReferralProcessingService);
 
     // Suppress logger output during tests by default
     vi.spyOn(processor["logger"], "log").mockImplementation(() => undefined);
@@ -40,12 +40,14 @@ describe("ReferralProcessor", () => {
         data: { bookingId: "booking-123", timestamp: new Date().toISOString() },
       } as Job<ReferralJobData, void, string>;
 
-      vi.mocked(referralService.processReferralCompletionForBooking).mockResolvedValue(undefined);
+      vi.mocked(referralProcessingService.processReferralCompletionForBooking).mockResolvedValue(
+        undefined,
+      );
 
       const result = await processor.process(job);
 
       expect(result).toEqual({ success: true });
-      expect(referralService.processReferralCompletionForBooking).toHaveBeenCalledWith(
+      expect(referralProcessingService.processReferralCompletionForBooking).toHaveBeenCalledWith(
         "booking-123",
       );
     });
@@ -60,7 +62,7 @@ describe("ReferralProcessor", () => {
       await expect(processor.process(job)).rejects.toThrow(
         "Unknown referral job type: unknown-job-type",
       );
-      expect(referralService.processReferralCompletionForBooking).not.toHaveBeenCalled();
+      expect(referralProcessingService.processReferralCompletionForBooking).not.toHaveBeenCalled();
     });
 
     it("should re-throw error when referral service fails", async () => {
@@ -71,12 +73,12 @@ describe("ReferralProcessor", () => {
       } as Job<ReferralJobData, void, string>;
 
       const serviceError = new Error("Database connection failed");
-      vi.mocked(referralService.processReferralCompletionForBooking).mockRejectedValue(
+      vi.mocked(referralProcessingService.processReferralCompletionForBooking).mockRejectedValue(
         serviceError,
       );
 
       await expect(processor.process(job)).rejects.toThrow("Database connection failed");
-      expect(referralService.processReferralCompletionForBooking).toHaveBeenCalledWith(
+      expect(referralProcessingService.processReferralCompletionForBooking).toHaveBeenCalledWith(
         "booking-123",
       );
     });
