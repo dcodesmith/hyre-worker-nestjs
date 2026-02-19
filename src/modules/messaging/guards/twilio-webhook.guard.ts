@@ -40,8 +40,7 @@ export class TwilioWebhookGuard implements CanActivate {
   }
 
   private getSignature(request: Request): string | null {
-    const signature =
-      request.headers["x-twilio-signature"] ?? request.headers["x-twilio-signature-256"];
+    const signature = request.headers["x-twilio-signature"];
     return typeof signature === "string" ? signature : null;
   }
 

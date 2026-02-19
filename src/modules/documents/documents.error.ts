@@ -12,7 +12,6 @@ export class DocumentsException extends AppException {}
 export class DocumentNotFoundException extends DocumentsException {
   constructor() {
     super(DocumentsErrorCode.DOCUMENT_NOT_FOUND, "Document not found", HttpStatus.NOT_FOUND, {
-      type: DocumentsErrorCode.DOCUMENT_NOT_FOUND,
       title: "Document Not Found",
     });
   }
@@ -25,7 +24,6 @@ export class DocumentFileNotFoundException extends DocumentsException {
       "Document file not found",
       HttpStatus.NOT_FOUND,
       {
-        type: DocumentsErrorCode.DOCUMENT_FILE_NOT_FOUND,
         title: "Document File Not Found",
       },
     );
@@ -39,7 +37,6 @@ export class DocumentFileFetchFailedException extends DocumentsException {
       "Failed to fetch document file",
       HttpStatus.BAD_GATEWAY,
       {
-        type: DocumentsErrorCode.DOCUMENT_FILE_FETCH_FAILED,
         title: "Document File Fetch Failed",
       },
     );

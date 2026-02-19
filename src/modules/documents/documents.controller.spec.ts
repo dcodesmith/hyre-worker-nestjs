@@ -64,5 +64,11 @@ describe("DocumentsController", () => {
 
     expect(documentProxyService.getPdfByDocumentId).toHaveBeenCalledWith("doc-1");
     expect(stream.pipe).toHaveBeenCalledWith(response);
+
+    expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/pdf");
+    expect(response.setHeader).toHaveBeenCalledWith(
+      "Content-Disposition",
+      expect.stringContaining("sample.pdf"),
+    );
   });
 });
