@@ -312,9 +312,7 @@ export class DashboardService {
       }, {} as PayoutStatusBreakdown);
 
       return {
-        totalPaidOut:
-          byStatus[PayoutTransactionStatus.PAID_OUT].amountPaid ||
-          byStatus[PayoutTransactionStatus.PAID_OUT].amountToPay,
+        totalPaidOut: byStatus[PayoutTransactionStatus.PAID_OUT].amountPaid,
         pendingPayouts:
           byStatus[PayoutTransactionStatus.PENDING_APPROVAL].amountToPay +
           byStatus[PayoutTransactionStatus.PENDING_DISBURSEMENT].amountToPay +

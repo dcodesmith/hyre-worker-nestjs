@@ -92,8 +92,10 @@ describe("Dashboard E2E Tests", () => {
     const paidOut = await factory.createPayoutTransaction(ownerId, {
       status: "PAID_OUT",
       amountToPay: 50000,
-      amountPaid: 50000,
-      completedAt: new Date("2026-02-03T10:00:00.000Z"),
+    });
+    await databaseService.payoutTransaction.update({
+      where: { id: paidOut.id },
+      data: { amountPaid: 50000, completedAt: new Date("2026-02-03T10:00:00.000Z") },
     });
     const pending = await factory.createPayoutTransaction(ownerId, {
       status: "PENDING_DISBURSEMENT",
