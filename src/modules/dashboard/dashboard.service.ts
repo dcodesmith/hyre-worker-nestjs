@@ -48,7 +48,7 @@ export class DashboardService {
     }
 
     if ("range" in query) {
-      const rangeDays = query.range === "custom" ? 30 : DASHBOARD_RANGE_DAYS[query.range];
+      const rangeDays = DASHBOARD_RANGE_DAYS[query.range];
       const from = new Date(to);
       from.setDate(from.getDate() - rangeDays);
       return { from, to };
@@ -93,7 +93,17 @@ export class DashboardService {
         }),
         this.databaseService.car.count({ where: { ownerId } }),
         this.databaseService.payoutTransaction.aggregate({
-          where: { fleetOwnerId: ownerId },
+          where: {
+            fleetOwnerId: ownerId,
+
+            status: {
+              in: [
+                PayoutTransactionStatus.PROCESSING,
+                PayoutTransactionStatus.PAID_OUT,
+                PayoutTransactionStatus.FAILED,
+              ],
+            },
+          },
           _sum: { amountToPay: true, amountPaid: true },
         }),
       ]);
