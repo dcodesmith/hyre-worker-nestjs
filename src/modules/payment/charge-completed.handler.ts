@@ -204,10 +204,10 @@ export class ChargeCompletedHandler {
 
     if (booking) {
       bookingId = booking.id;
-      amountExpected = booking.totalAmount.toNumber() ?? amountExpected;
+      amountExpected = booking.totalAmount.toNumber() || amountExpected;
     } else if (extension) {
       extensionId = extension.id;
-      amountExpected = extension.totalAmount.toNumber() ?? amountExpected;
+      amountExpected = extension.totalAmount.toNumber() || amountExpected;
     } else {
       this.logger.error("No booking or extension found for txRef, cannot create payment record", {
         txRef,

@@ -13,8 +13,8 @@ import {
   CLIENT_RECIPIENT_TYPE,
   DEFAULT_CHANNELS,
   FLEET_OWNER_RECIPIENT_TYPE,
+  HIGH_PRIORITY_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB_NAME,
-  STATUS_CHANGE_JOB_OPTIONS,
 } from "./notification.const";
 import {
   NotificationChannel,
@@ -24,6 +24,7 @@ import {
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
 import {
+  BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
@@ -57,9 +58,70 @@ export class NotificationService {
       showReviewRequest,
     });
 
-    await this.addJobToQueue(jobData, STATUS_CHANGE_JOB_OPTIONS);
+    await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
 
     this.logStatusChangeNotification(booking.id, oldStatus, newStatus, jobData.channels);
+  }
+
+  /**
+   * Queue cancellation notifications for both the customer and the fleet owner.
+   */
+  async queueBookingCancellationNotifications(booking: BookingWithRelations): Promise<void> {
+    const bookingDetails = normaliseBookingDetails(booking);
+
+    const templateData = {
+      templateKind: BOOKING_CANCELLED_TEMPLATE_KIND,
+      ...bookingDetails,
+      subject: "Your booking has been cancelled",
+    } as const;
+
+    const customerJobData: NotificationJobData = {
+      id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
+      type: NotificationType.BOOKING_CANCELLED,
+      channels: DEFAULT_CHANNELS,
+      bookingId: bookingDetails.id,
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          email: bookingDetails.customerEmail,
+          phoneNumber: bookingDetails.customerPhone,
+        },
+      },
+      templateData,
+    };
+
+    const ownerEmail = booking.car?.owner?.email;
+    const ownerPhone = booking.car?.owner?.phoneNumber;
+
+    const jobs: Promise<unknown>[] = [
+      this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS),
+    ];
+
+    if (ownerEmail || ownerPhone) {
+      const ownerJobData: NotificationJobData = {
+        id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
+        type: NotificationType.BOOKING_CANCELLED,
+        channels: this.determineChannels(ownerEmail ?? undefined, ownerPhone ?? undefined),
+        bookingId: bookingDetails.id,
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            email: ownerEmail ?? undefined,
+            phoneNumber: ownerPhone ?? undefined,
+          },
+        },
+        templateData: {
+          ...templateData,
+          subject: "A booking for your vehicle has been cancelled",
+        },
+      };
+      jobs.push(this.addJobToQueue(ownerJobData, HIGH_PRIORITY_JOB_OPTIONS));
+    }
+
+    await Promise.all(jobs);
+
+    this.logger.log("Queued booking cancellation notifications", {
+      bookingId: bookingDetails.id,
+      notifiedOwner: !!(ownerEmail || ownerPhone),
+    });
   }
 
   /**

@@ -14,6 +14,12 @@ export const BookingErrorCode = {
   CAR_NOT_AVAILABLE: "CAR_NOT_AVAILABLE",
   PAYMENT_INTENT_FAILED: "PAYMENT_INTENT_FAILED",
   BOOKING_CREATION_FAILED: "BOOKING_CREATION_FAILED",
+  BOOKING_NOT_FOUND: "BOOKING_NOT_FOUND",
+  BOOKING_FETCH_FAILED: "BOOKING_FETCH_FAILED",
+  BOOKING_UPDATE_FAILED: "BOOKING_UPDATE_FAILED",
+  BOOKING_UPDATE_NOT_ALLOWED: "BOOKING_UPDATE_NOT_ALLOWED",
+  BOOKING_NOT_CANCELLABLE: "BOOKING_NOT_CANCELLABLE",
+  BOOKING_CANCELLATION_FAILED: "BOOKING_CANCELLATION_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
 } as const;
 
@@ -31,11 +37,7 @@ export class BookingValidationException extends BookingException {
       BookingErrorCode.VALIDATION_ERROR,
       detail ?? "One or more validation errors occurred",
       HttpStatus.BAD_REQUEST,
-      {
-        type: BookingErrorCode.VALIDATION_ERROR,
-        title: "Validation Failed",
-        errors,
-      },
+      { title: "Validation Failed", errors },
     );
   }
 }
@@ -49,10 +51,7 @@ export class CarNotAvailableException extends BookingException {
       BookingErrorCode.CAR_NOT_AVAILABLE,
       reason ?? `Car ${carId} is not available for the selected dates`,
       HttpStatus.CONFLICT,
-      {
-        type: BookingErrorCode.CAR_NOT_AVAILABLE,
-        title: "Car Not Available",
-      },
+      { title: "Car Not Available" },
     );
   }
 }
@@ -66,10 +65,7 @@ export class CarNotFoundException extends BookingException {
       BookingErrorCode.CAR_NOT_FOUND,
       `Car with ID ${carId} was not found`,
       HttpStatus.NOT_FOUND,
-      {
-        type: BookingErrorCode.CAR_NOT_FOUND,
-        title: "Car Not Found",
-      },
+      { title: "Car Not Found" },
     );
   }
 }
@@ -83,10 +79,7 @@ export class PaymentIntentFailedException extends BookingException {
       BookingErrorCode.PAYMENT_INTENT_FAILED,
       detail ?? "Failed to create payment intent. Please try again.",
       HttpStatus.BAD_GATEWAY,
-      {
-        type: BookingErrorCode.PAYMENT_INTENT_FAILED,
-        title: "Payment Intent Failed",
-      },
+      { title: "Payment Intent Failed" },
     );
   }
 }
@@ -100,10 +93,7 @@ export class BookingCreationFailedException extends BookingException {
       BookingErrorCode.BOOKING_CREATION_FAILED,
       detail ?? "An unexpected error occurred while creating the booking",
       HttpStatus.INTERNAL_SERVER_ERROR,
-      {
-        type: BookingErrorCode.BOOKING_CREATION_FAILED,
-        title: "Booking Creation Failed",
-      },
+      { title: "Booking Creation Failed" },
     );
   }
 }
@@ -118,10 +108,73 @@ export class ReferralDiscountNoLongerAvailableException extends BookingException
       BookingErrorCode.REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE,
       "The referral discount is no longer available. It may have been used in another booking. Please retry without the discount.",
       HttpStatus.CONFLICT,
-      {
-        type: BookingErrorCode.REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE,
-        title: "Referral Discount No Longer Available",
-      },
+      { title: "Referral Discount No Longer Available" },
+    );
+  }
+}
+
+export class BookingNotFoundException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_NOT_FOUND,
+      "Booking not found or you do not have access to it",
+      HttpStatus.NOT_FOUND,
+      { title: "Booking Not Found" },
+    );
+  }
+}
+
+export class BookingFetchFailedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_FETCH_FAILED,
+      "An unexpected error occurred while fetching bookings",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Booking Fetch Failed" },
+    );
+  }
+}
+
+export class BookingUpdateFailedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_UPDATE_FAILED,
+      "An unexpected error occurred while updating the booking",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Booking Update Failed" },
+    );
+  }
+}
+
+export class BookingUpdateNotAllowedException extends BookingException {
+  constructor(detail?: string) {
+    super(
+      BookingErrorCode.BOOKING_UPDATE_NOT_ALLOWED,
+      detail ?? "This booking cannot be updated in its current state",
+      HttpStatus.CONFLICT,
+      { title: "Booking Update Not Allowed" },
+    );
+  }
+}
+
+export class BookingNotCancellableException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_NOT_CANCELLABLE,
+      "This booking cannot be cancelled in its current state",
+      HttpStatus.CONFLICT,
+      { title: "Booking Not Cancellable" },
+    );
+  }
+}
+
+export class BookingCancellationFailedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_CANCELLATION_FAILED,
+      "An unexpected error occurred while cancelling the booking",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Booking Cancellation Failed" },
     );
   }
 }

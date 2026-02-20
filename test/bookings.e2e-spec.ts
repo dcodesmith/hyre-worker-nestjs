@@ -19,6 +19,7 @@ describe("Bookings E2E Tests", () => {
   let factory: TestDataFactory;
 
   let testUserCookie: string;
+  let testUserId: string;
   let testCarId: string;
 
   beforeAll(async () => {
@@ -51,6 +52,7 @@ describe("Bookings E2E Tests", () => {
     const testEmail = uniqueEmail("booking-test-user");
     const testResult = await factory.authenticateAndGetUser(testEmail, "user");
     testUserCookie = testResult.cookie;
+    testUserId = testResult.user.id;
 
     // Create fleet owner and car
     const fleetOwner = await factory.createFleetOwner();
@@ -174,6 +176,193 @@ describe("Bookings E2E Tests", () => {
 
         expect(response.status).toBeGreaterThanOrEqual(HttpStatus.BAD_REQUEST);
       });
+    });
+  });
+
+  describe("GET /api/bookings", () => {
+    it("should return 401 without authentication", async () => {
+      const response = await request(app.getHttpServer()).get("/api/bookings");
+
+      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    });
+
+    it("should return bookings grouped by status for authenticated user", async () => {
+      await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/api/bookings")
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toBeTypeOf("object");
+      expect(response.body.CONFIRMED).toBeInstanceOf(Array);
+      expect(response.body.CONFIRMED.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should not return another user's bookings", async () => {
+      const otherUser = await factory.createUser();
+      await factory.createBooking(otherUser.id, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        bookingReference: `OTHER-${Date.now()}`,
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/api/bookings")
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      const allBookings = Object.values(response.body).flat() as Array<{ userId: string }>;
+      for (const booking of allBookings) {
+        expect(booking.userId).toBe(testUserId);
+      }
+    });
+  });
+
+  describe("GET /api/bookings/:bookingId", () => {
+    it("should return 401 without authentication", async () => {
+      const response = await request(app.getHttpServer()).get("/api/bookings/some-id");
+
+      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    });
+
+    it("should return booking details for the owner", async () => {
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body.id).toBe(booking.id);
+    });
+
+    it("should return 404 for non-existent booking", async () => {
+      const response = await request(app.getHttpServer())
+        .get("/api/bookings/non-existent-id")
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    });
+
+    it("should return 404 when accessing another user's booking", async () => {
+      const otherUser = await factory.createUser();
+      const otherBooking = await factory.createBooking(otherUser.id, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${otherBooking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
+  describe("PATCH /api/bookings/:bookingId", () => {
+    it("should return 401 without authentication", async () => {
+      const response = await request(app.getHttpServer())
+        .patch("/api/bookings/some-id")
+        .send({ pickupAddress: "New Address" });
+
+      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    });
+
+    it("should update booking pickup address", async () => {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
+      const futureEnd = new Date(futureStart.getTime() + 43200000);
+
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: futureEnd,
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ pickupAddress: "456 Updated St, Lagos" });
+
+      expect(response.status).toBe(HttpStatus.OK);
+    });
+
+    it("should return 400 for empty update body", async () => {
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({});
+
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+    });
+
+    it("should return 404 when updating another user's booking", async () => {
+      const otherUser = await factory.createUser();
+      const otherBooking = await factory.createBooking(otherUser.id, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${otherBooking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ pickupAddress: "Hijacked Address" });
+
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
+  describe("DELETE /api/bookings/:bookingId", () => {
+    it("should return 401 without authentication", async () => {
+      const response = await request(app.getHttpServer())
+        .delete("/api/bookings/some-id")
+        .send({ reason: "test" });
+
+      expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    });
+
+    it("should cancel a confirmed booking", async () => {
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .delete(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ reason: "Plans changed" });
+
+      expect(response.status).toBe(HttpStatus.OK);
+
+      const cancelled = await factory.getBookingById(booking.id);
+      expect(cancelled?.status).toBe("CANCELLED");
+    });
+
+    it("should return 404 when cancelling another user's booking", async () => {
+      const otherUser = await factory.createUser();
+      const otherBooking = await factory.createBooking(otherUser.id, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+      });
+
+      const response = await request(app.getHttpServer())
+        .delete(`/api/bookings/${otherBooking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ reason: "Hijack attempt" });
+
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
     });
   });
 });

@@ -7,10 +7,13 @@ import { NotificationModule } from "../notification/notification.module";
 import { RatesModule } from "../rates/rates.module";
 import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
 import { BookingLegService } from "./booking-leg.service";
+import { BookingReadService } from "./booking-read.service";
+import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
 
@@ -31,6 +34,9 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
     BookingCalculationService,
     BookingCreationService,
     BookingExtensionService,
+    BookingReadService,
+    BookingUpdateService,
+    BookingCancellationService,
     ExtensionConfirmationService,
   ],
   exports: [
@@ -40,6 +46,9 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
     BookingCalculationService,
     BookingCreationService,
     BookingExtensionService,
+    BookingReadService,
+    BookingUpdateService,
+    BookingCancellationService,
     ExtensionConfirmationService,
   ],
 })

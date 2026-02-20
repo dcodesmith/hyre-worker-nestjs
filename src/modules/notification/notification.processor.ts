@@ -7,9 +7,11 @@ import {
   renderBookingExtensionConfirmationEmail,
   renderBookingReminderEmail,
   renderBookingStatusUpdateEmail,
+  renderFleetOwnerBookingCancellationEmail,
   renderFleetOwnerNewBookingEmail,
   renderReviewReceivedEmailForChauffeur,
   renderReviewReceivedEmailForOwner,
+  renderUserBookingCancellationEmail,
 } from "../../templates/emails";
 import { EmailService } from "./email.service";
 import {
@@ -25,6 +27,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import {
+  BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
@@ -36,6 +39,7 @@ import {
   type TemplateData,
 } from "./template-data.interface";
 import {
+  BookingCancelledMapper,
   BookingConfirmedMapper,
   BookingReminderEndMapper,
   BookingReminderStartMapper,
@@ -61,6 +65,7 @@ export class NotificationProcessor extends WorkerHost {
     // Initialize template mappers in order of specificity
     this.templateMappers = [
       new BookingConfirmedMapper(),
+      new BookingCancelledMapper(),
       new FleetOwnerNewBookingMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
@@ -235,6 +240,8 @@ export class NotificationProcessor extends WorkerHost {
         return this.buildBookingExtensionConfirmedEmailHtml(templateData);
       case NotificationType.FLEET_OWNER_NEW_BOOKING:
         return this.buildFleetOwnerNewBookingEmailHtml(templateData);
+      case NotificationType.BOOKING_CANCELLED:
+        return this.buildBookingCancelledEmailHtml(templateData, recipient);
       case NotificationType.BOOKING_STATUS_CHANGE:
         return this.buildBookingStatusEmailHtml(templateData);
       case NotificationType.BOOKING_REMINDER_START:
@@ -275,6 +282,21 @@ export class NotificationProcessor extends WorkerHost {
     // Status email currently targets the client. If chauffeur delivery is desired,
     // a recipient-specific template should be introduced.
     return renderBookingStatusUpdateEmail(templateData);
+  }
+
+  private buildBookingCancelledEmailHtml(
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    if (templateData.templateKind !== BOOKING_CANCELLED_TEMPLATE_KIND) {
+      throw new Error("Invalid template data for booking cancellation");
+    }
+
+    if (recipient === FLEET_OWNER_RECIPIENT_TYPE) {
+      return renderFleetOwnerBookingCancellationEmail(templateData);
+    }
+
+    return renderUserBookingCancellationEmail(templateData);
   }
 
   private buildBookingReminderEmailHtml(
