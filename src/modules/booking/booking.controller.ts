@@ -1,6 +1,5 @@
 import {
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -108,7 +107,7 @@ export class BookingController {
     return this.bookingUpdateService.updateBooking(bookingId, sessionUser.id, body);
   }
 
-  @Delete(":bookingId")
+  @Patch(":bookingId/cancel")
   @UseGuards(SessionGuard)
   async cancelBooking(
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,

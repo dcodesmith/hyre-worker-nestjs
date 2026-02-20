@@ -37,11 +37,11 @@ export class BookingCancellationService {
           throw new BookingNotFoundException();
         }
 
-        const isCancellableStatus =
-          existingBooking.status === BookingStatus.CONFIRMED ||
-          existingBooking.status === BookingStatus.PENDING;
+        const canCancelBooking =
+          existingBooking.status === BookingStatus.CONFIRMED &&
+          existingBooking.paymentStatus === PaymentStatus.PAID;
 
-        if (!isCancellableStatus) {
+        if (!canCancelBooking) {
           throw new BookingNotCancellableException();
         }
 

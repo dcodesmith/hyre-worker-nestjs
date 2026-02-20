@@ -324,10 +324,10 @@ describe("Bookings E2E Tests", () => {
     });
   });
 
-  describe("DELETE /api/bookings/:bookingId", () => {
+  describe("PATCH /api/bookings/:bookingId/cancel", () => {
     it("should return 401 without authentication", async () => {
       const response = await request(app.getHttpServer())
-        .delete("/api/bookings/some-id")
+        .patch("/api/bookings/some-id/cancel")
         .send({ reason: "test" });
 
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
@@ -340,7 +340,7 @@ describe("Bookings E2E Tests", () => {
       });
 
       const response = await request(app.getHttpServer())
-        .delete(`/api/bookings/${booking.id}`)
+        .patch(`/api/bookings/${booking.id}/cancel`)
         .set("Cookie", testUserCookie)
         .send({ reason: "Plans changed" });
 
@@ -358,7 +358,7 @@ describe("Bookings E2E Tests", () => {
       });
 
       const response = await request(app.getHttpServer())
-        .delete(`/api/bookings/${otherBooking.id}`)
+        .patch(`/api/bookings/${otherBooking.id}/cancel`)
         .set("Cookie", testUserCookie)
         .send({ reason: "Hijack attempt" });
 

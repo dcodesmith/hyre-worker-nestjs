@@ -85,6 +85,12 @@ export const envSchema = z.object({
         .min(1, "At least one valid TRUSTED_ORIGIN is required"),
     ),
   SENDER_NAME: z.string().min(2, "SENDER_NAME is required"),
+
+  // S3 storage configuration (for car uploads)
+  AWS_REGION: z.string().min(1, "AWS_REGION is required for S3 uploads"),
+  AWS_ACCESS_KEY_ID: z.string().min(1, "AWS_ACCESS_KEY_ID is required for S3 uploads"),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS_SECRET_ACCESS_KEY is required for S3 uploads"),
+  AWS_BUCKET_NAME: z.string().min(1, "AWS_BUCKET_NAME is required for S3 uploads"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
