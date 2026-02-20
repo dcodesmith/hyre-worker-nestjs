@@ -5,9 +5,16 @@ import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { BookingController } from "./booking.controller";
-import { BookingValidationException } from "./booking.error";
+import {
+  BookingFetchFailedException,
+  BookingNotFoundException,
+  BookingValidationException,
+} from "./booking.error";
+import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
+import { BookingReadService } from "./booking-read.service";
+import { BookingUpdateService } from "./booking-update.service";
 import {
   type CreateBookingDto,
   type CreateBookingInput,
@@ -31,6 +38,9 @@ describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
   let bookingExtensionService: BookingExtensionService;
+  let bookingReadService: BookingReadService;
+  let bookingUpdateService: BookingUpdateService;
+  let bookingCancellationService: BookingCancellationService;
 
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
@@ -40,6 +50,16 @@ describe("BookingController", () => {
     extensionId: "extension-123",
     paymentIntentId: "tx-ext-123",
     checkoutUrl: "https://checkout.flutterwave.com/pay/ext123",
+  };
+  const mockBookingsByStatus = {
+    CONFIRMED: [{ id: "booking-1", status: "CONFIRMED" }],
+    COMPLETED: [{ id: "booking-2", status: "COMPLETED" }],
+  };
+  const mockBookingDetail = {
+    id: "booking-123",
+    status: "CONFIRMED",
+    userId: "user-123",
+    carId: "car-123",
   };
 
   const mockSessionUser = {
@@ -80,6 +100,16 @@ describe("BookingController", () => {
     const mockBookingExtensionService = {
       createExtension: vi.fn().mockResolvedValue(mockCreateExtensionResponse),
     };
+    const mockBookingReadService = {
+      getBookingsByStatus: vi.fn().mockResolvedValue(mockBookingsByStatus),
+      getBookingById: vi.fn().mockResolvedValue(mockBookingDetail),
+    };
+    const mockBookingUpdateService = {
+      updateBooking: vi.fn().mockResolvedValue(mockBookingDetail),
+    };
+    const mockBookingCancellationService = {
+      cancelBooking: vi.fn().mockResolvedValue({ ...mockBookingDetail, status: "CANCELLED" }),
+    };
 
     const mockAuthService = {
       isInitialized: true,
@@ -96,6 +126,9 @@ describe("BookingController", () => {
       providers: [
         { provide: BookingCreationService, useValue: mockBookingCreationService },
         { provide: BookingExtensionService, useValue: mockBookingExtensionService },
+        { provide: BookingReadService, useValue: mockBookingReadService },
+        { provide: BookingUpdateService, useValue: mockBookingUpdateService },
+        { provide: BookingCancellationService, useValue: mockBookingCancellationService },
         { provide: AuthService, useValue: mockAuthService },
         OptionalSessionGuard,
       ],
@@ -104,6 +137,9 @@ describe("BookingController", () => {
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
     bookingExtensionService = module.get<BookingExtensionService>(BookingExtensionService);
+    bookingReadService = module.get<BookingReadService>(BookingReadService);
+    bookingUpdateService = module.get<BookingUpdateService>(BookingUpdateService);
+    bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
   });
   describe("createBooking", () => {
     describe("authenticated user", () => {
@@ -349,6 +385,133 @@ describe("BookingController", () => {
         },
         mockSessionUser,
       );
+    });
+  });
+
+  describe("getBookingsByStatus", () => {
+    it("returns bookings grouped by status for authenticated user", async () => {
+      const result = await controller.getBookingsByStatus(mockSessionUser);
+
+      expect(result).toEqual(mockBookingsByStatus);
+      expect(bookingReadService.getBookingsByStatus).toHaveBeenCalledWith("user-123");
+    });
+
+    it("propagates service errors", async () => {
+      vi.mocked(bookingReadService.getBookingsByStatus).mockRejectedValueOnce(
+        new BookingFetchFailedException(),
+      );
+
+      await expect(controller.getBookingsByStatus(mockSessionUser)).rejects.toBeInstanceOf(
+        BookingFetchFailedException,
+      );
+    });
+  });
+
+  describe("getBookingById", () => {
+    it("returns booking details for authenticated user", async () => {
+      const result = await controller.getBookingById("booking-123", mockSessionUser);
+
+      expect(result).toEqual(mockBookingDetail);
+      expect(bookingReadService.getBookingById).toHaveBeenCalledWith("booking-123", "user-123");
+    });
+
+    it("propagates BookingNotFoundException when booking does not exist", async () => {
+      vi.mocked(bookingReadService.getBookingById).mockRejectedValueOnce(
+        new BookingNotFoundException(),
+      );
+
+      await expect(
+        controller.getBookingById("nonexistent", mockSessionUser),
+      ).rejects.toBeInstanceOf(BookingNotFoundException);
+    });
+  });
+
+  describe("updateBooking", () => {
+    it("updates booking for authenticated user", async () => {
+      const updateBody = { pickupAddress: "456 New St, Lagos" };
+
+      const result = await controller.updateBooking("booking-123", updateBody, mockSessionUser);
+
+      expect(result).toEqual(mockBookingDetail);
+      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
+        "booking-123",
+        "user-123",
+        updateBody,
+      );
+    });
+
+    it("updates booking pickup time", async () => {
+      const updateBody = { pickupTime: "10:00 AM" };
+
+      await controller.updateBooking("booking-123", updateBody, mockSessionUser);
+
+      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
+        "booking-123",
+        "user-123",
+        updateBody,
+      );
+    });
+
+    it("updates booking drop-off address with sameLocation false", async () => {
+      const updateBody = {
+        sameLocation: false as const,
+        dropOffAddress: "789 Drop Off Ave",
+      };
+
+      await controller.updateBooking("booking-123", updateBody, mockSessionUser);
+
+      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
+        "booking-123",
+        "user-123",
+        updateBody,
+      );
+    });
+
+    it("propagates service errors", async () => {
+      vi.mocked(bookingUpdateService.updateBooking).mockRejectedValueOnce(
+        new BookingNotFoundException(),
+      );
+
+      await expect(
+        controller.updateBooking("booking-123", { pickupAddress: "New" }, mockSessionUser),
+      ).rejects.toBeInstanceOf(BookingNotFoundException);
+    });
+  });
+
+  describe("cancelBooking", () => {
+    it("cancels booking with provided reason", async () => {
+      const result = await controller.cancelBooking(
+        "booking-123",
+        { reason: "Plans changed" },
+        mockSessionUser,
+      );
+
+      expect(result).toEqual(expect.objectContaining({ status: "CANCELLED" }));
+      expect(bookingCancellationService.cancelBooking).toHaveBeenCalledWith(
+        "booking-123",
+        "user-123",
+        "Plans changed",
+      );
+    });
+
+    it("uses default reason when none provided", async () => {
+      await controller.cancelBooking("booking-123", {}, mockSessionUser);
+
+      expect(bookingCancellationService.cancelBooking).toHaveBeenCalledWith(
+        "booking-123",
+        "user-123",
+        "User requested cancellation",
+      );
+    });
+
+    it("propagates service errors", async () => {
+      vi.mocked(bookingCancellationService.cancelBooking).mockRejectedValueOnce(
+        new BookingNotFoundException(),
+      );
+
+      await expect(
+        controller.cancelBooking("booking-123", { reason: "test" }, mockSessionUser),
+      ).rejects.toBeInstanceOf(BookingNotFoundException);
     });
   });
 });

@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -47,7 +47,13 @@ describe("BookingExtensionService", () => {
     roles: ["user" as const],
   } satisfies AuthSession["user"];
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T10:00:00.000Z"));
     vi.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({

@@ -11,6 +11,7 @@ export type RecipientType =
 export const BOOKING_STATUS_TEMPLATE_KIND = "bookingStatusChange" as const;
 export const BOOKING_REMINDER_TEMPLATE_KIND = "bookingReminder" as const;
 export const BOOKING_CONFIRMED_TEMPLATE_KIND = "bookingConfirmed" as const;
+export const BOOKING_CANCELLED_TEMPLATE_KIND = "bookingCancelled" as const;
 export const BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND = "bookingExtensionConfirmed" as const;
 export const FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND = "fleetOwnerNewBooking" as const;
 export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
@@ -18,6 +19,7 @@ export type TemplateKind =
   | typeof BOOKING_STATUS_TEMPLATE_KIND
   | typeof BOOKING_REMINDER_TEMPLATE_KIND
   | typeof BOOKING_CONFIRMED_TEMPLATE_KIND
+  | typeof BOOKING_CANCELLED_TEMPLATE_KIND
   | typeof BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND
   | typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
   | typeof REVIEW_RECEIVED_TEMPLATE_KIND;
@@ -52,6 +54,11 @@ export interface BookingConfirmedTemplateData extends NormalisedBookingDetails {
 
 export interface FleetOwnerNewBookingTemplateData extends NormalisedBookingDetails {
   templateKind: typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND;
+  subject: string;
+}
+
+export interface BookingCancelledTemplateData extends NormalisedBookingDetails {
+  templateKind: typeof BOOKING_CANCELLED_TEMPLATE_KIND;
   subject: string;
 }
 
@@ -90,6 +97,7 @@ export type TemplateData =
   | BookingStatusTemplateData
   | BookingReminderTemplateData
   | BookingConfirmedTemplateData
+  | BookingCancelledTemplateData
   | BookingExtensionConfirmedTemplateData
   | FleetOwnerNewBookingTemplateData
   | ReviewReceivedTemplateData;

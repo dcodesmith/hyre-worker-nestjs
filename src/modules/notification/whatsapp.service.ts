@@ -10,7 +10,10 @@ export enum Template {
   ClientBookingLegEndReminder = "clientBookingLegEndReminder",
   ChauffeurBookingLegEndReminder = "chauffeurBookingLegEndReminder",
   BookingConfirmation = "bookingConfirmation",
+  BookingCancellationClient = "bookingCancellationClient",
+  BookingCancellationFleetOwner = "bookingCancellationFleetOwner",
   FleetOwnerBookingNotification = "fleetOwnerBookingNotification",
+  BookingExtensionConfirmation = "bookingExtensionConfirmation",
 }
 
 const contentSidMap: Record<Template, string> = {
@@ -20,7 +23,10 @@ const contentSidMap: Record<Template, string> = {
   [Template.ClientBookingLegEndReminder]: "HX0c8470054c0ff1a0b43c06fe196e2ec3",
   [Template.ChauffeurBookingLegEndReminder]: "HX9faf29432a18e9f8f8283a5e281e5a3c",
   [Template.BookingConfirmation]: "HXac9f0b83ee03d47fe2f2969173dac354",
+  [Template.BookingCancellationClient]: "HXd32930f086ad7e2c3ac976e245c314f9",
+  [Template.BookingCancellationFleetOwner]: "HX5ad3e909d6c011f24e00f4706a78a90e",
   [Template.FleetOwnerBookingNotification]: "HXaeda40fabb6c33f323c1f101e0a10165",
+  [Template.BookingExtensionConfirmation]: "HXaeda40fabb6c33f323c1f101e0a10165",
 };
 
 @Injectable()

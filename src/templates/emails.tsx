@@ -16,6 +16,7 @@ import { render } from "@react-email/render";
 import { ReactNode } from "react";
 import tailwindConfig from "../email-tailwind.config";
 import type {
+  BookingCancelledTemplateData,
   BookingExtensionConfirmedTemplateData,
   ReviewReceivedTemplateData,
 } from "../modules/notification/template-data.interface";
@@ -310,6 +311,82 @@ export async function renderBookingConfirmationEmail(booking: NormalisedBookingD
         Please be at the pickup location on time. You'll be assigned a chauffeur shortly, and we
         will notify you with their details.
       </Text>
+    </EmailTemplate>,
+  );
+}
+
+export async function renderUserBookingCancellationEmail(booking: BookingCancelledTemplateData) {
+  const previewText = "Your booking has been cancelled";
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="Booking Cancellation Confirmation">
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        Your Booking Has Been Cancelled
+      </Heading>
+      <Text className="mb-3">Hello {booking.customerName},</Text>
+
+      <Text className="mb-3">
+        Your booking for the <span className="font-semibold">{booking.carName}</span> has been
+        cancelled.
+      </Text>
+
+      <Text className="mb-3">
+        Your payment of <span className="font-semibold">{booking.totalAmount}</span> will be
+        refunded shortly according to our policy.
+      </Text>
+
+      {booking.cancellationReason && (
+        <Text className="mt-3">
+          <span className="font-semibold">Reason for cancellation:</span>{" "}
+          {booking.cancellationReason}
+        </Text>
+      )}
+
+      <Section className="mt-4 border-t border-gray-200 pt-4">
+        <Text className="font-semibold mb-2 underline">
+          Cancelled Booking Details (Booking Reference: {booking.bookingReference})
+        </Text>
+        <DetailListItem label="Start Date & Time" value={booking.startDate} />
+        <DetailListItem label="End Date & Time" value={booking.endDate} />
+        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
+        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
+      </Section>
+    </EmailTemplate>,
+  );
+}
+
+export async function renderFleetOwnerBookingCancellationEmail(
+  booking: BookingCancelledTemplateData,
+) {
+  const previewText = "A booking for your vehicle has been cancelled";
+
+  return await render(
+    <EmailTemplate previewText={previewText} pageTitle="Booking Cancellation Notification">
+      <Heading as="h2" className="text-xl font-semibold mb-4">
+        Booking Cancelled
+      </Heading>
+      <Text className="mb-3">Hello {booking.ownerName},</Text>
+
+      <Text className="mb-3">
+        The booking for your vehicle, <span className="font-semibold">{booking.carName}</span>, has
+        been cancelled by {booking.customerName}.
+      </Text>
+
+      {booking.cancellationReason && (
+        <DetailListItem label="Reason for cancellation" value={booking.cancellationReason} />
+      )}
+
+      <Section className="mt-4 border-t border-gray-200 pt-4">
+        <Text className="font-semibold mb-2 underline">
+          Cancelled Booking Details (Booking Reference: {booking.bookingReference})
+        </Text>
+        <DetailListItem label="Customer" value={booking.customerName} />
+        <DetailListItem label="Start Date & Time" value={booking.startDate} />
+        <DetailListItem label="End Date & Time" value={booking.endDate} />
+        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
+        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
+        <DetailListItem label="Booking Amount" value={booking.totalAmount} />
+      </Section>
     </EmailTemplate>,
   );
 }
