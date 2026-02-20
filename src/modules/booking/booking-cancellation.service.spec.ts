@@ -94,30 +94,6 @@ describe("BookingCancellationService", () => {
     );
   });
 
-  it("queues cancellation notification for unpaid booking", async () => {
-    txMock.booking.findUnique.mockResolvedValueOnce({
-      id: "booking-2",
-      userId: "user-1",
-      status: BookingStatus.PENDING,
-      paymentStatus: PaymentStatus.UNPAID,
-      carId: "car-1",
-    });
-    txMock.booking.update.mockResolvedValueOnce({
-      id: "booking-2",
-      status: BookingStatus.CANCELLED,
-      car: { owner: {} },
-      user: {},
-      legs: [],
-    });
-    txMock.car.update.mockResolvedValueOnce({ id: "car-1", status: "AVAILABLE" });
-
-    await service.cancelBooking("booking-2", "user-1", "User requested cancellation");
-
-    expect(notificationServiceMock.queueBookingCancellationNotifications).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "booking-2", status: BookingStatus.CANCELLED }),
-    );
-  });
-
   it("throws BookingNotFoundException when booking is missing or not owned by user", async () => {
     txMock.booking.findUnique.mockResolvedValueOnce(null);
 

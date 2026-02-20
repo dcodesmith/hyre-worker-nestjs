@@ -11,6 +11,7 @@ import { EnvConfig, validateEnvironment } from "./config/env.config";
 import { parseOtlpHeaders } from "./config/tracing.config";
 import { AccountModule } from "./modules/account/account.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { CarModule } from "./modules/car/car.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { DocumentsModule } from "./modules/documents/documents.module";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
@@ -161,6 +162,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     ReferralModule,
     ReviewsModule,
     AuthModule,
+    CarModule,
   ],
 })
 export class AppModule implements NestModule {
