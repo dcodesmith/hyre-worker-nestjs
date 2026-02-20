@@ -13,7 +13,7 @@ import {
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
 } from "./car.error";
-import type { CarCreateFiles, UploadedCarFile } from "./car.interface";
+import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
 import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
 
@@ -135,12 +135,7 @@ export class CarService {
     ownerId: string,
     carId: string,
     files: CarCreateFiles,
-  ): Promise<{
-    imageUrls: string[];
-    motCertificateUrl: string;
-    insuranceCertificateUrl: string;
-    uploadedKeys: string[];
-  }> {
+  ): Promise<UploadedFiles> {
     const uploadedKeys: string[] = [];
     const trackUpload = async (file: UploadedCarFile, category: string): Promise<string> => {
       const key = this.getObjectKey(ownerId, carId, file.originalname, category);
@@ -272,12 +267,13 @@ export class CarService {
       await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber);
 
       const createdCar = await this.createCarShell(ownerId, dto);
-      const uploaded = await this.uploadCarFiles(ownerId, createdCar.id, files);
+      let uploaded: UploadedFiles | undefined;
 
       try {
+        uploaded = await this.uploadCarFiles(ownerId, createdCar.id, files);
         return await this.persistUploadedCarAssets(createdCar.id, uploaded);
       } catch (error) {
-        await this.cleanupFailedCreate(createdCar.id, uploaded.uploadedKeys);
+        await this.cleanupFailedCreate(createdCar.id, uploaded?.uploadedKeys ?? []);
         throw error;
       }
     } catch (error) {

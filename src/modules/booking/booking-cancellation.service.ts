@@ -49,16 +49,11 @@ export class BookingCancellationService {
           where: { id: bookingId },
           data: {
             status: BookingStatus.CANCELLED,
-            paymentStatus:
-              existingBooking.paymentStatus === PaymentStatus.PAID
-                ? PaymentStatus.REFUND_PROCESSING
-                : existingBooking.paymentStatus,
+            paymentStatus: PaymentStatus.REFUND_PROCESSING,
             cancelledAt: new Date(),
             cancellationReason: reason,
             referralCreditsReserved: 0,
-            ...(existingBooking.paymentStatus === PaymentStatus.PAID
-              ? { referralCreditsUsed: 0 }
-              : {}),
+            referralCreditsUsed: 0,
           },
           include: {
             user: true,

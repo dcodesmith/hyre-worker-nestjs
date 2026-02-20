@@ -27,7 +27,7 @@ export class FleetOwnerNotFoundException extends CarException {
     super(
       CarErrorCode.FLEET_OWNER_NOT_FOUND,
       "Fleet owner account not found",
-      HttpStatus.INTERNAL_SERVER_ERROR,
+      HttpStatus.NOT_FOUND,
       { title: "Fleet Owner Not Found" },
     );
   }

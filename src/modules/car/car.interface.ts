@@ -16,3 +16,10 @@ export interface CarCreateFiles {
   motCertificate: UploadedCarFile;
   insuranceCertificate: UploadedCarFile;
 }
+
+export interface UploadedFiles {
+  imageUrls: string[];
+  motCertificateUrl: string;
+  insuranceCertificateUrl: string;
+  uploadedKeys: string[];
+}
