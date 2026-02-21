@@ -6,6 +6,7 @@ import {
   RateAlreadyEndedException,
   RateDateOverlapException,
   RateNotFoundException,
+  RateNotYetActiveException,
 } from "./rates.error";
 import { RatesService } from "./rates.service";
 import { RatesAdminService } from "./rates-admin.service";
@@ -13,6 +14,7 @@ import { RatesAdminService } from "./rates-admin.service";
 describe("RatesAdminService", () => {
   let service: RatesAdminService;
   let databaseService: {
+    $transaction: ReturnType<typeof vi.fn>;
     platformFeeRate: {
       findMany: ReturnType<typeof vi.fn>;
       findFirst: ReturnType<typeof vi.fn>;
@@ -35,6 +37,7 @@ describe("RatesAdminService", () => {
 
   beforeEach(async () => {
     databaseService = {
+      $transaction: vi.fn(),
       platformFeeRate: {
         findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn().mockResolvedValue(null),
@@ -53,6 +56,9 @@ describe("RatesAdminService", () => {
         update: vi.fn(),
       },
     };
+    databaseService.$transaction.mockImplementation(
+      async (callback: (tx: typeof databaseService) => unknown) => callback(databaseService),
+    );
 
     ratesService = { clearCache: vi.fn() };
 
@@ -151,6 +157,9 @@ describe("RatesAdminService", () => {
 
       expect(result.id).toBe("pf-new");
       expect(result.ratePercent).toBe(10);
+      expect(databaseService.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: "Serializable",
+      });
       expect(ratesService.clearCache).toHaveBeenCalledOnce();
     });
 
@@ -181,6 +190,9 @@ describe("RatesAdminService", () => {
 
       expect(result.id).toBe("vat-new");
       expect(result.ratePercent).toBe(7.5);
+      expect(databaseService.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: "Serializable",
+      });
       expect(ratesService.clearCache).toHaveBeenCalledOnce();
     });
 
@@ -212,6 +224,9 @@ describe("RatesAdminService", () => {
 
       expect(result.id).toBe("addon-new");
       expect(result.rateAmount).toBe(5000);
+      expect(databaseService.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: "Serializable",
+      });
       expect(ratesService.clearCache).toHaveBeenCalledOnce();
     });
 
@@ -228,6 +243,7 @@ describe("RatesAdminService", () => {
     it("should end an active addon rate and clear cache", async () => {
       databaseService.addonRate.findUnique.mockResolvedValue({
         id: "addon-1",
+        effectiveSince: new Date("2024-01-01"),
         effectiveUntil: null,
       });
       databaseService.addonRate.update.mockResolvedValue({
@@ -257,12 +273,26 @@ describe("RatesAdminService", () => {
     it("should throw RateAlreadyEndedException when addon rate is already ended", async () => {
       databaseService.addonRate.findUnique.mockResolvedValue({
         id: "addon-1",
+        effectiveSince: new Date("2024-01-01"),
         effectiveUntil: new Date("2025-01-01"),
       });
 
       await expect(service.endAddonRate("addon-1")).rejects.toBeInstanceOf(
         RateAlreadyEndedException,
       );
+    });
+
+    it("should throw RateNotYetActiveException when addon rate starts in the future", async () => {
+      databaseService.addonRate.findUnique.mockResolvedValue({
+        id: "addon-1",
+        effectiveSince: new Date("2099-01-01"),
+        effectiveUntil: null,
+      });
+
+      await expect(service.endAddonRate("addon-1")).rejects.toBeInstanceOf(
+        RateNotYetActiveException,
+      );
+      expect(databaseService.addonRate.update).not.toHaveBeenCalled();
     });
   });
 });

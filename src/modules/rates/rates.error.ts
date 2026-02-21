@@ -8,6 +8,7 @@ export const RatesErrorCode = {
   RATE_UPDATE_FAILED: "RATE_UPDATE_FAILED",
   RATE_DATE_OVERLAP: "RATE_DATE_OVERLAP",
   RATE_ALREADY_ENDED: "RATE_ALREADY_ENDED",
+  RATE_NOT_YET_ACTIVE: "RATE_NOT_YET_ACTIVE",
   RATE_VALIDATION_ERROR: "RATE_VALIDATION_ERROR",
 } as const;
 
@@ -73,10 +74,13 @@ export class RateAlreadyEndedException extends RatesException {
   }
 }
 
-export class RateValidationException extends RatesException {
-  constructor(detail: string) {
-    super(RatesErrorCode.RATE_VALIDATION_ERROR, detail, HttpStatus.BAD_REQUEST, {
-      title: "Rate Validation Failed",
-    });
+export class RateNotYetActiveException extends RatesException {
+  constructor() {
+    super(
+      RatesErrorCode.RATE_NOT_YET_ACTIVE,
+      "Cannot end a rate that has not started yet",
+      HttpStatus.CONFLICT,
+      { title: "Rate Not Yet Active" },
+    );
   }
 }

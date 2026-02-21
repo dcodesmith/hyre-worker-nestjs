@@ -231,11 +231,12 @@ describe("Rates Admin E2E Tests", () => {
     });
 
     it("should end an active addon rate", async () => {
+      const activeSince = new Date(Date.now() - 60 * 60 * 1000);
       const addonRate = await databaseService.addonRate.create({
         data: {
           addonType: "SECURITY_DETAIL",
           rateAmount: 25000,
-          effectiveSince: new Date("2043-01-01"),
+          effectiveSince: activeSince,
           effectiveUntil: null,
         },
       });
@@ -246,6 +247,23 @@ describe("Rates Admin E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.effectiveUntil).toBeDefined();
+    });
+
+    it("should reject ending a future addon rate", async () => {
+      const addonRate = await databaseService.addonRate.create({
+        data: {
+          addonType: "SECURITY_DETAIL",
+          rateAmount: 26000,
+          effectiveSince: new Date("2099-01-01"),
+          effectiveUntil: null,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/rates/addon/${addonRate.id}/end`)
+        .set("Cookie", adminCookie);
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
     });
 
     it("should reject ending an already-ended addon rate", async () => {

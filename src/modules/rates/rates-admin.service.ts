@@ -11,6 +11,7 @@ import {
   RateCreateFailedException,
   RateDateOverlapException,
   RateNotFoundException,
+  RateNotYetActiveException,
   RatesException,
   RatesFetchFailedException,
   RateUpdateFailedException,
@@ -21,6 +22,7 @@ import { RatesService } from "./rates.service";
 @Injectable()
 export class RatesAdminService {
   private readonly logger = new Logger(RatesAdminService.name);
+  private readonly serializableIsolationLevel = "Serializable" as const;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -73,17 +75,27 @@ export class RatesAdminService {
 
   async createPlatformFeeRate(dto: CreatePlatformFeeDto) {
     try {
-      await this.assertNoPlatformFeeOverlap(dto.feeType, dto.effectiveSince, dto.effectiveUntil);
+      const rate = await this.databaseService.$transaction(
+        async (tx) => {
+          await this.assertNoPlatformFeeOverlap(
+            dto.feeType,
+            dto.effectiveSince,
+            dto.effectiveUntil,
+            tx,
+          );
 
-      const rate = await this.databaseService.platformFeeRate.create({
-        data: {
-          feeType: dto.feeType,
-          ratePercent: dto.ratePercent,
-          effectiveSince: dto.effectiveSince,
-          effectiveUntil: dto.effectiveUntil,
-          description: dto.description,
+          return tx.platformFeeRate.create({
+            data: {
+              feeType: dto.feeType,
+              ratePercent: dto.ratePercent,
+              effectiveSince: dto.effectiveSince,
+              effectiveUntil: dto.effectiveUntil,
+              description: dto.description,
+            },
+          });
         },
-      });
+        { isolationLevel: this.serializableIsolationLevel },
+      );
 
       this.ratesService.clearCache();
       return { ...rate, ratePercent: rate.ratePercent.toNumber() };
@@ -101,16 +113,21 @@ export class RatesAdminService {
 
   async createVatRate(dto: CreateVatRateDto) {
     try {
-      await this.assertNoVatRateOverlap(dto.effectiveSince, dto.effectiveUntil);
+      const rate = await this.databaseService.$transaction(
+        async (tx) => {
+          await this.assertNoVatRateOverlap(dto.effectiveSince, dto.effectiveUntil, tx);
 
-      const rate = await this.databaseService.taxRate.create({
-        data: {
-          ratePercent: dto.ratePercent,
-          effectiveSince: dto.effectiveSince,
-          effectiveUntil: dto.effectiveUntil,
-          description: dto.description,
+          return tx.taxRate.create({
+            data: {
+              ratePercent: dto.ratePercent,
+              effectiveSince: dto.effectiveSince,
+              effectiveUntil: dto.effectiveUntil,
+              description: dto.description,
+            },
+          });
         },
-      });
+        { isolationLevel: this.serializableIsolationLevel },
+      );
 
       this.ratesService.clearCache();
       return { ...rate, ratePercent: rate.ratePercent.toNumber() };
@@ -128,17 +145,27 @@ export class RatesAdminService {
 
   async createAddonRate(dto: CreateAddonRateDto) {
     try {
-      await this.assertNoAddonRateOverlap(dto.addonType, dto.effectiveSince, dto.effectiveUntil);
+      const rate = await this.databaseService.$transaction(
+        async (tx) => {
+          await this.assertNoAddonRateOverlap(
+            dto.addonType,
+            dto.effectiveSince,
+            dto.effectiveUntil,
+            tx,
+          );
 
-      const rate = await this.databaseService.addonRate.create({
-        data: {
-          addonType: dto.addonType,
-          rateAmount: dto.rateAmount,
-          effectiveSince: dto.effectiveSince,
-          effectiveUntil: dto.effectiveUntil,
-          description: dto.description,
+          return tx.addonRate.create({
+            data: {
+              addonType: dto.addonType,
+              rateAmount: dto.rateAmount,
+              effectiveSince: dto.effectiveSince,
+              effectiveUntil: dto.effectiveUntil,
+              description: dto.description,
+            },
+          });
         },
-      });
+        { isolationLevel: this.serializableIsolationLevel },
+      );
 
       this.ratesService.clearCache();
       return { ...rate, rateAmount: rate.rateAmount.toNumber() };
@@ -156,6 +183,7 @@ export class RatesAdminService {
 
   async endAddonRate(addonRateId: string) {
     try {
+      const now = new Date();
       const existing = await this.databaseService.addonRate.findUnique({
         where: { id: addonRateId },
       });
@@ -168,9 +196,13 @@ export class RatesAdminService {
         throw new RateAlreadyEndedException();
       }
 
+      if (existing.effectiveSince > now) {
+        throw new RateNotYetActiveException();
+      }
+
       const rate = await this.databaseService.addonRate.update({
         where: { id: addonRateId },
-        data: { effectiveUntil: new Date() },
+        data: { effectiveUntil: now },
       });
 
       this.ratesService.clearCache();
@@ -191,8 +223,9 @@ export class RatesAdminService {
     feeType: PlatformFeeType,
     effectiveSince: Date,
     effectiveUntil?: Date,
+    tx: Pick<DatabaseService, "platformFeeRate"> = this.databaseService,
   ): Promise<void> {
-    const overlapping = await this.databaseService.platformFeeRate.findFirst({
+    const overlapping = await tx.platformFeeRate.findFirst({
       where: {
         feeType,
         ...buildOverlapWindowWhere(effectiveSince, effectiveUntil),
@@ -206,8 +239,12 @@ export class RatesAdminService {
     }
   }
 
-  private async assertNoVatRateOverlap(effectiveSince: Date, effectiveUntil?: Date): Promise<void> {
-    const overlapping = await this.databaseService.taxRate.findFirst({
+  private async assertNoVatRateOverlap(
+    effectiveSince: Date,
+    effectiveUntil?: Date,
+    tx: Pick<DatabaseService, "taxRate"> = this.databaseService,
+  ): Promise<void> {
+    const overlapping = await tx.taxRate.findFirst({
       where: {
         ...buildOverlapWindowWhere(effectiveSince, effectiveUntil),
       },
@@ -224,8 +261,9 @@ export class RatesAdminService {
     addonType: AddonType,
     effectiveSince: Date,
     effectiveUntil?: Date,
+    tx: Pick<DatabaseService, "addonRate"> = this.databaseService,
   ): Promise<void> {
-    const overlapping = await this.databaseService.addonRate.findFirst({
+    const overlapping = await tx.addonRate.findFirst({
       where: {
         addonType,
         ...buildOverlapWindowWhere(effectiveSince, effectiveUntil),
