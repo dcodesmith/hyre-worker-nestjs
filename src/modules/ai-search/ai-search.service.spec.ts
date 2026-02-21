@@ -28,6 +28,7 @@ describe("AiSearchService", () => {
       color: "black",
       make: "Toyota",
       model: "Camry",
+      serviceTier: "ULTRA_LUXURY",
       vehicleType: "LUXURY_SEDAN",
       bookingType: "DAY",
       from: "2026-03-01",
@@ -40,12 +41,14 @@ describe("AiSearchService", () => {
       color: "black",
       make: "Toyota",
       model: "Camry",
+      serviceTier: "ULTRA_LUXURY",
       vehicleType: "LUXURY_SEDAN",
       bookingType: "DAY",
       from: "2026-03-01",
       to: "2026-03-02",
     });
     expect(result.interpretation).toContain("Looking for:");
+    expect(result.interpretation).toContain("ultra luxury");
     expect(result.interpretation).toContain("luxury sedan");
     expect(result.interpretation).toContain("Dates: 2026-03-01 to 2026-03-02");
   });

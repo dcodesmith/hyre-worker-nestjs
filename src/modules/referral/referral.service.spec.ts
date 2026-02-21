@@ -16,6 +16,12 @@ describe("ReferralService", () => {
   let service: ReferralService;
   let referralApiService: ReferralApiService;
   let referralProcessingService: ReferralProcessingService;
+  const buildRequest = (origin = "localhost:3000") =>
+    ({
+      headers: {},
+      protocol: "http",
+      get: vi.fn().mockReturnValue(origin),
+    }) as unknown as Request;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -91,16 +97,9 @@ describe("ReferralService", () => {
 
   it("throws user not found when referral summary is missing", async () => {
     vi.mocked(referralApiService.getUserReferralSummary).mockResolvedValue(null);
-
-    const request = {
-      headers: {},
-      protocol: "http",
-      get: vi.fn().mockReturnValue("localhost:3000"),
-    } as unknown as Request;
-
-    await expect(service.getCurrentUserReferralInfo("user-1", request)).rejects.toBeInstanceOf(
-      ReferralUserNotFoundException,
-    );
+    await expect(
+      service.getCurrentUserReferralInfo("user-1", buildRequest()),
+    ).rejects.toBeInstanceOf(ReferralUserNotFoundException);
   });
 
   it("throws generic eligibility failed error for unknown exceptions", async () => {
@@ -116,16 +115,9 @@ describe("ReferralService", () => {
 
   it("throws generic referral fetch failed for unknown exceptions", async () => {
     vi.mocked(referralApiService.getUserReferralSummary).mockRejectedValue(new Error("boom"));
-
-    const request = {
-      headers: {},
-      protocol: "http",
-      get: vi.fn().mockReturnValue("localhost:3000"),
-    } as unknown as Request;
-
-    await expect(service.getCurrentUserReferralInfo("user-1", request)).rejects.toBeInstanceOf(
-      ReferralUserFetchFailedException,
-    );
+    await expect(
+      service.getCurrentUserReferralInfo("user-1", buildRequest()),
+    ).rejects.toBeInstanceOf(ReferralUserFetchFailedException);
   });
 
   it("returns cached referral summary within ttl", async () => {
@@ -152,16 +144,109 @@ describe("ReferralService", () => {
       rewards: [],
     });
 
-    const request = {
-      headers: {},
-      protocol: "http",
-      get: vi.fn().mockReturnValue("localhost:3000"),
-    } as unknown as Request;
-
-    await service.getCurrentUserReferralInfo("user-1", request);
-    await service.getCurrentUserReferralInfo("user-1", request);
+    await service.getCurrentUserReferralInfo("user-1", buildRequest());
+    await service.getCurrentUserReferralInfo("user-1", buildRequest());
 
     expect(referralApiService.getUserReferralSummary).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it("evicts expired key on read and refetches", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    vi.mocked(referralApiService.getUserReferralSummary)
+      .mockResolvedValueOnce({
+        referralCode: "FIRST",
+        shareLink: "http://localhost:3000/auth?ref=FIRST",
+        hasUsedDiscount: false,
+        referredBy: null,
+        signupDate: null,
+        stats: {
+          totalReferrals: 0,
+          totalRewardsGranted: 0,
+          totalRewardsPending: 0,
+          lastReferralAt: null,
+          totalEarned: 0,
+          totalUsed: 0,
+          availableCredits: 0,
+          maxCreditsPerBooking: 30000,
+        },
+        referrals: [],
+        rewards: [],
+      })
+      .mockResolvedValueOnce({
+        referralCode: "SECOND",
+        shareLink: "http://localhost:3000/auth?ref=SECOND",
+        hasUsedDiscount: false,
+        referredBy: null,
+        signupDate: null,
+        stats: {
+          totalReferrals: 0,
+          totalRewardsGranted: 0,
+          totalRewardsPending: 0,
+          lastReferralAt: null,
+          totalEarned: 0,
+          totalUsed: 0,
+          availableCredits: 0,
+          maxCreditsPerBooking: 30000,
+        },
+        referrals: [],
+        rewards: [],
+      });
+
+    const first = await service.getCurrentUserReferralInfo("user-1", buildRequest());
+    vi.advanceTimersByTime(31_000);
+    const second = await service.getCurrentUserReferralInfo("user-1", buildRequest());
+
+    expect(first.referralCode).toBe("FIRST");
+    expect(second.referralCode).toBe("SECOND");
+    expect(referralApiService.getUserReferralSummary).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it("prunes unrelated expired cache entries during writes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    vi.mocked(referralApiService.getUserReferralSummary).mockImplementation(async (userId) => ({
+      referralCode: userId,
+      shareLink: `http://localhost:3000/auth?ref=${userId}`,
+      hasUsedDiscount: false,
+      referredBy: null,
+      signupDate: null,
+      stats: {
+        totalReferrals: 0,
+        totalRewardsGranted: 0,
+        totalRewardsPending: 0,
+        lastReferralAt: null,
+        totalEarned: 0,
+        totalUsed: 0,
+        availableCredits: 0,
+        maxCreditsPerBooking: 30000,
+      },
+      referrals: [],
+      rewards: [],
+    }));
+
+    await service.getCurrentUserReferralInfo("user-1", buildRequest("one.local"));
+    await service.getCurrentUserReferralInfo("user-2", buildRequest("two.local"));
+
+    vi.advanceTimersByTime(31_000);
+    await service.getCurrentUserReferralInfo("user-3", buildRequest("three.local"));
+
+    const cache = (
+      service as unknown as {
+        userSummaryCache: Map<string, { expiresAt: number }>;
+      }
+    ).userSummaryCache;
+    const keys = [...cache.keys()];
+
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain("user-3:");
+    expect(referralApiService.getUserReferralSummary).toHaveBeenCalledTimes(3);
 
     vi.useRealTimers();
   });

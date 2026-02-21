@@ -94,7 +94,7 @@ describe("Referrals E2E Tests", () => {
         .get("/api/referrals/validate/VALIDR01")
         .set("Cookie", freshAuth.cookie)
         .set("x-forwarded-for", "10.10.10.11")
-        .query({ email: "new-user@example.com" });
+        .query({ email: uniqueEmail("referral-validate-new") });
 
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.valid).toBe(true);

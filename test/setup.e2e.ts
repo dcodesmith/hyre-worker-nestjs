@@ -108,6 +108,12 @@ if (!globalThis.__E2E_REDIS_REJECTION_HANDLER_ATTACHED__) {
     if (message.includes("Connection is closed.")) {
       return;
     }
+    // Surface unexpected rejections to fail the test run.
+    // eslint-disable-next-line no-console
+    console.error("Unhandled rejection in e2e tests:", reason);
+    setImmediate(() => {
+      throw reason instanceof Error ? reason : new Error(message);
+    });
   });
   globalThis.__E2E_REDIS_REJECTION_HANDLER_ATTACHED__ = true;
 }

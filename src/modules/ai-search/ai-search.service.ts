@@ -48,7 +48,7 @@ export class AiSearchService {
         params.color,
         params.make,
         params.model,
-        params.serviceTier?.toLowerCase(),
+        params.serviceTier?.toLowerCase().replaceAll("_", " "),
         params.vehicleType?.toLowerCase().replaceAll("_", " "),
       ]
         .filter(Boolean)

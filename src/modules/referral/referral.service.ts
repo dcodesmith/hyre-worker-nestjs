@@ -17,6 +17,7 @@ import { ReferralProcessingService } from "./referral-processing.service";
 export class ReferralService {
   private readonly logger = new Logger(ReferralService.name);
   private readonly userSummaryTtlMs = 30 * 1000;
+  private readonly maxPruneChecksPerWrite = 25;
   private readonly userSummaryCache = new Map<
     string,
     {
@@ -45,6 +46,23 @@ export class ReferralService {
         error: error instanceof Error ? error.message : String(error),
       });
       throw fallback();
+    }
+  }
+
+  private pruneExpiredUserSummaryCache(
+    now: number,
+    maxEntriesToScan = this.userSummaryCache.size,
+  ): void {
+    let scanned = 0;
+    for (const [key, entry] of this.userSummaryCache.entries()) {
+      if (entry.expiresAt <= now) {
+        this.userSummaryCache.delete(key);
+      }
+
+      scanned += 1;
+      if (scanned >= maxEntriesToScan) {
+        break;
+      }
     }
   }
 
@@ -98,8 +116,12 @@ export class ReferralService {
     const cacheKey = `${userId}:${requestOrigin ?? "unknown-origin"}`;
     const now = Date.now();
     const cached = this.userSummaryCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      return cached.value;
+    if (cached) {
+      if (cached.expiresAt > now) {
+        return cached.value;
+      }
+
+      this.userSummaryCache.delete(cacheKey);
     }
 
     const referralInfo = await this.withReferralExceptionBoundary(
@@ -116,6 +138,7 @@ export class ReferralService {
       value: referralInfo,
       expiresAt: now + this.userSummaryTtlMs,
     });
+    this.pruneExpiredUserSummaryCache(now, this.maxPruneChecksPerWrite);
 
     return referralInfo;
   }
