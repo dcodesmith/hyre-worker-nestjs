@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { buildActiveWindowWhere, buildOverlapWindowWhere, isRateActive } from "./rates.helper";
 
 describe("rates.helper", () => {
+  const computeOverlapFlags = (
+    existing: { effectiveSince: Date; effectiveUntil: Date | null },
+    where: ReturnType<typeof buildOverlapWindowWhere>,
+  ) => {
+    const leftSide = existing.effectiveSince < where.effectiveSince.lt;
+    const rightSide =
+      (existing.effectiveUntil !== null &&
+        existing.effectiveUntil >
+          (where.OR[0] as { effectiveUntil: { gt: Date } }).effectiveUntil.gt) ||
+      existing.effectiveUntil === null;
+
+    return { leftSide, rightSide, overlaps: leftSide && rightSide };
+  };
+
   describe("buildActiveWindowWhere", () => {
     it("builds active predicate with inclusive since and exclusive until", () => {
       const at = new Date("2026-03-01T00:00:00.000Z");
@@ -42,17 +56,11 @@ describe("rates.helper", () => {
         effectiveUntil: new Date("2026-09-01T00:00:00.000Z"),
       };
       const where = buildOverlapWindowWhere(since, until);
-
-      const leftSide = adjacentExisting.effectiveSince < (where.effectiveSince.lt as Date);
-      const rightSide =
-        (adjacentExisting.effectiveUntil !== null &&
-          adjacentExisting.effectiveUntil >
-            (where.OR[0] as { effectiveUntil: { gt: Date } }).effectiveUntil.gt) ||
-        adjacentExisting.effectiveUntil === null;
+      const { leftSide, rightSide, overlaps } = computeOverlapFlags(adjacentExisting, where);
 
       expect(leftSide).toBe(false);
       expect(rightSide).toBe(true);
-      expect(leftSide && rightSide).toBe(false);
+      expect(overlaps).toBe(false);
     });
 
     it("builds predicates that include truly overlapping windows", () => {
@@ -63,17 +71,11 @@ describe("rates.helper", () => {
         effectiveUntil: new Date("2026-07-01T00:00:00.000Z"),
       };
       const where = buildOverlapWindowWhere(since, until);
-
-      const leftSide = overlappingExisting.effectiveSince < (where.effectiveSince.lt as Date);
-      const rightSide =
-        (overlappingExisting.effectiveUntil !== null &&
-          overlappingExisting.effectiveUntil >
-            (where.OR[0] as { effectiveUntil: { gt: Date } }).effectiveUntil.gt) ||
-        overlappingExisting.effectiveUntil === null;
+      const { leftSide, rightSide, overlaps } = computeOverlapFlags(overlappingExisting, where);
 
       expect(leftSide).toBe(true);
       expect(rightSide).toBe(true);
-      expect(leftSide && rightSide).toBe(true);
+      expect(overlaps).toBe(true);
     });
 
     it("OR branch matches open-ended existing windows", () => {

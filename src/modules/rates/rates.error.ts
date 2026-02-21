@@ -9,7 +9,6 @@ export const RatesErrorCode = {
   RATE_DATE_OVERLAP: "RATE_DATE_OVERLAP",
   RATE_ALREADY_ENDED: "RATE_ALREADY_ENDED",
   RATE_NOT_YET_ACTIVE: "RATE_NOT_YET_ACTIVE",
-  RATE_VALIDATION_ERROR: "RATE_VALIDATION_ERROR",
 } as const;
 
 export class RatesException extends AppException {}

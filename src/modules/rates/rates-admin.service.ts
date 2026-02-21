@@ -184,26 +184,31 @@ export class RatesAdminService {
   async endAddonRate(addonRateId: string) {
     try {
       const now = new Date();
-      const existing = await this.databaseService.addonRate.findUnique({
-        where: { id: addonRateId },
-      });
+      const rate = await this.databaseService.$transaction(
+        async (tx) => {
+          const existing = await tx.addonRate.findUnique({
+            where: { id: addonRateId },
+          });
 
-      if (!existing) {
-        throw new RateNotFoundException();
-      }
+          if (!existing) {
+            throw new RateNotFoundException();
+          }
 
-      if (existing.effectiveUntil !== null) {
-        throw new RateAlreadyEndedException();
-      }
+          if (existing.effectiveUntil !== null) {
+            throw new RateAlreadyEndedException();
+          }
 
-      if (existing.effectiveSince > now) {
-        throw new RateNotYetActiveException();
-      }
+          if (existing.effectiveSince > now) {
+            throw new RateNotYetActiveException();
+          }
 
-      const rate = await this.databaseService.addonRate.update({
-        where: { id: addonRateId },
-        data: { effectiveUntil: now },
-      });
+          return tx.addonRate.update({
+            where: { id: addonRateId },
+            data: { effectiveUntil: now },
+          });
+        },
+        { isolationLevel: this.serializableIsolationLevel },
+      );
 
       this.ratesService.clearCache();
       return { ...rate, rateAmount: rate.rateAmount.toNumber() };
