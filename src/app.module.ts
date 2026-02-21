@@ -10,6 +10,7 @@ import { RequestIdMiddleware } from "./common/middlewares/request-id.middleware"
 import { EnvConfig, validateEnvironment } from "./config/env.config";
 import { parseOtlpHeaders } from "./config/tracing.config";
 import { AccountModule } from "./modules/account/account.module";
+import { AiSearchModule } from "./modules/ai-search/ai-search.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CarModule } from "./modules/car/car.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
@@ -151,6 +152,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     // Queues are registered in their respective feature modules
     HttpClientModule,
     DatabaseModule,
+    AiSearchModule,
     AccountModule,
     FlutterwaveModule,
     DocumentsModule,

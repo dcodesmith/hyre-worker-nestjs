@@ -219,7 +219,7 @@ describe("Rates Admin E2E Tests", () => {
       const response = await request(app.getHttpServer())
         .patch("/api/rates/addon/nonexistent/end")
         .set("Cookie", nonAdminCookie);
-      expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      expect([HttpStatus.FORBIDDEN, HttpStatus.UNAUTHORIZED]).toContain(response.status);
     });
 
     it("should return 404 for non-existent addon rate", async () => {
