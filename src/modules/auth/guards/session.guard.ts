@@ -57,9 +57,14 @@ export class SessionGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const session = await this.authService.auth.api.getSession({
-      headers: toHeaders(request.headers),
-    });
+    let session: Awaited<ReturnType<typeof this.authService.auth.api.getSession>> = null;
+    try {
+      session = await this.authService.auth.api.getSession({
+        headers: toHeaders(request.headers),
+      });
+    } catch {
+      throw new UnauthorizedException("Invalid or expired session");
+    }
 
     if (!session) {
       throw new UnauthorizedException("Invalid or expired session");
