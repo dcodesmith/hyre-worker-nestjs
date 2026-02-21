@@ -74,6 +74,62 @@ describe("DashboardService", () => {
     ).rejects.toBeInstanceOf(DashboardValidationException);
   });
 
+  it("groups weekly earnings using UTC week boundaries", async () => {
+    databaseServiceMock.booking.findMany.mockResolvedValueOnce([
+      {
+        endDate: new Date("2026-01-04T23:30:00.000Z"),
+        fleetOwnerPayoutAmountNet: asDecimal(10000),
+        platformFleetOwnerCommissionAmount: asDecimal(1000),
+      },
+      {
+        endDate: new Date("2026-01-05T00:30:00.000Z"),
+        fleetOwnerPayoutAmountNet: asDecimal(20000),
+        platformFleetOwnerCommissionAmount: asDecimal(2000),
+      },
+    ]);
+
+    const result = await service.getEarnings("owner-1", {
+      range: "custom",
+      groupBy: "week",
+      from: new Date("2026-01-01T00:00:00.000Z"),
+      to: new Date("2026-01-31T23:59:59.999Z"),
+    });
+
+    expect(result.series).toHaveLength(2);
+    expect(result.series[0]?.bucketStart).toBe("2025-12-29T00:00:00.000Z");
+    expect(result.series[0]?.gross).toBe(11000);
+    expect(result.series[1]?.bucketStart).toBe("2026-01-05T00:00:00.000Z");
+    expect(result.series[1]?.gross).toBe(22000);
+  });
+
+  it("groups monthly earnings using UTC month start", async () => {
+    databaseServiceMock.booking.findMany.mockResolvedValueOnce([
+      {
+        endDate: new Date("2026-01-31T23:30:00.000Z"),
+        fleetOwnerPayoutAmountNet: asDecimal(30000),
+        platformFleetOwnerCommissionAmount: asDecimal(3000),
+      },
+      {
+        endDate: new Date("2026-02-01T00:30:00.000Z"),
+        fleetOwnerPayoutAmountNet: asDecimal(40000),
+        platformFleetOwnerCommissionAmount: asDecimal(4000),
+      },
+    ]);
+
+    const result = await service.getEarnings("owner-1", {
+      range: "custom",
+      groupBy: "month",
+      from: new Date("2026-01-01T00:00:00.000Z"),
+      to: new Date("2026-02-28T23:59:59.999Z"),
+    });
+
+    expect(result.series).toHaveLength(2);
+    expect(result.series[0]?.bucketStart).toBe("2026-01-01T00:00:00.000Z");
+    expect(result.series[0]?.gross).toBe(33000);
+    expect(result.series[1]?.bucketStart).toBe("2026-02-01T00:00:00.000Z");
+    expect(result.series[1]?.gross).toBe(44000);
+  });
+
   it("returns paginated payouts list", async () => {
     databaseServiceMock.payoutTransaction.findMany.mockResolvedValueOnce([
       {

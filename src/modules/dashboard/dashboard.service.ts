@@ -62,17 +62,17 @@ export class DashboardService {
 
   private getBucketStart(date: Date, groupBy: DashboardGroupBy): Date {
     const bucket = new Date(date);
-    bucket.setHours(0, 0, 0, 0);
+    bucket.setUTCHours(0, 0, 0, 0);
 
     if (groupBy === "month") {
-      bucket.setDate(1);
+      bucket.setUTCDate(1);
       return bucket;
     }
 
     if (groupBy === "week") {
-      const day = bucket.getDay();
+      const day = bucket.getUTCDay();
       const diff = day === 0 ? -6 : 1 - day;
-      bucket.setDate(bucket.getDate() + diff);
+      bucket.setUTCDate(bucket.getUTCDate() + diff);
     }
 
     return bucket;

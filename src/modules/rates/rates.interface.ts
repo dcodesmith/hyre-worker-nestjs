@@ -14,3 +14,8 @@ export interface PlatformRates {
   /** Security detail addon rate (flat amount per leg) */
   securityDetailRate: Decimal;
 }
+
+export interface EffectiveWindowRate {
+  effectiveSince: Date;
+  effectiveUntil: Date | null;
+}

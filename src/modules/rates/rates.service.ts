@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service";
+import { buildActiveWindowWhere } from "./rates.helper";
 import type { PlatformRates } from "./rates.interface";
 
 /**
@@ -48,16 +49,14 @@ export class RatesService {
       this.databaseService.platformFeeRate.findMany({
         where: {
           feeType: { in: ["PLATFORM_SERVICE_FEE", "FLEET_OWNER_COMMISSION"] },
-          effectiveSince: { lte: currentDate },
-          OR: [{ effectiveUntil: { gt: currentDate } }, { effectiveUntil: null }],
+          ...buildActiveWindowWhere(currentDate),
         },
         orderBy: { effectiveSince: "desc" },
       }),
       // Get VAT rate
       this.databaseService.taxRate.findFirst({
         where: {
-          effectiveSince: { lte: currentDate },
-          OR: [{ effectiveUntil: { gt: currentDate } }, { effectiveUntil: null }],
+          ...buildActiveWindowWhere(currentDate),
         },
         orderBy: { effectiveSince: "desc" },
       }),
@@ -65,8 +64,7 @@ export class RatesService {
       this.databaseService.addonRate.findFirst({
         where: {
           addonType: "SECURITY_DETAIL",
-          effectiveSince: { lte: currentDate },
-          OR: [{ effectiveUntil: { gt: currentDate } }, { effectiveUntil: null }],
+          ...buildActiveWindowWhere(currentDate),
         },
         orderBy: { effectiveSince: "desc" },
       }),
