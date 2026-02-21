@@ -5,8 +5,6 @@ import { vi } from "vitest";
 declare global {
   // eslint-disable-next-line no-var
   var __E2E_WORKER_ISOLATION_INITIALIZED__: boolean | undefined;
-  // eslint-disable-next-line no-var
-  var __E2E_REDIS_REJECTION_HANDLER_ATTACHED__: boolean | undefined;
 }
 
 function getWorkerId(): string {
@@ -100,17 +98,6 @@ async function initializeWorkerIsolation(): Promise<void> {
 }
 
 await initializeWorkerIsolation();
-
-if (!globalThis.__E2E_REDIS_REJECTION_HANDLER_ATTACHED__) {
-  process.on("unhandledRejection", (reason) => {
-    const message = reason instanceof Error ? reason.message : String(reason);
-    // Ignore known BullMQ/ioredis teardown race when test containers shut down.
-    if (message.includes("Connection is closed.")) {
-      return;
-    }
-  });
-  globalThis.__E2E_REDIS_REJECTION_HANDLER_ATTACHED__ = true;
-}
 
 // Mock email template rendering functions to avoid React dependency in e2e tests
 // The NotificationProcessor imports these functions which use @react-email/components (React)

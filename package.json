@@ -55,7 +55,6 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.7.0",
     "nestjs-pino": "^4.5.0",
-    "openai": "^6.22.0",
     "pino-http": "^11.0.0",
     "pino-opentelemetry-transport": "^2.0.0",
     "react": "^18.3.1",

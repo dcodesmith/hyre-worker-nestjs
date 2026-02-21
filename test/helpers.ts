@@ -131,7 +131,7 @@ export class TestDataFactory {
 
     // Send OTP
     await request(this.app.getHttpServer())
-      .post("/api/auth/email-otp/send-verification-otp")
+      .post("/auth/api/email-otp/send-verification-otp")
       .set(authHeaders)
       .send({ email, type: "sign-in", role });
 
@@ -149,7 +149,7 @@ export class TestDataFactory {
 
     // Verify OTP
     const verifyResponse = await request(this.app.getHttpServer())
-      .post("/api/auth/sign-in/email-otp")
+      .post("/auth/api/sign-in/email-otp")
       .set(authHeaders)
       .send({ email, otp, role });
 

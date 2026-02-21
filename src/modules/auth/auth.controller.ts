@@ -24,18 +24,18 @@ function toHeaders(incomingHeaders: IncomingHttpHeaders): Headers {
   return headers;
 }
 
-@Controller()
+@Controller("auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   /**
    * Catch-all handler for Better Auth endpoints.
-   * Routes all /api/auth/* requests to Better Auth.
+   * Routes all /auth/api/* requests to Better Auth.
    *
    * Note: We use @Res() here because Better Auth needs direct access
    * to the response object to handle cookies and headers.
    */
-  @All("api/auth/*path")
+  @All("api/*path")
   async handleAuthRequest(@Req() req: Request, @Res() res: Response): Promise<void> {
     this.ensureAuthInitialized();
 
@@ -48,7 +48,7 @@ export class AuthController {
    * Get current session information.
    * Returns session data with user roles if authenticated, 401 if not.
    */
-  @Get("auth/session")
+  @Get("session")
   async getSession(
     @Req() req: Request,
   ): Promise<{ user: Record<string, unknown> & { roles: string[] }; session: unknown }> {

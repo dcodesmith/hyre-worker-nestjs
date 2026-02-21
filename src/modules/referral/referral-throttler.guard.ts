@@ -1,6 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
-import type { ThrottlerStorage } from "@nestjs/throttler";
-import { InjectThrottlerStorage } from "@nestjs/throttler";
+import { ThrottlerStorage } from "@nestjs/throttler";
 import type { Response } from "express";
 import {
   getClientIp,
@@ -11,14 +10,15 @@ import {
 import { AUTH_SESSION_KEY, type AuthSession } from "../auth/guards/session.guard";
 import { ReferralRateLimitExceededException } from "./referral.error";
 import type { ReferralThrottleRequestContext } from "./referral.interface";
-import { REFERRAL_THROTTLE_CONFIG } from "./referral-throttling.config";
 
 @Injectable()
 export class ReferralThrottlerGuard implements CanActivate {
-  constructor(
-    @InjectThrottlerStorage()
-    private readonly throttlerStorage: ThrottlerStorage,
-  ) {}
+  private readonly ttlMs = 60 * 60 * 1000;
+  private readonly ttlSeconds = 60 * 60;
+  private readonly userLimit = 20;
+  private readonly ipLimit = 60;
+
+  constructor(private readonly throttlerStorage: ThrottlerStorage) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<
@@ -33,39 +33,36 @@ export class ReferralThrottlerGuard implements CanActivate {
     const routePath = request.route?.path || "validate";
     const method = request.method || "GET";
 
-    const [userHit, ipHit] = await Promise.all([
-      this.throttlerStorage.increment(
-        `${REFERRAL_THROTTLE_CONFIG.name}:user:${method}:${routePath}:${userTracker}`,
-        REFERRAL_THROTTLE_CONFIG.ttlMs,
-        REFERRAL_THROTTLE_CONFIG.userLimit,
-        REFERRAL_THROTTLE_CONFIG.ttlMs,
-        REFERRAL_THROTTLE_CONFIG.name,
-      ),
-      this.throttlerStorage.increment(
-        `${REFERRAL_THROTTLE_CONFIG.name}:ip:${method}:${routePath}:${ipTracker}`,
-        REFERRAL_THROTTLE_CONFIG.ttlMs,
-        REFERRAL_THROTTLE_CONFIG.ipLimit,
-        REFERRAL_THROTTLE_CONFIG.ttlMs,
-        REFERRAL_THROTTLE_CONFIG.name,
-      ),
-    ]);
+    const userHit = await this.throttlerStorage.increment(
+      `referral-validation:user:${method}:${routePath}:${userTracker}`,
+      this.ttlMs,
+      this.userLimit,
+      this.ttlMs,
+      "referral-validation",
+    );
 
-    const userBlocked = isThrottled(userHit, REFERRAL_THROTTLE_CONFIG.userLimit);
-    const ipBlocked = isThrottled(ipHit, REFERRAL_THROTTLE_CONFIG.ipLimit);
+    const ipHit = await this.throttlerStorage.increment(
+      `referral-validation:ip:${method}:${routePath}:${ipTracker}`,
+      this.ttlMs,
+      this.ipLimit,
+      this.ttlMs,
+      "referral-validation",
+    );
+
+    const userBlocked = isThrottled(userHit, this.userLimit);
+    const ipBlocked = isThrottled(ipHit, this.ipLimit);
 
     if (!userBlocked && !ipBlocked) {
       return true;
     }
 
     const activeHit = userBlocked ? userHit : ipHit;
-    const activeLimit = userBlocked
-      ? REFERRAL_THROTTLE_CONFIG.userLimit
-      : REFERRAL_THROTTLE_CONFIG.ipLimit;
-    const retryAfter = getRetryAfterSeconds(activeHit, REFERRAL_THROTTLE_CONFIG.ttlSeconds);
+    const activeLimit = userBlocked ? this.userLimit : this.ipLimit;
+    const retryAfter = getRetryAfterSeconds(activeHit, this.ttlSeconds);
 
     setRateLimitHeaders(response, {
       limit: activeLimit,
-      windowSeconds: REFERRAL_THROTTLE_CONFIG.ttlSeconds,
+      windowSeconds: this.ttlSeconds,
       retryAfterSeconds: retryAfter,
       remaining: 0,
     });

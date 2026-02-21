@@ -255,7 +255,7 @@ export function createAuth(options: AuthConfigOptions) {
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     secret: sessionSecret,
     baseURL: authBaseUrl,
-    basePath: "/api/auth",
+    basePath: "/auth/api",
     trustedOrigins,
     session: {
       expiresIn: 60 * 60 * 24 * 7, // 7 days

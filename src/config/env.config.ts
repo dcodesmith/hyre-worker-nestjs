@@ -66,7 +66,6 @@ export const envSchema = z.object({
 
   // Google Maps configuration (for drive time calculations)
   GOOGLE_DISTANCE_MATRIX_API_KEY: z.string().min(1, "GOOGLE_DISTANCE_MATRIX_API_KEY is required"),
-  OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
 
   // Auth configuration (optional - only required when AuthModule is used)
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
