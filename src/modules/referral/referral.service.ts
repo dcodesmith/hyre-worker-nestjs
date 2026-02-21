@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import type { Request } from "express";
 import { getRequestOrigin } from "../../common/http/request.helper";
 import type { ReferralEligibilityQueryDto, ValidateReferralQueryDto } from "./dto/referral.dto";
@@ -9,15 +9,44 @@ import {
   ReferralUserNotFoundException,
   ReferralValidationFailedException,
 } from "./referral.error";
+import type { ReferralUserSummaryResponse } from "./referral.interface";
 import { ReferralApiService } from "./referral-api.service";
 import { ReferralProcessingService } from "./referral-processing.service";
 
 @Injectable()
 export class ReferralService {
+  private readonly logger = new Logger(ReferralService.name);
+  private readonly userSummaryTtlMs = 30 * 1000;
+  private readonly userSummaryCache = new Map<
+    string,
+    {
+      value: ReferralUserSummaryResponse;
+      expiresAt: number;
+    }
+  >();
+
   constructor(
     private readonly referralApiService: ReferralApiService,
     private readonly referralProcessingService: ReferralProcessingService,
   ) {}
+
+  private async withReferralExceptionBoundary<T>(
+    operation: () => Promise<T>,
+    fallback: () => ReferralException,
+    operationName: string,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof ReferralException) {
+        throw error;
+      }
+      this.logger.error(`Unhandled referral error in ${operationName}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw fallback();
+    }
+  }
 
   async queueReferralProcessing(bookingId: string): Promise<void> {
     return this.referralProcessingService.queueReferralProcessing(bookingId);
@@ -28,62 +57,66 @@ export class ReferralService {
   }
 
   async validateReferralCode(code: string, query: ValidateReferralQueryDto) {
-    try {
-      const referrer = await this.referralApiService.validateReferralCode(code, query.email);
-      return {
-        valid: true,
-        referrer: {
-          name: referrer.name ?? "Anonymous",
-        },
-        message: "Valid referral code.",
-      };
-    } catch (error) {
-      if (error instanceof ReferralException) {
-        throw error;
-      }
-      throw new ReferralValidationFailedException();
-    }
+    return this.withReferralExceptionBoundary(
+      async () => {
+        const referrer = await this.referralApiService.validateReferralCode(code, query.email);
+        return {
+          valid: true,
+          referrer: {
+            name: referrer.name ?? "Anonymous",
+          },
+          message: "Valid referral code.",
+        };
+      },
+      () => new ReferralValidationFailedException(),
+      "validateReferralCode",
+    );
   }
 
   async getReferralEligibility(userId: string, query: ReferralEligibilityQueryDto) {
-    try {
-      const eligibility = await this.referralApiService.checkReferralEligibility(
-        userId,
-        query.amount,
-        query.type,
-      );
+    return this.withReferralExceptionBoundary(
+      async () => {
+        const eligibility = await this.referralApiService.checkReferralEligibility(
+          userId,
+          query.amount,
+          query.type,
+        );
 
-      return {
-        eligible: eligibility.eligible,
-        discountAmount: eligibility.discountAmount || 0,
-        reason: eligibility.reason,
-      };
-    } catch (error) {
-      if (error instanceof ReferralException) {
-        throw error;
-      }
-      throw new ReferralEligibilityCheckFailedException();
-    }
+        return {
+          eligible: eligibility.eligible,
+          discountAmount: eligibility.discountAmount || 0,
+          reason: eligibility.reason,
+        };
+      },
+      () => new ReferralEligibilityCheckFailedException(),
+      "getReferralEligibility",
+    );
   }
 
   async getCurrentUserReferralInfo(userId: string, request: Request) {
-    try {
-      const requestOrigin = getRequestOrigin(request);
-      const referralInfo = await this.referralApiService.getUserReferralSummary(
-        userId,
-        requestOrigin,
-      );
-
-      if (!referralInfo) {
-        throw new ReferralUserNotFoundException();
-      }
-
-      return referralInfo;
-    } catch (error) {
-      if (error instanceof ReferralException) {
-        throw error;
-      }
-      throw new ReferralUserFetchFailedException();
+    const requestOrigin = getRequestOrigin(request);
+    const cacheKey = `${userId}:${requestOrigin ?? "unknown-origin"}`;
+    const now = Date.now();
+    const cached = this.userSummaryCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
     }
+
+    const referralInfo = await this.withReferralExceptionBoundary(
+      async () => this.referralApiService.getUserReferralSummary(userId, requestOrigin),
+      () => new ReferralUserFetchFailedException(),
+      "getCurrentUserReferralInfo",
+    );
+
+    if (!referralInfo) {
+      throw new ReferralUserNotFoundException();
+    }
+
+    this.userSummaryCache.set(cacheKey, {
+      value: referralInfo,
+      expiresAt: now + this.userSummaryTtlMs,
+    });
+
+    return referralInfo;
   }
 }

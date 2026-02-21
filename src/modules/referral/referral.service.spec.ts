@@ -2,7 +2,9 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ReferralEligibilityCheckFailedException,
   ReferralInvalidCodeException,
+  ReferralUserFetchFailedException,
   ReferralUserNotFoundException,
   ReferralValidationFailedException,
 } from "./referral.error";
@@ -99,5 +101,68 @@ describe("ReferralService", () => {
     await expect(service.getCurrentUserReferralInfo("user-1", request)).rejects.toBeInstanceOf(
       ReferralUserNotFoundException,
     );
+  });
+
+  it("throws generic eligibility failed error for unknown exceptions", async () => {
+    vi.mocked(referralApiService.checkReferralEligibility).mockRejectedValue(new Error("boom"));
+
+    await expect(
+      service.getReferralEligibility("user-1", {
+        amount: 20000,
+        type: "DAY",
+      }),
+    ).rejects.toBeInstanceOf(ReferralEligibilityCheckFailedException);
+  });
+
+  it("throws generic referral fetch failed for unknown exceptions", async () => {
+    vi.mocked(referralApiService.getUserReferralSummary).mockRejectedValue(new Error("boom"));
+
+    const request = {
+      headers: {},
+      protocol: "http",
+      get: vi.fn().mockReturnValue("localhost:3000"),
+    } as unknown as Request;
+
+    await expect(service.getCurrentUserReferralInfo("user-1", request)).rejects.toBeInstanceOf(
+      ReferralUserFetchFailedException,
+    );
+  });
+
+  it("returns cached referral summary within ttl", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    vi.mocked(referralApiService.getUserReferralSummary).mockResolvedValue({
+      referralCode: "ABCDEFGH",
+      shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
+      hasUsedDiscount: false,
+      referredBy: null,
+      signupDate: null,
+      stats: {
+        totalReferrals: 0,
+        totalRewardsGranted: 0,
+        totalRewardsPending: 0,
+        lastReferralAt: null,
+        totalEarned: 0,
+        totalUsed: 0,
+        availableCredits: 0,
+        maxCreditsPerBooking: 30000,
+      },
+      referrals: [],
+      rewards: [],
+    });
+
+    const request = {
+      headers: {},
+      protocol: "http",
+      get: vi.fn().mockReturnValue("localhost:3000"),
+    } as unknown as Request;
+
+    await service.getCurrentUserReferralInfo("user-1", request);
+    await service.getCurrentUserReferralInfo("user-1", request);
+
+    expect(referralApiService.getUserReferralSummary).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
   });
 });

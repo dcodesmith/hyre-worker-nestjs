@@ -12,6 +12,7 @@ import { ReferralService } from "./referral.service";
 import { ReferralApiService } from "./referral-api.service";
 import { ReferralProcessingService } from "./referral-processing.service";
 import { ReferralThrottlerGuard } from "./referral-throttler.guard";
+import { REFERRAL_THROTTLE_CONFIG } from "./referral-throttling.config";
 
 @Module({
   imports: [
@@ -19,9 +20,9 @@ import { ReferralThrottlerGuard } from "./referral-throttler.guard";
     DatabaseModule,
     ThrottlerModule.forRoot([
       {
-        name: "referral-validation",
-        ttl: 3600 * 1000,
-        limit: 10,
+        name: REFERRAL_THROTTLE_CONFIG.name,
+        ttl: REFERRAL_THROTTLE_CONFIG.ttlMs,
+        limit: REFERRAL_THROTTLE_CONFIG.userLimit,
       },
       {
         name: "manual-triggers",
