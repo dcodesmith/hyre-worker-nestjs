@@ -23,7 +23,6 @@ describe("VehicleSearchPreconditionPolicy", () => {
       prompt: "What date should pickup start? Please share it as YYYY-MM-DD.",
     });
   });
-
   it("returns flight-number precondition for airport pickups", () => {
     const result = policy.resolve({
       from: "2026-03-10",
@@ -46,7 +45,6 @@ describe("VehicleSearchPreconditionPolicy", () => {
       prompt: "Please share your flight number so I can check airport pickup availability.",
     });
   });
-
   it("clarifies booking type when booking type is missing or DAY on multi-day range", () => {
     expect(policy.shouldClarifyBookingType({ from: "2026-03-10", bookingType: "DAY" })).toBe(false);
     expect(

@@ -92,7 +92,6 @@ export interface VehicleSearchAlternative extends VehicleSearchOption {
 export type VehicleSearchPreconditionField =
   | "from"
   | "to"
-  | "bookingType"
   | "pickupTime"
   | "pickupLocation"
   | "dropoffLocation"

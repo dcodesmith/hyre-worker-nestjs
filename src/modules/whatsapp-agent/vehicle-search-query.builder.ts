@@ -5,7 +5,6 @@ import { normalizeBookingType, parseSearchDate } from "./vehicle-search-precondi
 
 export class VehicleSearchQueryBuilder {
   private readonly knownMultiWordMakes = new Set<string>(["land rover", "mercedes benz", "mini"]);
-
   constructor(private readonly maxSearchCandidates: number) {}
 
   parseVehicleModel(value: string | undefined): { make?: string; model?: string } {
@@ -179,7 +178,6 @@ export class VehicleSearchQueryBuilder {
       return true;
     });
   }
-
   private canonicalizeMake(value: string): string {
     return value.toLowerCase().replaceAll("-", " ").replaceAll(/\s+/g, " ").trim();
   }

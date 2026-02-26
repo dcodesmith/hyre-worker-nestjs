@@ -96,14 +96,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
           context.conversationId,
           result.markAsHandoff.reason,
         );
-        try {
-          await this.searchSlotMemoryService.clear(context.conversationId);
-        } catch (error) {
-          this.logger.warn("Failed to clear search slot memory after handoff", {
-            conversationId: context.conversationId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        await this.searchSlotMemoryService.clear(context.conversationId);
       }
 
       await this.conversationService.markInboundMessageProcessed(messageId);
