@@ -44,7 +44,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
         return { success: true };
 
       case PROCESS_WHATSAPP_OUTBOX_JOB:
-        // Outbox dispatch worker will be implemented in the next slice.
+        await this.processOutbox(job as Job<ProcessWhatsAppOutboxJobData, unknown, string>);
         return { success: true };
 
       default:
@@ -77,7 +77,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
         windowExpiresAt: context.conversation.windowExpiresAt,
       };
 
-      const result = this.orchestratorService.decide(orchestratorContext);
+      const result = await this.orchestratorService.decide(orchestratorContext);
 
       for (const outbound of result.enqueueOutbox) {
         await this.senderService.enqueueOutbound(outbound);
@@ -133,6 +133,12 @@ export class WhatsAppAgentProcessor extends WorkerHost {
 
   private async sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async processOutbox(
+    job: Job<ProcessWhatsAppOutboxJobData, unknown, string>,
+  ): Promise<void> {
+    await this.senderService.processOutbox(job.data.outboxId);
   }
 
   @OnWorkerEvent("failed")
