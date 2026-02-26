@@ -134,11 +134,12 @@ export class ReferralService {
       throw new ReferralUserNotFoundException();
     }
 
+    const nowAfterFetch = Date.now();
     this.userSummaryCache.set(cacheKey, {
       value: referralInfo,
-      expiresAt: now + this.userSummaryTtlMs,
+      expiresAt: nowAfterFetch + this.userSummaryTtlMs,
     });
-    this.pruneExpiredUserSummaryCache(now, this.maxPruneChecksPerWrite);
+    this.pruneExpiredUserSummaryCache(nowAfterFetch, this.maxPruneChecksPerWrite);
 
     return referralInfo;
   }

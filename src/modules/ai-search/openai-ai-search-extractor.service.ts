@@ -81,7 +81,7 @@ export class OpenAiAiSearchExtractorService {
     return `You are a car rental search assistant for Tripdly in Lagos, Nigeria.
 Extract search parameters from user queries and return them as JSON.
 
-Today's date is: ${today} (${now.toDateString()})
+Today's date is: ${today} (${today})
 Timezone: Africa/Lagos (WAT)
 
 Extract the following fields when mentioned:

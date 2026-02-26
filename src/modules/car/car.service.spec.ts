@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import {
+  CarCreateFailedException,
   CarFetchFailedException,
   CarNotFoundException,
   OwnerDriverCarLimitReachedException,
@@ -20,6 +21,28 @@ describe("CarService", () => {
     mimetype,
     buffer: Buffer.from(content),
     size: Buffer.byteLength(content),
+  });
+  const createCarDto = (registrationNumber = "ABC-123XY") => ({
+    make: "Toyota",
+    model: "Camry",
+    year: 2022,
+    color: "",
+    registrationNumber,
+    dayRate: 50000,
+    hourlyRate: 5000,
+    nightRate: 60000,
+    fullDayRate: 100000,
+    airportPickupRate: 30000,
+    pricingIncludesFuel: false,
+    fuelUpgradeRate: 10000,
+    vehicleType: VehicleType.SEDAN,
+    serviceTier: ServiceTier.STANDARD,
+    passengerCapacity: 4,
+  });
+  const createCarFiles = () => ({
+    images: [createMockFile("car.jpg", "image/jpeg")],
+    motCertificate: createMockFile("mot.pdf", "application/pdf"),
+    insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
   });
 
   const databaseServiceMock = {
@@ -93,70 +116,22 @@ describe("CarService", () => {
     databaseServiceMock.car.count.mockResolvedValueOnce(1);
 
     await expect(
-      service.createCar(
-        "owner-1",
-        {
-          make: "Toyota",
-          model: "Camry",
-          year: 2022,
-          color: "",
-          registrationNumber: "ABC-123XY",
-          dayRate: 50000,
-          hourlyRate: 5000,
-          nightRate: 60000,
-          fullDayRate: 100000,
-          airportPickupRate: 30000,
-          pricingIncludesFuel: false,
-          fuelUpgradeRate: 10000,
-          vehicleType: VehicleType.SEDAN,
-          serviceTier: ServiceTier.STANDARD,
-          passengerCapacity: 4,
-        },
-        {
-          images: [createMockFile("car.jpg", "image/jpeg")],
-          motCertificate: createMockFile("mot.pdf", "application/pdf"),
-          insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
-        },
-      ),
+      service.createCar("owner-1", createCarDto(), createCarFiles()),
     ).rejects.toBeInstanceOf(OwnerDriverCarLimitReachedException);
   });
 
-  it("rejects duplicate registration number for same owner", async () => {
+  it("rejects duplicate registration number for same owner (format-insensitive)", async () => {
     databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-    databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "existing-car" });
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ registrationNumber: "ABC123XY" }]);
 
     await expect(
-      service.createCar(
-        "owner-1",
-        {
-          make: "Toyota",
-          model: "Camry",
-          year: 2022,
-          color: "",
-          registrationNumber: "ABC-123XY",
-          dayRate: 50000,
-          hourlyRate: 5000,
-          nightRate: 60000,
-          fullDayRate: 100000,
-          airportPickupRate: 30000,
-          pricingIncludesFuel: false,
-          fuelUpgradeRate: 10000,
-          vehicleType: VehicleType.SEDAN,
-          serviceTier: ServiceTier.STANDARD,
-          passengerCapacity: 4,
-        },
-        {
-          images: [createMockFile("car.jpg", "image/jpeg")],
-          motCertificate: createMockFile("mot.pdf", "application/pdf"),
-          insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
-        },
-      ),
+      service.createCar("owner-1", createCarDto("ABC-123XY"), createCarFiles()),
     ).rejects.toBeInstanceOf(RegistrationNumberAlreadyExistsException);
   });
 
   it("creates car and related images/documents in transaction", async () => {
     databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-    databaseServiceMock.car.findFirst.mockResolvedValueOnce(null);
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
     databaseServiceMock.car.create.mockResolvedValueOnce({ id: "car-1" });
     storageServiceMock.uploadBuffer
       .mockResolvedValueOnce("https://cdn.example.com/car-1.jpg")
@@ -170,33 +145,16 @@ describe("CarService", () => {
       }),
     );
 
-    const result = await service.createCar(
-      "owner-1",
-      {
-        make: "Toyota",
-        model: "Camry",
-        year: 2022,
-        color: "",
-        registrationNumber: "ABC-123XY",
-        dayRate: 50000,
-        hourlyRate: 5000,
-        nightRate: 60000,
-        fullDayRate: 100000,
-        airportPickupRate: 30000,
-        pricingIncludesFuel: false,
-        fuelUpgradeRate: 10000,
-        vehicleType: VehicleType.SEDAN,
-        serviceTier: ServiceTier.STANDARD,
-        passengerCapacity: 4,
-      },
-      {
-        images: [createMockFile("car.jpg", "image/jpeg")],
-        motCertificate: createMockFile("mot.pdf", "application/pdf"),
-        insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
-      },
-    );
+    const result = await service.createCar("owner-1", createCarDto("ABC-123XY"), createCarFiles());
 
     expect(result).toEqual({ id: "car-1", ownerId: "owner-1" });
+    expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          registrationNumber: "ABC123XY",
+        }),
+      }),
+    );
   });
 
   it("updates owner car", async () => {
@@ -212,6 +170,41 @@ describe("CarService", () => {
     const result = await service.updateCar("car-1", "owner-1", { status: Status.HOLD });
 
     expect(result).toEqual({ id: "car-1", status: Status.HOLD });
+  });
+
+  it("rejects update when registration number conflicts after normalization", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ZZZ-999AA",
+    });
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ registrationNumber: "ABC123XY" }]);
+
+    await expect(
+      service.updateCar("car-1", "owner-1", { registrationNumber: "ABC 123XY" }),
+    ).rejects.toBeInstanceOf(RegistrationNumberAlreadyExistsException);
+  });
+
+  it("deletes already-uploaded files when create fails mid-upload", async () => {
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+    databaseServiceMock.car.create.mockResolvedValueOnce({ id: "car-1" });
+    databaseServiceMock.car.delete.mockResolvedValueOnce({ id: "car-1" });
+    storageServiceMock.uploadBuffer
+      .mockResolvedValueOnce("https://cdn.example.com/car-1.jpg")
+      .mockRejectedValueOnce(new Error("s3 timeout"));
+    storageServiceMock.deleteObjectByKey.mockResolvedValue(undefined);
+
+    await expect(
+      service.createCar("owner-1", createCarDto(), createCarFiles()),
+    ).rejects.toBeInstanceOf(CarCreateFailedException);
+
+    expect(databaseServiceMock.car.delete).toHaveBeenCalledWith({ where: { id: "car-1" } });
+    expect(storageServiceMock.deleteObjectByKey.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(
+      storageServiceMock.deleteObjectByKey.mock.calls.some(([key]) =>
+        typeof key === "string" ? key.includes("owner-1/car-1/") : false,
+      ),
+    ).toBe(true);
   });
 
   it("throws CarFetchFailedException when list query fails unexpectedly", async () => {
