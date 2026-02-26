@@ -28,6 +28,7 @@ import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
+import { WhatsAppAgentModule } from "./modules/whatsapp-agent/whatsapp-agent.module";
 
 @Module({
   imports: [
@@ -157,6 +158,7 @@ import { StatusChangeModule } from "./modules/status-change/status-change.module
     FlutterwaveModule,
     DocumentsModule,
     MessagingModule,
+    WhatsAppAgentModule,
     NotificationModule,
     PaymentModule,
     ReminderModule,

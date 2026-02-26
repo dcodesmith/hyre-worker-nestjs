@@ -1,5 +1,12 @@
 import otelSdk from "./tracing";
 import "reflect-metadata";
+
+// Surface unhandled rejections during bootstrap (e.g. Redis/DB connection failures)
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Bootstrap] Unhandled rejection:", reason);
+  console.error("Promise:", promise);
+});
+
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost, NestFactory } from "@nestjs/core";
@@ -83,7 +90,11 @@ async function bootstrap() {
     );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
     logger.error(`Failed to start application: ${errorMessage}`);
+    // Ensure error is visible even if logger hasn't flushed
+    console.error(`[Bootstrap] Failed to start:`, errorMessage);
+    if (errorStack) console.error(errorStack);
     process.exit(1);
   }
 }
