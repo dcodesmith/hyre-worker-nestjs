@@ -97,6 +97,7 @@ export class WhatsAppSenderService {
         dedupeKey: true,
         mode: true,
         status: true,
+        providerMessageSid: true,
         attempts: true,
         maxAttempts: true,
         textBody: true,
@@ -115,8 +116,17 @@ export class WhatsAppSenderService {
 
     if (
       outbox.status === WhatsAppOutboxStatus.SENT ||
+      outbox.status === WhatsAppOutboxStatus.FAILED ||
       outbox.status === WhatsAppOutboxStatus.DEAD_LETTER
     ) {
+      return;
+    }
+
+    if (outbox.providerMessageSid?.trim()) {
+      this.logger.warn("Skipping outbox dispatch because provider message sid already exists", {
+        outboxId: outbox.id,
+        providerMessageSid: outbox.providerMessageSid,
+      });
       return;
     }
 
@@ -175,7 +185,13 @@ export class WhatsAppSenderService {
       templateVariables: Prisma.JsonValue | null;
     },
   ): Promise<MessageInstance> {
-    if (outbox.mode === "TEMPLATE" && outbox.templateName?.startsWith("HX")) {
+    if (outbox.mode === "TEMPLATE") {
+      if (!outbox.templateName?.startsWith("HX")) {
+        throw new Error(
+          "Invalid TEMPLATE: templateName must be a Twilio Content SID starting with 'HX'",
+        );
+      }
+
       const variables =
         outbox.templateVariables && typeof outbox.templateVariables === "object"
           ? JSON.stringify(outbox.templateVariables)

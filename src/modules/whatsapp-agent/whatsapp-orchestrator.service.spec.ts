@@ -1,9 +1,17 @@
+import { Test, TestingModule } from "@nestjs/testing";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
-import { describe, expect, it, vi } from "vitest";
-import { VehicleSearchToolResult } from "./whatsapp-agent.interface";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { VehicleSearchToolResult } from "./whatsapp-agent.interface";
 import { WhatsAppOrchestratorService } from "./whatsapp-orchestrator.service";
+import { WhatsAppToolExecutorService } from "./whatsapp-tool-executor.service";
+import { WhatsAppWindowPolicyService } from "./whatsapp-window-policy.service";
 
 describe("WhatsAppOrchestratorService", () => {
+  let moduleRef: TestingModule;
+  let service: WhatsAppOrchestratorService;
+  let windowPolicyService: { resolveOutboundMode: ReturnType<typeof vi.fn> };
+  let toolExecutorService: { searchVehiclesFromMessage: ReturnType<typeof vi.fn> };
+
   const buildContext = (
     overrides?: Partial<Parameters<WhatsAppOrchestratorService["decide"]>[0]>,
   ) => ({
@@ -15,19 +23,32 @@ describe("WhatsAppOrchestratorService", () => {
     ...overrides,
   });
 
-  it("routes explicit AGENT request to handoff", async () => {
-    const windowPolicyService = {
+  beforeEach(async () => {
+    windowPolicyService = {
       resolveOutboundMode: vi.fn().mockReturnValue(WhatsAppDeliveryMode.FREE_FORM),
     };
-    const toolExecutorService = {
+    toolExecutorService = {
       searchVehiclesFromMessage: vi.fn(),
     };
 
-    const service = new WhatsAppOrchestratorService(
-      windowPolicyService as never,
-      toolExecutorService as never,
-    );
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        WhatsAppOrchestratorService,
+        {
+          provide: WhatsAppWindowPolicyService,
+          useValue: windowPolicyService,
+        },
+        {
+          provide: WhatsAppToolExecutorService,
+          useValue: toolExecutorService,
+        },
+      ],
+    }).compile();
 
+    service = moduleRef.get(WhatsAppOrchestratorService);
+  });
+
+  it("routes explicit AGENT request to handoff", async () => {
     const result = await service.decide(buildContext({ body: "agent" }));
 
     expect(result.markAsHandoff).toEqual({ reason: "USER_REQUESTED_AGENT" });
@@ -36,27 +57,12 @@ describe("WhatsAppOrchestratorService", () => {
   });
 
   it("returns media fallback for inbound audio/image/doc messages", async () => {
-    const windowPolicyService = {
-      resolveOutboundMode: vi.fn().mockReturnValue(WhatsAppDeliveryMode.FREE_FORM),
-    };
-    const toolExecutorService = {
-      searchVehiclesFromMessage: vi.fn(),
-    };
-
-    const service = new WhatsAppOrchestratorService(
-      windowPolicyService as never,
-      toolExecutorService as never,
-    );
-
     const result = await service.decide(buildContext({ kind: WhatsAppMessageKind.AUDIO }));
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("media-fallback:msg_1");
     expect(toolExecutorService.searchVehiclesFromMessage).not.toHaveBeenCalled();
   });
 
   it("builds options list and image messages when tool search returns vehicles", async () => {
-    const windowPolicyService = {
-      resolveOutboundMode: vi.fn().mockReturnValue(WhatsAppDeliveryMode.FREE_FORM),
-    };
     const toolResult: VehicleSearchToolResult = {
       interpretation: "Looking for: white suv",
       extracted: { color: "white", vehicleType: "SUV" },
@@ -77,14 +83,7 @@ describe("WhatsAppOrchestratorService", () => {
         },
       ],
     };
-    const toolExecutorService = {
-      searchVehiclesFromMessage: vi.fn().mockResolvedValue(toolResult),
-    };
-
-    const service = new WhatsAppOrchestratorService(
-      windowPolicyService as never,
-      toolExecutorService as never,
-    );
+    toolExecutorService.searchVehiclesFromMessage.mockResolvedValue(toolResult);
 
     const result = await service.decide(buildContext());
 
@@ -98,17 +97,7 @@ describe("WhatsAppOrchestratorService", () => {
   });
 
   it("asks for details when model/tool extraction cannot determine search intent", async () => {
-    const windowPolicyService = {
-      resolveOutboundMode: vi.fn().mockReturnValue(WhatsAppDeliveryMode.FREE_FORM),
-    };
-    const toolExecutorService = {
-      searchVehiclesFromMessage: vi.fn().mockResolvedValue(null),
-    };
-
-    const service = new WhatsAppOrchestratorService(
-      windowPolicyService as never,
-      toolExecutorService as never,
-    );
+    toolExecutorService.searchVehiclesFromMessage.mockResolvedValue(null);
 
     const result = await service.decide(buildContext({ body: "hello there" }));
     expect(result.enqueueOutbox).toHaveLength(1);
