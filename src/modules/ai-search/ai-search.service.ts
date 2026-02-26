@@ -35,6 +35,8 @@ export class AiSearchService {
     if (params.to) searchParams.to = params.to;
     if (params.bookingType) searchParams.bookingType = params.bookingType;
     if (params.pickupTime) searchParams.pickupTime = params.pickupTime;
+    if (params.pickupLocation) searchParams.pickupLocation = params.pickupLocation;
+    if (params.dropoffLocation) searchParams.dropoffLocation = params.dropoffLocation;
     if (params.flightNumber) searchParams.flightNumber = params.flightNumber;
 
     return searchParams;
@@ -70,6 +72,12 @@ export class AiSearchService {
         AIRPORT_PICKUP: "airport pickup",
       } as const;
       parts.push(`Type: ${typeLabels[params.bookingType]}`);
+    }
+
+    if (params.pickupLocation || params.dropoffLocation) {
+      const pickup = params.pickupLocation ?? "unspecified pickup";
+      const dropoff = params.dropoffLocation ?? "unspecified drop-off";
+      parts.push(`Route: ${pickup} -> ${dropoff}`);
     }
 
     return parts.join(" • ");

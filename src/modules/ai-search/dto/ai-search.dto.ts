@@ -19,6 +19,8 @@ export const extractedAiSearchParamsSchema = z
     to: z.iso.date().optional(),
     bookingType: z.enum(["DAY", "NIGHT", "FULL_DAY", "AIRPORT_PICKUP"]).optional(),
     pickupTime: z.string().optional(),
+    pickupLocation: z.string().optional(),
+    dropoffLocation: z.string().optional(),
     flightNumber: z.string().optional(),
   })
   .refine(

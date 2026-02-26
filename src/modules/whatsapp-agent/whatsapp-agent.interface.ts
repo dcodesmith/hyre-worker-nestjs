@@ -58,8 +58,12 @@ export interface InboundMessageContext {
 
 export interface VehicleSearchOption {
   id: string;
+  make: string;
+  model: string;
   name: string;
   color: string | null;
+  vehicleType: string;
+  serviceTier: string;
   imageUrl: string | null;
   rates: {
     day: number;
@@ -67,10 +71,55 @@ export interface VehicleSearchOption {
     fullDay: number | null;
     airportPickup: number | null;
   };
+  estimatedTotalInclVat?: number;
+  estimatedSubtotal?: number;
+  estimatedVatAmount?: number;
+  estimateBasis?: string;
+}
+
+export type VehicleSearchAlternativeReason =
+  | "SAME_MODEL_DIFFERENT_COLOR"
+  | "SAME_COLOR_SIMILAR_CLASS"
+  | "SIMILAR_CLASS"
+  | "SIMILAR_PRICE_RANGE"
+  | "CLOSEST_AVAILABLE";
+
+export interface VehicleSearchAlternative extends VehicleSearchOption {
+  reason: VehicleSearchAlternativeReason;
+  score: number;
+}
+
+export type VehicleSearchPreconditionField =
+  | "from"
+  | "to"
+  | "pickupTime"
+  | "pickupLocation"
+  | "dropoffLocation"
+  | "flightNumber";
+
+export interface VehicleSearchPrecondition {
+  missingField: VehicleSearchPreconditionField;
+  prompt: string;
 }
 
 export interface VehicleSearchToolResult {
   interpretation: string;
   extracted: ExtractedAiSearchParams;
-  options: VehicleSearchOption[];
+  exactMatches: VehicleSearchOption[];
+  alternatives: VehicleSearchAlternative[];
+  precondition: VehicleSearchPrecondition | null;
+  shouldClarifyBookingType: boolean;
 }
+
+export type VehicleSearchMessageResult =
+  | {
+      kind: "ok";
+      result: VehicleSearchToolResult;
+    }
+  | {
+      kind: "no_intent";
+    }
+  | {
+      kind: "error";
+      error: string;
+    };

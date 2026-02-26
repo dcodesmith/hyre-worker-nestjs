@@ -8,6 +8,8 @@ export interface ExtractedAiSearchParams {
   to?: string;
   bookingType?: "DAY" | "NIGHT" | "FULL_DAY" | "AIRPORT_PICKUP";
   pickupTime?: string;
+  pickupLocation?: string;
+  dropoffLocation?: string;
   flightNumber?: string;
 }
 

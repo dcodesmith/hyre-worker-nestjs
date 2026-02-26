@@ -13,6 +13,11 @@ import {
   WHATSAPP_OUTBOX_MAX_ATTEMPTS,
   WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
 } from "./whatsapp-agent.const";
+import {
+  WhatsAppOutboundMessageEmptyException,
+  WhatsAppOutboundOutboxIdMissingException,
+  WhatsAppOutboundTemplateInvalidException,
+} from "./whatsapp-agent.error";
 import type { CreateOutboxInput, ProcessWhatsAppOutboxJobData } from "./whatsapp-agent.interface";
 
 @Injectable()
@@ -62,7 +67,7 @@ export class WhatsAppSenderService {
     }
 
     if (!outboxId) {
-      throw new Error("Outbound enqueue did not return outbox id");
+      throw new WhatsAppOutboundOutboxIdMissingException();
     }
 
     try {
@@ -187,9 +192,7 @@ export class WhatsAppSenderService {
   ): Promise<MessageInstance> {
     if (outbox.mode === "TEMPLATE") {
       if (!outbox.templateName?.startsWith("HX")) {
-        throw new Error(
-          "Invalid TEMPLATE: templateName must be a Twilio Content SID starting with 'HX'",
-        );
+        throw new WhatsAppOutboundTemplateInvalidException();
       }
 
       const variables =
@@ -206,7 +209,7 @@ export class WhatsAppSenderService {
     }
 
     if (!outbox.textBody && !outbox.mediaUrl) {
-      throw new Error(`Outbox ${outbox.id} has neither textBody nor mediaUrl`);
+      throw new WhatsAppOutboundMessageEmptyException(outbox.id);
     }
 
     return this.twilioClient.messages.create({
