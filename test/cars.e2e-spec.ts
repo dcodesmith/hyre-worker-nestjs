@@ -20,6 +20,7 @@ describe("Cars E2E Tests", () => {
   let secondOwnerId: string;
   let userCookie: string;
   let publicCarId: string;
+  let ownerCarId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -126,9 +127,10 @@ describe("Cars E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.CREATED);
     expect(response.body.ownerId).toBe(ownerId);
-    expect(response.body.registrationNumber).toBe("KJA-123AB");
+    expect(response.body.registrationNumber).toBe("KJA123AB");
     expect(response.body.images).toHaveLength(1);
     expect(response.body.documents).toHaveLength(2);
+    ownerCarId = response.body.id;
   });
 
   it("GET /api/fleet-owner/cars lists only requesting fleet owner's cars", async () => {
@@ -145,41 +147,26 @@ describe("Cars E2E Tests", () => {
   });
 
   it("GET /api/fleet-owner/cars/:carId returns car detail for owner", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
     const response = await request(app.getHttpServer())
-      .get(`/api/fleet-owner/cars/${ownerCar.id}`)
+      .get(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", ownerCookie);
 
     expect(response.status).toBe(HttpStatus.OK);
-    expect(response.body.id).toBe(ownerCar.id);
+    expect(response.body.id).toBe(ownerCarId);
     expect(response.body.ownerId).toBe(ownerId);
   });
 
   it("GET /api/fleet-owner/cars/:carId returns 404 for other fleet owner's car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
     const response = await request(app.getHttpServer())
-      .get(`/api/fleet-owner/cars/${ownerCar.id}`)
+      .get(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", secondOwnerCookie);
 
     expect(response.status).toBe(HttpStatus.NOT_FOUND);
   });
 
   it("PATCH /api/fleet-owner/cars/:carId updates owner car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
     const response = await request(app.getHttpServer())
-      .patch(`/api/fleet-owner/cars/${ownerCar.id}`)
+      .patch(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", ownerCookie)
       .send({
         dayRate: 55000,
@@ -192,13 +179,8 @@ describe("Cars E2E Tests", () => {
   });
 
   it("PATCH /api/fleet-owner/cars/:carId returns 404 when updating another owner's car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
     const response = await request(app.getHttpServer())
-      .patch(`/api/fleet-owner/cars/${ownerCar.id}`)
+      .patch(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", secondOwnerCookie)
       .send({ status: "AVAILABLE" });
 
