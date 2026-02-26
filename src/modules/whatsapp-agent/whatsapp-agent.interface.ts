@@ -1,4 +1,5 @@
 import type { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
+import { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 
 export interface TwilioInboundWebhookPayload {
   MessageSid?: string;
@@ -53,4 +54,23 @@ export interface InboundMessageContext {
   conversationId: string;
   body?: string;
   kind: WhatsAppMessageKind;
+}
+
+export interface VehicleSearchOption {
+  id: string;
+  name: string;
+  color: string | null;
+  imageUrl: string | null;
+  rates: {
+    day: number;
+    night: number | null;
+    fullDay: number | null;
+    airportPickup: number | null;
+  };
+}
+
+export interface VehicleSearchToolResult {
+  interpretation: string;
+  extracted: ExtractedAiSearchParams;
+  options: VehicleSearchOption[];
 }
