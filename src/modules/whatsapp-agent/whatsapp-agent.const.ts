@@ -1,0 +1,6 @@
+export const WHATSAPP_AGENT_ACK_XML = "<Response></Response>";
+export const WHATSAPP_SERVICE_WINDOW_HOURS = 24;
+export const WHATSAPP_PROCESSING_LOCK_TTL_MS = 60_000;
+
+export const WHATSAPP_DEFAULT_JOB_ATTEMPTS = 3;
+export const WHATSAPP_DEFAULT_BACKOFF_MS = 2_000;

@@ -743,6 +743,160 @@ model ReferralProgramConfig {
   updatedBy String?
 }
 
+enum WhatsAppConversationStatus {
+  ACTIVE
+  HANDOFF
+  CLOSED
+}
+
+enum BookingDraftStatus {
+  NEW
+  COLLECTING
+  QUOTED
+  AWAITING_PAYMENT
+  CONFIRMED
+  CLOSED
+  CANCELLED
+}
+
+enum WhatsAppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WhatsAppMessageKind {
+  TEXT
+  IMAGE
+  AUDIO
+  DOCUMENT
+  LOCATION
+  INTERACTIVE
+  SYSTEM
+  UNKNOWN
+}
+
+enum WhatsAppMessageStatus {
+  RECEIVED
+  QUEUED
+  PROCESSED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum WhatsAppOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DEAD_LETTER
+}
+
+enum WhatsAppDeliveryMode {
+  FREE_FORM
+  TEMPLATE
+}
+
+model WhatsAppConversation {
+  id                      String                     @id @default(cuid())
+  phoneE164               String                     @unique
+  waId                    String?                    @unique
+  profileName             String?
+  status                  WhatsAppConversationStatus @default(ACTIVE)
+  lastInboundAt           DateTime?
+  lastOutboundAt          DateTime?
+  windowExpiresAt         DateTime?
+  handoffReason           String?
+  handoffAt               DateTime?
+  activeBookingDraftId    String?
+  processingLockToken     String?
+  processingLockExpiresAt DateTime?
+  messages                WhatsAppMessage[]
+  outboxItems             WhatsAppOutbox[]
+  bookingDrafts           BookingDraft[]
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+
+  @@index([status])
+  @@index([windowExpiresAt])
+  @@index([processingLockExpiresAt])
+}
+
+model WhatsAppMessage {
+  id                 String                   @id @default(cuid())
+  conversationId     String
+  providerMessageSid String?                  @unique
+  dedupeKey          String                   @unique
+  direction          WhatsAppMessageDirection
+  kind               WhatsAppMessageKind      @default(UNKNOWN)
+  status             WhatsAppMessageStatus    @default(RECEIVED)
+  body               String?
+  mediaUrl           String?
+  mediaContentType   String?
+  providerStatus     String?
+  errorCode          String?
+  errorMessage       String?
+  rawPayload         Json
+  receivedAt         DateTime                 @default(now())
+  processedAt        DateTime?
+  sentAt             DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, receivedAt(sort: Desc)])
+  @@index([direction, status])
+}
+
+model WhatsAppOutbox {
+  id                 String               @id @default(cuid())
+  conversationId     String
+  dedupeKey          String               @unique
+  mode               WhatsAppDeliveryMode
+  status             WhatsAppOutboxStatus @default(PENDING)
+  textBody           String?
+  mediaUrl           String?
+  templateName       String?
+  templateVariables  Json?
+  payload            Json?
+  providerMessageSid String?
+  failureReason      String?
+  attempts           Int                  @default(0)
+  maxAttempts        Int                  @default(5)
+  nextAttemptAt      DateTime             @default(now())
+  lastAttemptAt      DateTime?
+  sentAt             DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([status, nextAttemptAt])
+}
+
+model BookingDraft {
+  id                String             @id @default(cuid())
+  conversationId    String
+  status            BookingDraftStatus @default(NEW)
+  state             Json
+  selectedOptionId  String?
+  quoteExpiresAt    DateTime?
+  checkoutUrl       String?
+  checkoutExpiresAt DateTime?
+  linkedBookingId   String?
+  paymentStatus     PaymentStatus?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, status])
+  @@index([updatedAt(sort: Desc)])
+}
+
 // Better-auth required tables
 model Session {
   id        String   @id @default(cuid())
