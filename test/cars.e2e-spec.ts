@@ -19,6 +19,8 @@ describe("Cars E2E Tests", () => {
   let secondOwnerCookie: string;
   let secondOwnerId: string;
   let userCookie: string;
+  let publicCarId: string;
+  let ownerCarId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -61,25 +63,39 @@ describe("Cars E2E Tests", () => {
 
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("cars-user"), "user");
     userCookie = userAuth.cookie;
+
+    await databaseService.user.update({
+      where: { id: ownerId },
+      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    });
+
+    const publicCar = await factory.createCar(ownerId, {
+      registrationNumber: "PUB-123AA",
+      approvalStatus: "APPROVED",
+      status: "AVAILABLE",
+    });
+    publicCarId = publicCar.id;
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  it("GET /api/cars returns 401 when unauthenticated", async () => {
-    const response = await request(app.getHttpServer()).get("/api/cars");
+  it("GET /api/fleet-owner/cars returns 401 when unauthenticated", async () => {
+    const response = await request(app.getHttpServer()).get("/api/fleet-owner/cars");
     expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
   });
 
-  it("GET /api/cars returns 403 when authenticated as non-fleet owner", async () => {
-    const response = await request(app.getHttpServer()).get("/api/cars").set("Cookie", userCookie);
+  it("GET /api/fleet-owner/cars returns 403 when authenticated as non-fleet owner", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/api/fleet-owner/cars")
+      .set("Cookie", userCookie);
     expect(response.status).toBe(HttpStatus.FORBIDDEN);
   });
 
-  it("POST /api/cars creates car for fleet owner", async () => {
+  it("POST /api/fleet-owner/cars creates car for fleet owner", async () => {
     const response = await request(app.getHttpServer())
-      .post("/api/cars")
+      .post("/api/fleet-owner/cars")
       .set("Cookie", ownerCookie)
       .field("make", "Toyota")
       .field("model", "Camry")
@@ -111,15 +127,18 @@ describe("Cars E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.CREATED);
     expect(response.body.ownerId).toBe(ownerId);
-    expect(response.body.registrationNumber).toBe("KJA-123AB");
+    expect(response.body.registrationNumber).toBe("KJA123AB");
     expect(response.body.images).toHaveLength(1);
     expect(response.body.documents).toHaveLength(2);
+    ownerCarId = response.body.id;
   });
 
-  it("GET /api/cars lists only requesting fleet owner's cars", async () => {
+  it("GET /api/fleet-owner/cars lists only requesting fleet owner's cars", async () => {
     await factory.createCar(secondOwnerId, { registrationNumber: "ABC-987ZZ" });
 
-    const response = await request(app.getHttpServer()).get("/api/cars").set("Cookie", ownerCookie);
+    const response = await request(app.getHttpServer())
+      .get("/api/fleet-owner/cars")
+      .set("Cookie", ownerCookie);
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(Array.isArray(response.body)).toBe(true);
@@ -127,42 +146,27 @@ describe("Cars E2E Tests", () => {
     expect(response.body.every((car: { ownerId: string }) => car.ownerId === ownerId)).toBe(true);
   });
 
-  it("GET /api/cars/:carId returns car detail for owner", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
+  it("GET /api/fleet-owner/cars/:carId returns car detail for owner", async () => {
     const response = await request(app.getHttpServer())
-      .get(`/api/cars/${ownerCar.id}`)
+      .get(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", ownerCookie);
 
     expect(response.status).toBe(HttpStatus.OK);
-    expect(response.body.id).toBe(ownerCar.id);
+    expect(response.body.id).toBe(ownerCarId);
     expect(response.body.ownerId).toBe(ownerId);
   });
 
-  it("GET /api/cars/:carId returns 404 for other fleet owner's car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
+  it("GET /api/fleet-owner/cars/:carId returns 404 for other fleet owner's car", async () => {
     const response = await request(app.getHttpServer())
-      .get(`/api/cars/${ownerCar.id}`)
+      .get(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", secondOwnerCookie);
 
     expect(response.status).toBe(HttpStatus.NOT_FOUND);
   });
 
-  it("PATCH /api/cars/:carId updates owner car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
+  it("PATCH /api/fleet-owner/cars/:carId updates owner car", async () => {
     const response = await request(app.getHttpServer())
-      .patch(`/api/cars/${ownerCar.id}`)
+      .patch(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", ownerCookie)
       .send({
         dayRate: 55000,
@@ -174,16 +178,49 @@ describe("Cars E2E Tests", () => {
     expect(response.body.status).toBe("HOLD");
   });
 
-  it("PATCH /api/cars/:carId returns 404 when updating another owner's car", async () => {
-    const ownerCar = await databaseService.car.findFirstOrThrow({
-      where: { ownerId, registrationNumber: "KJA-123AB" },
-      select: { id: true },
-    });
-
+  it("PATCH /api/fleet-owner/cars/:carId returns 404 when updating another owner's car", async () => {
     const response = await request(app.getHttpServer())
-      .patch(`/api/cars/${ownerCar.id}`)
+      .patch(`/api/fleet-owner/cars/${ownerCarId}`)
       .set("Cookie", secondOwnerCookie)
       .send({ status: "AVAILABLE" });
+
+    expect(response.status).toBe(HttpStatus.NOT_FOUND);
+  });
+
+  it("GET /api/cars/categories returns public categories payload", async () => {
+    const response = await request(app.getHttpServer()).get("/api/cars/categories?limit=20");
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(Array.isArray(response.body.categories)).toBe(true);
+    expect(Array.isArray(response.body.allCars)).toBe(true);
+    expect(response.body.total).toBeGreaterThanOrEqual(1);
+  });
+
+  it("GET /api/cars/search returns public search payload", async () => {
+    const response = await request(app.getHttpServer()).get("/api/cars/search?page=1&limit=12");
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(Array.isArray(response.body.cars)).toBe(true);
+    expect(response.body.pagination.page).toBe(1);
+    expect(response.body.pagination.limit).toBe(12);
+    expect(response.body.pagination.total).toBeGreaterThanOrEqual(1);
+  });
+
+  it("GET /api/cars/:carId returns approved public car detail", async () => {
+    const response = await request(app.getHttpServer()).get(`/api/cars/${publicCarId}`);
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.body.id).toBe(publicCarId);
+  });
+
+  it("GET /api/cars/:carId returns 404 for non-approved car", async () => {
+    const pendingCar = await factory.createCar(ownerId, {
+      registrationNumber: "PUB-404AA",
+      approvalStatus: "PENDING",
+      status: "AVAILABLE",
+    });
+
+    const response = await request(app.getHttpServer()).get(`/api/cars/${pendingCar.id}`);
 
     expect(response.status).toBe(HttpStatus.NOT_FOUND);
   });

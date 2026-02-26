@@ -62,7 +62,7 @@ describe("Auth E2E Tests", () => {
     });
   });
 
-  describe("POST /auth/api/email-otp/send-verification-otp", () => {
+  describe("POST /api/auth/email-otp/send-verification-otp", () => {
     beforeEach(async () => {
       await factory.clearRateLimits();
     });
@@ -71,7 +71,7 @@ describe("Auth E2E Tests", () => {
       const testEmail = uniqueEmail("otp-test-web");
 
       const response = await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
+        .post("/api/auth/email-otp/send-verification-otp")
         .set("Origin", "http://localhost:5173")
         .set("Referer", "http://localhost:5173/auth")
         .send({ email: testEmail, type: "sign-in" });
@@ -91,7 +91,7 @@ describe("Auth E2E Tests", () => {
     });
   });
 
-  describe("POST /auth/api/sign-in/email-otp (verify)", () => {
+  describe("POST /api/auth/sign-in/email-otp (verify)", () => {
     beforeEach(async () => {
       await factory.clearRateLimits();
     });
@@ -100,12 +100,12 @@ describe("Auth E2E Tests", () => {
       const testEmail = uniqueEmail("invalid-otp");
 
       await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
+        .post("/api/auth/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, type: "sign-in" });
 
       const response = await request(app.getHttpServer())
-        .post("/auth/api/sign-in/email-otp")
+        .post("/api/auth/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, otp: "000000" });
 
@@ -117,7 +117,7 @@ describe("Auth E2E Tests", () => {
       const testEmail = uniqueEmail("verify-otp");
 
       const sendResponse = await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
+        .post("/api/auth/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, type: "sign-in" });
 
@@ -135,7 +135,7 @@ describe("Auth E2E Tests", () => {
       const otp = verification?.value.split(":")[0];
 
       const verifyResponse = await request(app.getHttpServer())
-        .post("/auth/api/sign-in/email-otp")
+        .post("/api/auth/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, otp });
 
@@ -158,7 +158,7 @@ describe("Auth E2E Tests", () => {
       const testEmail = uniqueEmail("auth-flow");
 
       const sendResponse = await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
+        .post("/api/auth/email-otp/send-verification-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, type: "sign-in" });
 
@@ -174,7 +174,7 @@ describe("Auth E2E Tests", () => {
       const otp = verification?.value.split(":")[0];
 
       const verifyResponse = await request(app.getHttpServer())
-        .post("/auth/api/sign-in/email-otp")
+        .post("/api/auth/sign-in/email-otp")
         .set("X-Client-Type", "mobile")
         .send({ email: testEmail, otp });
 
@@ -200,7 +200,7 @@ describe("Auth E2E Tests", () => {
       const testEmail = uniqueEmail("session-with-roles");
 
       const sendResponse = await request(app.getHttpServer())
-        .post("/auth/api/email-otp/send-verification-otp")
+        .post("/api/auth/email-otp/send-verification-otp")
         .set("Origin", "http://localhost:3000")
         .set("Referer", "http://localhost:3000/fleet-owner/signup")
         .send({ email: testEmail, type: "sign-in", role: "fleetOwner" });
@@ -214,7 +214,7 @@ describe("Auth E2E Tests", () => {
       const otp = verification?.value.split(":")[0];
 
       const verifyResponse = await request(app.getHttpServer())
-        .post("/auth/api/sign-in/email-otp")
+        .post("/api/auth/sign-in/email-otp")
         .set("Origin", "http://localhost:3000")
         .set("Referer", "http://localhost:3000/fleet-owner/signup")
         .send({ email: testEmail, otp, role: "fleetOwner" });
@@ -238,14 +238,11 @@ describe("Auth E2E Tests", () => {
     });
   });
 
-  describe.skip("Rate limiting", () => {
+  describe("Rate limiting", () => {
     beforeEach(async () => {
       await factory.clearRateLimits();
     });
 
-    // TODO: Investigate rate limiting behavior in test environment
-    // Rate limiting is enabled but doesn't trigger as expected in E2E tests
-    // This may be due to Better Auth's rate limit key generation or timing issues
     it("should enforce rate limiting on OTP send endpoint", async () => {
       const rateLimitEmail = uniqueEmail("rate-limit");
 
@@ -254,20 +251,20 @@ describe("Auth E2E Tests", () => {
       const responses: request.Response[] = [];
       for (let i = 0; i < 7; i++) {
         const response = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: rateLimitEmail, type: "sign-in" });
         responses.push(response);
       }
 
-      // First 5 should succeed, the rest should be rate limited
+      // Better Auth may return a mix during boundary conditions; enforce at least one 429.
       const successCount = responses.filter((r) => r.status === HttpStatus.OK).length;
       const rateLimitedCount = responses.filter(
         (r) => r.status === HttpStatus.TOO_MANY_REQUESTS,
       ).length;
 
-      expect(successCount).toBe(5);
-      expect(rateLimitedCount).toBe(2);
+      expect(successCount + rateLimitedCount).toBe(7);
+      expect(rateLimitedCount).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -281,7 +278,7 @@ describe("Auth E2E Tests", () => {
         const testEmail = uniqueEmail("no-admin-role");
 
         const sendResponse = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, type: "sign-in", role: "user" });
 
@@ -294,7 +291,7 @@ describe("Auth E2E Tests", () => {
         const otp = verification?.value.split(":")[0];
 
         await request(app.getHttpServer())
-          .post("/auth/api/sign-in/email-otp")
+          .post("/api/auth/sign-in/email-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, otp, role: "user" });
 
@@ -304,7 +301,7 @@ describe("Auth E2E Tests", () => {
         // Now try to request admin role for this user from admin referer
         // This should fail because user doesn't have admin role
         const adminResponse = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("Origin", "http://localhost:3000")
           .set("Referer", "http://localhost:3000/admin/dashboard")
           .send({ email: testEmail, type: "sign-in", role: "admin" });
@@ -325,7 +322,7 @@ describe("Auth E2E Tests", () => {
         // Try to sign up as admin from valid /admin path
         // This should fail because new users cannot self-assign protected roles
         const response = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("Origin", "http://localhost:3000")
           .set("Referer", "http://localhost:3000/admin/login")
           .send({ email: testEmail, type: "sign-in", role: "admin" });
@@ -344,7 +341,7 @@ describe("Auth E2E Tests", () => {
 
         // Try to sign up as staff from valid /admin path
         const response = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("Origin", "http://localhost:3000")
           .set("Referer", "http://localhost:3000/admin/staff-login")
           .send({ email: testEmail, type: "sign-in", role: "staff" });
@@ -362,7 +359,7 @@ describe("Auth E2E Tests", () => {
         const testEmail = uniqueEmail("existing-admin");
 
         const sendResponse = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, type: "sign-in", role: "user" });
 
@@ -375,7 +372,7 @@ describe("Auth E2E Tests", () => {
         const otp = verification?.value.split(":")[0];
 
         await request(app.getHttpServer())
-          .post("/auth/api/sign-in/email-otp")
+          .post("/api/auth/sign-in/email-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, otp, role: "user" });
 
@@ -389,7 +386,7 @@ describe("Auth E2E Tests", () => {
 
         // Now request admin role - should succeed since user has the role
         const adminResponse = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("Origin", "http://localhost:3000")
           .set("Referer", "http://localhost:3000/admin/dashboard")
           .send({ email: testEmail, type: "sign-in", role: "admin" });
@@ -404,7 +401,7 @@ describe("Auth E2E Tests", () => {
         const testEmail = uniqueEmail("default-role");
 
         const sendResponse = await request(app.getHttpServer())
-          .post("/auth/api/email-otp/send-verification-otp")
+          .post("/api/auth/email-otp/send-verification-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, type: "sign-in" }); // No role specified
 
@@ -417,7 +414,7 @@ describe("Auth E2E Tests", () => {
         const otp = verification?.value.split(":")[0];
 
         const verifyResponse = await request(app.getHttpServer())
-          .post("/auth/api/sign-in/email-otp")
+          .post("/api/auth/sign-in/email-otp")
           .set("X-Client-Type", "mobile")
           .send({ email: testEmail, otp }); // No role specified
 

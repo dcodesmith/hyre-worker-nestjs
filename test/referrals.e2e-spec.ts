@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
+import { REFERRAL_THROTTLE_CONFIG } from "../src/modules/referral/referral-throttling.config";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("Referrals E2E Tests", () => {
@@ -56,23 +57,51 @@ describe("Referrals E2E Tests", () => {
     });
 
     it("returns 429 after exceeding validation attempts from same IP", async () => {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await request(app.getHttpServer())
+      let response: request.Response | undefined;
+      const maxAttempts = REFERRAL_THROTTLE_CONFIG.userLimit + 5;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        response = await request(app.getHttpServer())
           .get("/api/referrals/validate/INVAL123")
           .set("Cookie", userCookie)
           .set("x-forwarded-for", "10.10.10.10");
+
+        if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
+          break;
+        }
       }
 
-      const response = await request(app.getHttpServer())
-        .get("/api/referrals/validate/INVAL123")
-        .set("Cookie", userCookie)
-        .set("x-forwarded-for", "10.10.10.10");
-
-      expect(response.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(response?.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
       expect(response.body.detail).toBe("Too many validation attempts. Please try again later.");
       expect(response.headers["retry-after"]).toBeDefined();
-      expect(response.headers["ratelimit-limit"]).toBe("20");
+      expect(response.headers["ratelimit-limit"]).toBe(String(REFERRAL_THROTTLE_CONFIG.userLimit));
       expect(response.headers["ratelimit-remaining"]).toBe("0");
+      expect(response.headers["ratelimit-policy"]).toBe(
+        `${REFERRAL_THROTTLE_CONFIG.userLimit};w=${REFERRAL_THROTTLE_CONFIG.ttlSeconds}`,
+      );
+    });
+
+    it("returns valid payload for an existing referral code", async () => {
+      const freshAuth = await factory.authenticateAndGetUser(
+        uniqueEmail("referral-validate"),
+        "user",
+      );
+
+      await databaseService.user.update({
+        where: { id: freshAuth.user.id },
+        data: { referralCode: "VALIDR01" },
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/api/referrals/validate/VALIDR01")
+        .set("Cookie", freshAuth.cookie)
+        .set("x-forwarded-for", "10.10.10.11")
+        .query({ email: uniqueEmail("referral-validate-new") });
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body.valid).toBe(true);
+      expect(response.body.referrer.name).toBeDefined();
+      expect(response.body.message).toBe("Valid referral code.");
     });
   });
 

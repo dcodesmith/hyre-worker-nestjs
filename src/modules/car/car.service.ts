@@ -59,6 +59,10 @@ export class CarService {
     return `${ownerId}/${carId}/${category}/${safeFilename}`;
   }
 
+  private normalizeRegistrationNumber(registrationNumber: string): string {
+    return registrationNumber.toUpperCase().replaceAll(/\s+/g, "").replaceAll("-", "");
+  }
+
   private async assertOwnerCanCreateCar(ownerId: string): Promise<void> {
     const fleetOwnerUser = await this.databaseService.user.findUnique({
       where: { id: ownerId },
@@ -85,19 +89,22 @@ export class CarService {
   private async assertRegistrationNumberUnique(
     ownerId: string,
     registrationNumber: string,
+    excludeCarId?: string,
   ): Promise<void> {
-    const existingCar = await this.databaseService.car.findFirst({
+    const normalizedRegistrationNumber = this.normalizeRegistrationNumber(registrationNumber);
+    const existingCars = await this.databaseService.car.findMany({
       where: {
         ownerId,
-        registrationNumber: {
-          equals: registrationNumber.trim(),
-          mode: "insensitive",
-        },
+        ...(excludeCarId && { id: { not: excludeCarId } }),
       },
-      select: { id: true },
+      select: { registrationNumber: true },
     });
 
-    if (existingCar) {
+    const hasDuplicate = existingCars.some(
+      (car) =>
+        this.normalizeRegistrationNumber(car.registrationNumber) === normalizedRegistrationNumber,
+    );
+    if (hasDuplicate) {
       throw new RegistrationNumberAlreadyExistsException(registrationNumber);
     }
   }
@@ -113,7 +120,7 @@ export class CarService {
         year: dto.year,
         color: dto.color,
         ownerId,
-        registrationNumber: dto.registrationNumber,
+        registrationNumber: this.normalizeRegistrationNumber(dto.registrationNumber),
         status: dto.status ?? Status.AVAILABLE,
         approvalStatus: CarApprovalStatus.PENDING,
         hourlyRate: dto.hourlyRate,
@@ -135,8 +142,8 @@ export class CarService {
     ownerId: string,
     carId: string,
     files: CarCreateFiles,
+    uploadedKeys: string[],
   ): Promise<UploadedFiles> {
-    const uploadedKeys: string[] = [];
     const trackUpload = async (file: UploadedCarFile, category: string): Promise<string> => {
       const key = this.getObjectKey(ownerId, carId, file.originalname, category);
       const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
@@ -267,13 +274,13 @@ export class CarService {
       await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber);
 
       const createdCar = await this.createCarShell(ownerId, dto);
-      let uploaded: UploadedFiles | undefined;
+      const uploadedKeys: string[] = [];
 
       try {
-        uploaded = await this.uploadCarFiles(ownerId, createdCar.id, files);
+        const uploaded = await this.uploadCarFiles(ownerId, createdCar.id, files, uploadedKeys);
         return await this.persistUploadedCarAssets(createdCar.id, uploaded);
       } catch (error) {
-        await this.cleanupFailedCreate(createdCar.id, uploaded?.uploadedKeys ?? []);
+        await this.cleanupFailedCreate(createdCar.id, uploadedKeys);
         throw error;
       }
     } catch (error) {
@@ -299,27 +306,25 @@ export class CarService {
         throw new CarNotFoundException();
       }
 
-      if (dto.registrationNumber && dto.registrationNumber !== existingCar.registrationNumber) {
-        const duplicate = await this.databaseService.car.findFirst({
-          where: {
-            ownerId,
-            id: { not: carId },
-            registrationNumber: {
-              equals: dto.registrationNumber.trim(),
-              mode: "insensitive",
-            },
-          },
-          select: { id: true },
-        });
-        if (duplicate) {
-          throw new RegistrationNumberAlreadyExistsException(dto.registrationNumber);
-        }
+      const normalizedRegistrationNumber = dto.registrationNumber
+        ? this.normalizeRegistrationNumber(dto.registrationNumber)
+        : undefined;
+
+      if (
+        normalizedRegistrationNumber &&
+        normalizedRegistrationNumber !==
+          this.normalizeRegistrationNumber(existingCar.registrationNumber)
+      ) {
+        await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
       }
 
       return await this.databaseService.car.update({
         where: { id: carId },
         data: {
           ...dto,
+          ...(normalizedRegistrationNumber && {
+            registrationNumber: normalizedRegistrationNumber,
+          }),
           fuelUpgradeRate:
             dto.pricingIncludesFuel === true ? null : (dto.fuelUpgradeRate ?? undefined),
         },
