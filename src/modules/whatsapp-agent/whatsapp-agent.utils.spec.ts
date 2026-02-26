@@ -3,6 +3,7 @@ import {
   buildInboundDedupeKey,
   deriveMessageKind,
   extractInboundMedia,
+  isInboundCustomerMessage,
   normalizeTwilioWhatsAppPhone,
 } from "./whatsapp-agent.utils";
 
@@ -46,5 +47,23 @@ describe("whatsapp-agent utils", () => {
 
   it("uses message sid for deterministic inbound dedupe key", () => {
     expect(buildInboundDedupeKey({ MessageSid: "SM123" })).toBe("twilio:inbound:sid:SM123");
+  });
+
+  it("uses hash fallback for deterministic inbound dedupe key when no MessageSid", () => {
+    const key = buildInboundDedupeKey({
+      From: "whatsapp:+2348012345678",
+      Body: "need a white suv tomorrow",
+      NumMedia: "0",
+    });
+    expect(key).toMatch(/^twilio:inbound:hash:[a-f0-9]{64}$/);
+  });
+
+  it("rejects status callbacks as inbound customer messages", () => {
+    expect(
+      isInboundCustomerMessage({
+        From: "whatsapp:+2348012345678",
+        MessageStatus: "delivered",
+      }),
+    ).toBe(false);
   });
 });

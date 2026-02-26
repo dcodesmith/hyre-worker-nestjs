@@ -5,7 +5,7 @@ import { Module } from "@nestjs/common";
 import { WHATSAPP_AGENT_QUEUE } from "../../config/constants";
 import { DatabaseModule } from "../database/database.module";
 import { TwilioWebhookGuard } from "../messaging/guards/twilio-webhook.guard";
-import { WHATSAPP_DEFAULT_BACKOFF_MS, WHATSAPP_DEFAULT_JOB_ATTEMPTS } from "./whatsapp-agent.const";
+import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./whatsapp-agent.const";
 import { WhatsAppAgentProcessor } from "./whatsapp-agent.processor";
 import { WhatsAppConversationService } from "./whatsapp-conversation.service";
 import { WhatsAppInboundController } from "./whatsapp-inbound.controller";
@@ -19,15 +19,7 @@ import { WhatsAppWindowPolicyService } from "./whatsapp-window-policy.service";
     DatabaseModule,
     BullModule.registerQueue({
       name: WHATSAPP_AGENT_QUEUE,
-      defaultJobOptions: {
-        attempts: WHATSAPP_DEFAULT_JOB_ATTEMPTS,
-        backoff: {
-          type: "exponential",
-          delay: WHATSAPP_DEFAULT_BACKOFF_MS,
-        },
-        removeOnComplete: 100,
-        removeOnFail: 50,
-      },
+      defaultJobOptions: WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS,
     }),
     BullBoardModule.forFeature({
       name: WHATSAPP_AGENT_QUEUE,

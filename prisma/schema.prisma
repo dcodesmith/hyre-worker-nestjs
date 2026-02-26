@@ -272,6 +272,7 @@ model Booking {
   payoutTransactions PayoutTransaction[] @relation("BookingPayouts")
   referralRewards    ReferralReward[]
   review             Review?             @relation("BookingReview")
+  linkedDrafts       BookingDraft[]      @relation("LinkedBookingDraft")
 
   @@index([bookingReference])
   @@index([carId])
@@ -810,11 +811,12 @@ model WhatsAppConversation {
   handoffReason           String?
   handoffAt               DateTime?
   activeBookingDraftId    String?
+  activeBookingDraft      BookingDraft?               @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
   processingLockToken     String?
   processingLockExpiresAt DateTime?
   messages                WhatsAppMessage[]
   outboxItems             WhatsAppOutbox[]
-  bookingDrafts           BookingDraft[]
+  bookingDrafts           BookingDraft[]              @relation("ConversationDrafts")
   createdAt               DateTime                   @default(now())
   updatedAt               DateTime                   @updatedAt
 
@@ -887,11 +889,13 @@ model BookingDraft {
   checkoutUrl       String?
   checkoutExpiresAt DateTime?
   linkedBookingId   String?
+  linkedBooking     Booking?           @relation("LinkedBookingDraft", fields: [linkedBookingId], references: [id], onDelete: SetNull)
   paymentStatus     PaymentStatus?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation          WhatsAppConversation   @relation("ConversationDrafts", fields: [conversationId], references: [id], onDelete: Cascade)
+  activeForConversations WhatsAppConversation[] @relation("ActiveConversationDraft")
 
   @@index([conversationId, status])
   @@index([updatedAt(sort: Desc)])

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { WHATSAPP_SERVICE_WINDOW_HOURS } from "./whatsapp-agent.const";
 import type { TwilioInboundWebhookPayload, WhatsAppMediaPayload } from "./whatsapp-agent.interface";
 
 function toE164(value: string): string {
@@ -81,15 +80,14 @@ export function buildInboundDedupeKey(payload: TwilioInboundWebhookPayload): str
 }
 
 export function isInboundCustomerMessage(payload: TwilioInboundWebhookPayload): boolean {
-  // Twilio status callbacks contain MessageStatus but not a customer "From" WhatsApp identity.
+  if (payload.MessageStatus) {
+    return false;
+  }
+
   const fromPhone = normalizeTwilioWhatsAppPhone(payload.From);
   if (!fromPhone) {
     return false;
   }
 
   return true;
-}
-
-export function computeWindowExpiry(from: Date): Date {
-  return new Date(from.getTime() + WHATSAPP_SERVICE_WINDOW_HOURS * 60 * 60 * 1000);
 }

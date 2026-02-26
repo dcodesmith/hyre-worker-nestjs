@@ -4,20 +4,20 @@ import { Prisma, WhatsAppMessageKind } from "@prisma/client";
 import { Queue } from "bullmq";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
-import { WHATSAPP_DEFAULT_BACKOFF_MS, WHATSAPP_DEFAULT_JOB_ATTEMPTS } from "./whatsapp-agent.const";
+import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./whatsapp-agent.const";
 import type {
   ProcessWhatsAppInboundJobData,
   TwilioInboundWebhookPayload,
 } from "./whatsapp-agent.interface";
 import {
   buildInboundDedupeKey,
-  computeWindowExpiry,
   deriveMessageKind,
   extractInboundMedia,
   isInboundCustomerMessage,
   normalizeTwilioWhatsAppPhone,
 } from "./whatsapp-agent.utils";
 import { WhatsAppConversationService } from "./whatsapp-conversation.service";
+import { WhatsAppWindowPolicyService } from "./whatsapp-window-policy.service";
 
 @Injectable()
 export class WhatsAppIngressService {
@@ -26,6 +26,7 @@ export class WhatsAppIngressService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly conversationService: WhatsAppConversationService,
+    private readonly windowPolicyService: WhatsAppWindowPolicyService,
     @InjectQueue(WHATSAPP_AGENT_QUEUE)
     private readonly whatsappAgentQueue: Queue<ProcessWhatsAppInboundJobData>,
   ) {}
@@ -47,7 +48,7 @@ export class WhatsAppIngressService {
 
     const dedupeKey = buildInboundDedupeKey(payload);
     const now = new Date();
-    const windowExpiresAt = computeWindowExpiry(now);
+    const windowExpiresAt = this.windowPolicyService.computeWindowExpiry(now);
     const media = extractInboundMedia(payload);
     const messageKind = deriveMessageKind(payload) as WhatsAppMessageKind;
 
@@ -98,22 +99,36 @@ export class WhatsAppIngressService {
       throw error;
     }
 
-    await this.conversationService.markInboundMessageQueued(messageId);
+    if (!messageId) {
+      throw new Error("Inbound message creation did not return an id");
+    }
 
-    await this.whatsappAgentQueue.add(
-      PROCESS_WHATSAPP_INBOUND_JOB,
-      {
-        conversationId: conversation.id,
-        messageId,
-        dedupeKey,
-      },
-      {
-        jobId: dedupeKey,
-        attempts: WHATSAPP_DEFAULT_JOB_ATTEMPTS,
-        backoff: { type: "exponential", delay: WHATSAPP_DEFAULT_BACKOFF_MS },
-        removeOnComplete: 100,
-        removeOnFail: 50,
-      },
-    );
+    try {
+      await this.whatsappAgentQueue.add(
+        PROCESS_WHATSAPP_INBOUND_JOB,
+        {
+          conversationId: conversation.id,
+          messageId,
+          dedupeKey,
+        },
+        {
+          ...WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS,
+          jobId: dedupeKey,
+        },
+      );
+    } catch (error) {
+      try {
+        await this.databaseService.whatsAppMessage.delete({ where: { id: messageId } });
+      } catch (cleanupError) {
+        this.logger.error("Failed to cleanup inbound message after enqueue failure", {
+          messageId,
+          dedupeKey,
+          cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      }
+      throw error;
+    }
+
+    await this.conversationService.markInboundMessageQueued(messageId);
   }
 }

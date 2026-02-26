@@ -19,26 +19,6 @@ CREATE TYPE "WhatsAppOutboxStatus" AS ENUM ('PENDING', 'PROCESSING', 'SENT', 'FA
 -- CreateEnum
 CREATE TYPE "WhatsAppDeliveryMode" AS ENUM ('FREE_FORM', 'TEMPLATE');
 
--- AlterEnum
-ALTER TYPE "PaymentAttemptStatus" ADD VALUE 'REFUND_ERROR';
-
--- DropIndex
-DROP INDEX "Review_bookingId_idx";
-
--- AlterTable
-ALTER TABLE "Payment" ADD COLUMN     "refundIdempotencyKey" TEXT;
-
--- AlterTable
-ALTER TABLE "User" DROP COLUMN "marketingConsent",
-DROP COLUMN "privacyAcceptedAt",
-DROP COLUMN "termsAcceptedAt";
-
--- AlterTable
-ALTER TABLE "_RoleToUser" ADD CONSTRAINT "_RoleToUser_AB_pkey" PRIMARY KEY ("A", "B");
-
--- DropIndex
-DROP INDEX "_RoleToUser_AB_unique";
-
 -- CreateTable
 CREATE TABLE "WhatsAppConversation" (
     "id" TEXT NOT NULL,
@@ -170,15 +150,6 @@ CREATE INDEX "BookingDraft_conversationId_status_idx" ON "BookingDraft"("convers
 -- CreateIndex
 CREATE INDEX "BookingDraft_updatedAt_idx" ON "BookingDraft"("updatedAt" DESC);
 
--- CreateIndex
-CREATE UNIQUE INDEX "FlightStatusEvent_flightId_eventType_eventTime_key" ON "FlightStatusEvent"("flightId", "eventType", "eventTime");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Payment_refundIdempotencyKey_key" ON "Payment"("refundIdempotencyKey");
-
--- CreateIndex
-CREATE INDEX "Review_serviceRating_idx" ON "Review"("serviceRating");
-
 -- AddForeignKey
 ALTER TABLE "WhatsAppMessage" ADD CONSTRAINT "WhatsAppMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "WhatsAppConversation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -187,4 +158,3 @@ ALTER TABLE "WhatsAppOutbox" ADD CONSTRAINT "WhatsAppOutbox_conversationId_fkey"
 
 -- AddForeignKey
 ALTER TABLE "BookingDraft" ADD CONSTRAINT "BookingDraft_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "WhatsAppConversation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-

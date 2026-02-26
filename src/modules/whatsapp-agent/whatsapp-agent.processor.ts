@@ -7,6 +7,12 @@ import {
   PROCESS_WHATSAPP_OUTBOX_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../config/constants";
+import {
+  WHATSAPP_LOCK_ACQUIRE_INITIAL_BACKOFF_MS,
+  WHATSAPP_LOCK_ACQUIRE_JITTER_MS,
+  WHATSAPP_LOCK_ACQUIRE_MAX_BACKOFF_MS,
+  WHATSAPP_LOCK_ACQUIRE_MAX_WAIT_MS,
+} from "./whatsapp-agent.const";
 import type {
   InboundMessageContext,
   ProcessWhatsAppInboundJobData,
@@ -52,10 +58,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
     const lockToken = randomUUID();
     const { conversationId, messageId } = job.data;
 
-    const lockAcquired = await this.conversationService.acquireProcessingLock(
-      conversationId,
-      lockToken,
-    );
+    const lockAcquired = await this.acquireProcessingLockWithBackoff(conversationId, lockToken);
     if (!lockAcquired) {
       throw new Error(`Failed to acquire conversation lock for ${conversationId}`);
     }
@@ -95,6 +98,41 @@ export class WhatsAppAgentProcessor extends WorkerHost {
     } finally {
       await this.conversationService.releaseProcessingLock(conversationId, lockToken);
     }
+  }
+
+  private async acquireProcessingLockWithBackoff(
+    conversationId: string,
+    lockToken: string,
+  ): Promise<boolean> {
+    const startedAt = Date.now();
+    let delayMs = WHATSAPP_LOCK_ACQUIRE_INITIAL_BACKOFF_MS;
+
+    while (Date.now() - startedAt < WHATSAPP_LOCK_ACQUIRE_MAX_WAIT_MS) {
+      const lockAcquired = await this.conversationService.acquireProcessingLock(
+        conversationId,
+        lockToken,
+      );
+      if (lockAcquired) {
+        return true;
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      const remainingMs = WHATSAPP_LOCK_ACQUIRE_MAX_WAIT_MS - elapsedMs;
+      if (remainingMs <= 0) {
+        break;
+      }
+
+      const jitterMs = Math.floor(Math.random() * WHATSAPP_LOCK_ACQUIRE_JITTER_MS);
+      const sleepMs = Math.min(delayMs + jitterMs, remainingMs);
+      await this.sleep(sleepMs);
+      delayMs = Math.min(delayMs * 2, WHATSAPP_LOCK_ACQUIRE_MAX_BACKOFF_MS);
+    }
+
+    return false;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   @OnWorkerEvent("failed")
