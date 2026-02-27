@@ -22,6 +22,11 @@ export class VehicleSearchQueryBuilder {
       return { model: normalized };
     }
 
+    const canonicalFullInput = this.canonicalizeMake(normalized);
+    if (this.knownMultiWordMakes.has(canonicalFullInput)) {
+      return { make: normalized };
+    }
+
     for (let makeTokenCount = parts.length - 1; makeTokenCount >= 1; makeTokenCount -= 1) {
       const makeCandidate = parts.slice(0, makeTokenCount).join(" ");
       const canonicalCandidate = this.canonicalizeMake(makeCandidate);

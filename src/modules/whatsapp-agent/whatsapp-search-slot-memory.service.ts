@@ -10,10 +10,16 @@ interface SearchSlotPayload {
   updatedAt: string;
 }
 
+interface SearchSlotSnapshot {
+  extracted: ExtractedAiSearchParams | null;
+  raw: string | null;
+}
+
 @Injectable()
 export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
   private readonly logger = new Logger(WhatsAppSearchSlotMemoryService.name);
   private readonly redis: Redis;
+  private readonly maxMergeAttempts = 3;
 
   constructor(private readonly configService: ConfigService<EnvConfig>) {
     const redisUrl = this.configService.get("REDIS_URL", { infer: true });
@@ -27,19 +33,27 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
     conversationId: string,
     latest: ExtractedAiSearchParams,
   ): Promise<ExtractedAiSearchParams> {
-    const previous = await this.get(conversationId);
-    const merged = this.merge(previous ?? {}, latest);
-    try {
-      await this.set(conversationId, merged);
-      return merged;
-    } catch (error) {
-      this.logger.warn("Failed to persist merged search slot memory", {
-        conversationId,
-        merged,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+    for (let attempt = 1; attempt <= this.maxMergeAttempts; attempt += 1) {
+      const previous = await this.get(conversationId);
+      const merged = this.merge(previous.extracted ?? {}, latest);
+      try {
+        const persisted = await this.set(conversationId, merged, previous.raw);
+        if (persisted) {
+          return merged;
+        }
+      } catch (error) {
+        this.logger.warn("Failed to persist merged search slot memory", {
+          conversationId,
+          merged: "[REDACTED]",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     }
+
+    throw new Error(
+      `Failed to persist merged search slot memory for conversation ${conversationId} after ${this.maxMergeAttempts} attempts`,
+    );
   }
 
   async clear(conversationId: string): Promise<void> {
@@ -57,35 +71,53 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
     await this.redis.quit().catch(() => undefined);
   }
 
-  private async get(conversationId: string): Promise<ExtractedAiSearchParams | null> {
+  private async get(conversationId: string): Promise<SearchSlotSnapshot> {
     try {
       const raw = await this.redis.get(this.buildKey(conversationId));
       if (!raw) {
-        return null;
+        return { extracted: null, raw: null };
       }
-      const parsed = JSON.parse(raw) as SearchSlotPayload;
-      return parsed.extracted ?? null;
+      try {
+        const parsed = JSON.parse(raw) as SearchSlotPayload;
+        return { extracted: parsed.extracted ?? null, raw };
+      } catch (error) {
+        this.logger.warn("Failed to parse search slot memory payload", {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { extracted: null, raw };
+      }
     } catch (error) {
       this.logger.warn("Failed to read search slot memory", {
         conversationId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return null;
+      return { extracted: null, raw: null };
     }
   }
 
-  private async set(conversationId: string, extracted: ExtractedAiSearchParams): Promise<void> {
+  private async set(
+    conversationId: string,
+    extracted: ExtractedAiSearchParams,
+    expectedRaw: string | null,
+  ): Promise<boolean> {
+    const key = this.buildKey(conversationId);
     const payload: SearchSlotPayload = {
       extracted,
       updatedAt: new Date().toISOString(),
     };
     try {
-      await this.redis.set(
-        this.buildKey(conversationId),
-        JSON.stringify(payload),
-        "EX",
-        WHATSAPP_SEARCH_SLOT_TTL_SECONDS,
-      );
+      await this.redis.watch(key);
+      const currentRaw = await this.redis.get(key);
+      if (currentRaw !== expectedRaw) {
+        await this.redis.unwatch();
+        return false;
+      }
+
+      const transaction = this.redis.multi();
+      transaction.set(key, JSON.stringify(payload), "EX", WHATSAPP_SEARCH_SLOT_TTL_SECONDS);
+      const execResult = await transaction.exec();
+      return execResult !== null;
     } catch (error) {
       this.logger.warn("Failed to write search slot memory", {
         conversationId,

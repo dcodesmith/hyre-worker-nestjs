@@ -64,6 +64,9 @@ export class WhatsAppToolExecutorService {
     const enabledToolNames = whatsappAgentEnabledToolNames as readonly string[];
     switch (toolName) {
       case "search_vehicles":
+        if (!enabledToolNames.includes(toolName)) {
+          throw new WhatsAppToolNotEnabledException(toolName);
+        }
         return this.searchVehiclesFromToolInput(
           parseWhatsAppAgentToolInput("search_vehicles", input),
         );
@@ -118,7 +121,10 @@ export class WhatsAppToolExecutorService {
         durationMs: Date.now() - startedAt,
         error: errorMessage,
       });
-      return { kind: "error", error: errorMessage };
+      return {
+        kind: "error",
+        error: "An internal error occurred while processing your request.",
+      };
     }
   }
 
@@ -181,7 +187,7 @@ export class WhatsAppToolExecutorService {
     let alternatives: VehicleSearchAlternative[] = [];
     if (exactMatches.length === 0) {
       const alternativeQueries = this.queryBuilder.buildAlternativeQueries(extracted);
-      const alternativeResults = await Promise.all(
+      const settledAlternativeResults = await Promise.allSettled(
         alternativeQueries.map(async (query, index) =>
           this.withTimeout(
             this.carSearchService.searchCars(query),
@@ -190,6 +196,17 @@ export class WhatsAppToolExecutorService {
           ),
         ),
       );
+      const alternativeResults = settledAlternativeResults.flatMap((result, index) => {
+        if (result.status === "fulfilled") {
+          return [result.value];
+        }
+        const operation = `car-search:alternative:${index + 1}`;
+        this.logger.warn("Alternative car search query failed", {
+          operation,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+        return [];
+      });
       const alternativeCandidates = alternativeResults.flatMap((result) =>
         result.cars.map((car) => this.alternativeRanker.mapCarToOption(car)),
       );

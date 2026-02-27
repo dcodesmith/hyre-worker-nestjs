@@ -103,7 +103,11 @@ export class VehicleSearchAlternativeRanker {
       return true;
     }
 
-    if (normalizedActual.includes(normalizedExpected)) {
+    if (
+      normalizedActual.length >= VehicleSearchAlternativeRanker.MIN_MATCH_LENGTH &&
+      normalizedExpected.length >= VehicleSearchAlternativeRanker.MIN_MATCH_LENGTH &&
+      normalizedActual.includes(normalizedExpected)
+    ) {
       return true;
     }
 
