@@ -45,6 +45,12 @@ describe("WhatsAppSearchSlotMemoryService", () => {
     redisMock.get.mockResolvedValue(
       JSON.stringify({
         extracted: { make: "Toyota", model: "Prado", color: "Black" },
+        dialogState: {
+          bookingTypeConfirmed: false,
+          lastAskedQuestionType: null,
+          lastAskedAt: null,
+        },
+        updatedAt: new Date().toISOString(),
       }),
     );
     redisMock.eval.mockResolvedValue(1);
@@ -55,13 +61,14 @@ describe("WhatsAppSearchSlotMemoryService", () => {
       model: "   ",
     });
 
-    expect(merged).toEqual({
+    expect(merged.extracted).toEqual({
       make: "Toyota",
       model: "Prado",
       color: "Black",
       from: "2026-03-10",
       to: "2026-03-12",
     });
+    expect(merged.dialogState.bookingTypeConfirmed).toBe(false);
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.any(String),
       1,
@@ -81,7 +88,7 @@ describe("WhatsAppSearchSlotMemoryService", () => {
       color: "White",
     });
 
-    expect(merged).toEqual({ vehicleType: "SUV", color: "White" });
+    expect(merged.extracted).toEqual({ vehicleType: "SUV", color: "White" });
   });
 
   it("returns latest payload when redis payload is invalid json", async () => {
@@ -93,7 +100,7 @@ describe("WhatsAppSearchSlotMemoryService", () => {
       color: "White",
     });
 
-    expect(merged).toEqual({ vehicleType: "SUV", color: "White" });
+    expect(merged.extracted).toEqual({ vehicleType: "SUV", color: "White" });
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.any(String),
       1,
@@ -127,6 +134,35 @@ describe("WhatsAppSearchSlotMemoryService", () => {
     expect(redisMock.eval).toHaveBeenCalledTimes(3);
   });
 
+  it("clears stale model when latest message broadens to make plus vehicle type", async () => {
+    redisMock.get.mockResolvedValue(
+      JSON.stringify({
+        extracted: {
+          make: "Toyota",
+          model: "Prado",
+          color: "Black",
+        },
+        dialogState: {
+          bookingTypeConfirmed: true,
+          lastAskedQuestionType: "booking_clarification",
+          lastAskedAt: "2026-03-10T09:00:00.000Z",
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    redisMock.eval.mockResolvedValue(1);
+
+    const merged = await service.mergeWithLatest("conv_4", {
+      make: "Toyota",
+      vehicleType: "SUV",
+      color: "White",
+    });
+
+    expect(merged.extracted.model).toBeUndefined();
+    expect(merged.extracted.vehicleType).toBe("SUV");
+    expect(merged.dialogState.bookingTypeConfirmed).toBe(false);
+  });
+
   it("swallows clear errors and does not throw", async () => {
     redisMock.del.mockRejectedValue(new Error("redis del error"));
 
@@ -142,5 +178,22 @@ describe("WhatsAppSearchSlotMemoryService", () => {
   it("swallows redis quit errors on module destroy", async () => {
     redisMock.quit.mockRejectedValue(new Error("quit failed"));
     await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+  });
+
+  it("skips redis write for no-op dialog state updates", async () => {
+    redisMock.get.mockResolvedValue(
+      JSON.stringify({
+        extracted: { make: "Toyota" },
+        dialogState: {
+          bookingTypeConfirmed: false,
+          lastAskedQuestionType: null,
+          lastAskedAt: null,
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    await expect(service.clearAskedQuestion("conv_noop")).resolves.toBeUndefined();
+    expect(redisMock.eval).not.toHaveBeenCalled();
   });
 });

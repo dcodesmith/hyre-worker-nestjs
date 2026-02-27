@@ -106,15 +106,47 @@ export class WhatsAppToolExecutorService {
       if (!this.hasSearchSignal(latestExtracted)) {
         return { kind: "no_intent" };
       }
-      const extracted =
+      const merged =
         conversationId == null
-          ? latestExtracted
+          ? {
+              extracted: latestExtracted,
+              dialogState: {
+                bookingTypeConfirmed: Boolean(latestExtracted.bookingType),
+                lastAskedQuestionType: null,
+                lastAskedAt: null,
+              },
+            }
           : await this.slotMemoryService.mergeWithLatest(conversationId, latestExtracted);
 
-      return {
-        kind: "ok",
-        result: await this.searchVehiclesFromExtracted(extracted, aiSearch.interpretation),
-      };
+      const result = await this.searchVehiclesFromExtracted(
+        merged.extracted,
+        aiSearch.interpretation,
+        merged.dialogState,
+      );
+
+      if (result.precondition) {
+        if (conversationId) {
+          await this.slotMemoryService.recordQuestionAsked(conversationId, "precondition");
+        }
+        return { kind: "ask_precondition", result };
+      }
+
+      if (result.shouldClarifyBookingType) {
+        if (conversationId) {
+          await this.slotMemoryService.recordQuestionAsked(conversationId, "booking_clarification");
+        }
+        return { kind: "ask_booking_clarification", result };
+      }
+
+      if (conversationId) {
+        await this.slotMemoryService.clearAskedQuestion(conversationId);
+      }
+
+      if (result.exactMatches.length === 0 && result.alternatives.length === 0) {
+        return { kind: "no_options", result };
+      }
+
+      return { kind: "show_options", result };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.warn("Tool search flow failed for WhatsApp message", {
@@ -157,6 +189,10 @@ export class WhatsAppToolExecutorService {
   private async searchVehiclesFromExtracted(
     extracted: ExtractedAiSearchParams,
     interpretation: string,
+    dialogState?: {
+      bookingTypeConfirmed?: boolean;
+      lastAskedQuestionType?: "precondition" | "booking_clarification" | null;
+    },
   ): Promise<VehicleSearchToolResult> {
     const precondition = this.preconditionPolicy.resolve(extracted);
     if (precondition) {
@@ -230,7 +266,10 @@ export class WhatsAppToolExecutorService {
       exactMatches: enrichedExactMatches,
       alternatives: enrichedAlternatives,
       precondition: null,
-      shouldClarifyBookingType: this.preconditionPolicy.shouldClarifyBookingType(extracted),
+      shouldClarifyBookingType: this.preconditionPolicy.shouldClarifyBookingType(extracted, {
+        bookingTypeConfirmed: dialogState?.bookingTypeConfirmed,
+        lastAskedQuestionType: dialogState?.lastAskedQuestionType,
+      }),
     };
   }
 

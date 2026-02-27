@@ -76,7 +76,7 @@ export class WhatsAppSenderService {
         { outboxId },
         {
           ...WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
-          jobId: `whatsapp-outbox:${outboxId}`,
+          jobId: `whatsapp-outbox_${outboxId}`,
         },
       );
     } catch (error) {

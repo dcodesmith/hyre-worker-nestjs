@@ -114,7 +114,7 @@ export class WhatsAppIngressService {
         },
         {
           ...WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS,
-          jobId: dedupeKey,
+          jobId: dedupeKey.replaceAll(":", "_"),
         },
       );
     } catch (error) {

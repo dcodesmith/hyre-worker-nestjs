@@ -58,4 +58,19 @@ describe("VehicleSearchPreconditionPolicy", () => {
     ).toBe(true);
     expect(policy.shouldClarifyBookingType({ from: "2026-03-10" })).toBe(true);
   });
+
+  it("does not re-clarify booking type when booking type is already confirmed", () => {
+    expect(
+      policy.shouldClarifyBookingType(
+        {
+          from: "2026-03-10",
+          to: "2026-03-12",
+          bookingType: "DAY",
+        },
+        {
+          bookingTypeConfirmed: true,
+        },
+      ),
+    ).toBe(false);
+  });
 });

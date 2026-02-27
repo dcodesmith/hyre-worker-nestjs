@@ -124,9 +124,9 @@ export class WhatsAppOrchestratorService {
         ],
       };
     }
-    const searchResult: VehicleSearchToolResult = searchMessageResult.result;
 
-    if (searchResult.precondition) {
+    if (searchMessageResult.kind === "ask_precondition") {
+      const searchResult: VehicleSearchToolResult = searchMessageResult.result;
       const textBody = await this.followupQuestionService.buildFriendlyQuestion({
         intent: "precondition",
         customerMessage: context.body,
@@ -147,6 +147,45 @@ export class WhatsAppOrchestratorService {
       };
     }
 
+    if (searchMessageResult.kind === "ask_booking_clarification") {
+      const searchResult: VehicleSearchToolResult = searchMessageResult.result;
+      const fallbackPrompt = this.buildBookingClarificationPrompt(searchResult);
+      const textBody = await this.followupQuestionService.buildFriendlyQuestion({
+        intent: "booking_clarification",
+        customerMessage: context.body,
+        extracted: searchResult.extracted,
+        missingFields: this.resolveBookingClarificationMissingFields(searchResult),
+        fallbackQuestion: fallbackPrompt,
+      });
+      return {
+        enqueueOutbox: [
+          {
+            conversationId: context.conversationId,
+            dedupeKey: `collect-booking-clarification:${context.messageId}`,
+            mode,
+            textBody,
+            templateName: "booking-reopen",
+          },
+        ],
+      };
+    }
+
+    if (searchMessageResult.kind === "no_options") {
+      return {
+        enqueueOutbox: [
+          {
+            conversationId: context.conversationId,
+            dedupeKey: `no-options:${context.messageId}`,
+            mode,
+            textBody:
+              "I could not find available cars for those details. Please try another date, booking type, or broader vehicle preferences.",
+            templateName: "booking-reopen",
+          },
+        ],
+      };
+    }
+
+    const searchResult: VehicleSearchToolResult = searchMessageResult.result;
     const displayOptions = this.getDisplayOptions(searchResult);
     if (displayOptions.length === 0) {
       return {
@@ -168,7 +207,7 @@ export class WhatsAppOrchestratorService {
         conversationId: context.conversationId,
         dedupeKey: `options-list:${context.messageId}`,
         mode,
-        textBody: await this.buildVehicleOptionsMessage(searchResult, context.body),
+        textBody: this.buildVehicleOptionsMessage(searchResult),
       },
     ];
 
@@ -189,10 +228,7 @@ export class WhatsAppOrchestratorService {
     return { enqueueOutbox: outboxItems };
   }
 
-  private async buildVehicleOptionsMessage(
-    result: VehicleSearchToolResult,
-    customerMessage?: string,
-  ): Promise<string> {
+  private buildVehicleOptionsMessage(result: VehicleSearchToolResult): string {
     const isAlternativeResponse = result.exactMatches.length === 0;
     const options = this.getDisplayOptions(result);
     const lines = options.map((option, index) =>
@@ -202,22 +238,8 @@ export class WhatsAppOrchestratorService {
     const responseSections = [
       this.buildSearchHeader(result, isAlternativeResponse),
       lines.join("\n"),
+      "Reply with the option number to continue.",
     ];
-
-    if (result.shouldClarifyBookingType) {
-      const fallbackPrompt = this.buildBookingClarificationPrompt(result);
-      responseSections.push(
-        await this.followupQuestionService.buildFriendlyQuestion({
-          intent: "booking_clarification",
-          customerMessage,
-          extracted: result.extracted,
-          missingFields: this.resolveBookingClarificationMissingFields(result),
-          fallbackQuestion: fallbackPrompt,
-        }),
-      );
-    } else {
-      responseSections.push("Reply with the option number to continue.");
-    }
 
     return responseSections.join("\n\n");
   }
@@ -244,9 +266,9 @@ export class WhatsAppOrchestratorService {
 
     const requestedVehicle = this.buildRequestedVehicleLabel(result);
     if (requestedVehicle) {
-      return `No exact ${requestedVehicle} available for those details, but here are close alternatives:`;
+      return `No exact ${requestedVehicle} available for those details, but here are close alternatives and their prices including VAT:`;
     }
-    return "No exact match found for those details, but here are close alternatives:";
+    return "No exact match found for those details, but here are close alternatives and their prices including VAT:";
   }
 
   private buildRequestedVehicleLabel(result: VehicleSearchToolResult): string {
@@ -268,16 +290,9 @@ export class WhatsAppOrchestratorService {
       typeof option.estimatedTotalInclVat === "number"
         ? `Estimated total (incl. VAT) ₦${option.estimatedTotalInclVat.toLocaleString()}`
         : null;
-    const rateParts = [
-      `DAY ₦${option.rates.day.toLocaleString()}`,
-      option.rates.night == null ? null : `NIGHT ₦${option.rates.night.toLocaleString()}`,
-      option.rates.fullDay == null ? null : `FULL_DAY ₦${option.rates.fullDay.toLocaleString()}`,
-    ].filter(Boolean);
 
     const color = option.color ? ` (${option.color})` : "";
-    const baseLine = `${displayIndex}. ${option.name}${color} — ${[estimate, ...rateParts]
-      .filter(Boolean)
-      .join(" | ")}`;
+    const baseLine = `${displayIndex}. ${option.name}${color} — ${estimate ?? "Estimated total unavailable"}`;
     if (!includeAlternativeReason || !option.reason) {
       return baseLine;
     }

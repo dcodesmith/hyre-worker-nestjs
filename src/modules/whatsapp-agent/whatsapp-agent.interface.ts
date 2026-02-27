@@ -114,23 +114,51 @@ export interface VehicleSearchToolResult {
 
 export type VehicleSearchMessageResult =
   | {
-      kind: "ok";
-      result: VehicleSearchToolResult;
-    }
-  | {
       kind: "no_intent";
     }
   | {
       kind: "error";
       error: string;
+    }
+  | {
+      kind: "ask_precondition";
+      result: VehicleSearchToolResult;
+    }
+  | {
+      kind: "ask_booking_clarification";
+      result: VehicleSearchToolResult;
+    }
+  | {
+      kind: "show_options";
+      result: VehicleSearchToolResult;
+    }
+  | {
+      kind: "no_options";
+      result: VehicleSearchToolResult;
     };
+
+export type SearchQuestionType = "precondition" | "booking_clarification";
+
+export interface SearchDialogState {
+  bookingTypeConfirmed: boolean;
+  lastAskedQuestionType: SearchQuestionType | null;
+  lastAskedAt: string | null;
+}
 
 export interface SearchSlotPayload {
   extracted: ExtractedAiSearchParams;
+  dialogState?: SearchDialogState;
   updatedAt: string;
 }
 
 export interface SearchSlotSnapshot {
   extracted: ExtractedAiSearchParams | null;
+  dialogState: SearchDialogState;
+  updatedAt: string | null;
   raw: string | null;
+}
+
+export interface SearchSlotMergeResult {
+  extracted: ExtractedAiSearchParams;
+  dialogState: SearchDialogState;
 }
