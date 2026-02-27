@@ -123,3 +123,13 @@ export type VehicleSearchMessageResult =
       kind: "error";
       error: string;
     };
+
+export interface SearchSlotPayload {
+  extracted: ExtractedAiSearchParams;
+  updatedAt: string;
+}
+
+export interface SearchSlotSnapshot {
+  extracted: ExtractedAiSearchParams | null;
+  raw: string | null;
+}
