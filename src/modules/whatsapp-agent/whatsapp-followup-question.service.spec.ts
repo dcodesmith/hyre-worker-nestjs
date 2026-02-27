@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WHATSAPP_OPENAI_CLIENT } from "./whatsapp-agent.tokens";
 import { WhatsAppFollowupQuestionService } from "./whatsapp-followup-question.service";
 
@@ -34,6 +34,12 @@ describe("WhatsAppFollowupQuestionService", () => {
     }).compile();
 
     service = moduleRef.get(WhatsAppFollowupQuestionService);
+  });
+
+  afterEach(async () => {
+    if (moduleRef) {
+      await moduleRef.close();
+    }
   });
 
   it("falls back when model response is empty", async () => {
