@@ -1,33 +1,17 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import Redis from "ioredis";
-import type { EnvConfig } from "../../config/env.config";
+import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import { WHATSAPP_SEARCH_SLOT_TTL_SECONDS } from "./whatsapp-agent.const";
-
-interface SearchSlotPayload {
-  extracted: ExtractedAiSearchParams;
-  updatedAt: string;
-}
-
-interface SearchSlotSnapshot {
-  extracted: ExtractedAiSearchParams | null;
-  raw: string | null;
-}
+import { WhatsAppSlotMemoryPersistFailedException } from "./whatsapp-agent.error";
+import { SearchSlotPayload, SearchSlotSnapshot } from "./whatsapp-agent.interface";
+import type { WhatsAppRedisClient } from "./whatsapp-agent.tokens";
+import { WHATSAPP_REDIS_CLIENT } from "./whatsapp-agent.tokens";
 
 @Injectable()
 export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
   private readonly logger = new Logger(WhatsAppSearchSlotMemoryService.name);
-  private readonly redis: Redis;
   private readonly maxMergeAttempts = 3;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
-    const redisUrl = this.configService.get("REDIS_URL", { infer: true });
-    this.redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: 2,
-      enableReadyCheck: true,
-    });
-  }
+  constructor(@Inject(WHATSAPP_REDIS_CLIENT) private readonly redis: WhatsAppRedisClient) {}
 
   async mergeWithLatest(
     conversationId: string,
@@ -51,9 +35,7 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
       }
     }
 
-    throw new Error(
-      `Failed to persist merged search slot memory for conversation ${conversationId} after ${this.maxMergeAttempts} attempts`,
-    );
+    throw new WhatsAppSlotMemoryPersistFailedException(conversationId, this.maxMergeAttempts);
   }
 
   async clear(conversationId: string): Promise<void> {

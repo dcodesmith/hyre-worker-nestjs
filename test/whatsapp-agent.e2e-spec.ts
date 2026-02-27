@@ -132,6 +132,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(text).toContain("Toyota Prado");
     expect(text).toContain("Land Cruiser");
     expect(text).toContain("Lexus GX 460");
+    expect(text).toContain("Estimated total (incl. VAT)");
     expect(text).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
 
     const imageKeys = result.enqueueOutbox.map((entry) => entry.dedupeKey);
@@ -178,10 +179,73 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(text).toContain("No exact");
     expect(text).toContain("Toyota Prado");
     expect(text).toContain("Mercedes GLE");
+    expect(text).toContain("Estimated total (incl. VAT)");
     expect(text).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 
-  it("enforces hard precondition when pickup date is missing", async () => {
+  it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-S3-001",
+    });
+
+    aiSearchService.search
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          make: "Toyota",
+          color: "Black",
+          vehicleType: "SUV",
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          from: "2026-03-07",
+          to: "2026-03-09",
+        }),
+      );
+
+    const firstTurn = await orchestratorService.decide({
+      messageId: "msg_s3_first",
+      conversationId: "conv_s3",
+      body: "I need a black Toyota SUV",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toContain("collect-precondition");
+
+    const secondTurn = await orchestratorService.decide({
+      messageId: "msg_s3_second",
+      conversationId: "conv_s3",
+      body: "from tomorrow for 3 days",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s3_second");
+    const text = secondTurn.enqueueOutbox[0]?.textBody ?? "";
+    expect(text).toContain("Toyota Prado");
+    expect(text).toContain("Estimated total (incl. VAT)");
+  });
+
+  it("Scenario 4: reset command clears slot memory and asks for a new request", async () => {
+    const reset = await orchestratorService.decide({
+      messageId: "msg_s4",
+      conversationId: "conv_s4",
+      body: "start over",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+
+    expect(reset.enqueueOutbox).toHaveLength(1);
+    expect(reset.enqueueOutbox[0]?.dedupeKey).toBe("reset-ack:msg_s4");
+    expect(reset.enqueueOutbox[0]?.textBody).toContain("reset");
+  });
+
+  it("Scenario 5: enforces hard precondition when pickup date is missing", async () => {
     aiSearchService.search.mockResolvedValue(
       buildAiSearchResponse({
         make: "Toyota",
@@ -191,15 +255,15 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     );
 
     const result = await orchestratorService.decide({
-      messageId: "msg_s3",
-      conversationId: "conv_s3",
+      messageId: "msg_s5",
+      conversationId: "conv_s5",
       body: "I need a black Prado",
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
 
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-precondition:msg_s3:from");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-precondition:msg_s5:from");
     expect(result.enqueueOutbox[0]?.textBody).toContain("What date should pickup start?");
   });
 });

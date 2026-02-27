@@ -12,6 +12,7 @@ export const WhatsAppAgentErrorCode = {
   WHATSAPP_OUTBOUND_TEMPLATE_INVALID: "WHATSAPP_OUTBOUND_TEMPLATE_INVALID",
   WHATSAPP_OUTBOUND_MESSAGE_EMPTY: "WHATSAPP_OUTBOUND_MESSAGE_EMPTY",
   WHATSAPP_OPERATION_TIMEOUT: "WHATSAPP_OPERATION_TIMEOUT",
+  WHATSAPP_SLOT_MEMORY_PERSIST_FAILED: "WHATSAPP_SLOT_MEMORY_PERSIST_FAILED",
 } as const;
 
 export class WhatsAppAgentException extends AppException {}
@@ -148,6 +149,20 @@ export class WhatsAppOperationTimeoutException extends WhatsAppAgentException {
       {
         title: "WhatsApp Operation Timeout",
         details: { operation, timeoutMs },
+      },
+    );
+  }
+}
+
+export class WhatsAppSlotMemoryPersistFailedException extends WhatsAppAgentException {
+  constructor(conversationId: string, attempts: number) {
+    super(
+      WhatsAppAgentErrorCode.WHATSAPP_SLOT_MEMORY_PERSIST_FAILED,
+      `Failed to persist merged search slot memory for conversation ${conversationId} after ${attempts} attempts`,
+      HttpStatus.SERVICE_UNAVAILABLE,
+      {
+        title: "WhatsApp Slot Memory Persist Failed",
+        details: { conversationId, attempts },
       },
     );
   }
