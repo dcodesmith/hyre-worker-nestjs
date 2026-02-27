@@ -8,6 +8,7 @@ import type {
 
 export class VehicleSearchAlternativeRanker {
   private static readonly MIN_MATCH_LENGTH = 2;
+
   constructor(
     private readonly maxExactMatches: number,
     private readonly maxAlternatives: number,

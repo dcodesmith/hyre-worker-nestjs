@@ -64,6 +64,9 @@ export class WhatsAppToolExecutorService {
     const enabledToolNames = whatsappAgentEnabledToolNames as readonly string[];
     switch (toolName) {
       case "search_vehicles":
+        if (!enabledToolNames.includes(toolName)) {
+          throw new WhatsAppToolNotEnabledException(toolName);
+        }
         return this.searchVehiclesFromToolInput(
           parseWhatsAppAgentToolInput("search_vehicles", input),
         );

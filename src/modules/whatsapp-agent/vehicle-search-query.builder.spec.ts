@@ -30,6 +30,7 @@ describe("VehicleSearchQueryBuilder", () => {
       model: "GLE 450",
     });
   });
+
   it("maps vehicle category directly to vehicleType", () => {
     expect(builder.mapVehicleCategory("LUXURY_SUV")).toEqual({ vehicleType: "LUXURY_SUV" });
   });
@@ -53,6 +54,7 @@ describe("VehicleSearchQueryBuilder", () => {
     expect(interpretation).toContain("Pickup: Ikeja");
     expect(interpretation).toContain("Drop-off: Victoria Island");
   });
+
   it("builds exact query with temporal and direct filters", () => {
     const query = builder.buildExactQuery({
       from: "2026-03-10",
@@ -72,6 +74,7 @@ describe("VehicleSearchQueryBuilder", () => {
     expect(query.from).toBeInstanceOf(Date);
     expect(query.to).toBeInstanceOf(Date);
   });
+
   it("handles invalid date strings in exact query by skipping invalid temporal fields", () => {
     const query = builder.buildExactQuery({
       from: "invalid-date",
