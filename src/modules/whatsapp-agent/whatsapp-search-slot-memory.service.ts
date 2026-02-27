@@ -1,9 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import Redis from "ioredis";
-import type { EnvConfig } from "../../config/env.config";
+import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import { WHATSAPP_SEARCH_SLOT_TTL_SECONDS } from "./whatsapp-agent.const";
+import type { WhatsAppRedisClient } from "./whatsapp-agent.tokens";
+import { WHATSAPP_REDIS_CLIENT } from "./whatsapp-agent.tokens";
 
 interface SearchSlotPayload {
   extracted: ExtractedAiSearchParams;
@@ -13,15 +12,8 @@ interface SearchSlotPayload {
 @Injectable()
 export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
   private readonly logger = new Logger(WhatsAppSearchSlotMemoryService.name);
-  private readonly redis: Redis;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
-    const redisUrl = this.configService.get("REDIS_URL", { infer: true });
-    this.redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: 2,
-      enableReadyCheck: true,
-    });
-  }
+  constructor(@Inject(WHATSAPP_REDIS_CLIENT) private readonly redis: WhatsAppRedisClient) {}
 
   async mergeWithLatest(
     conversationId: string,

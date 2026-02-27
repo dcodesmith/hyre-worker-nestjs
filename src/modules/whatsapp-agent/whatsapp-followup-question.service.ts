@@ -1,8 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import OpenAI from "openai";
-import type { EnvConfig } from "../../config/env.config";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
+import type { WhatsAppOpenAiClient } from "./whatsapp-agent.tokens";
+import { WHATSAPP_OPENAI_CLIENT } from "./whatsapp-agent.tokens";
 
 interface FollowupQuestionContext {
   customerMessage?: string;
@@ -15,17 +14,11 @@ interface FollowupQuestionContext {
 @Injectable()
 export class WhatsAppFollowupQuestionService {
   private readonly logger = new Logger(WhatsAppFollowupQuestionService.name);
-  private readonly openAiClient: OpenAI;
   private readonly followupModel = "gpt-4o-mini";
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
-    const apiKey = this.configService.get("OPENAI_API_KEY", { infer: true });
-    this.openAiClient = new OpenAI({
-      apiKey,
-      timeout: 5000,
-      maxRetries: 1,
-    });
-  }
+  constructor(
+    @Inject(WHATSAPP_OPENAI_CLIENT) private readonly openAiClient: WhatsAppOpenAiClient,
+  ) {}
 
   async buildFriendlyQuestion(context: FollowupQuestionContext): Promise<string> {
     try {
