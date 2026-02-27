@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WHATSAPP_SEARCH_SLOT_TTL_SECONDS } from "./whatsapp-agent.const";
 import { WhatsAppSlotMemoryPersistFailedException } from "./whatsapp-agent.error";
 import { WHATSAPP_REDIS_CLIENT } from "./whatsapp-agent.tokens";
@@ -22,7 +22,7 @@ describe("WhatsAppSearchSlotMemoryService", () => {
       eval: vi.fn(),
       set: vi.fn(),
       del: vi.fn(),
-      quit: vi.fn(),
+      quit: vi.fn().mockResolvedValue("OK"),
     };
     moduleRef = await Test.createTestingModule({
       providers: [
@@ -34,6 +34,11 @@ describe("WhatsAppSearchSlotMemoryService", () => {
       ],
     }).compile();
     service = moduleRef.get(WhatsAppSearchSlotMemoryService);
+  });
+
+  afterEach(async () => {
+    await moduleRef?.close();
+    vi.resetAllMocks();
   });
 
   it("merges latest non-empty fields with previous slot payload", async () => {

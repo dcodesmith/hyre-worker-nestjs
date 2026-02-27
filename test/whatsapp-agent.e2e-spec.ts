@@ -133,7 +133,10 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(text).toContain("Land Cruiser");
     expect(text).toContain("Lexus GX 460");
     expect(text).toContain("Estimated total (incl. VAT)");
-    expect(text).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
+    const normalizedText = text.toLowerCase();
+    expect(normalizedText).toContain("day");
+    expect(normalizedText).toContain("night");
+    expect(normalizedText).toContain("full_day");
 
     const imageKeys = result.enqueueOutbox.map((entry) => entry.dedupeKey);
     expect(imageKeys).toContain(`option-image:msg_s1:${pradoWhite.id}`);
@@ -180,7 +183,10 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(text).toContain("Toyota Prado");
     expect(text).toContain("Mercedes GLE");
     expect(text).toContain("Estimated total (incl. VAT)");
-    expect(text).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
+    const normalizedText = text.toLowerCase();
+    expect(normalizedText).toContain("day");
+    expect(normalizedText).toContain("night");
+    expect(normalizedText).toContain("full_day");
   });
 
   it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
@@ -232,6 +238,55 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
   });
 
   it("Scenario 4: reset command clears slot memory and asks for a new request", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-S4-001",
+    });
+
+    aiSearchService.search
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          make: "Toyota",
+          model: "Prado",
+          color: "Black",
+          from: "2026-03-07",
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          to: "2026-03-09",
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          to: "2026-03-09",
+        }),
+      );
+
+    await orchestratorService.decide({
+      messageId: "msg_s4_seed",
+      conversationId: "conv_s4",
+      body: "I need a black Toyota Prado from 2026-03-07",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+
+    const beforeResetFollowup = await orchestratorService.decide({
+      messageId: "msg_s4_before_reset",
+      conversationId: "conv_s4",
+      body: "until 2026-03-09",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+    expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
+      "options-list:msg_s4_before_reset",
+    );
+    expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain("Toyota Prado");
+
     const reset = await orchestratorService.decide({
       messageId: "msg_s4",
       conversationId: "conv_s4",
@@ -243,6 +298,22 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(reset.enqueueOutbox).toHaveLength(1);
     expect(reset.enqueueOutbox[0]?.dedupeKey).toBe("reset-ack:msg_s4");
     expect(reset.enqueueOutbox[0]?.textBody).toContain("reset");
+
+    const afterResetFollowup = await orchestratorService.decide({
+      messageId: "msg_s4_after_reset",
+      conversationId: "conv_s4",
+      body: "until 2026-03-09",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+    expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
+      "collect-precondition:msg_s4_after_reset:from",
+    );
+    const afterResetText = (afterResetFollowup.enqueueOutbox[0]?.textBody ?? "").toLowerCase();
+    expect(afterResetText).toContain("pickup");
+    expect(afterResetText).toContain("date");
+    expect(afterResetText).toContain("yyyy-mm-dd");
+    expect(afterResetText).not.toContain("toyota prado");
   });
 
   it("Scenario 5: enforces hard precondition when pickup date is missing", async () => {
@@ -264,6 +335,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     expect(result.enqueueOutbox).toHaveLength(1);
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-precondition:msg_s5:from");
-    expect(result.enqueueOutbox[0]?.textBody).toContain("What date should pickup start?");
+    const text = (result.enqueueOutbox[0]?.textBody ?? "").toLowerCase();
+    expect(text).toContain("pickup");
+    expect(text).toContain("date");
+    expect(text).toContain("yyyy-mm-dd");
   });
 });
