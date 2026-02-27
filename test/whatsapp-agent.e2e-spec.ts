@@ -140,7 +140,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(imageKeys).toContain(`option-image:msg_s1:${lexusBlack.id}`);
   });
 
-  it("Scenario 2: asks booking-type clarification after listing exact category matches", async () => {
+  it("Scenario 2: asks booking-type clarification after listing close category alternatives", async () => {
     await seedCar({
       make: "Toyota",
       model: "Prado",
@@ -175,7 +175,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s2");
-    expect(text).toContain("Available options");
+    expect(text).toContain("No exact");
     expect(text).toContain("Toyota Prado");
     expect(text).toContain("Mercedes GLE");
     expect(text).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
