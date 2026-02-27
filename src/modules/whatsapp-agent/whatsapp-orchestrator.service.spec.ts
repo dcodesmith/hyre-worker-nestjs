@@ -117,7 +117,7 @@ describe("WhatsAppOrchestratorService", () => {
       shouldClarifyBookingType: false,
     };
     toolExecutorService.searchVehiclesFromMessage.mockResolvedValue({
-      kind: "ok",
+      kind: "show_options",
       result: toolResult,
     });
 
@@ -135,7 +135,7 @@ describe("WhatsAppOrchestratorService", () => {
 
   it("asks a precondition question when required search fields are missing", async () => {
     toolExecutorService.searchVehiclesFromMessage.mockResolvedValue({
-      kind: "ok",
+      kind: "ask_precondition",
       result: {
         interpretation: "Looking for: black toyota",
         extracted: { make: "Toyota", color: "Black" },
@@ -157,7 +157,7 @@ describe("WhatsAppOrchestratorService", () => {
 
   it("builds alternatives response and asks booking-type clarification when exact match is unavailable", async () => {
     toolExecutorService.searchVehiclesFromMessage.mockResolvedValue({
-      kind: "ok",
+      kind: "ask_booking_clarification",
       result: {
         interpretation: "Looking for: black toyota prado",
         extracted: { make: "Toyota", model: "Prado", color: "Black", from: "2026-03-01" },
@@ -183,16 +183,15 @@ describe("WhatsAppOrchestratorService", () => {
     });
 
     const result = await service.decide(buildContext());
-    const optionsMessage = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(optionsMessage).toContain("No exact");
-    expect(optionsMessage).toContain("same model, different color");
-    expect(optionsMessage).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
-    expect(optionsMessage).toContain("pickup and drop-off locations");
+    const clarificationMessage = result.enqueueOutbox[0]?.textBody ?? "";
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_1");
+    expect(clarificationMessage).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
+    expect(clarificationMessage).toContain("pickup and drop-off locations");
   });
 
   it("asks only for missing drop-off location when pickup location is already provided", async () => {
     toolExecutorService.searchVehiclesFromMessage.mockResolvedValue({
-      kind: "ok",
+      kind: "ask_booking_clarification",
       result: {
         interpretation: "Looking for: black toyota prado",
         extracted: {
@@ -224,10 +223,11 @@ describe("WhatsAppOrchestratorService", () => {
     });
 
     const result = await service.decide(buildContext());
-    const optionsMessage = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(optionsMessage).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
-    expect(optionsMessage).toContain("drop-off location");
-    expect(optionsMessage).not.toContain("pickup and drop-off locations");
+    const clarificationMessage = result.enqueueOutbox[0]?.textBody ?? "";
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_1");
+    expect(clarificationMessage).toContain("Reply with DAY, NIGHT, or FULL_DAY.");
+    expect(clarificationMessage).toContain("drop-off location");
+    expect(clarificationMessage).not.toContain("pickup and drop-off locations");
   });
 
   it("returns a fallback message when tool execution returns an error result", async () => {

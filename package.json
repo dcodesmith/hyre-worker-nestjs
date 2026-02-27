@@ -20,6 +20,7 @@
     "test:ui": "vitest --ui",
     "test:e2e": "npx dotenv -e .env.e2e -o -- vitest run --config vitest.e2e.config.mjs",
     "db:generate": "prisma generate",
+    "wa:webhook:test": "pnpm run build && npx dotenv -e .env -o -- node dist/cli.js wa:webhook:test",
     "deploy": "pnpm run build && pnpm run db:generate",
     "prepare": "husky",
     "type-check": "tsc --noEmit"
@@ -54,6 +55,7 @@
     "date-fns": "^4.1.0",
     "helmet": "^8.1.0",
     "ioredis": "^5.7.0",
+    "nest-commander": "^3.20.1",
     "nestjs-pino": "^4.5.0",
     "openai": "^6.22.0",
     "pino-http": "^11.0.0",

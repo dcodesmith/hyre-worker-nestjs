@@ -17,7 +17,11 @@ describe("WhatsAppToolExecutorService", () => {
   let service: WhatsAppToolExecutorService;
   let aiSearchService: { search: ReturnType<typeof vi.fn> };
   let carSearchService: { searchCars: ReturnType<typeof vi.fn> };
-  let searchSlotMemoryService: { mergeWithLatest: ReturnType<typeof vi.fn> };
+  let searchSlotMemoryService: {
+    mergeWithLatest: ReturnType<typeof vi.fn>;
+    recordQuestionAsked: ReturnType<typeof vi.fn>;
+    clearAskedQuestion: ReturnType<typeof vi.fn>;
+  };
   let ratesService: { getRates: ReturnType<typeof vi.fn> };
 
   const buildSearchResponse = (cars: SearchCarDto[]): CarSearchResponseDto => ({
@@ -64,7 +68,16 @@ describe("WhatsAppToolExecutorService", () => {
       searchCars: vi.fn(),
     };
     searchSlotMemoryService = {
-      mergeWithLatest: vi.fn().mockImplementation(async (_conversationId, latest) => latest),
+      mergeWithLatest: vi.fn().mockImplementation(async (_conversationId, latest) => ({
+        extracted: latest,
+        dialogState: {
+          bookingTypeConfirmed: Boolean(latest.bookingType),
+          lastAskedQuestionType: null,
+          lastAskedAt: null,
+        },
+      })),
+      recordQuestionAsked: vi.fn().mockResolvedValue(undefined),
+      clearAskedQuestion: vi.fn().mockResolvedValue(undefined),
     };
     ratesService = {
       getRates: vi.fn().mockResolvedValue({
@@ -154,8 +167,8 @@ describe("WhatsAppToolExecutorService", () => {
 
     const result = await service.searchVehiclesFromMessage("Need a black Prado");
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("ask_precondition");
+    const toolResult = result.kind === "ask_precondition" ? result.result : null;
     expect(toolResult?.precondition).toEqual({
       missingField: "from",
       prompt: "What date should pickup start? Please share it as YYYY-MM-DD.",
@@ -175,12 +188,19 @@ describe("WhatsAppToolExecutorService", () => {
       },
     });
     searchSlotMemoryService.mergeWithLatest.mockResolvedValue({
-      make: "Toyota",
-      model: "Prado",
-      color: "Black",
-      from: "2026-03-10",
-      to: "2026-03-12",
-      pickupTime: "11:00 AM",
+      extracted: {
+        make: "Toyota",
+        model: "Prado",
+        color: "Black",
+        from: "2026-03-10",
+        to: "2026-03-12",
+        pickupTime: "11:00 AM",
+      },
+      dialogState: {
+        bookingTypeConfirmed: false,
+        lastAskedQuestionType: null,
+        lastAskedAt: null,
+      },
     });
     carSearchService.searchCars.mockResolvedValue(buildSearchResponse([buildCar("car_merged")]));
 
@@ -190,8 +210,8 @@ describe("WhatsAppToolExecutorService", () => {
       from: "2026-03-10",
       to: "2026-03-12",
     });
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("ask_booking_clarification");
+    const toolResult = result.kind === "ask_booking_clarification" ? result.result : null;
     expect(toolResult?.extracted.make).toBe("Toyota");
   });
 
@@ -209,8 +229,8 @@ describe("WhatsAppToolExecutorService", () => {
 
     const result = await service.searchVehiclesFromMessage("Need Prado from Mar 10 to Mar 8");
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("ask_precondition");
+    const toolResult = result.kind === "ask_precondition" ? result.result : null;
     expect(toolResult?.precondition).toEqual({
       missingField: "to",
       prompt: "Drop-off date cannot be before pickup date. Please share a valid drop-off date.",
@@ -235,8 +255,8 @@ describe("WhatsAppToolExecutorService", () => {
       "Need Prado on Mar 10 for daytime, pickup 25:99",
     );
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("ask_precondition");
+    const toolResult = result.kind === "ask_precondition" ? result.result : null;
     expect(toolResult?.precondition).toEqual({
       missingField: "pickupTime",
       prompt: "Please share pickup time in this format: 9:00 AM.",
@@ -265,8 +285,8 @@ describe("WhatsAppToolExecutorService", () => {
 
     const result = await service.searchVehiclesFromMessage("Need a black Prado tomorrow");
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("ask_booking_clarification");
+    const toolResult = result.kind === "ask_booking_clarification" ? result.result : null;
     expect(toolResult?.precondition).toBeNull();
     expect(toolResult?.exactMatches.map((option) => option.id)).toEqual(["car_exact_prado_black"]);
     expect(toolResult?.exactMatches[0]?.estimatedTotalInclVat).toBeGreaterThan(0);
@@ -322,8 +342,8 @@ describe("WhatsAppToolExecutorService", () => {
 
     const result = await service.searchVehiclesFromMessage("Need a black Toyota Prado");
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("show_options");
+    const toolResult = result.kind === "show_options" ? result.result : null;
     expect(toolResult?.exactMatches).toHaveLength(0);
     expect(toolResult?.alternatives[0]?.id).toBe("car_prado_white");
     expect(toolResult?.alternatives[0]?.reason).toBe("SAME_MODEL_DIFFERENT_COLOR");
@@ -402,12 +422,46 @@ describe("WhatsAppToolExecutorService", () => {
       "Need a black Toyota Prado tomorrow night",
     );
 
-    expect(result.kind).toBe("ok");
-    const toolResult = result.kind === "ok" ? result.result : null;
+    expect(result.kind).toBe("show_options");
+    const toolResult = result.kind === "show_options" ? result.result : null;
     expect(toolResult?.exactMatches).toHaveLength(0);
     expect(toolResult?.alternatives.some((option) => option.reason === "SIMILAR_PRICE_RANGE")).toBe(
       true,
     );
+  });
+
+  it("does not ask booking clarification again after explicit booking type confirmation", async () => {
+    aiSearchService.search.mockResolvedValue({
+      interpretation: "Looking for: day confirmation",
+      params: {},
+      raw: {
+        bookingType: "DAY",
+      },
+    });
+    searchSlotMemoryService.mergeWithLatest.mockResolvedValue({
+      extracted: {
+        make: "Toyota",
+        vehicleType: "SUV",
+        from: "2026-03-10",
+        to: "2026-03-12",
+        bookingType: "DAY",
+        pickupTime: "9:00 AM",
+        pickupLocation: "Wheatbaker hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker hotel, Ikoyi",
+      },
+      dialogState: {
+        bookingTypeConfirmed: true,
+        lastAskedQuestionType: "booking_clarification",
+        lastAskedAt: "2026-03-09T10:00:00.000Z",
+      },
+    });
+    carSearchService.searchCars.mockResolvedValue(buildSearchResponse([buildCar("car_confirmed")]));
+
+    const result = await service.searchVehiclesFromMessage("DAY", "conv_confirmed");
+
+    expect(result.kind).toBe("show_options");
+    expect(searchSlotMemoryService.recordQuestionAsked).not.toHaveBeenCalled();
+    expect(searchSlotMemoryService.clearAskedQuestion).toHaveBeenCalledWith("conv_confirmed");
   });
 
   it("returns error result when AI search times out", async () => {

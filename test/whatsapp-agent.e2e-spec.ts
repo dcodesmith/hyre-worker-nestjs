@@ -85,21 +85,21 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
   });
 
   it("Scenario 1: returns ranked alternatives and booking-type clarification when no exact match exists", async () => {
-    const pradoWhite = await seedCar({
+    await seedCar({
       make: "Toyota",
       model: "Prado",
       color: "White",
       dayRate: 65000,
       registrationNumber: "WA-S1-001",
     });
-    const landCruiserBlack = await seedCar({
+    await seedCar({
       make: "Toyota",
       model: "Land Cruiser",
       color: "Black",
       dayRate: 75000,
       registrationNumber: "WA-S1-002",
     });
-    const lexusBlack = await seedCar({
+    await seedCar({
       make: "Lexus",
       model: "GX 460",
       color: "Black",
@@ -126,22 +126,14 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
 
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s1");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_s1");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("No exact");
-    expect(text).toContain("Toyota Prado");
-    expect(text).toContain("Land Cruiser");
-    expect(text).toContain("Lexus GX 460");
-    expect(text).toContain("Estimated total (incl. VAT)");
+    expect(text).toContain("DAY");
+    expect(text).toContain("NIGHT");
+    expect(text).toContain("FULL_DAY");
     const normalizedText = text.toLowerCase();
-    expect(normalizedText).toContain("day");
-    expect(normalizedText).toContain("night");
-    expect(normalizedText).toContain("full_day");
-
-    const imageKeys = result.enqueueOutbox.map((entry) => entry.dedupeKey);
-    expect(imageKeys).toContain(`option-image:msg_s1:${pradoWhite.id}`);
-    expect(imageKeys).toContain(`option-image:msg_s1:${landCruiserBlack.id}`);
-    expect(imageKeys).toContain(`option-image:msg_s1:${lexusBlack.id}`);
+    expect(normalizedText).toContain("pickup");
+    expect(normalizedText).toContain("drop-off");
   });
 
   it("Scenario 2: asks booking-type clarification after listing close category alternatives", async () => {
@@ -178,15 +170,13 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s2");
-    expect(text).toContain("No exact");
-    expect(text).toContain("Toyota Prado");
-    expect(text).toContain("Mercedes GLE");
-    expect(text).toContain("Estimated total (incl. VAT)");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_s2");
+    expect(text).toContain("DAY");
+    expect(text).toContain("NIGHT");
+    expect(text).toContain("FULL_DAY");
     const normalizedText = text.toLowerCase();
-    expect(normalizedText).toContain("day");
-    expect(normalizedText).toContain("night");
-    expect(normalizedText).toContain("full_day");
+    expect(normalizedText).toContain("pickup");
+    expect(normalizedText).toContain("drop-off");
   });
 
   it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
@@ -231,10 +221,13 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
 
-    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s3_second");
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe(
+      "collect-booking-clarification:msg_s3_second",
+    );
     const text = secondTurn.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("Toyota Prado");
-    expect(text).toContain("Estimated total (incl. VAT)");
+    expect(text).toContain("DAY");
+    expect(text).toContain("NIGHT");
+    expect(text).toContain("FULL_DAY");
   });
 
   it("Scenario 4: reset command clears slot memory and asks for a new request", async () => {
@@ -283,9 +276,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
     expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
-      "options-list:msg_s4_before_reset",
+      "collect-booking-clarification:msg_s4_before_reset",
     );
-    expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain("Toyota Prado");
+    expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain("DAY");
 
     const reset = await orchestratorService.decide({
       messageId: "msg_s4",
@@ -339,5 +332,97 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(text).toContain("pickup");
     expect(text).toContain("date");
     expect(text).toContain("yyyy-mm-dd");
+  });
+
+  it("Scenario 6: booking type confirmation does not loop after clarification prompt", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      color: "White",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-S6-001",
+    });
+
+    aiSearchService.search
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          make: "Toyota",
+          vehicleType: "SUV",
+          color: "White",
+          from: "2026-03-10",
+          to: "2026-03-12",
+          pickupTime: "9 AM",
+          pickupLocation: "Wheatbaker hotel, Ikoyi",
+          dropoffLocation: "Wheatbaker hotel, Ikoyi",
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildAiSearchResponse({
+          bookingType: "DAY",
+        }),
+      );
+
+    const firstTurn = await orchestratorService.decide({
+      messageId: "msg_s6_first",
+      conversationId: "conv_s6",
+      body: "I'd like to book a white Toyota SUV for 2 days from tomorrow starting at 9am, pick up and drop off at Wheatbaker hotel, Ikoyi",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+    });
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe(
+      "collect-booking-clarification:msg_s6_first",
+    );
+
+    const secondTurn = await orchestratorService.decide({
+      messageId: "msg_s6_second",
+      conversationId: "conv_s6",
+      body: "DAY",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+    });
+
+    const secondTurnText = secondTurn.enqueueOutbox[0]?.textBody ?? "";
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s6_second");
+    expect(secondTurnText).toContain("Estimated total (incl. VAT)");
+    expect(secondTurnText).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
+  });
+
+  it("Scenario 7: explicit DAY booking type in first message goes straight to options", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      color: "White",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-S7-001",
+    });
+
+    aiSearchService.search.mockResolvedValue(
+      buildAiSearchResponse({
+        make: "Toyota",
+        vehicleType: "SUV",
+        color: "White",
+        from: "2026-03-10",
+        to: "2026-03-12",
+        bookingType: "DAY",
+        pickupTime: "9 AM",
+        pickupLocation: "Wheatbaker hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker hotel, Ikoyi",
+      }),
+    );
+
+    const result = await orchestratorService.decide({
+      messageId: "msg_s7",
+      conversationId: "conv_s7",
+      body: "I'd like to book a white Toyota SUV for 2 days from tomorrow starting at 9am, day booking type, pick up and drop off at Wheatbaker hotel, Ikoyi",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+    });
+
+    const text = result.enqueueOutbox[0]?.textBody ?? "";
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s7");
+    expect(text).toContain("Estimated total (incl. VAT)");
+    expect(text).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 });

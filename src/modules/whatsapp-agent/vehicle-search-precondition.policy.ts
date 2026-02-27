@@ -99,7 +99,20 @@ export class VehicleSearchPreconditionPolicy {
     return null;
   }
 
-  shouldClarifyBookingType(extracted: ExtractedAiSearchParams): boolean {
+  shouldClarifyBookingType(
+    extracted: ExtractedAiSearchParams,
+    options?: {
+      bookingTypeConfirmed?: boolean;
+      lastAskedQuestionType?: "precondition" | "booking_clarification" | null;
+    },
+  ): boolean {
+    if (options?.bookingTypeConfirmed) {
+      return false;
+    }
+    if (options?.lastAskedQuestionType === "booking_clarification") {
+      // Avoid asking the same clarification back-to-back.
+      return false;
+    }
     const bookingType = normalizeBookingType(extracted.bookingType);
     if (!bookingType) {
       return true;

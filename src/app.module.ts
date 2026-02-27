@@ -5,6 +5,7 @@ import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { LoggerModule } from "nestjs-pino";
+import { CommandsModule } from "./commands/commands.module";
 import { createBullBoardAuthMiddleware } from "./common/middlewares/bull-board-auth.middleware";
 import { RequestIdMiddleware } from "./common/middlewares/request-id.middleware";
 import { EnvConfig, validateEnvironment } from "./config/env.config";
@@ -151,6 +152,7 @@ import { WhatsAppAgentModule } from "./modules/whatsapp-agent/whatsapp-agent.mod
       inject: [ConfigService],
     }),
     // Queues are registered in their respective feature modules
+    CommandsModule,
     HttpClientModule,
     DatabaseModule,
     AiSearchModule,
