@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import type { EnvConfig } from "../../config/env.config";
 import {
   AiSearchException,
+  AiSearchProviderAuthenticationException,
   AiSearchProviderResponseInvalidException,
   AiSearchTimeoutException,
 } from "./ai-search.error";
@@ -67,6 +68,13 @@ export class OpenAiAiSearchExtractorService {
         throw new AiSearchTimeoutException();
       }
 
+      if (
+        error instanceof Error &&
+        /missing bearer|basic authentication|incorrect api key|unauthorized/i.test(error.message)
+      ) {
+        throw new AiSearchProviderAuthenticationException();
+      }
+
       throw new AiSearchProviderResponseInvalidException();
     }
   }
@@ -94,6 +102,8 @@ Extract the following fields when mentioned:
 - to: End date in YYYY-MM-DD format
 - bookingType: One of: DAY, NIGHT, FULL_DAY, AIRPORT_PICKUP
 - pickupTime: Time in "HH AM/PM" format (e.g., "10 AM", "2 PM")
+- pickupLocation: Pickup location/address/landmark
+- dropoffLocation: Drop-off location/address/landmark
 - flightNumber: Flight number for airport pickups
 
 Date parsing rules:
@@ -118,16 +128,17 @@ Service tier mapping:
 - "ultra luxury", "ultra-luxury", "high-end" → ULTRA_LUXURY
 
 Booking type mapping:
-- Default to DAY if dates are mentioned without specifying night/airport
 - "night", "overnight" → NIGHT
 - "24 hours", "full day", "24hr" → FULL_DAY
-- "airport", "flight", "pickup" → AIRPORT_PICKUP
+- "airport", "flight", "terminal", "arrivals" → AIRPORT_PICKUP
 
 Important:
 - Only include fields that are explicitly mentioned or can be inferred
 - If duration is mentioned (e.g., "5 days"), calculate the end date
 - Be flexible with synonyms (e.g., "Benz" = "Mercedes")
-- Return strict JSON only with these keys: color, make, model, vehicleType, serviceTier, from, to, bookingType, pickupTime, flightNumber
+- Do not infer AIRPORT_PICKUP from generic "pick up"/"pickup"; only infer it when airport/flight context is present
+- If user says "pick up and drop off at <same place>", set both pickupLocation and dropoffLocation to that place
+- Return strict JSON only with these keys: color, make, model, vehicleType, serviceTier, from, to, bookingType, pickupTime, pickupLocation, dropoffLocation, flightNumber
 - Do not include unknown keys or explanatory text`;
   }
 

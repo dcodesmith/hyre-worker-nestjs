@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./whatsapp-agent.const";
+import { WhatsAppInboundMessageIdMissingException } from "./whatsapp-agent.error";
 import type {
   ProcessWhatsAppInboundJobData,
   TwilioInboundWebhookPayload,
@@ -100,7 +101,7 @@ export class WhatsAppIngressService {
     }
 
     if (!messageId) {
-      throw new Error("Inbound message creation did not return an id");
+      throw new WhatsAppInboundMessageIdMissingException();
     }
 
     try {

@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AiSearchProviderAuthenticationException,
   AiSearchProviderResponseInvalidException,
   AiSearchTimeoutException,
 } from "./ai-search.error";
@@ -56,5 +57,18 @@ describe("OpenAiAiSearchExtractorService", () => {
     };
 
     await expect(service.extract("find me a car")).rejects.toBeInstanceOf(AiSearchTimeoutException);
+  });
+
+  it("throws auth error when provider reports missing authentication header", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValue(new Error("Missing bearer or basic authentication in header"));
+    (service as unknown as { openAiClient: unknown }).openAiClient = {
+      chat: { completions: { create } },
+    };
+
+    await expect(service.extract("find me a car")).rejects.toBeInstanceOf(
+      AiSearchProviderAuthenticationException,
+    );
   });
 });

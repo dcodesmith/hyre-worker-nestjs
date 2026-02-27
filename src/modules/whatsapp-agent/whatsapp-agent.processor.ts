@@ -13,6 +13,10 @@ import {
   WHATSAPP_LOCK_ACQUIRE_MAX_BACKOFF_MS,
   WHATSAPP_LOCK_ACQUIRE_MAX_WAIT_MS,
 } from "./whatsapp-agent.const";
+import {
+  WhatsAppAgentUnknownJobTypeException,
+  WhatsAppProcessingLockAcquireFailedException,
+} from "./whatsapp-agent.error";
 import type {
   InboundMessageContext,
   ProcessWhatsAppInboundJobData,
@@ -20,6 +24,7 @@ import type {
 } from "./whatsapp-agent.interface";
 import { WhatsAppConversationService } from "./whatsapp-conversation.service";
 import { WhatsAppOrchestratorService } from "./whatsapp-orchestrator.service";
+import { WhatsAppSearchSlotMemoryService } from "./whatsapp-search-slot-memory.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
 type WhatsAppAgentJobData = ProcessWhatsAppInboundJobData | ProcessWhatsAppOutboxJobData;
@@ -33,6 +38,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
     private readonly conversationService: WhatsAppConversationService,
     private readonly orchestratorService: WhatsAppOrchestratorService,
     private readonly senderService: WhatsAppSenderService,
+    private readonly searchSlotMemoryService: WhatsAppSearchSlotMemoryService,
   ) {
     super();
   }
@@ -48,7 +54,7 @@ export class WhatsAppAgentProcessor extends WorkerHost {
         return { success: true };
 
       default:
-        throw new Error(`Unknown WhatsApp Agent job type: ${job.name}`);
+        throw new WhatsAppAgentUnknownJobTypeException(job.name);
     }
   }
 
@@ -57,10 +63,12 @@ export class WhatsAppAgentProcessor extends WorkerHost {
   ): Promise<void> {
     const lockToken = randomUUID();
     const { conversationId, messageId } = job.data;
+    const startedAt = Date.now();
+    const traceId = `${conversationId}:${messageId}`;
 
     const lockAcquired = await this.acquireProcessingLockWithBackoff(conversationId, lockToken);
     if (!lockAcquired) {
-      throw new Error(`Failed to acquire conversation lock for ${conversationId}`);
+      throw new WhatsAppProcessingLockAcquireFailedException(conversationId);
     }
 
     try {
@@ -88,12 +96,30 @@ export class WhatsAppAgentProcessor extends WorkerHost {
           context.conversationId,
           result.markAsHandoff.reason,
         );
+        try {
+          await this.searchSlotMemoryService.clear(context.conversationId);
+        } catch (error) {
+          this.logger.warn("Failed to clear search slot memory after handoff", {
+            conversationId: context.conversationId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       await this.conversationService.markInboundMessageProcessed(messageId);
+      this.logger.log("Processed inbound WhatsApp message", {
+        traceId,
+        outboundCount: result.enqueueOutbox.length,
+        durationMs: Date.now() - startedAt,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await this.conversationService.markInboundMessageFailed(messageId, errorMessage);
+      this.logger.warn("Failed processing inbound WhatsApp message", {
+        traceId,
+        durationMs: Date.now() - startedAt,
+        error: errorMessage,
+      });
       throw error;
     } finally {
       await this.conversationService.releaseProcessingLock(conversationId, lockToken);
