@@ -22,6 +22,9 @@ describe("VehicleSearchQueryBuilder", () => {
       make: "Land Rover",
       model: "Defender",
     });
+    expect(builder.parseVehicleModel("Mercedes-Benz")).toEqual({
+      make: "Mercedes-Benz",
+    });
     expect(builder.parseVehicleModel("Mercedes-Benz GLE 450")).toEqual({
       make: "Mercedes-Benz",
       model: "GLE 450",

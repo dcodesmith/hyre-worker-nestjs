@@ -106,18 +106,34 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
       extracted,
       updatedAt: new Date().toISOString(),
     };
-    try {
-      await this.redis.watch(key);
-      const currentRaw = await this.redis.get(key);
-      if (currentRaw !== expectedRaw) {
-        await this.redis.unwatch();
-        return false;
-      }
+    const expectedRawArg = expectedRaw ?? "__NULL__";
+    const compareAndSetScript = `
+      local current = redis.call("GET", KEYS[1])
+      local expected = ARGV[1]
 
-      const transaction = this.redis.multi();
-      transaction.set(key, JSON.stringify(payload), "EX", WHATSAPP_SEARCH_SLOT_TTL_SECONDS);
-      const execResult = await transaction.exec();
-      return execResult !== null;
+      if expected == "__NULL__" then
+        if current ~= false then
+          return 0
+        end
+      else
+        if current ~= expected then
+          return 0
+        end
+      end
+
+      redis.call("SET", KEYS[1], ARGV[2], "EX", ARGV[3])
+      return 1
+    `;
+    try {
+      const evalResult = await this.redis.eval(
+        compareAndSetScript,
+        1,
+        key,
+        expectedRawArg,
+        JSON.stringify(payload),
+        String(WHATSAPP_SEARCH_SLOT_TTL_SECONDS),
+      );
+      return evalResult === 1;
     } catch (error) {
       this.logger.warn("Failed to write search slot memory", {
         conversationId,

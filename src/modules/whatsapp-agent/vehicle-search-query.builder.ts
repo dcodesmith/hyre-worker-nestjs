@@ -19,6 +19,10 @@ export class VehicleSearchQueryBuilder {
 
     const parts = normalized.split(" ");
     if (parts.length === 1) {
+      const canonicalFullInput = this.canonicalizeMake(normalized);
+      if (this.knownMultiWordMakes.has(canonicalFullInput)) {
+        return { make: normalized };
+      }
       return { model: normalized };
     }
 
