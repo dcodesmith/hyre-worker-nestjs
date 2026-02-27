@@ -171,35 +171,13 @@ export class WhatsAppOrchestratorService {
     }
 
     if (searchMessageResult.kind === "no_options") {
-      return {
-        enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
-            dedupeKey: `no-options:${context.messageId}`,
-            mode,
-            textBody:
-              "I could not find available cars for those details. Please try another date, booking type, or broader vehicle preferences.",
-            templateName: "booking-reopen",
-          },
-        ],
-      };
+      return this.buildNoOptionsResponse(context.conversationId, context.messageId, mode);
     }
 
     const searchResult: VehicleSearchToolResult = searchMessageResult.result;
     const displayOptions = this.getDisplayOptions(searchResult);
     if (displayOptions.length === 0) {
-      return {
-        enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
-            dedupeKey: `no-options:${context.messageId}`,
-            mode,
-            textBody:
-              "I could not find available cars for those details. Please try another date, booking type, or broader vehicle preferences.",
-            templateName: "booking-reopen",
-          },
-        ],
-      };
+      return this.buildNoOptionsResponse(context.conversationId, context.messageId, mode);
     }
 
     const outboxItems: OrchestratorResult["enqueueOutbox"] = [
@@ -345,5 +323,24 @@ export class WhatsAppOrchestratorService {
       missing.push("dropoffLocation");
     }
     return missing;
+  }
+
+  private buildNoOptionsResponse(
+    conversationId: string,
+    messageId: string,
+    mode: OrchestratorResult["enqueueOutbox"][number]["mode"],
+  ): OrchestratorResult {
+    return {
+      enqueueOutbox: [
+        {
+          conversationId,
+          dedupeKey: `no-options:${messageId}`,
+          mode,
+          textBody:
+            "I could not find available cars for those details. Please try another date, booking type, or broader vehicle preferences.",
+          templateName: "booking-reopen",
+        },
+      ],
+    };
   }
 }

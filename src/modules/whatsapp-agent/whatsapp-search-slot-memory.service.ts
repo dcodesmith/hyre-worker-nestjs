@@ -323,6 +323,10 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
     }
     const updatedMs = Date.parse(updatedAt);
     if (Number.isNaN(updatedMs)) {
+      this.logger.warn("Invalid search slot updatedAt timestamp; treating as non-expired", {
+        service: WhatsAppSearchSlotMemoryService.name,
+        updatedAt,
+      });
       return false;
     }
     return Date.now() - updatedMs > this.freshIntentWindowMs;

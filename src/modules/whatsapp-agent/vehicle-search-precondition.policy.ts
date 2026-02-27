@@ -109,14 +109,13 @@ export class VehicleSearchPreconditionPolicy {
     if (options?.bookingTypeConfirmed) {
       return false;
     }
+    if (options?.lastAskedQuestionType === "booking_clarification") {
+      // Avoid asking the same clarification back-to-back.
+      return false;
+    }
     const bookingType = normalizeBookingType(extracted.bookingType);
     if (!bookingType) {
       return true;
-    }
-
-    if (options?.lastAskedQuestionType === "booking_clarification") {
-      // Avoid asking the same clarification back-to-back once we have a booking type value.
-      return false;
     }
 
     if (bookingType !== BookingType.DAY || !extracted.from || !extracted.to) {
