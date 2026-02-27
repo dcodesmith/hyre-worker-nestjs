@@ -4,6 +4,8 @@ import type { CarSearchQueryDto } from "../car/dto/car-search.dto";
 import { normalizeBookingType, parseSearchDate } from "./vehicle-search-precondition.policy";
 
 export class VehicleSearchQueryBuilder {
+  private readonly knownMultiWordMakes = new Set<string>(["land rover", "mercedes benz", "mini"]);
+
   constructor(private readonly maxSearchCandidates: number) {}
 
   parseVehicleModel(value: string | undefined): { make?: string; model?: string } {
@@ -20,9 +22,22 @@ export class VehicleSearchQueryBuilder {
       return { model: normalized };
     }
 
+    for (let makeTokenCount = parts.length - 1; makeTokenCount >= 1; makeTokenCount -= 1) {
+      const makeCandidate = parts.slice(0, makeTokenCount).join(" ");
+      const canonicalCandidate = this.canonicalizeMake(makeCandidate);
+      if (!this.knownMultiWordMakes.has(canonicalCandidate)) {
+        continue;
+      }
+
+      return {
+        make: makeCandidate,
+        model: parts.slice(makeTokenCount).join(" "),
+      };
+    }
+
     return {
-      make: parts[0],
-      model: parts.slice(1).join(" "),
+      make: parts.slice(0, -1).join(" "),
+      model: parts.at(-1),
     };
   }
 
@@ -154,5 +169,9 @@ export class VehicleSearchQueryBuilder {
       seen.add(key);
       return true;
     });
+  }
+
+  private canonicalizeMake(value: string): string {
+    return value.toLowerCase().replaceAll("-", " ").replaceAll(/\s+/g, " ").trim();
   }
 }

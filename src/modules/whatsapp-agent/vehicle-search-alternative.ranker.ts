@@ -7,6 +7,8 @@ import type {
 } from "./whatsapp-agent.interface";
 
 export class VehicleSearchAlternativeRanker {
+  private static readonly MIN_MATCH_LENGTH = 2;
+
   constructor(
     private readonly maxExactMatches: number,
     private readonly maxAlternatives: number,
@@ -97,8 +99,18 @@ export class VehicleSearchAlternativeRanker {
     if (!normalizedActual || !normalizedExpected) {
       return false;
     }
+    if (normalizedActual === normalizedExpected) {
+      return true;
+    }
+
+    if (normalizedActual.includes(normalizedExpected)) {
+      return true;
+    }
+
     return (
-      normalizedActual.includes(normalizedExpected) || normalizedExpected.includes(normalizedActual)
+      normalizedActual.length >= VehicleSearchAlternativeRanker.MIN_MATCH_LENGTH &&
+      normalizedExpected.length >= VehicleSearchAlternativeRanker.MIN_MATCH_LENGTH &&
+      normalizedExpected.includes(normalizedActual)
     );
   }
 

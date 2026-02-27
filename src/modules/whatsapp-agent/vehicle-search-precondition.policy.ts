@@ -3,10 +3,31 @@ import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import type { VehicleSearchPrecondition } from "./whatsapp-agent.interface";
 
 export function parseSearchDate(value: string | undefined): Date | null {
+  const dateOnlyPattern = /^(\d{4})-(\d{2})-(\d{2})$/;
   if (!value) {
     return null;
   }
-  const date = new Date(value);
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const dateOnlyMatch = dateOnlyPattern.exec(normalized);
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const monthIndex = Number(dateOnlyMatch[2]) - 1;
+    const day = Number(dateOnlyMatch[3]);
+    const strictDate = new Date(Date.UTC(year, monthIndex, day));
+    if (
+      strictDate.getUTCFullYear() !== year ||
+      strictDate.getUTCMonth() !== monthIndex ||
+      strictDate.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return strictDate;
+  }
+
+  const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) {
     return null;
   }
@@ -68,7 +89,7 @@ export class VehicleSearchPreconditionPolicy {
       };
     }
 
-    if (bookingType === BookingType.AIRPORT_PICKUP && !extracted.flightNumber) {
+    if (bookingType === BookingType.AIRPORT_PICKUP && !extracted.flightNumber?.trim()) {
       return {
         missingField: "flightNumber",
         prompt: "Please share your flight number so I can check airport pickup availability.",

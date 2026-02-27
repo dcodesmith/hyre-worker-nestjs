@@ -29,8 +29,17 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
   ): Promise<ExtractedAiSearchParams> {
     const previous = await this.get(conversationId);
     const merged = this.merge(previous ?? {}, latest);
-    await this.set(conversationId, merged);
-    return merged;
+    try {
+      await this.set(conversationId, merged);
+      return merged;
+    } catch (error) {
+      this.logger.warn("Failed to persist merged search slot memory", {
+        conversationId,
+        merged,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   async clear(conversationId: string): Promise<void> {
@@ -82,6 +91,7 @@ export class WhatsAppSearchSlotMemoryService implements OnModuleDestroy {
         conversationId,
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
     }
   }
 

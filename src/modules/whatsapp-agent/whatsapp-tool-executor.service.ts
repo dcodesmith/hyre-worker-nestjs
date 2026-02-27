@@ -259,7 +259,7 @@ export class WhatsAppToolExecutorService {
   private async resolveVatRatePercent(): Promise<number> {
     try {
       const rates = await this.ratesService.getRates();
-      return Number(rates.vatRatePercent);
+      return rates.vatRatePercent.toNumber();
     } catch (error) {
       this.logger.warn("Failed to resolve VAT rate for search estimate", {
         error: error instanceof Error ? error.message : String(error),
