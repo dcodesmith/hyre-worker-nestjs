@@ -1,6 +1,6 @@
-import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OPENAI_SDK_CLIENT } from "../openai-sdk/openai-sdk.tokens";
 import {
   AiSearchProviderAuthenticationException,
   AiSearchProviderResponseInvalidException,
@@ -10,15 +10,23 @@ import { OpenAiAiSearchExtractorService } from "./openai-ai-search-extractor.ser
 
 describe("OpenAiAiSearchExtractorService", () => {
   let service: OpenAiAiSearchExtractorService;
+  let create: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    create = vi.fn();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OpenAiAiSearchExtractorService,
         {
-          provide: ConfigService,
+          provide: OPENAI_SDK_CLIENT,
           useValue: {
-            get: vi.fn().mockReturnValue("test-openai-api-key"),
+            withOptions: vi.fn().mockReturnValue({
+              chat: {
+                completions: {
+                  create,
+                },
+              },
+            }),
           },
         },
       ],
@@ -40,10 +48,7 @@ describe("OpenAiAiSearchExtractorService", () => {
   });
 
   it("throws invalid response error when OpenAI returns empty content", async () => {
-    const create = vi.fn().mockResolvedValue({ choices: [{ message: { content: "" } }] });
-    (service as unknown as { openAiClient: unknown }).openAiClient = {
-      chat: { completions: { create } },
-    };
+    create.mockResolvedValue({ choices: [{ message: { content: "" } }] });
 
     await expect(service.extract("find me a car")).rejects.toBeInstanceOf(
       AiSearchProviderResponseInvalidException,
@@ -51,21 +56,13 @@ describe("OpenAiAiSearchExtractorService", () => {
   });
 
   it("throws timeout error on timeout message", async () => {
-    const create = vi.fn().mockRejectedValue(new Error("Request timed out"));
-    (service as unknown as { openAiClient: unknown }).openAiClient = {
-      chat: { completions: { create } },
-    };
+    create.mockRejectedValue(new Error("Request timed out"));
 
     await expect(service.extract("find me a car")).rejects.toBeInstanceOf(AiSearchTimeoutException);
   });
 
   it("throws auth error when provider reports missing authentication header", async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValue(new Error("Missing bearer or basic authentication in header"));
-    (service as unknown as { openAiClient: unknown }).openAiClient = {
-      chat: { completions: { create } },
-    };
+    create.mockRejectedValue(new Error("Missing bearer or basic authentication in header"));
 
     await expect(service.extract("find me a car")).rejects.toBeInstanceOf(
       AiSearchProviderAuthenticationException,

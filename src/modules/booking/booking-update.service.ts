@@ -9,20 +9,9 @@ import {
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
+import { CurrentBookingRecord } from "./booking.interface";
 import { BookingValidationService } from "./booking-validation.service";
 import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
-
-type CurrentBookingRecord = {
-  id: string;
-  userId: string | null;
-  carId: string;
-  type: BookingType;
-  status: BookingStatus;
-  startDate: Date;
-  endDate: Date;
-  pickupLocation: string;
-  returnLocation: string;
-};
 
 @Injectable()
 export class BookingUpdateService {

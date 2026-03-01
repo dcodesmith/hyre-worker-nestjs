@@ -1,11 +1,11 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { OpenAiSdkModule } from "../openai-sdk/openai-sdk.module";
 import { AiSearchController } from "./ai-search.controller";
 import { AiSearchService } from "./ai-search.service";
 import { OpenAiAiSearchExtractorService } from "./openai-ai-search-extractor.service";
 
 @Module({
-  imports: [ConfigModule],
+  imports: [OpenAiSdkModule],
   controllers: [AiSearchController],
   providers: [AiSearchService, OpenAiAiSearchExtractorService],
   exports: [AiSearchService],

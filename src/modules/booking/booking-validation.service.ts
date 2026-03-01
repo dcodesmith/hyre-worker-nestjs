@@ -251,11 +251,14 @@ export class BookingValidationService {
       const difference = clientDecimal.minus(serverTotal).abs();
 
       if (difference.greaterThan(PRICE_TOLERANCE)) {
-        this.logger.warn("Price mismatch detected", {
-          clientTotal: clientDecimal.toString(),
-          serverTotal: serverTotal.toString(),
-          difference: difference.toString(),
-        });
+        this.logger.warn(
+          {
+            clientTotal: clientDecimal.toString(),
+            serverTotal: serverTotal.toString(),
+            difference: difference.toString(),
+          },
+          "Price mismatch detected",
+        );
 
         throw new BookingValidationException([
           {

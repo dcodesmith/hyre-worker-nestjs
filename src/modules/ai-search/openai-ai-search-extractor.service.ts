@@ -1,7 +1,5 @@
-import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import OpenAI from "openai";
-import type { EnvConfig } from "../../config/env.config";
+import { Inject, Injectable } from "@nestjs/common";
+import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../openai-sdk/openai-sdk.tokens";
 import {
   AiSearchException,
   AiSearchProviderAuthenticationException,
@@ -13,13 +11,11 @@ import { extractedAiSearchParamsSchema } from "./dto/ai-search.dto";
 
 @Injectable()
 export class OpenAiAiSearchExtractorService {
-  private readonly openAiClient: OpenAI;
+  private readonly openAiClient: OpenAiSdkClient;
   private static readonly LAGOS_TIMEZONE = "Africa/Lagos";
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
-    const apiKey = this.configService.get("OPENAI_API_KEY", { infer: true });
-    this.openAiClient = new OpenAI({
-      apiKey,
+  constructor(@Inject(OPENAI_SDK_CLIENT) openAiClient: OpenAiSdkClient) {
+    this.openAiClient = openAiClient.withOptions({
       timeout: 8000,
       maxRetries: 1,
     });

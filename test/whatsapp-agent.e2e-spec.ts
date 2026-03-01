@@ -8,14 +8,14 @@ import { GlobalExceptionFilter } from "../src/common/filters/global-exception.fi
 import type { AiSearchResponse } from "../src/modules/ai-search/ai-search.interface";
 import { AiSearchService } from "../src/modules/ai-search/ai-search.service";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { WhatsAppOrchestratorService } from "../src/modules/whatsapp-agent/whatsapp-orchestrator.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
-  let orchestratorService: WhatsAppOrchestratorService;
+  let orchestratorService: BookingAgentOrchestratorService;
   let aiSearchService: { search: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
@@ -59,7 +59,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     await app.init();
 
     databaseService = app.get(DatabaseService);
-    orchestratorService = app.get(WhatsAppOrchestratorService);
+    orchestratorService = app.get(BookingAgentOrchestratorService);
     factory = new TestDataFactory(databaseService);
 
     const owner = await factory.createFleetOwner({ email: uniqueEmail("wa-agent-owner") });

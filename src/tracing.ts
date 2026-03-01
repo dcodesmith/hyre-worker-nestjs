@@ -32,6 +32,10 @@ const sdk = new NodeSDK({
       "@opentelemetry/instrumentation-fs": {
         enabled: false,
       },
+      // Disable OpenAI instrumentation - conflicts with LangChain's OpenAI client
+      "@opentelemetry/instrumentation-openai": {
+        enabled: false,
+      },
     }),
     new PinoInstrumentation({
       logKeys: TRACE_LOG_KEYS,
