@@ -13,7 +13,7 @@ import type {
 } from "./langgraph.interface";
 import type { LangGraphAnthropicClient } from "./langgraph.tokens";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
-import { isBareCancelControl, normalizeControlText } from "./langgraph-control-intent.policy";
+import { shouldClarifyCancelIntent } from "./langgraph-cancel-clarification.policy";
 import { buildResponderSystemPrompt, buildResponderUserContext } from "./prompts/responder.prompt";
 
 @Injectable()
@@ -23,7 +23,6 @@ export class LangGraphResponderService {
   private static readonly MAX_CONTEXT_FIELD_CHARS = 300;
   private static readonly MAX_DRAFT_CONTEXT_CHARS = 600;
   private static readonly MAX_OPTION_CONTEXT_ITEMS = 5;
-  private static readonly CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD = 0.85;
 
   constructor(
     @Inject(LANGGRAPH_ANTHROPIC_CLIENT) private readonly claude: LangGraphAnthropicClient,
@@ -122,7 +121,7 @@ export class LangGraphResponderService {
     }
 
     if (stage === "confirming" && selectedOption) {
-      if (this.shouldClarifyCancelIntent(state)) {
+      if (shouldClarifyCancelIntent(state)) {
         return {
           text: "Do you want to cancel this booking request entirely, or see other car options?",
           interactive: {
@@ -360,24 +359,5 @@ export class LangGraphResponderService {
     }
 
     return undefined;
-  }
-
-  private shouldClarifyCancelIntent(state: BookingAgentState): boolean {
-    if (state.stage !== "confirming" || !state.selectedOption || !state.extraction) {
-      return false;
-    }
-
-    if (state.extraction.intent !== "cancel") {
-      return false;
-    }
-
-    if (
-      state.extraction.confidence >=
-      LangGraphResponderService.CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD
-    ) {
-      return false;
-    }
-
-    return isBareCancelControl(normalizeControlText(state.inboundMessage));
   }
 }

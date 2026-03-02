@@ -1,75 +1,38 @@
 import { describe, expect, it } from "vitest";
-import type { BookingAgentState, VehicleSearchOption } from "./langgraph.interface";
+import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { buildOutboxItems } from "./langgraph-outbox.builder";
-
-function buildVehicle(overrides?: Partial<VehicleSearchOption>): VehicleSearchOption {
-  return {
-    id: "veh_1",
-    make: "Toyota",
-    model: "Prado",
-    name: "Toyota Prado",
-    color: "black",
-    vehicleType: "SUV",
-    serviceTier: "EXECUTIVE",
-    imageUrl: null,
-    rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
-    estimatedTotalInclVat: 150000,
-    ...overrides,
-  };
-}
-
-function buildState(overrides?: Partial<BookingAgentState>): BookingAgentState {
-  return {
-    messages: [],
-    conversationId: "conv_test",
-    customerId: null,
-    inboundMessage: "show me options",
-    inboundMessageId: "msg_1",
-    inboundInteractive: undefined,
-    draft: {},
-    stage: "presenting_options",
-    turnCount: 1,
-    extraction: null,
-    availableOptions: [],
-    lastShownOptions: [],
-    selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
-    bookingId: null,
-    paymentLink: null,
-    preferences: {},
-    response: null,
-    outboxItems: [],
-    nextNode: null,
-    error: null,
-    ...overrides,
-  };
-}
 
 describe("langgraph-outbox.builder", () => {
   it("builds intro + template cards mapped by vehicleId", () => {
-    const veh1 = buildVehicle({ id: "veh_1", make: "Toyota", model: "Prado" });
-    const veh2 = buildVehicle({ id: "veh_2", make: "Lexus", model: "GX" });
+    const veh1 = buildVehicleOption({ id: "veh_1", make: "Toyota", model: "Prado" });
+    const veh2 = buildVehicleOption({ id: "veh_2", make: "Lexus", model: "GX" });
 
-    const outbox = buildOutboxItems(buildState({ availableOptions: [veh1, veh2] }), {
-      text: "Here are your options!",
-      vehicleCards: [
-        {
-          vehicleId: "veh_2",
-          imageUrl: "https://img/2.jpg",
-          caption: "Card 2",
-          buttonId: "select_vehicle:veh_2",
-          buttonTitle: "Select",
-        },
-        {
-          vehicleId: "veh_1",
-          imageUrl: "https://img/1.jpg",
-          caption: "Card 1",
-          buttonId: "select_vehicle:veh_1",
-          buttonTitle: "Select",
-        },
-      ],
-    });
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "presenting_options",
+        inboundMessage: "show me options",
+        availableOptions: [veh1, veh2],
+      }),
+      {
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "veh_2",
+            imageUrl: "https://img/2.jpg",
+            caption: "Card 2",
+            buttonId: "select_vehicle:veh_2",
+            buttonTitle: "Select",
+          },
+          {
+            vehicleId: "veh_1",
+            imageUrl: "https://img/1.jpg",
+            caption: "Card 1",
+            buttonId: "select_vehicle:veh_1",
+            buttonTitle: "Select",
+          },
+        ],
+      },
+    );
 
     expect(outbox).toHaveLength(3);
     expect(outbox[0].mode).toBe("FREE_FORM");
@@ -80,7 +43,11 @@ describe("langgraph-outbox.builder", () => {
 
   it("falls back to single free-form message when cards do not map to available options", () => {
     const outbox = buildOutboxItems(
-      buildState({ availableOptions: [buildVehicle({ id: "veh_1" })] }),
+      buildState({
+        stage: "presenting_options",
+        inboundMessage: "show me options",
+        availableOptions: [buildVehicleOption({ id: "veh_1" })],
+      }),
       {
         text: "Here are your options!",
         vehicleCards: [
@@ -104,7 +71,7 @@ describe("langgraph-outbox.builder", () => {
     const outbox = buildOutboxItems(
       buildState({
         stage: "awaiting_payment",
-        selectedOption: buildVehicle({ make: "KIA", model: "Sportage LX" }),
+        selectedOption: buildVehicleOption({ make: "KIA", model: "Sportage LX" }),
         paymentLink: "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
       }),
       {

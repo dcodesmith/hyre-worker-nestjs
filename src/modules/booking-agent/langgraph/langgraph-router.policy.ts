@@ -5,14 +5,12 @@ import type {
   LangGraphRouteDecision,
   VehicleSearchOption,
 } from "./langgraph.interface";
+import { shouldClarifyCancelIntent } from "./langgraph-cancel-clarification.policy";
 import {
-  isBareCancelControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./langgraph-control-intent.policy";
-
-const CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD = 0.85;
 
 export function resolveRouteDecision(state: BookingAgentState): LangGraphRouteDecision {
   const { extraction, draft, availableOptions } = state;
@@ -136,23 +134,6 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
     default:
       return null;
   }
-}
-
-function shouldClarifyCancelIntent(state: BookingAgentState): boolean {
-  if (state.stage !== "confirming" || !state.selectedOption || !state.extraction) {
-    return false;
-  }
-
-  if (state.extraction.intent !== "cancel") {
-    return false;
-  }
-
-  if (state.extraction.confidence >= CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD) {
-    return false;
-  }
-
-  const normalizedMessage = normalizeControlText(state.inboundMessage);
-  return isBareCancelControl(normalizedMessage);
 }
 
 function resolveFallbackDecision(

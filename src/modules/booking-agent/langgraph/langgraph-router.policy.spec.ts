@@ -1,50 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BookingAgentState, VehicleSearchOption } from "./langgraph.interface";
+import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { resolveRouteDecision } from "./langgraph-router.policy";
-
-function buildVehicleOption(overrides?: Partial<VehicleSearchOption>): VehicleSearchOption {
-  return {
-    id: "vehicle_1",
-    make: "Toyota",
-    model: "Prado",
-    name: "Toyota Prado",
-    color: "black",
-    vehicleType: "SUV",
-    serviceTier: "EXECUTIVE",
-    imageUrl: null,
-    rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
-    estimatedTotalInclVat: 150000,
-    ...overrides,
-  };
-}
-
-function buildState(overrides?: Partial<BookingAgentState>): BookingAgentState {
-  return {
-    messages: [],
-    conversationId: "conv_1",
-    customerId: null,
-    inboundMessage: "",
-    inboundMessageId: "msg_1",
-    inboundInteractive: undefined,
-    draft: {},
-    stage: "collecting",
-    turnCount: 1,
-    extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.9 },
-    availableOptions: [],
-    lastShownOptions: [],
-    selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
-    bookingId: null,
-    paymentLink: null,
-    preferences: {},
-    response: null,
-    outboxItems: [],
-    nextNode: null,
-    error: null,
-    ...overrides,
-  };
-}
 
 describe("langgraph-router.policy", () => {
   it("routes to search when all required fields exist and options are empty", () => {
@@ -57,6 +13,7 @@ describe("langgraph-router.policy", () => {
         dropoffDate: "2026-03-01",
         dropoffLocation: "Lekki",
       },
+      extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.9 },
     });
 
     const decision = resolveRouteDecision(state);
@@ -75,6 +32,7 @@ describe("langgraph-router.policy", () => {
         dropoffLocation: "Lekki",
       },
       availableOptions: [buildVehicleOption()],
+      extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.9 },
     });
 
     const decision = resolveRouteDecision(state);
