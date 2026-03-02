@@ -3,6 +3,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
+import { GooglePlacesService } from "../../maps/google-places.service";
+import type { AddressLookupResult } from "../../maps/maps.interface";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { LANGGRAPH_NODE_NAMES, LANGGRAPH_OUTBOUND_MODE } from "./langgraph.const";
@@ -104,6 +106,14 @@ const BookingAgentAnnotation = Annotation.Root({
     reducer: (_, update) => update,
     default: () => [],
   }),
+  locationSuggestions: Annotation({
+    reducer: (_, update: BookingAgentState["locationSuggestions"]) => update,
+    default: () => [],
+  }),
+  locationLookupTriggered: Annotation<boolean>({
+    reducer: (_, update) => update,
+    default: () => false,
+  }),
   nextNode: AnnotationWithDefault<string | null>(null),
   error: AnnotationWithDefault<string | null>(null),
 });
@@ -122,6 +132,7 @@ export class LangGraphGraphService {
     private readonly bookingAgentSearchService: BookingAgentSearchService,
     private readonly bookingCreationService: BookingCreationService,
     private readonly databaseService: DatabaseService,
+    private readonly googlePlacesService: GooglePlacesService,
   ) {}
 
   async invoke(input: LangGraphInvokeInput): Promise<LangGraphInvokeResult> {
@@ -266,6 +277,7 @@ export class LangGraphGraphService {
     }
 
     const draftChanged = hasDraftChanged(draft, newDraft);
+    const pickupLocationChanged = draft.pickupLocation !== newDraft.pickupLocation;
     const shouldClearOptions = draftChanged && state.availableOptions.length > 0;
 
     this.logger.debug("Merge node completed", {
@@ -279,6 +291,8 @@ export class LangGraphGraphService {
       preferences: newPreferences,
       availableOptions: shouldClearOptions ? [] : state.availableOptions,
       lastShownOptions: shouldClearOptions ? [] : state.lastShownOptions,
+      locationSuggestions: pickupLocationChanged ? [] : (state.locationSuggestions ?? []),
+      locationLookupTriggered: pickupLocationChanged ? false : !!state.locationLookupTriggered,
     };
   }
 
@@ -303,6 +317,26 @@ export class LangGraphGraphService {
     });
 
     const decision = resolveRouteDecision(state as BookingAgentState);
+    const isControlIntent =
+      extraction?.intent === "new_booking" ||
+      extraction?.intent === "reset" ||
+      extraction?.intent === "greeting" ||
+      extraction?.intent === "cancel" ||
+      extraction?.intent === "request_agent";
+    const shouldRunEarlyPickupValidation =
+      !isControlIntent &&
+      (decision.nextNode ?? LANGGRAPH_NODE_NAMES.RESPOND) === LANGGRAPH_NODE_NAMES.RESPOND &&
+      (decision.stage ?? stage) === "collecting" &&
+      !!draft.pickupLocation &&
+      (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
+    if (shouldRunEarlyPickupValidation) {
+      return {
+        ...decision,
+        nextNode: LANGGRAPH_NODE_NAMES.SEARCH,
+        stage: "collecting",
+      };
+    }
+
     return decision;
   }
 
@@ -312,7 +346,41 @@ export class LangGraphGraphService {
 
   private async searchNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
     try {
-      const extractedParams = convertToExtractedParams(state.draft);
+      let validatedDraft = state.draft;
+      const shouldValidatePickupLocation =
+        !!state.draft.pickupLocation &&
+        (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
+      if (shouldValidatePickupLocation) {
+        const locationResult = await this.googlePlacesService.validateAddressWithSuggestions(
+          state.draft.pickupLocation,
+        );
+
+        if (!locationResult.isValid) {
+          return this.buildInvalidPickupLocationResult(state, locationResult);
+        }
+
+        if (locationResult.normalizedAddress) {
+          validatedDraft = {
+            ...state.draft,
+            pickupLocation: locationResult.normalizedAddress,
+          };
+        }
+      }
+
+      const missingFields = getMissingRequiredFields(validatedDraft);
+      if (missingFields.length > 0) {
+        return {
+          draft: validatedDraft,
+          stage: "collecting",
+          availableOptions: [],
+          lastShownOptions: [],
+          error: null,
+          locationSuggestions: [],
+          locationLookupTriggered: true,
+        };
+      }
+
+      const extractedParams = convertToExtractedParams(validatedDraft);
       this.logger.log(
         {
           draft: state.draft,
@@ -366,10 +434,13 @@ export class LangGraphGraphService {
           : null;
 
       return {
+        draft: validatedDraft,
         availableOptions: options,
         lastShownOptions: options,
         stage: newStage,
         error: noResultsError,
+        locationSuggestions: [],
+        locationLookupTriggered: true,
       };
     } catch (error) {
       this.logger.error("Search node failed", {
@@ -382,12 +453,18 @@ export class LangGraphGraphService {
           "I couldn't check availability right now. Please try again or adjust your booking details.",
         availableOptions: [],
         lastShownOptions: [],
+        locationSuggestions: [],
+        locationLookupTriggered: false,
       };
     }
   }
 
   private async respondNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
     try {
+      if (state.outboxItems.length > 0 && state.response) {
+        return {};
+      }
+
       this.logger.log(
         {
           stage: state.stage,
@@ -413,6 +490,71 @@ export class LangGraphGraphService {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private buildLocationSuggestionText(
+    pickupLocation: string,
+    suggestions: BookingAgentState["locationSuggestions"] = [],
+  ): string {
+    if (suggestions.length === 0) {
+      return `I couldn't find "${pickupLocation}" on Google Maps. Please share a more specific pickup location (for example: street + area in Lagos).`;
+    }
+
+    const list = suggestions.slice(0, 4).map((suggestion, index) => {
+      return `${index + 1}. ${suggestion.description}`;
+    });
+    return [
+      `I couldn't find an exact Google Maps match for "${pickupLocation}".`,
+      "",
+      "Did you mean one of these?",
+      ...list,
+      "",
+      "Reply with the full address you want from the list, or send a clearer pickup address.",
+    ].join("\n");
+  }
+
+  private buildAreaOnlyLocationPrompt(pickupLocation: string): string {
+    return [
+      `"${pickupLocation}" looks like a general area, not a full pickup address.`,
+      "",
+      "Please share a specific pickup address (for example: building number + street, or a hotel/landmark name in Lagos).",
+    ].join("\n");
+  }
+
+  private buildInvalidPickupLocationResult(
+    state: AnnotationState,
+    locationResult: AddressLookupResult,
+  ): Partial<AnnotationState> {
+    const suggestionText =
+      locationResult.failureReason === "AREA_ONLY"
+        ? this.buildAreaOnlyLocationPrompt(state.draft.pickupLocation ?? "that location")
+        : this.buildLocationSuggestionText(state.draft.pickupLocation ?? "that location", [
+            ...(locationResult.suggestions ?? []),
+          ]);
+
+    return {
+      stage: "collecting",
+      locationLookupTriggered: false,
+      locationSuggestions: (locationResult.suggestions ?? []).map((suggestion) => ({
+        placeId: suggestion.placeId,
+        description: suggestion.description,
+      })),
+      response: { text: suggestionText },
+      outboxItems: [
+        {
+          conversationId: state.conversationId,
+          dedupeKey: `langgraph:${state.inboundMessageId}:address-checking`,
+          mode: LANGGRAPH_OUTBOUND_MODE.FREE_FORM,
+          textBody: "Thanks - I'm checking that pickup address on Google Maps now...",
+        },
+        {
+          conversationId: state.conversationId,
+          dedupeKey: `langgraph:${state.inboundMessageId}:address-suggestions`,
+          mode: LANGGRAPH_OUTBOUND_MODE.FREE_FORM,
+          textBody: suggestionText,
+        },
+      ],
+    };
   }
 
   private async createBookingNode(state: AnnotationState): Promise<Partial<AnnotationState>> {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
+import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import type { BookingAgentState, VehicleSearchOption } from "./langgraph.interface";
@@ -40,6 +41,9 @@ describe("LangGraphGraphService", () => {
     whatsAppConversation: {
       findUnique: ReturnType<typeof vi.fn>;
     };
+  };
+  let googlePlacesServiceMock: {
+    validateAddressWithSuggestions: ReturnType<typeof vi.fn>;
   };
 
   const conversationId = "conv_test";
@@ -133,6 +137,14 @@ describe("LangGraphGraphService", () => {
       },
     };
 
+    googlePlacesServiceMock = {
+      validateAddressWithSuggestions: vi.fn().mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+        suggestions: [],
+      }),
+    };
+
     moduleRef = await Test.createTestingModule({
       providers: [
         LangGraphGraphService,
@@ -143,6 +155,7 @@ describe("LangGraphGraphService", () => {
         { provide: BookingAgentWindowPolicyService, useValue: windowPolicyServiceMock },
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
       ],
     }).compile();
 
@@ -393,7 +406,7 @@ describe("LangGraphGraphService", () => {
 
       expect(result.draft.bookingType).toBe("DAY");
       expect(result.draft.pickupDate).toBe("2026-03-01");
-      expect(result.draft.pickupLocation).toBe("Lagos");
+      expect(result.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
     });
 
     it("triggers search when all required fields collected", async () => {
@@ -512,6 +525,49 @@ describe("LangGraphGraphService", () => {
       expect(responderArg.availableOptions).toHaveLength(1);
       expect(responderArg.availableOptions[0].id).toBe("veh_search_result");
       expect(responderArg.stage).toBe("presenting_options");
+    });
+
+    it("validates pickup immediately in collecting stage when user provides vague area", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "pick me up from Ikoyi",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: { pickupLocation: "Ikoyi" },
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [],
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pick me up from Ikoyi",
+      });
+
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Ikoyi");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("looks like a general area");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
     });
   });
 
@@ -1194,6 +1250,95 @@ describe("LangGraphGraphService", () => {
   });
 
   describe("search - no results", () => {
+    it("sends checking message and top suggestions when pickup address is not found", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheabaker Ikoyi",
+        dropoffLocation: "Wheabaker Ikoyi",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [
+          { placeId: "1", description: "The Wheatbaker, Ikoyi, Lagos" },
+          { placeId: "2", description: "The Wheatbaker Hotel, Onitolo Road, Ikoyi, Lagos" },
+          { placeId: "3", description: "Wheatbaker Street, Ikoyi, Lagos" },
+          { placeId: "4", description: "Wheatbaker Bus Stop, Ikoyi, Lagos" },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pickup is wheabaker ikoyi",
+      });
+
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("Did you mean one of these?");
+      expect(result.outboxItems[1]?.textBody).toContain("1. The Wheatbaker, Ikoyi, Lagos");
+    });
+
+    it("re-validates pickup location on next turn after invalid lookup", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [
+        { placeId: "1", description: "The Wheatbaker, Ikoyi, Lagos" },
+      ];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [],
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "yes",
+      });
+
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Ikoyi");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("looks like a general area");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+
     it("sets error message when search returns no vehicles", async () => {
       const existingState = buildInitialState();
       existingState.stage = "collecting";

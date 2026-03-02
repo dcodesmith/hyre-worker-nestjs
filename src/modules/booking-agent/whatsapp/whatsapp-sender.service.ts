@@ -2,7 +2,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
-import { Queue } from "bullmq";
+import type { Queue } from "bullmq";
 import twilio, { Twilio } from "twilio";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { PROCESS_WHATSAPP_OUTBOX_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";

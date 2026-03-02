@@ -11,6 +11,7 @@ import type { EnvConfig } from "../../config/env.config";
 import { BookingModule } from "../booking/booking.module";
 import { CarModule } from "../car/car.module";
 import { DatabaseModule } from "../database/database.module";
+import { MapsModule } from "../maps/maps.module";
 import { TwilioWebhookGuard } from "../messaging/guards/twilio-webhook.guard";
 import { OpenAiSdkModule } from "../openai-sdk/openai-sdk.module";
 import { RatesModule } from "../rates/rates.module";
@@ -40,6 +41,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     DatabaseModule,
     BookingModule,
     CarModule,
+    MapsModule,
     RatesModule,
     OpenAiSdkModule,
     BullModule.registerQueue({
