@@ -1,9 +1,7 @@
 import { format } from "date-fns";
 import { getMissingRequiredFields } from "../../booking-agent.helper";
-import { REQUIRED_SEARCH_FIELDS } from "../langgraph.const";
 import type {
   BookingAgentState,
-  BookingDraft,
   BookingStage,
   BuildResponderUserContextOptions,
   ExtractionResult,
