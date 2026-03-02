@@ -7,6 +7,7 @@ import type { LangGraphOpenAIClient } from "./langgraph.tokens";
 import { LANGGRAPH_OPENAI_CLIENT } from "./langgraph.tokens";
 import {
   isAgentRequestControl,
+  isBareCancelControl,
   isCancelIntentControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
@@ -261,6 +262,10 @@ export class LangGraphExtractorService {
 
     if (isAgentRequestControl(normalized)) {
       return { intent: "request_agent", draftPatch: {}, confidence: 1 };
+    }
+
+    if (stage === "confirming" && isBareCancelControl(normalized)) {
+      return { intent: "cancel", draftPatch: {}, confidence: 0.6 };
     }
 
     if (isCancelIntentControl(normalized)) {

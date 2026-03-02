@@ -5,6 +5,7 @@ import type {
   LangGraphRouteDecision,
   VehicleSearchOption,
 } from "./langgraph.interface";
+import { shouldClarifyCancelIntent } from "./langgraph-cancel-clarification.policy";
 import {
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
@@ -19,14 +20,14 @@ export function resolveRouteDecision(state: BookingAgentState): LangGraphRouteDe
     return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "collecting" };
   }
 
-  const stageGuard = getDeterministicStageGuard(state);
-  if (stageGuard) {
-    return stageGuard;
-  }
-
   const intentDecision = resolveIntentDecision(state);
   if (intentDecision) {
     return intentDecision;
+  }
+
+  const stageGuard = getDeterministicStageGuard(state);
+  if (stageGuard) {
+    return stageGuard;
   }
 
   return resolveFallbackDecision(missingFields.length === 0, availableOptions.length === 0);
@@ -114,6 +115,9 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
     case "request_agent":
       return { nextNode: LANGGRAPH_NODE_NAMES.HANDOFF };
     case "cancel":
+      if (shouldClarifyCancelIntent(state)) {
+        return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "confirming" };
+      }
       return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "cancelled" };
     case "reset":
       return buildResetDecision();

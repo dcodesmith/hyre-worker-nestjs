@@ -13,6 +13,7 @@ import type {
 } from "./langgraph.interface";
 import type { LangGraphAnthropicClient } from "./langgraph.tokens";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
+import { shouldClarifyCancelIntent } from "./langgraph-cancel-clarification.policy";
 import { buildResponderSystemPrompt, buildResponderUserContext } from "./prompts/responder.prompt";
 
 @Injectable()
@@ -120,6 +121,19 @@ export class LangGraphResponderService {
     }
 
     if (stage === "confirming" && selectedOption) {
+      if (shouldClarifyCancelIntent(state)) {
+        return {
+          text: "Do you want to cancel this booking request entirely, or see other car options?",
+          interactive: {
+            type: "buttons",
+            buttons: [
+              { id: LANGGRAPH_BUTTON_ID.CANCEL, title: "✕ Cancel Booking" },
+              { id: LANGGRAPH_BUTTON_ID.SHOW_OTHERS, title: "↻ Show Others" },
+            ],
+          },
+        };
+      }
+
       if (error) {
         return {
           text: `${error}\n\nWould you like me to try again or connect you to an agent?`,

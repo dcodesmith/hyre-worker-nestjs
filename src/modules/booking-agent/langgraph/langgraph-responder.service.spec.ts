@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BookingAgentState, VehicleSearchOption } from "./langgraph.interface";
+import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
 import { LangGraphResponderService } from "./langgraph-responder.service";
 
@@ -10,45 +10,6 @@ describe("LangGraphResponderService", () => {
   let claudeMock: {
     invoke: ReturnType<typeof vi.fn>;
   };
-
-  const buildState = (overrides?: Partial<BookingAgentState>): BookingAgentState => ({
-    conversationId: "conv_test",
-    inboundMessage: "I need a car tomorrow",
-    inboundMessageId: "msg_1",
-    customerId: null,
-    stage: "collecting",
-    turnCount: 1,
-    messages: [],
-    draft: {},
-    availableOptions: [],
-    lastShownOptions: [],
-    selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
-    bookingId: null,
-    paymentLink: null,
-    preferences: {},
-    response: null,
-    outboxItems: [],
-    extraction: null,
-    nextNode: null,
-    error: null,
-    ...overrides,
-  });
-
-  const buildVehicleOption = (overrides?: Partial<VehicleSearchOption>): VehicleSearchOption => ({
-    id: "vehicle_1",
-    make: "Toyota",
-    model: "Prado",
-    name: "Toyota Prado",
-    color: "black",
-    vehicleType: "SUV",
-    serviceTier: "EXECUTIVE",
-    imageUrl: null,
-    rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
-    estimatedTotalInclVat: 150000,
-    ...overrides,
-  });
 
   beforeEach(async () => {
     claudeMock = {
@@ -287,6 +248,31 @@ describe("LangGraphResponderService", () => {
       expect(response.interactive?.buttons?.[0].id).toBe("retry_booking");
       expect(response.interactive?.buttons?.[1].id).toBe("show_others");
       expect(response.interactive?.buttons?.[2].id).toBe("agent");
+    });
+
+    it("asks for clarification on low-confidence bare cancel during confirming", async () => {
+      const state = buildState({
+        stage: "confirming",
+        inboundMessage: "cancel",
+        selectedOption: buildVehicleOption(),
+        extraction: { intent: "cancel", draftPatch: {}, confidence: 0.6 },
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("cancel this booking request entirely");
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons).toHaveLength(2);
+      expect(response.interactive?.buttons?.[0].id).toBe("cancel");
+      expect(response.interactive?.buttons?.[1].id).toBe("show_others");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
     it("prepends availability fallback message when presenting refreshed options", async () => {

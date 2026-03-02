@@ -5,7 +5,8 @@ import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
-import type { BookingAgentState, VehicleSearchOption } from "./langgraph.interface";
+import { buildVehicleOption } from "./langgraph.factory";
+import type { BookingAgentState } from "./langgraph.interface";
 import { LangGraphExtractorService } from "./langgraph-extractor.service";
 import { LangGraphGraphService } from "./langgraph-graph.service";
 import { LangGraphResponderService } from "./langgraph-responder.service";
@@ -67,20 +68,6 @@ describe("LangGraphGraphService", () => {
     extraction: null,
     nextNode: null,
     error: null,
-  });
-
-  const buildVehicleOption = (overrides?: Partial<VehicleSearchOption>): VehicleSearchOption => ({
-    id: "vehicle_1",
-    make: "Toyota",
-    model: "Prado",
-    name: "Toyota Prado",
-    color: "black",
-    vehicleType: "SUV",
-    serviceTier: "EXECUTIVE",
-    imageUrl: null,
-    rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
-    estimatedTotalInclVat: 150000,
-    ...overrides,
   });
 
   beforeEach(async () => {

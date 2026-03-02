@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAgentRequestControl,
+  isBareCancelControl,
   isCancelIntentControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
@@ -26,6 +27,7 @@ describe("langgraph-control-intent.policy", () => {
 
   it("detects cancel and agent requests", () => {
     expect(isCancelIntentControl("cancel booking")).toBe(true);
+    expect(isBareCancelControl("cancel")).toBe(true);
     expect(isAgentRequestControl("talk to agent")).toBe(true);
   });
 
