@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { WhatsAppMessageKind } from "@prisma/client";
+import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WhatsAppProcessingLockAcquireFailedException } from "../booking-agent.error";
 import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.service";
@@ -108,7 +108,12 @@ describe("WhatsAppProcessor", () => {
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [
-        { conversationId: "conv-1", dedupeKey: "out-1", mode: "FREEFORM", textBody: "ok" },
+        {
+          conversationId: "conv-1",
+          dedupeKey: "out-1",
+          mode: WhatsAppDeliveryMode.FREE_FORM,
+          textBody: "ok",
+        },
       ],
       markAsHandoff: { reason: "USER_REQUESTED_AGENT" },
     });

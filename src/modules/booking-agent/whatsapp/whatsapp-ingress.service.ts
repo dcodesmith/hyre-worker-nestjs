@@ -2,12 +2,12 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { Queue } from "bullmq";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
-import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "../booking-agent.const";
 import type {
   ProcessWhatsAppInboundJobData,
   TwilioInboundWebhookPayload,
 } from "../booking-agent.interface";
+import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import {
   buildInboundDedupeKey,
   deriveMessageKind,
@@ -103,6 +103,14 @@ export class WhatsAppIngressService {
       throw error;
     }
 
-    await this.persistenceService.markInboundMessageQueued(messageId);
+    try {
+      await this.persistenceService.markInboundMessageQueued(messageId);
+    } catch (error) {
+      this.logger.error("Failed to mark inbound message as queued after successful enqueue", {
+        messageId,
+        dedupeKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

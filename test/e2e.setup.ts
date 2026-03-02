@@ -4,20 +4,49 @@ import { RedisContainer, StartedRedisContainer } from "@testcontainers/redis";
 
 let pgContainer: StartedPostgreSqlContainer;
 let redisContainer: StartedRedisContainer;
+const CONTAINER_STARTUP_TIMEOUT_MS = 60_000;
+const CONTAINER_START_RETRIES = 2;
+
+async function withRetry<T>(factory: () => Promise<T>, name: string): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= CONTAINER_START_RETRIES; attempt += 1) {
+    try {
+      return await factory();
+    } catch (error) {
+      lastError = error;
+      if (attempt < CONTAINER_START_RETRIES) {
+        console.warn(`${name} start attempt ${attempt} failed, retrying...`);
+      }
+    }
+  }
+  throw lastError;
+}
 
 // This function runs once before all tests
 export async function setup() {
   try {
     // Start Postgres container
-    pgContainer = await new PostgreSqlContainer("postgres:16-alpine")
-      .withDatabase("hyre_e2e_db")
-      .withUsername("testuser")
-      .withPassword("testpassword")
-      .withExposedPorts(5432) // Exposes 5432 inside container to a random host port
-      .start();
+    pgContainer = await withRetry(
+      () =>
+        new PostgreSqlContainer("postgres:16-alpine")
+          .withDatabase("hyre_e2e_db")
+          .withUsername("testuser")
+          .withPassword("testpassword")
+          .withExposedPorts(5432) // Exposes 5432 inside container to a random host port
+          .withStartupTimeout(CONTAINER_STARTUP_TIMEOUT_MS)
+          .start(),
+      "PostgreSQL container",
+    );
 
     // Start Redis container
-    redisContainer = await new RedisContainer("redis:7-alpine").withExposedPorts(6379).start();
+    redisContainer = await withRetry(
+      () =>
+        new RedisContainer("redis:7-alpine")
+          .withExposedPorts(6379)
+          .withStartupTimeout(CONTAINER_STARTUP_TIMEOUT_MS)
+          .start(),
+      "Redis container",
+    );
 
     // Set environment variables for your application to connect to
     const databaseUrl = pgContainer.getConnectionUri();

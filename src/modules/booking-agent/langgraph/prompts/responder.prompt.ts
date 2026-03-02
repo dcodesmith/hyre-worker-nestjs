@@ -22,7 +22,7 @@ const STAGE_INSTRUCTIONS: Partial<Record<BookingStage, string>> = {
   greeting:
     "INSTRUCTION: Welcome them warmly. Invite them to share their booking details — they can give everything at once or just tell you what they need.\n",
   searching:
-    "INSTRUCTION: We are searching for vehicles. This should not happen - if you see this, there's a bug.\n",
+    "INSTRUCTION: We are searching for vehicles. This state should not be reached - escalate internally and do not surface internal diagnostics to customers.\n",
 };
 
 export function buildResponderSystemPrompt(state: BookingAgentState): string {
@@ -116,7 +116,11 @@ export function buildResponderUserContext(
   }
 
   if (selectedOption) {
-    context += `SELECTED: ${selectedOption.make} ${selectedOption.model} - ₦${selectedOption.estimatedTotalInclVat?.toLocaleString()}\n`;
+    const selectedPrice =
+      typeof selectedOption.estimatedTotalInclVat === "number"
+        ? `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`
+        : "N/A";
+    context += `SELECTED: ${selectedOption.make} ${selectedOption.model} - ${selectedPrice}\n`;
   }
 
   if (holdId) {

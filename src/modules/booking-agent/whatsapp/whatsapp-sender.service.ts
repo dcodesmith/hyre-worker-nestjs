@@ -83,8 +83,8 @@ export class WhatsAppSenderService {
   }
 
   async processOutbox(outboxId: string): Promise<void> {
-    const now = new Date();
-    const claimed = await this.persistenceService.claimOutboxForProcessing(outboxId, now);
+    const claimTime = new Date();
+    const claimed = await this.persistenceService.claimOutboxForProcessing(outboxId, claimTime);
     if (!claimed) {
       return;
     }
@@ -99,7 +99,8 @@ export class WhatsAppSenderService {
 
     try {
       const providerMessage = await this.sendViaTwilio(outbox.conversation.phoneE164, outbox);
-      await this.markOutboxSent(outbox, providerMessage, now);
+      const sentAt = new Date();
+      await this.markOutboxSent(outbox, providerMessage, sentAt);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isDeadLetter = attemptsMade >= outbox.maxAttempts;
@@ -109,7 +110,7 @@ export class WhatsAppSenderService {
         errorMessage,
         isDeadLetter
           ? outbox.nextAttemptAt
-          : new Date(now.getTime() + computeOutboxRetryDelayMs(attemptsMade)),
+          : new Date(claimTime.getTime() + computeOutboxRetryDelayMs(attemptsMade)),
       );
 
       if (!isDeadLetter) {

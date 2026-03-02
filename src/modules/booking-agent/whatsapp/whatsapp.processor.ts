@@ -24,9 +24,9 @@ import type {
   ProcessWhatsAppOutboxJobData,
 } from "../booking-agent.interface";
 import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.service";
+import { parseInteractiveReply } from "./whatsapp-agent.utils";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
-import { parseInteractiveReply } from "./whatsapp-agent.utils";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
 type WhatsAppAgentJobData = ProcessWhatsAppInboundJobData | ProcessWhatsAppOutboxJobData;
@@ -188,8 +188,8 @@ export class WhatsAppProcessor extends WorkerHost {
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<WhatsAppAgentJobData> | undefined, error: Error): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
+    const errorMessage = error.message;
+    const errorStack = error.stack;
     if (!job) {
       this.logger.error(`WhatsApp agent job failed without context: ${errorMessage}`, errorStack);
       return;

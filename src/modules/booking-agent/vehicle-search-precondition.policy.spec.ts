@@ -83,7 +83,7 @@ describe("VehicleSearchPreconditionPolicy", () => {
       });
       expect(result).toEqual({
         missingField: "pickupTime",
-        prompt: "Please share pickup time in this format: 9:00 AM.",
+        prompt: "Please share pickup time in this format: 9:00 AM or 14:00.",
       });
     });
   });

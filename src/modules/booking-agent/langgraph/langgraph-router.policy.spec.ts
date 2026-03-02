@@ -111,6 +111,18 @@ describe("langgraph-router.policy", () => {
     expect(decision.availableOptions).toEqual([]);
   });
 
+  it("does not route to create_booking for affirmative response outside confirming stage", () => {
+    const state = buildState({
+      stage: "awaiting_payment",
+      inboundMessage: "yes",
+      selectedOption: buildVehicleOption(),
+      extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.4 },
+    });
+
+    const decision = resolveRouteDecision(state);
+    expect(decision.nextNode).not.toBe("create_booking");
+  });
+
   it("clears state for reset intent", () => {
     const decision = resolveRouteDecision(
       buildState({

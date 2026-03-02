@@ -29,11 +29,7 @@ export function resolveRouteDecision(state: BookingAgentState): LangGraphRouteDe
     return intentDecision;
   }
 
-  return resolveFallbackDecision(
-    extraction.intent,
-    missingFields.length === 0,
-    availableOptions.length === 0,
-  );
+  return resolveFallbackDecision(missingFields.length === 0, availableOptions.length === 0);
 }
 
 export function resolveSelection(
@@ -87,7 +83,7 @@ export function resolveSelection(
 }
 
 function getDeterministicStageGuard(state: BookingAgentState): LangGraphRouteDecision | null {
-  if (!state.selectedOption) {
+  if (state.stage !== "confirming" || !state.selectedOption) {
     return null;
   }
 
@@ -137,7 +133,6 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
 }
 
 function resolveFallbackDecision(
-  intent: BookingAgentState["extraction"]["intent"],
   hasNoMissingFields: boolean,
   hasNoAvailableOptions: boolean,
 ): LangGraphRouteDecision {
@@ -146,10 +141,6 @@ function resolveFallbackDecision(
       return { nextNode: LANGGRAPH_NODE_NAMES.SEARCH, stage: "searching" };
     }
     return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "presenting_options" };
-  }
-
-  if (intent === "confirm") {
-    return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "collecting" };
   }
 
   return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "collecting" };

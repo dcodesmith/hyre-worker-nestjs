@@ -1,3 +1,5 @@
+import { normalizeBookingTimeWindow } from "../../booking/booking-time-window.helper";
+import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type {
   BookingDraft,
   VehicleSearchOption,
@@ -20,13 +22,17 @@ export function buildBookingInputFromDraft(
   draft: BookingDraft,
   selectedOption: VehicleSearchOption,
   guestIdentity: WhatsAppGuestIdentity,
-) {
-  const startDate = draft.pickupDate ? new Date(draft.pickupDate) : new Date();
-  const endDate = draft.dropoffDate ? new Date(draft.dropoffDate) : new Date();
-
-  if (draft.pickupTime) {
-    parseAndApplyPickupTime(startDate, draft.pickupTime);
-  }
+): {
+  input: CreateBookingInput;
+  normalizedStartDate: Date;
+  normalizedEndDate: Date;
+} {
+  const { startDate, endDate } = normalizeBookingTimeWindow({
+    bookingType: draft.bookingType ?? "DAY",
+    startDate: new Date(draft.pickupDate),
+    endDate: new Date(draft.dropoffDate),
+    pickupTime: draft.pickupTime,
+  });
 
   const sameLocation = draft.pickupLocation === draft.dropoffLocation;
 
@@ -57,28 +63,6 @@ export function buildBookingInputFromDraft(
     normalizedStartDate: startDate,
     normalizedEndDate: endDate,
   };
-}
-
-function parseAndApplyPickupTime(date: Date, pickupTime: string): void {
-  const time24Match = /^(\d{1,2}):(\d{2})$/.exec(pickupTime);
-  if (time24Match) {
-    const hours = Number.parseInt(time24Match[1], 10);
-    const minutes = Number.parseInt(time24Match[2], 10);
-    date.setHours(hours, minutes, 0, 0);
-    return;
-  }
-
-  const time12Match = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(pickupTime);
-  if (time12Match) {
-    let hours = Number.parseInt(time12Match[1], 10);
-    const minutes = time12Match[2] ? Number.parseInt(time12Match[2], 10) : 0;
-    const period = time12Match[3].toUpperCase();
-
-    if (period === "PM" && hours !== 12) hours += 12;
-    if (period === "AM" && hours === 12) hours = 0;
-
-    date.setHours(hours, minutes, 0, 0);
-  }
 }
 
 function normalizePickupTimeTo12Hour(pickupTime: string): string {

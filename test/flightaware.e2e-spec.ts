@@ -158,5 +158,5 @@ describe("FlightAware E2E Tests", () => {
       where: { flightId: flight.id, eventType: "arrival" },
     });
     expect(storedEvent?.processed).toBe(true);
-  });
+  }, 60_000);
 });

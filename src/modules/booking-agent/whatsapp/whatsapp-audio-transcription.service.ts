@@ -10,6 +10,7 @@ export class WhatsAppAudioTranscriptionService {
   private readonly logger = new Logger(WhatsAppAudioTranscriptionService.name);
   private readonly twilioAccountSid: string;
   private readonly twilioAuthToken: string;
+  private static readonly MEDIA_FETCH_TIMEOUT_MS = 10_000;
 
   constructor(
     @Inject(OPENAI_SDK_CLIENT) private readonly openaiClient: OpenAiSdkClient,
@@ -55,13 +56,34 @@ export class WhatsAppAudioTranscriptionService {
     const basicAuth = Buffer.from(`${this.twilioAccountSid}:${this.twilioAuthToken}`).toString(
       "base64",
     );
-    const response = await fetch(mediaUrl, {
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-      },
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      WhatsAppAudioTranscriptionService.MEDIA_FETCH_TIMEOUT_MS,
+    );
+    let response: Response;
+    try {
+      response = await fetch(mediaUrl, {
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+        },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `Timed out fetching WhatsApp media from ${mediaUrl} after ${WhatsAppAudioTranscriptionService.MEDIA_FETCH_TIMEOUT_MS}ms`,
+        );
+      }
+      throw new Error(
+        `Failed to fetch WhatsApp media from ${mediaUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
     if (!response.ok) {
-      throw new Error(`Failed to fetch WhatsApp media (${response.status})`);
+      throw new Error(`Failed to fetch WhatsApp media from ${mediaUrl} (${response.status})`);
     }
 
     const arrayBuffer = await response.arrayBuffer();
@@ -72,7 +94,7 @@ export class WhatsAppAudioTranscriptionService {
     audioBytes: Uint8Array,
     mediaContentType: string | null = "audio/ogg",
   ): Promise<string> {
-    const contentType = mediaContentType;
+    const contentType = mediaContentType ?? "audio/ogg";
     const extension = this.resolveFileExtension(contentType);
     const file = await toFile(Buffer.from(audioBytes), `voice-note${extension}`, {
       type: contentType,
@@ -91,8 +113,8 @@ export class WhatsAppAudioTranscriptionService {
     return "";
   }
 
-  private resolveFileExtension(contentType: string): string {
-    const normalized = contentType.toLowerCase();
+  private resolveFileExtension(contentType: string | null | undefined): string {
+    const normalized = (contentType ?? "").toLowerCase();
     if (normalized.includes("mpeg") || normalized.includes("mp3")) return ".mp3";
     if (normalized.includes("wav")) return ".wav";
     if (normalized.includes("webm")) return ".webm";

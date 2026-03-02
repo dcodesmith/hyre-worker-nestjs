@@ -3,7 +3,7 @@ import { BullBoardModule } from "@bull-board/nestjs";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { BullModule } from "@nestjs/bullmq";
-import { Module } from "@nestjs/common";
+import { Inject, Logger, Module, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 import { WHATSAPP_AGENT_QUEUE } from "../../config/constants";
@@ -80,10 +80,15 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const redisUrl = configService.get("REDIS_URL", { infer: true });
-        return new Redis(redisUrl, {
+        const logger = new Logger("BookingAgentRedisClient");
+        const client = new Redis(redisUrl, {
           maxRetriesPerRequest: 2,
           enableReadyCheck: true,
         });
+        client.on("error", (error) => {
+          logger.error("LANGGRAPH_REDIS_CLIENT emitted Redis error", error);
+        });
+        return client;
       },
     },
     LangGraphStateService,
@@ -108,4 +113,24 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     BullModule,
   ],
 })
-export class BookingAgentModule {}
+export class BookingAgentModule implements OnModuleDestroy {
+  private readonly logger = new Logger(BookingAgentModule.name);
+
+  constructor(
+    @Inject(LANGGRAPH_REDIS_CLIENT)
+    private readonly redisClient: Redis,
+  ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    try {
+      await this.redisClient.quit();
+    } catch (error) {
+      this.logger.warn("Failed to quit LANGGRAPH_REDIS_CLIENT, forcing disconnect", error);
+      try {
+        this.redisClient.disconnect();
+      } catch (disconnectError) {
+        this.logger.error("Failed to disconnect LANGGRAPH_REDIS_CLIENT", disconnectError);
+      }
+    }
+  }
+}

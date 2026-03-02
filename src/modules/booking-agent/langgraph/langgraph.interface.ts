@@ -1,8 +1,8 @@
 import type { BookingType, WhatsAppDeliveryMode } from "@prisma/client";
 import type { ExtractedAiSearchParams } from "../../ai-search/ai-search.interface";
-import type { VehicleSearchOption } from "../booking-agent.interface";
+import type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
 
-export type { VehicleSearchOption } from "../booking-agent.interface";
+export type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
 
 export interface BookingDraft {
   bookingType?: BookingType;
@@ -33,13 +33,6 @@ export interface ConversationMessage {
   content: string;
   timestamp: string;
   interactive?: InteractiveReply;
-}
-
-export interface InteractiveReply {
-  type: "button" | "list_reply";
-  buttonId?: string;
-  listRowId?: string;
-  title?: string;
 }
 
 export type BookingStage =

@@ -9,6 +9,7 @@ import {
   NIGHT_END_HOUR,
   NIGHT_START_HOUR,
 } from "./booking.const";
+import { getEffectiveEndDate } from "./booking.helper";
 import { GeneratedLeg, LegGenerationInput } from "./booking.interface";
 
 /**
@@ -65,7 +66,7 @@ export class BookingLegService {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
+    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
 
     // Convert to UTCDate for timezone-safe operations
     const utcStart = new UTCDate(startDate);
@@ -100,7 +101,7 @@ export class BookingLegService {
     input: Extract<LegGenerationInput, { bookingType: "NIGHT" }>,
   ): GeneratedLeg[] {
     const { startDate, endDate } = input;
-    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
+    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
 
     const legs: GeneratedLeg[] = [];
     const totalHours = (effectiveEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
@@ -146,7 +147,7 @@ export class BookingLegService {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = this.getEffectiveEndDate(endDate, startDate);
+    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
 
     // Convert to UTCDate for timezone-safe operations
     const utcStart = new UTCDate(startDate);
@@ -240,39 +241,5 @@ export class BookingLegService {
     }
 
     return { hours, minutes };
-  }
-
-  /**
-   * Get effective end date for leg generation.
-   *
-   * If endDate is exactly UTC midnight (00:00:00.000Z), subtract 1ms
-   * to avoid off-by-one errors in day boundary calculations.
-   * However, never return a date earlier than startDate to avoid
-   * invalid intervals that would crash eachDayOfInterval.
-   *
-   * Note: Uses UTC methods to ensure consistent behavior regardless of
-   * server timezone (e.g., Africa/Lagos).
-   *
-   * @param endDate - Original end date
-   * @param startDate - Start date to use as minimum bound
-   * @returns Adjusted end date (never earlier than startDate)
-   */
-  private getEffectiveEndDate(endDate: Date, startDate: Date): Date {
-    const isMidnight =
-      endDate.getUTCHours() === 0 &&
-      endDate.getUTCMinutes() === 0 &&
-      endDate.getUTCSeconds() === 0 &&
-      endDate.getUTCMilliseconds() === 0;
-
-    if (isMidnight) {
-      const adjusted = new Date(endDate.getTime() - 1);
-      // Don't adjust if it would make end date earlier than start date
-      if (adjusted < startDate) {
-        return startDate;
-      }
-      return adjusted;
-    }
-
-    return endDate;
   }
 }

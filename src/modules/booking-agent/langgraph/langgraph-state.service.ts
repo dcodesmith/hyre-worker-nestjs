@@ -19,6 +19,7 @@ export class LangGraphStateService {
   private readonly logger = new Logger(LangGraphStateService.name);
   private readonly historyLimit: number;
   private readonly maxPersistAttempts = 3;
+  private readonly persistRetryBaseDelayMs = 100;
 
   constructor(
     @Inject(LANGGRAPH_REDIS_CLIENT) private readonly redis: LangGraphRedisClient,
@@ -98,6 +99,8 @@ export class LangGraphStateService {
         if (attempt === this.maxPersistAttempts) {
           throw new LangGraphStatePersistFailedException(conversationId, attempt);
         }
+
+        await this.sleep(this.persistRetryBaseDelayMs * 2 ** (attempt - 1));
       }
     }
   }
@@ -179,6 +182,14 @@ export class LangGraphStateService {
     };
   }
 
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Mutates `BookingAgentState.messages` in-place and trims it to `historyLimit`.
+   * Callers should pass a mutable state object and rely on this side effect.
+   */
   addMessage(state: BookingAgentState, role: "user" | "assistant", content: string): void {
     state.messages.push({
       role,

@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import {
   CHECKOUT_LINK_CONTENT_SID,
   LANGGRAPH_OUTBOUND_MODE,
@@ -19,6 +20,8 @@ type OutboxStateContext = {
   availableOptions: VehicleSearchOption[];
 };
 
+const logger = new Logger("LangGraphOutboxBuilder");
+
 function extractCheckoutToken(checkoutUrl: string): string | null {
   try {
     const url = new URL(checkoutUrl);
@@ -30,7 +33,10 @@ function extractCheckoutToken(checkoutUrl: string): string | null {
 }
 
 function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
-  return `₦${vehicle.estimatedTotalInclVat?.toLocaleString()} incl. VAT`;
+  if (vehicle.estimatedTotalInclVat === undefined) {
+    return "Price unavailable";
+  }
+  return `₦${vehicle.estimatedTotalInclVat.toLocaleString()} incl. VAT`;
 }
 
 export function buildOutboxItems(
@@ -50,6 +56,12 @@ export function buildOutboxItems(
     response.vehicleCards.forEach((card, index) => {
       const vehicle = state.availableOptions.find((option) => option.id === card.vehicleId);
       if (!vehicle) {
+        logger.debug("Skipping vehicle card with missing option reference", {
+          index,
+          vehicleId: card.vehicleId,
+          card,
+          availableOptionIds: state.availableOptions.map((option) => option.id),
+        });
         return;
       }
 
@@ -96,7 +108,7 @@ export function buildOutboxItems(
         mode: LANGGRAPH_OUTBOUND_MODE.TEMPLATE,
         templateName: CHECKOUT_LINK_CONTENT_SID,
         templateVariables: {
-          "1": response.text, //buildCheckoutBodyText(state.selectedOption),
+          "1": response.text,
           "2": checkoutToken,
         },
       },

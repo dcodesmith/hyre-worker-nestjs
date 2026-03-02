@@ -102,7 +102,10 @@ export class WhatsAppPersistenceService {
       where: {
         id: outboxId,
         providerMessageSid: null,
-        OR: [{ status: WhatsAppOutboxStatus.PENDING }, { status: WhatsAppOutboxStatus.FAILED }],
+        OR: [
+          { status: WhatsAppOutboxStatus.PENDING },
+          { status: WhatsAppOutboxStatus.FAILED, nextAttemptAt: { lte: now } },
+        ],
       },
       data: {
         status: WhatsAppOutboxStatus.PROCESSING,

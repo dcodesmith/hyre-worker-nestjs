@@ -49,6 +49,12 @@ describe("BookingAgentSearchService", () => {
     ...overrides,
   });
 
+  const makeIsoDate = (daysFromToday: number): string => {
+    const date = new Date();
+    date.setDate(date.getDate() + daysFromToday);
+    return date.toISOString().split("T")[0] ?? "";
+  };
+
   beforeEach(async () => {
     carSearchService = {
       searchCars: vi.fn(),
@@ -99,12 +105,15 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("returns a hard precondition prompt when drop-off date is invalid or before pickup", async () => {
+    const fromDate = makeIsoDate(10);
+    const toDate = makeIsoDate(8);
+
     const result = await service.searchVehiclesFromExtracted(
       {
         make: "Toyota",
         model: "Prado",
-        from: "2026-03-10",
-        to: "2026-03-08",
+        from: fromDate,
+        to: toDate,
       },
       "Looking for: black toyota prado",
     );
@@ -117,11 +126,13 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("returns a hard precondition prompt when pickup time format is invalid", async () => {
+    const fromDate = makeIsoDate(10);
+
     const result = await service.searchVehiclesFromExtracted(
       {
         make: "Toyota",
         model: "Prado",
-        from: "2026-03-10",
+        from: fromDate,
         bookingType: "DAY",
         pickupTime: "25:99",
       },
@@ -130,12 +141,14 @@ describe("BookingAgentSearchService", () => {
 
     expect(result.precondition).toEqual({
       missingField: "pickupTime",
-      prompt: "Please share pickup time in this format: 9:00 AM.",
+      prompt: "Please share pickup time in this format: 9:00 AM or 14:00.",
     });
     expect(carSearchService.searchCars).not.toHaveBeenCalled();
   });
 
   it("returns exact matches when at least one candidate fully matches requested attributes", async () => {
+    const fromDate = makeIsoDate(2);
+
     carSearchService.searchCars.mockResolvedValue(
       buildSearchResponse([
         buildCar("car_exact_prado_black"),
@@ -148,7 +161,7 @@ describe("BookingAgentSearchService", () => {
         make: "Toyota",
         model: "Prado",
         color: "Black",
-        from: "2026-03-02",
+        from: fromDate,
       },
       "Looking for: black toyota prado",
     );
@@ -161,6 +174,8 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("returns ranked alternatives when no exact match exists", async () => {
+    const fromDate = makeIsoDate(2);
+
     const pradoWhite = buildCar("car_prado_white", { color: "White" });
     const landCruiserBlack = buildCar("car_land_cruiser_black", {
       model: "Land Cruiser",
@@ -199,7 +214,7 @@ describe("BookingAgentSearchService", () => {
         model: "Prado",
         color: "Black",
         vehicleType: "SUV",
-        from: "2026-03-02",
+        from: fromDate,
         bookingType: "NIGHT",
       },
       "Looking for: black toyota prado",
@@ -213,6 +228,8 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("labels fallback options as similar price range when no class/model/color match but price is close", async () => {
+    const fromDate = makeIsoDate(2);
+
     const suvOne = buildCar("car_suv_one", {
       make: "Toyota",
       model: "Land Cruiser",
@@ -272,7 +289,7 @@ describe("BookingAgentSearchService", () => {
         model: "Prado",
         color: "Black",
         vehicleType: "SUV",
-        from: "2026-03-02",
+        from: fromDate,
         bookingType: "NIGHT",
       },
       "Looking for: black toyota prado",
@@ -285,32 +302,38 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("throws timeout when car search exceeds timeout window", async () => {
-    vi.useFakeTimers();
-    carSearchService.searchCars.mockImplementation(
-      async () =>
-        new Promise(() => {
-          // Intentionally unresolved to trigger timeout handling.
-        }),
-    );
+    const fromDate = makeIsoDate(10);
+    const toDate = makeIsoDate(12);
 
-    const searchPromise = service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        from: "2026-03-10",
-        to: "2026-03-12",
-        bookingType: "DAY",
-        pickupTime: "9:00 AM",
-        pickupLocation: "Wheatbaker hotel, Ikoyi",
-        dropoffLocation: "Wheatbaker hotel, Ikoyi",
-      },
-      "Looking for: Toyota Prado",
-    );
-    const rejectionAssertion = expect(searchPromise).rejects.toBeInstanceOf(
-      WhatsAppOperationTimeoutException,
-    );
-    await vi.advanceTimersByTimeAsync(WHATSAPP_CAR_SEARCH_TIMEOUT_MS + 100);
-    await rejectionAssertion;
-    vi.useRealTimers();
+    vi.useFakeTimers();
+    try {
+      carSearchService.searchCars.mockImplementation(
+        async () =>
+          new Promise(() => {
+            // Intentionally unresolved to trigger timeout handling.
+          }),
+      );
+
+      const searchPromise = service.searchVehiclesFromExtracted(
+        {
+          make: "Toyota",
+          model: "Prado",
+          from: fromDate,
+          to: toDate,
+          bookingType: "DAY",
+          pickupTime: "9:00 AM",
+          pickupLocation: "Wheatbaker hotel, Ikoyi",
+          dropoffLocation: "Wheatbaker hotel, Ikoyi",
+        },
+        "Looking for: Toyota Prado",
+      );
+      const rejectionAssertion = expect(searchPromise).rejects.toBeInstanceOf(
+        WhatsAppOperationTimeoutException,
+      );
+      await vi.advanceTimersByTimeAsync(WHATSAPP_CAR_SEARCH_TIMEOUT_MS + 100);
+      await rejectionAssertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

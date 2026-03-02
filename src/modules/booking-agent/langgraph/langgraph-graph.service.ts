@@ -1,5 +1,4 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import { MemorySaver } from "@langchain/langgraph-checkpoint";
 import { Injectable, Logger } from "@nestjs/common";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
@@ -72,7 +71,7 @@ const BookingAgentAnnotation = Annotation.Root({
     default: () => "greeting",
   }),
   turnCount: Annotation<number>({
-    reducer: (current, _) => current + 1,
+    reducer: (current, update) => (typeof update === "number" ? update : current + 1),
     default: () => 0,
   }),
   extraction: AnnotationWithDefault<ExtractionResult | null>(null),
@@ -213,8 +212,7 @@ export class LangGraphGraphService {
       .addEdge(LANGGRAPH_NODE_NAMES.RESPOND, END)
       .addEdge(LANGGRAPH_NODE_NAMES.HANDOFF, END);
 
-    const checkpointer = new MemorySaver();
-    return workflow.compile({ checkpointer });
+    return workflow.compile();
   }
 
   private async extractNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
@@ -457,7 +455,7 @@ export class LangGraphGraphService {
 
       // For WhatsApp bookings, we create as a guest booking
       const result = await this.bookingCreationService.createBooking(
-        bookingInput as Parameters<typeof this.bookingCreationService.createBooking>[0],
+        bookingInput,
         null, // No session user for WhatsApp bookings
       );
 
@@ -526,10 +524,14 @@ export class LangGraphGraphService {
   }
 
   private validateDraftBeforeBookingCreation(draft: BookingDraft): Partial<AnnotationState> | null {
-    if (!draft.pickupTime) {
-      this.logger.error({ draft }, "Missing pickupTime in draft - cannot create booking");
+    if (!draft.pickupDate || !draft.dropoffDate || !draft.pickupTime) {
+      this.logger.error(
+        { draft },
+        "Missing required date/time fields in draft - cannot create booking",
+      );
       return {
-        error: "Missing pickup time - please specify when you need the vehicle",
+        error:
+          "Missing required booking details. Please provide pickup date, drop-off date, and pickup time.",
         stage: "collecting",
       };
     }
@@ -575,9 +577,9 @@ export class LangGraphGraphService {
       carId: string;
       pickupAddress: string;
       bookingType: string;
-      pickupTime: string;
+      pickupTime?: string;
       clientTotalAmount?: string;
-      sameLocation: boolean;
+      sameLocation?: boolean;
       guestEmail?: string;
     },
     normalizedStartDate: Date,

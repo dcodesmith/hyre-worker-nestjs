@@ -16,22 +16,21 @@ export function parseSearchDate(value: string | undefined): Date | null {
     const year = Number(dateOnlyMatch[1]);
     const monthIndex = Number(dateOnlyMatch[2]) - 1;
     const day = Number(dateOnlyMatch[3]);
-    const strictDate = new Date(Date.UTC(year, monthIndex, day));
+    const strictDate = new Date(year, monthIndex, day);
+    if (Number.isNaN(strictDate.getTime())) {
+      return null;
+    }
     if (
-      strictDate.getUTCFullYear() !== year ||
-      strictDate.getUTCMonth() !== monthIndex ||
-      strictDate.getUTCDate() !== day
+      strictDate.getFullYear() !== year ||
+      strictDate.getMonth() !== monthIndex ||
+      strictDate.getDate() !== day
     ) {
       return null;
     }
     return strictDate;
   }
 
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return date;
+  return null;
 }
 
 export function normalizeBookingType(value: string | undefined): BookingType | null {
@@ -76,7 +75,7 @@ export class VehicleSearchPreconditionPolicy {
     if (extracted.pickupTime && !this.pickupTimePattern.test(extracted.pickupTime.trim())) {
       return {
         missingField: "pickupTime",
-        prompt: "Please share pickup time in this format: 9:00 AM.",
+        prompt: "Please share pickup time in this format: 9:00 AM or 14:00.",
       };
     }
 

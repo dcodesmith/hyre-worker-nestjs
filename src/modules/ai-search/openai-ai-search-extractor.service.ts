@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { APIConnectionTimeoutError, AuthenticationError } from "openai";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../openai-sdk/openai-sdk.tokens";
 import {
   AiSearchException,
@@ -60,14 +61,11 @@ export class OpenAiAiSearchExtractorService {
         throw error;
       }
 
-      if (error instanceof Error && /timeout|timed out/i.test(error.message)) {
+      if (error instanceof APIConnectionTimeoutError) {
         throw new AiSearchTimeoutException();
       }
 
-      if (
-        error instanceof Error &&
-        /missing bearer|basic authentication|incorrect api key|unauthorized/i.test(error.message)
-      ) {
+      if (error instanceof AuthenticationError) {
         throw new AiSearchProviderAuthenticationException();
       }
 
@@ -85,7 +83,7 @@ export class OpenAiAiSearchExtractorService {
     return `You are a car rental search assistant for Tripdly in Lagos, Nigeria.
 Extract search parameters from user queries and return them as JSON.
 
-Today's date is: ${today} (${today})
+Today's date is: ${today}
 Timezone: Africa/Lagos (WAT)
 
 Extract the following fields when mentioned:

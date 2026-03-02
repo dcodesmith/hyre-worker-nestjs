@@ -87,7 +87,7 @@ function calculateFullDayLegCount(startDate: Date, endDate: Date): number {
  * @param startDate - Start date to use as minimum bound
  * @returns Adjusted end date (never earlier than startDate)
  */
-function getEffectiveEndDate(endDate: Date, startDate: Date): Date {
+export function getEffectiveEndDate(endDate: Date, startDate: Date): Date {
   const isMidnight =
     endDate.getUTCHours() === 0 &&
     endDate.getUTCMinutes() === 0 &&

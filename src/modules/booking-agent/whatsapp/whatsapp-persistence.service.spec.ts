@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { WhatsAppOutboxStatus } from "@prisma/client";
+import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../../database/database.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
@@ -113,6 +113,45 @@ describe("WhatsAppPersistenceService", () => {
         data: expect.objectContaining({
           status: WhatsAppOutboxStatus.FAILED,
           failureReason: "x".repeat(500),
+        }),
+      }),
+    );
+  });
+
+  it("marks outbox sent with non-null nextAttemptAt", async () => {
+    const sentAt = new Date("2026-03-02T10:00:00.000Z");
+    const tx = {
+      whatsAppOutbox: { update: vi.fn().mockResolvedValue({}) },
+      whatsAppConversation: { update: vi.fn().mockResolvedValue({}) },
+      whatsAppMessage: { create: vi.fn().mockResolvedValue({}) },
+    };
+    databaseService.$transaction.mockImplementation(async (callback) => callback(tx));
+
+    await service.markOutboxSent({
+      outboxId: "outbox-1",
+      conversationId: "conv-1",
+      textBody: "hello",
+      mediaUrl: null,
+      kind: WhatsAppMessageKind.TEXT,
+      providerMessage: {
+        sid: "SM123",
+        status: "queued",
+        errorCode: null,
+        errorMessage: null,
+        dateCreated: sentAt,
+        dateUpdated: sentAt,
+      } as never,
+      sentAt,
+    });
+
+    expect(tx.whatsAppOutbox.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "outbox-1" },
+        data: expect.objectContaining({
+          status: WhatsAppOutboxStatus.SENT,
+          providerMessageSid: "SM123",
+          sentAt,
+          nextAttemptAt: sentAt,
         }),
       }),
     );

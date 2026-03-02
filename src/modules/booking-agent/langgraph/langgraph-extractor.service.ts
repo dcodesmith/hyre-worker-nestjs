@@ -95,7 +95,11 @@ export class LangGraphExtractorService {
       let content = "";
       if (typeof response.content === "string") {
         content = response.content;
-      } else if (response.content[0]?.type === "text") {
+      } else if (
+        Array.isArray(response.content) &&
+        response.content.length > 0 &&
+        response.content[0]?.type === "text"
+      ) {
         content = String(response.content[0].text ?? "");
       }
 

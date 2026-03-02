@@ -54,7 +54,8 @@ async function initializeWorkerIsolation(): Promise<void> {
   const workerIdNumber = parseWorkerId(workerId);
   const schema = `e2e_w${workerId}`;
   const workerDatabaseUrl = withSchema(baseDatabaseUrl, schema);
-  const workerRedisDb = 10 + workerIdNumber;
+  // Redis default database count is 16 (0-15). Keep worker DB index in-range.
+  const workerRedisDb = Math.abs(workerIdNumber % 16);
   const workerRedisUrl = withRedisDb(baseRedisUrl, workerRedisDb);
 
   // Scope each worker to isolated database schema and Redis DB.

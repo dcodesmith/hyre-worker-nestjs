@@ -42,6 +42,7 @@ import type {
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingLegService } from "./booking-leg.service";
+import { normalizeBookingTimeWindow } from "./booking-time-window.helper";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
@@ -91,8 +92,20 @@ export class BookingCreationService {
     booking: CreateBookingInput,
     sessionUser: AuthSession["user"] | null,
   ): Promise<CreateBookingResponse> {
+    const normalizedWindow = normalizeBookingTimeWindow({
+      bookingType: booking.bookingType,
+      startDate: booking.startDate,
+      endDate: booking.endDate,
+      pickupTime: booking.pickupTime,
+    });
+    const normalizedBooking = {
+      ...booking,
+      startDate: normalizedWindow.startDate,
+      endDate: normalizedWindow.endDate,
+    };
+
     // Validate guest booking requirements early
-    if (!sessionUser && !isGuestBooking(booking)) {
+    if (!sessionUser && !isGuestBooking(normalizedBooking)) {
       throw new BookingValidationException(
         [
           { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
@@ -104,48 +117,48 @@ export class BookingCreationService {
     }
 
     this.logger.log("Starting booking creation", {
-      carId: booking.carId,
-      bookingType: booking.bookingType,
-      startDate: booking.startDate.toISOString(),
-      endDate: booking.endDate.toISOString(),
-      isGuest: isGuestBooking(booking),
+      carId: normalizedBooking.carId,
+      bookingType: normalizedBooking.bookingType,
+      startDate: normalizedBooking.startDate.toISOString(),
+      endDate: normalizedBooking.endDate.toISOString(),
+      isGuest: isGuestBooking(normalizedBooking),
       userId: sessionUser?.id,
     });
 
     this.validationService.validateDates({
-      startDate: booking.startDate,
-      endDate: booking.endDate,
-      bookingType: booking.bookingType,
+      startDate: normalizedBooking.startDate,
+      endDate: normalizedBooking.endDate,
+      bookingType: normalizedBooking.bookingType,
     });
 
     await this.validationService.checkCarAvailability({
-      carId: booking.carId,
-      startDate: booking.startDate,
-      endDate: booking.endDate,
+      carId: normalizedBooking.carId,
+      startDate: normalizedBooking.startDate,
+      endDate: normalizedBooking.endDate,
     });
 
-    if (isGuestBooking(booking)) {
-      await this.validationService.validateGuestEmail(booking);
+    if (isGuestBooking(normalizedBooking)) {
+      await this.validationService.validateGuestEmail(normalizedBooking);
     }
 
     let flightData: FlightDataForBooking | null = null;
 
-    if (booking.bookingType === "AIRPORT_PICKUP" && booking.flightNumber) {
+    if (normalizedBooking.bookingType === "AIRPORT_PICKUP" && normalizedBooking.flightNumber) {
       // AIRPORT_PICKUP always has sameLocation=false (enforced by DTO validation)
       // pickupAddress is the airport, dropOffAddress is the customer's destination
       // Type narrowing: when sameLocation is false, dropOffAddress is guaranteed to exist
-      if (booking.sameLocation === false) {
+      if (normalizedBooking.sameLocation === false) {
         flightData = await this.validateAndGetFlightData(
-          booking.flightNumber,
-          booking.startDate,
-          booking.dropOffAddress,
+          normalizedBooking.flightNumber,
+          normalizedBooking.startDate,
+          normalizedBooking.dropOffAddress,
         );
       }
     }
 
-    const car = await this.fetchCarWithPricing(booking.carId);
+    const car = await this.fetchCarWithPricing(normalizedBooking.carId);
 
-    const legs = this.generateBookingLegs(booking, flightData);
+    const legs = this.generateBookingLegs(normalizedBooking, flightData);
 
     // Preliminary eligibility check for price calculation
     // For authenticated users: check session data for preliminary eligibility
@@ -154,23 +167,28 @@ export class BookingCreationService {
       await this.checkPreliminaryReferralEligibility(sessionUser);
 
     const financials = await this.calculationService.calculateBookingCost({
-      bookingType: booking.bookingType,
+      bookingType: normalizedBooking.bookingType,
       legs,
       car,
-      includeSecurityDetail: booking.includeSecurityDetail,
-      requiresFullTank: booking.requiresFullTank,
+      includeSecurityDetail: normalizedBooking.includeSecurityDetail,
+      requiresFullTank: normalizedBooking.requiresFullTank,
       // Credits not implemented yet - would need to add creditsBalance to User model
       userCreditsBalance: undefined,
-      creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
+      creditsToUse: normalizedBooking.useCredits
+        ? new Decimal(normalizedBooking.useCredits)
+        : undefined,
       referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
     });
 
-    this.validationService.validatePriceMatch(booking.clientTotalAmount, financials.totalAmount);
+    this.validationService.validatePriceMatch(
+      normalizedBooking.clientTotalAmount,
+      financials.totalAmount,
+    );
 
-    const customerDetails = await this.getCustomerDetails(booking, sessionUser);
+    const customerDetails = await this.getCustomerDetails(normalizedBooking, sessionUser);
 
     const result = await this.createBookingWithPayment({
-      booking,
+      booking: normalizedBooking,
       sessionUser,
       car,
       legs,

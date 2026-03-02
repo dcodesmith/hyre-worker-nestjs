@@ -114,6 +114,18 @@ export class BookingAgentOrchestratorService {
         templateVariables: item.templateVariables,
       }));
 
+      if (result.error && outboxItems.length === 0) {
+        outboxItems.push({
+          conversationId: context.conversationId,
+          dedupeKey: `langgraph-error-fallback:${context.messageId}`,
+          mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
+          textBody:
+            "I'm having trouble processing your request. Please try again or type AGENT to speak with someone.",
+          templateName: undefined,
+          templateVariables: undefined,
+        });
+      }
+
       return { enqueueOutbox: outboxItems };
     } catch (error) {
       this.logger.error("LangGraph orchestration failed, falling back to error response", {

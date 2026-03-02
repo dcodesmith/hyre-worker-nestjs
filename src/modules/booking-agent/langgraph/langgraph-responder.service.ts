@@ -18,6 +18,7 @@ import { buildResponderSystemPrompt, buildResponderUserContext } from "./prompts
 @Injectable()
 export class LangGraphResponderService {
   private readonly logger = new Logger(LangGraphResponderService.name);
+  private static readonly MAX_MESSAGE_HISTORY = 6;
   private static readonly MAX_CONTEXT_FIELD_CHARS = 300;
   private static readonly MAX_DRAFT_CONTEXT_CHARS = 600;
   private static readonly MAX_OPTION_CONTEXT_ITEMS = 5;
@@ -60,7 +61,7 @@ export class LangGraphResponderService {
 
       const response = await this.claude.invoke([
         { role: "system", content: systemPrompt },
-        ...messages.slice(-6).map((m) => ({
+        ...messages.slice(-LangGraphResponderService.MAX_MESSAGE_HISTORY).map((m) => ({
           role: m.role,
           content: m.content,
         })),
@@ -134,7 +135,7 @@ export class LangGraphResponderService {
 
     if (stage === "awaiting_payment" && paymentLink) {
       return {
-        text: this.buildPaymentMessage(selectedOption, paymentLink),
+        text: this.buildPaymentMessage(selectedOption),
       };
     }
 
@@ -280,10 +281,7 @@ export class LangGraphResponderService {
     return dayDifference;
   }
 
-  private buildPaymentMessage(
-    selectedOption: VehicleSearchOption | null,
-    _paymentLink: string,
-  ): string {
+  private buildPaymentMessage(selectedOption: VehicleSearchOption | null): string {
     return [
       "*✅ Booking Created!*",
       "",
@@ -291,8 +289,7 @@ export class LangGraphResponderService {
         ? `Your *${selectedOption.make} ${selectedOption.model}* has been reserved.`
         : "Your vehicle has been reserved.",
       "",
-      "*Complete your payment to confirm:*",
-      "I have sent your secure checkout link below.",
+      "*Complete your payment to confirm booking*",
       "",
       "_Your reservation will be held while you complete payment._",
     ].join("\n");

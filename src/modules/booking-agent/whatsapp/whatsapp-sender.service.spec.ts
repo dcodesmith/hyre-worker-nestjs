@@ -95,7 +95,7 @@ describe("WhatsAppSenderService", () => {
     persistenceService.getOutboxForDispatch.mockResolvedValue({
       id: "outbox-1",
       conversationId: "conv-1",
-      mode: "FREEFORM",
+      mode: "FREE_FORM",
       textBody: "hello",
       mediaUrl: null,
       templateName: null,
@@ -126,7 +126,7 @@ describe("WhatsAppSenderService", () => {
     persistenceService.getOutboxForDispatch.mockResolvedValue({
       id: "outbox-2",
       conversationId: "conv-2",
-      mode: "FREEFORM",
+      mode: "FREE_FORM",
       textBody: "hello",
       mediaUrl: null,
       templateName: null,

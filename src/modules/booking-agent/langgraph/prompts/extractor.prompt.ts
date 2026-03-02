@@ -13,7 +13,7 @@ export function buildExtractorSystemPrompt(input: BuildExtractorPromptInput): st
       ? lastShownOptions
           .map(
             (opt, i) =>
-              `${i + 1}. ${opt.make} ${opt.model} (${opt.color ?? "any color"}) - ₦${opt.estimatedTotalInclVat?.toLocaleString() ?? "N/A"}`,
+              `${i + 1}. ${opt.make} ${opt.model} (${opt.color ?? "any color"}) - ₦${opt.estimatedTotalInclVat?.toLocaleString("en-NG") ?? "N/A"}`,
           )
           .join("\n")
       : "No options shown yet";
