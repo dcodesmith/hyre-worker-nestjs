@@ -92,6 +92,11 @@ export const envSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().min(1, "AWS_ACCESS_KEY_ID is required for S3 uploads"),
   AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS_SECRET_ACCESS_KEY is required for S3 uploads"),
   AWS_BUCKET_NAME: z.string().min(1, "AWS_BUCKET_NAME is required for S3 uploads"),
+
+  // LangGraph Agent configuration
+  ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
+  LANGGRAPH_HISTORY_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
+  LANGGRAPH_HISTORY_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

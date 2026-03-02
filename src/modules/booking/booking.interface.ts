@@ -1,4 +1,4 @@
-import type { BookingType } from "@prisma/client";
+import type { BookingStatus, BookingType } from "@prisma/client";
 import type { Decimal } from "@prisma/client/runtime/library";
 import type { CarPricing } from "./booking-calculation.interface";
 
@@ -146,3 +146,15 @@ export type LegGenerationInput =
   | NightLegInput
   | FullDayLegInput
   | AirportPickupLegInput;
+
+export type CurrentBookingRecord = {
+  id: string;
+  userId: string | null;
+  carId: string;
+  type: BookingType;
+  status: BookingStatus;
+  startDate: Date;
+  endDate: Date;
+  pickupLocation: string;
+  returnLocation: string;
+};

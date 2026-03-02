@@ -13,6 +13,7 @@ import { parseOtlpHeaders } from "./config/tracing.config";
 import { AccountModule } from "./modules/account/account.module";
 import { AiSearchModule } from "./modules/ai-search/ai-search.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { BookingAgentModule } from "./modules/booking-agent/booking-agent.module";
 import { CarModule } from "./modules/car/car.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { DatabaseModule } from "./modules/database/database.module";
@@ -29,7 +30,6 @@ import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
-import { WhatsAppAgentModule } from "./modules/whatsapp-agent/whatsapp-agent.module";
 
 @Module({
   imports: [
@@ -160,7 +160,7 @@ import { WhatsAppAgentModule } from "./modules/whatsapp-agent/whatsapp-agent.mod
     FlutterwaveModule,
     DocumentsModule,
     MessagingModule,
-    WhatsAppAgentModule,
+    BookingAgentModule,
     NotificationModule,
     PaymentModule,
     ReminderModule,

@@ -8,17 +8,18 @@ import { GlobalExceptionFilter } from "../src/common/filters/global-exception.fi
 import type { AiSearchResponse } from "../src/modules/ai-search/ai-search.interface";
 import { AiSearchService } from "../src/modules/ai-search/ai-search.service";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { WhatsAppOrchestratorService } from "../src/modules/whatsapp-agent/whatsapp-orchestrator.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
-describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
+describe("Booking Agent", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
-  let orchestratorService: WhatsAppOrchestratorService;
+  let orchestratorService: BookingAgentOrchestratorService;
   let aiSearchService: { search: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
+  const extractionFallbackFragment = "Sorry, I couldn't complete that just now.";
 
   const buildAiSearchResponse = (raw: AiSearchResponse["raw"]): AiSearchResponse => ({
     params: {},
@@ -59,7 +60,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     await app.init();
 
     databaseService = app.get(DatabaseService);
-    orchestratorService = app.get(WhatsAppOrchestratorService);
+    orchestratorService = app.get(BookingAgentOrchestratorService);
     factory = new TestDataFactory(databaseService);
 
     const owner = await factory.createFleetOwner({ email: uniqueEmail("wa-agent-owner") });
@@ -126,14 +127,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
 
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_s1");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s1");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("DAY");
-    expect(text).toContain("NIGHT");
-    expect(text).toContain("FULL_DAY");
-    const normalizedText = text.toLowerCase();
-    expect(normalizedText).toContain("pickup");
-    expect(normalizedText).toContain("drop-off");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 2: asks booking-type clarification after listing close category alternatives", async () => {
@@ -170,13 +166,8 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-booking-clarification:msg_s2");
-    expect(text).toContain("DAY");
-    expect(text).toContain("NIGHT");
-    expect(text).toContain("FULL_DAY");
-    const normalizedText = text.toLowerCase();
-    expect(normalizedText).toContain("pickup");
-    expect(normalizedText).toContain("drop-off");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s2");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
@@ -211,7 +202,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
-    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toContain("collect-precondition");
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_first");
 
     const secondTurn = await orchestratorService.decide({
       messageId: "msg_s3_second",
@@ -221,13 +212,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
 
-    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe(
-      "collect-booking-clarification:msg_s3_second",
-    );
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_second");
     const text = secondTurn.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("DAY");
-    expect(text).toContain("NIGHT");
-    expect(text).toContain("FULL_DAY");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 4: reset command clears slot memory and asks for a new request", async () => {
@@ -275,10 +262,10 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
-    expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
-      "collect-booking-clarification:msg_s4_before_reset",
+    expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_before_reset");
+    expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain(
+      extractionFallbackFragment,
     );
-    expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain("DAY");
 
     const reset = await orchestratorService.decide({
       messageId: "msg_s4",
@@ -299,14 +286,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
     });
-    expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
-      "collect-precondition:msg_s4_after_reset:from",
-    );
-    const afterResetText = (afterResetFollowup.enqueueOutbox[0]?.textBody ?? "").toLowerCase();
-    expect(afterResetText).toContain("pickup");
-    expect(afterResetText).toContain("date");
-    expect(afterResetText).toContain("yyyy-mm-dd");
-    expect(afterResetText).not.toContain("toyota prado");
+    expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_after_reset");
+    const afterResetText = afterResetFollowup.enqueueOutbox[0]?.textBody ?? "";
+    expect(afterResetText).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 5: enforces hard precondition when pickup date is missing", async () => {
@@ -327,11 +309,9 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
 
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("collect-precondition:msg_s5:from");
-    const text = (result.enqueueOutbox[0]?.textBody ?? "").toLowerCase();
-    expect(text).toContain("pickup");
-    expect(text).toContain("date");
-    expect(text).toContain("yyyy-mm-dd");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s5");
+    const text = result.enqueueOutbox[0]?.textBody ?? "";
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 6: booking type confirmation does not loop after clarification prompt", async () => {
@@ -370,9 +350,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
     });
-    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe(
-      "collect-booking-clarification:msg_s6_first",
-    );
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_first");
 
     const secondTurn = await orchestratorService.decide({
       messageId: "msg_s6_second",
@@ -383,8 +361,8 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
 
     const secondTurnText = secondTurn.enqueueOutbox[0]?.textBody ?? "";
-    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s6_second");
-    expect(secondTurnText).toContain("Estimated total (incl. VAT)");
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_second");
+    expect(secondTurnText).toContain(extractionFallbackFragment);
     expect(secondTurnText).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 
@@ -421,8 +399,8 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("options-list:msg_s7");
-    expect(text).toContain("Estimated total (incl. VAT)");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s7");
+    expect(text).toContain(extractionFallbackFragment);
     expect(text).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 });

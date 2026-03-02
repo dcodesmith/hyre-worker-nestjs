@@ -1,7 +1,6 @@
-import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import OpenAI from "openai";
-import type { EnvConfig } from "../../config/env.config";
+import { Inject, Injectable } from "@nestjs/common";
+import { APIConnectionTimeoutError, AuthenticationError } from "openai";
+import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../openai-sdk/openai-sdk.tokens";
 import {
   AiSearchException,
   AiSearchProviderAuthenticationException,
@@ -13,13 +12,11 @@ import { extractedAiSearchParamsSchema } from "./dto/ai-search.dto";
 
 @Injectable()
 export class OpenAiAiSearchExtractorService {
-  private readonly openAiClient: OpenAI;
+  private readonly openAiClient: OpenAiSdkClient;
   private static readonly LAGOS_TIMEZONE = "Africa/Lagos";
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
-    const apiKey = this.configService.get("OPENAI_API_KEY", { infer: true });
-    this.openAiClient = new OpenAI({
-      apiKey,
+  constructor(@Inject(OPENAI_SDK_CLIENT) openAiClient: OpenAiSdkClient) {
+    this.openAiClient = openAiClient.withOptions({
       timeout: 8000,
       maxRetries: 1,
     });
@@ -64,14 +61,11 @@ export class OpenAiAiSearchExtractorService {
         throw error;
       }
 
-      if (error instanceof Error && /timeout|timed out/i.test(error.message)) {
+      if (error instanceof APIConnectionTimeoutError) {
         throw new AiSearchTimeoutException();
       }
 
-      if (
-        error instanceof Error &&
-        /missing bearer|basic authentication|incorrect api key|unauthorized/i.test(error.message)
-      ) {
+      if (error instanceof AuthenticationError) {
         throw new AiSearchProviderAuthenticationException();
       }
 
@@ -89,7 +83,7 @@ export class OpenAiAiSearchExtractorService {
     return `You are a car rental search assistant for Tripdly in Lagos, Nigeria.
 Extract search parameters from user queries and return them as JSON.
 
-Today's date is: ${today} (${today})
+Today's date is: ${today}
 Timezone: Africa/Lagos (WAT)
 
 Extract the following fields when mentioned:

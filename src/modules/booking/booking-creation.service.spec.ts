@@ -266,6 +266,32 @@ describe("BookingCreationService", () => {
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
     });
 
+    it("normalizes DAY booking window before validation", async () => {
+      setupSuccessfulMocks();
+
+      const booking = createBookingInput({
+        startDate: new Date("2026-03-03T00:00:00.000Z"),
+        endDate: new Date("2026-03-03T00:00:00.000Z"),
+        bookingType: "DAY",
+        pickupTime: "10 AM",
+      });
+      const user = createSessionUser();
+
+      await service.createBooking(booking, user);
+
+      expect(validationService.validateDates).toHaveBeenCalledWith({
+        startDate: new Date("2026-03-03T10:00:00.000Z"),
+        endDate: new Date("2026-03-03T22:00:00.000Z"),
+        bookingType: "DAY",
+      });
+      expect(validationService.checkCarAvailability).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startDate: new Date("2026-03-03T10:00:00.000Z"),
+          endDate: new Date("2026-03-03T22:00:00.000Z"),
+        }),
+      );
+    });
+
     it("should throw BookingValidationException when date validation fails", async () => {
       vi.mocked(validationService.validateDates).mockImplementation(() => {
         throw new BookingValidationException([
