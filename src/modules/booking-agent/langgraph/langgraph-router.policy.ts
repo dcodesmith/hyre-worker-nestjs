@@ -1,10 +1,10 @@
+import { getMissingRequiredFields } from "../booking-agent.helper";
 import { LANGGRAPH_NODE_NAMES } from "./langgraph.const";
 import type {
   BookingAgentState,
   LangGraphRouteDecision,
   VehicleSearchOption,
 } from "./langgraph.interface";
-import { getMissingRequiredFields } from "./langgraph-booking-rules";
 import {
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,

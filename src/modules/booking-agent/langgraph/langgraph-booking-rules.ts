@@ -1,5 +1,4 @@
 import { addDays, format, parseISO } from "date-fns";
-import { REQUIRED_SEARCH_FIELDS } from "./langgraph.const";
 import type { BookingDraft, UserIntent } from "./langgraph.interface";
 import { normalizeControlText } from "./langgraph-control-intent.policy";
 
@@ -22,10 +21,6 @@ export function hasDraftChanged(oldDraft: BookingDraft, newDraft: BookingDraft):
   ];
 
   return keyFields.some((field) => oldDraft[field] !== newDraft[field]);
-}
-
-export function getMissingRequiredFields(draft: BookingDraft): string[] {
-  return REQUIRED_SEARCH_FIELDS.filter((field) => !draft[field]);
 }
 
 export function applyDerivedDraftFields(draft: BookingDraft, inboundMessage: string): BookingDraft {

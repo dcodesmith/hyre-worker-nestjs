@@ -3,6 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
+import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { LANGGRAPH_NODE_NAMES, LANGGRAPH_OUTBOUND_MODE } from "./langgraph.const";
 import { LangGraphExecutionFailedException } from "./langgraph.error";
@@ -24,7 +25,6 @@ import { convertToExtractedParams } from "./langgraph.interface";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./langgraph-booking-orchestrator";
 import {
   applyDerivedDraftFields,
-  getMissingRequiredFields,
   hasDraftChanged,
   shouldApplyDraftPatch,
 } from "./langgraph-booking-rules";
@@ -377,8 +377,11 @@ export class LangGraphGraphService {
         stack: error instanceof Error ? error.stack : undefined,
       });
       return {
-        error: error instanceof Error ? error.message : String(error),
+        stage: "collecting",
+        error:
+          "I couldn't check availability right now. Please try again or adjust your booking details.",
         availableOptions: [],
+        lastShownOptions: [],
       };
     }
   }

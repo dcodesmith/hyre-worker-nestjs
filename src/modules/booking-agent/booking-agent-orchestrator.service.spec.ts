@@ -107,6 +107,32 @@ describe("BookingAgentOrchestratorService", () => {
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:outbox:1");
   });
 
+  it("marks conversation as handoff when LangGraph returns handoff outbox", async () => {
+    langGraphService.invoke.mockResolvedValue({
+      outboxItems: [
+        {
+          conversationId: "conv_1",
+          dedupeKey: "langgraph:handoff:msg_1",
+          mode: WhatsAppDeliveryMode.FREE_FORM,
+          textBody:
+            "A Tripdly agent will join this chat shortly. Please share your booking reference if available.",
+        },
+      ],
+      response: {
+        text: "A Tripdly agent will join this chat shortly. Please share your booking reference if available.",
+      },
+      stage: "cancelled",
+      draft: {},
+      error: null,
+    });
+
+    const result = await service.decide(buildContext({ body: "talk to agent" }));
+
+    expect(result.enqueueOutbox).toHaveLength(1);
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:handoff:msg_1");
+    expect(result.markAsHandoff).toEqual({ reason: "USER_REQUESTED_AGENT" });
+  });
+
   it("returns fallback message when LangGraph invocation fails", async () => {
     langGraphService.invoke.mockRejectedValue(new Error("Graph failed"));
 

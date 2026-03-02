@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDerivedDraftFields,
-  getMissingRequiredFields,
   hasDraftChanged,
   shouldApplyDraftPatch,
 } from "./langgraph-booking-rules";
@@ -38,17 +37,6 @@ describe("langgraph-booking-rules", () => {
     const oldDraft = { pickupDate: "2026-03-01", bookingType: "DAY" as const };
     const newDraft = { pickupDate: "2026-03-02", bookingType: "DAY" as const };
     expect(hasDraftChanged(oldDraft, newDraft)).toBe(true);
-  });
-
-  it("returns missing required fields", () => {
-    const missing = getMissingRequiredFields({
-      bookingType: "DAY",
-      pickupDate: "2026-03-01",
-      pickupTime: "09:00",
-    });
-    expect(missing).toContain("pickupLocation");
-    expect(missing).toContain("dropoffDate");
-    expect(missing).toContain("dropoffLocation");
   });
 
   it("applies draft patches only for data-updating intents", () => {

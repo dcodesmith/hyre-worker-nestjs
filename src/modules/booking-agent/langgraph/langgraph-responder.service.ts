@@ -106,7 +106,7 @@ export class LangGraphResponderService {
 
     if (error && availableOptions.length === 0 && stage === "collecting") {
       return {
-        text: `Unfortunately, ${error}`,
+        text: "Sorry, I couldn't complete that just now. Please try again or type AGENT to continue with a human agent.",
       };
     }
 

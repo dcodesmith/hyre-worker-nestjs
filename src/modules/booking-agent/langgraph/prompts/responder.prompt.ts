@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { getMissingRequiredFields } from "../../booking-agent.helper";
 import { REQUIRED_SEARCH_FIELDS } from "../langgraph.const";
 import type {
   BookingAgentState,
@@ -92,7 +93,7 @@ export function buildResponderUserContext(
   options: BuildResponderUserContextOptions,
 ): string {
   const { stage, draft, extraction, availableOptions, selectedOption, holdId } = state;
-  const missingFields = getMissingFields(draft);
+  const missingFields = getMissingRequiredFields(draft);
 
   let context = `CURRENT STATE: ${stage}\n`;
   context += `TURN: ${state.turnCount}\n`;
@@ -142,10 +143,6 @@ function formatExtractionContext(extraction: ExtractionResult | null): string {
   if (extraction.selectionHint) out += `SELECTION HINT: ${extraction.selectionHint}\n`;
   if (extraction.preferenceHint) out += `PREFERENCE: ${extraction.preferenceHint}\n`;
   return out;
-}
-
-function getMissingFields(draft: BookingDraft): string[] {
-  return REQUIRED_SEARCH_FIELDS.filter((field) => !draft[field]);
 }
 
 function truncate(value: string, maxChars: number): string {

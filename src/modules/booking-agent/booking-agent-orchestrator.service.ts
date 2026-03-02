@@ -126,7 +126,14 @@ export class BookingAgentOrchestratorService {
         });
       }
 
-      return { enqueueOutbox: outboxItems };
+      const hasHandoffOutbox = outboxItems.some((item) =>
+        item.dedupeKey.startsWith("langgraph:handoff:"),
+      );
+
+      return {
+        enqueueOutbox: outboxItems,
+        ...(hasHandoffOutbox ? { markAsHandoff: { reason: "USER_REQUESTED_AGENT" } } : {}),
+      };
     } catch (error) {
       this.logger.error("LangGraph orchestration failed, falling back to error response", {
         conversationId: context.conversationId,

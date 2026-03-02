@@ -12,13 +12,14 @@ import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/bo
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
-describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
+describe("Booking Agent", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let orchestratorService: BookingAgentOrchestratorService;
   let aiSearchService: { search: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
+  const extractionFallbackFragment = "Sorry, I couldn't complete that just now.";
 
   const buildAiSearchResponse = (raw: AiSearchResponse["raw"]): AiSearchResponse => ({
     params: {},
@@ -128,7 +129,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s1");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("Lang Graph Extraction Failed Exception");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 2: asks booking-type clarification after listing close category alternatives", async () => {
@@ -166,7 +167,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s2");
-    expect(text).toContain("Lang Graph Extraction Failed Exception");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
@@ -213,7 +214,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_second");
     const text = secondTurn.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("Lang Graph Extraction Failed Exception");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 4: reset command clears slot memory and asks for a new request", async () => {
@@ -263,7 +264,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
     expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_before_reset");
     expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain(
-      "Lang Graph Extraction Failed Exception",
+      extractionFallbackFragment,
     );
 
     const reset = await orchestratorService.decide({
@@ -287,7 +288,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     });
     expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_after_reset");
     const afterResetText = afterResetFollowup.enqueueOutbox[0]?.textBody ?? "";
-    expect(afterResetText).toContain("Lang Graph Extraction Failed Exception");
+    expect(afterResetText).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 5: enforces hard precondition when pickup date is missing", async () => {
@@ -310,7 +311,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
     expect(result.enqueueOutbox).toHaveLength(1);
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s5");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain("Lang Graph Extraction Failed Exception");
+    expect(text).toContain(extractionFallbackFragment);
   });
 
   it("Scenario 6: booking type confirmation does not loop after clarification prompt", async () => {
@@ -361,7 +362,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     const secondTurnText = secondTurn.enqueueOutbox[0]?.textBody ?? "";
     expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_second");
-    expect(secondTurnText).toContain("Lang Graph Extraction Failed Exception");
+    expect(secondTurnText).toContain(extractionFallbackFragment);
     expect(secondTurnText).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 
@@ -399,7 +400,7 @@ describe("WhatsApp Agent phase 2.1 scenarios (e2e)", () => {
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s7");
-    expect(text).toContain("Lang Graph Extraction Failed Exception");
+    expect(text).toContain(extractionFallbackFragment);
     expect(text).not.toContain("Reply with DAY, NIGHT, or FULL_DAY.");
   });
 });
