@@ -111,6 +111,36 @@ describe("langgraph-router.policy", () => {
     expect(decision.availableOptions).toEqual([]);
   });
 
+  it("routes to cancelled for cancel intent during confirming", () => {
+    const vehicle = buildVehicleOption();
+    const state = buildState({
+      stage: "confirming",
+      inboundMessage: "cancel",
+      selectedOption: vehicle,
+      availableOptions: [vehicle],
+      extraction: { intent: "cancel", draftPatch: {}, confidence: 0.95 },
+    });
+
+    const decision = resolveRouteDecision(state);
+    expect(decision.nextNode).toBe("respond");
+    expect(decision.stage).toBe("cancelled");
+  });
+
+  it("keeps confirming stage for low-confidence bare cancel intent", () => {
+    const vehicle = buildVehicleOption();
+    const state = buildState({
+      stage: "confirming",
+      inboundMessage: "cancel",
+      selectedOption: vehicle,
+      availableOptions: [vehicle],
+      extraction: { intent: "cancel", draftPatch: {}, confidence: 0.6 },
+    });
+
+    const decision = resolveRouteDecision(state);
+    expect(decision.nextNode).toBe("respond");
+    expect(decision.stage).toBe("confirming");
+  });
+
   it("does not route to create_booking for affirmative response outside confirming stage", () => {
     const state = buildState({
       stage: "awaiting_payment",

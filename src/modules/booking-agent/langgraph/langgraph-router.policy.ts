@@ -6,10 +6,13 @@ import type {
   VehicleSearchOption,
 } from "./langgraph.interface";
 import {
+  isBareCancelControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./langgraph-control-intent.policy";
+
+const CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD = 0.85;
 
 export function resolveRouteDecision(state: BookingAgentState): LangGraphRouteDecision {
   const { extraction, draft, availableOptions } = state;
@@ -19,14 +22,14 @@ export function resolveRouteDecision(state: BookingAgentState): LangGraphRouteDe
     return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "collecting" };
   }
 
-  const stageGuard = getDeterministicStageGuard(state);
-  if (stageGuard) {
-    return stageGuard;
-  }
-
   const intentDecision = resolveIntentDecision(state);
   if (intentDecision) {
     return intentDecision;
+  }
+
+  const stageGuard = getDeterministicStageGuard(state);
+  if (stageGuard) {
+    return stageGuard;
   }
 
   return resolveFallbackDecision(missingFields.length === 0, availableOptions.length === 0);
@@ -114,6 +117,9 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
     case "request_agent":
       return { nextNode: LANGGRAPH_NODE_NAMES.HANDOFF };
     case "cancel":
+      if (shouldClarifyCancelIntent(state)) {
+        return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "confirming" };
+      }
       return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "cancelled" };
     case "reset":
       return buildResetDecision();
@@ -130,6 +136,23 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
     default:
       return null;
   }
+}
+
+function shouldClarifyCancelIntent(state: BookingAgentState): boolean {
+  if (state.stage !== "confirming" || !state.selectedOption || !state.extraction) {
+    return false;
+  }
+
+  if (state.extraction.intent !== "cancel") {
+    return false;
+  }
+
+  if (state.extraction.confidence >= CANCEL_CLARIFICATION_CONFIDENCE_THRESHOLD) {
+    return false;
+  }
+
+  const normalizedMessage = normalizeControlText(state.inboundMessage);
+  return isBareCancelControl(normalizedMessage);
 }
 
 function resolveFallbackDecision(

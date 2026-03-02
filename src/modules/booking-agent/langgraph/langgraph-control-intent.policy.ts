@@ -83,6 +83,10 @@ export function isCancelIntentControl(normalizedText: string): boolean {
   return cancelSet.has(normalizedText);
 }
 
+export function isBareCancelControl(normalizedText: string): boolean {
+  return normalizedText === "cancel";
+}
+
 export function isAgentRequestControl(normalizedText: string): boolean {
   const agentSet = new Set(["agent", "talk to agent", "speak to agent", "human", "talk to human"]);
   return agentSet.has(normalizedText);

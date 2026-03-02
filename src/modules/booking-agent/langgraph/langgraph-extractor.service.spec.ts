@@ -411,6 +411,19 @@ describe("LangGraphExtractorService", () => {
       expect(openaiMock.invoke).not.toHaveBeenCalled();
     });
 
+    it("uses low-confidence cancel intent for bare cancel in confirming stage", async () => {
+      const state = buildState({
+        inboundMessage: "cancel",
+        stage: "confirming",
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("cancel");
+      expect(result.confidence).toBe(0.6);
+      expect(openaiMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("extracts greeting intent", async () => {
       openaiMock.invoke.mockResolvedValue({
         content: JSON.stringify({

@@ -289,6 +289,31 @@ describe("LangGraphResponderService", () => {
       expect(response.interactive?.buttons?.[2].id).toBe("agent");
     });
 
+    it("asks for clarification on low-confidence bare cancel during confirming", async () => {
+      const state = buildState({
+        stage: "confirming",
+        inboundMessage: "cancel",
+        selectedOption: buildVehicleOption(),
+        extraction: { intent: "cancel", draftPatch: {}, confidence: 0.6 },
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("cancel this booking request entirely");
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons).toHaveLength(2);
+      expect(response.interactive?.buttons?.[0].id).toBe("cancel");
+      expect(response.interactive?.buttons?.[1].id).toBe("show_others");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("prepends availability fallback message when presenting refreshed options", async () => {
       const options = [buildVehicleOption({ id: "2", make: "Lexus", model: "LX570" })];
 
