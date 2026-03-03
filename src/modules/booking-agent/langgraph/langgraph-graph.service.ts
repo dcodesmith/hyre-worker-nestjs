@@ -352,6 +352,22 @@ export class LangGraphGraphService {
       }
       const validatedDraft = validationResult.draft;
 
+      // If location lookup previously failed (NO_MATCH) and user hasn't provided a new address,
+      // don't proceed to search - stay in collecting stage to get a valid address
+      const locationPreviouslyFailedNoMatch =
+        state.locationLookupTriggered && (state.locationSuggestions ?? []).length === 0;
+      if (locationPreviouslyFailedNoMatch && validatedDraft.pickupLocation) {
+        return {
+          draft: validatedDraft,
+          stage: "collecting",
+          availableOptions: [],
+          lastShownOptions: [],
+          error: null,
+          locationSuggestions: [],
+          locationLookupTriggered: true,
+        };
+      }
+
       const missingFields = getMissingRequiredFields(validatedDraft);
       if (missingFields.length > 0) {
         return {
@@ -385,10 +401,15 @@ export class LangGraphGraphService {
           extractedParams,
         });
         // Go back to collecting stage to ask for the missing field
+        // Preserve the validated draft and location lookup state
         return {
+          draft: validatedDraft,
           availableOptions: [],
+          lastShownOptions: [],
           stage: "collecting",
           error: searchResult.precondition.prompt,
+          locationSuggestions: [],
+          locationLookupTriggered: true,
         };
       }
 
@@ -432,14 +453,15 @@ export class LangGraphGraphService {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      // Preserve locationLookupTriggered state - if we reached the catch block,
+      // validation may have already succeeded before the error occurred.
+      // Setting it to false would cause an unnecessary re-validation on the next turn.
       return {
         stage: "collecting",
         error:
           "I couldn't check availability right now. Please try again or adjust your booking details.",
         availableOptions: [],
         lastShownOptions: [],
-        locationSuggestions: [],
-        locationLookupTriggered: false,
       };
     }
   }
@@ -557,9 +579,15 @@ export class LangGraphGraphService {
             ...(locationResult.suggestions ?? []),
           ]);
 
+    // For NO_MATCH and AMBIGUOUS, set locationLookupTriggered to true to prevent infinite
+    // re-validation loops. For AREA_ONLY, keep it false so re-validation occurs when the
+    // user provides a more specific address (since suggestions are empty for AREA_ONLY).
+    const shouldMarkLookupComplete =
+      locationResult.failureReason === "NO_MATCH" || locationResult.failureReason === "AMBIGUOUS";
+
     return {
       stage: "collecting",
-      locationLookupTriggered: false,
+      locationLookupTriggered: shouldMarkLookupComplete,
       locationSuggestions: (locationResult.suggestions ?? []).map((suggestion) => ({
         placeId: suggestion.placeId,
         description: suggestion.description,
