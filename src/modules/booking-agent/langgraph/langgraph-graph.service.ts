@@ -114,6 +114,10 @@ const BookingAgentAnnotation = Annotation.Root({
     reducer: (_, update) => update,
     default: () => false,
   }),
+  locationLookupFailed: Annotation<boolean>({
+    reducer: (_, update) => update,
+    default: () => false,
+  }),
   nextNode: AnnotationWithDefault<string | null>(null),
   error: AnnotationWithDefault<string | null>(null),
 });
@@ -293,6 +297,7 @@ export class LangGraphGraphService {
       lastShownOptions: shouldClearOptions ? [] : state.lastShownOptions,
       locationSuggestions: pickupLocationChanged ? [] : (state.locationSuggestions ?? []),
       locationLookupTriggered: pickupLocationChanged ? false : !!state.locationLookupTriggered,
+      locationLookupFailed: pickupLocationChanged ? false : !!state.locationLookupFailed,
     };
   }
 
@@ -353,10 +358,10 @@ export class LangGraphGraphService {
       const validatedDraft = validationResult.draft;
 
       // If location lookup previously failed (NO_MATCH) and user hasn't provided a new address,
-      // don't proceed to search - stay in collecting stage to get a valid address
-      const locationPreviouslyFailedNoMatch =
-        state.locationLookupTriggered && (state.locationSuggestions ?? []).length === 0;
-      if (locationPreviouslyFailedNoMatch && validatedDraft.pickupLocation) {
+      // don't proceed to search - stay in collecting stage to get a valid address.
+      // Note: We use the explicit `locationLookupFailed` flag rather than inferring from
+      // empty suggestions, because a successful search also clears suggestions.
+      if (state.locationLookupFailed && validatedDraft.pickupLocation) {
         return {
           draft: validatedDraft,
           stage: "collecting",
@@ -365,6 +370,7 @@ export class LangGraphGraphService {
           error: null,
           locationSuggestions: [],
           locationLookupTriggered: true,
+          locationLookupFailed: true,
         };
       }
 
@@ -447,6 +453,8 @@ export class LangGraphGraphService {
         error: noResultsError,
         locationSuggestions: [],
         locationLookupTriggered: true,
+        // Clear failed state on successful search - this allows re-search with same location
+        locationLookupFailed: false,
       };
     } catch (error) {
       this.logger.error("Search node failed", {
@@ -585,14 +593,20 @@ export class LangGraphGraphService {
     const shouldMarkLookupComplete =
       locationResult.failureReason === "NO_MATCH" || locationResult.failureReason === "AMBIGUOUS";
 
+    // NO_MATCH means the address couldn't be found at all - mark as failed so searchNode
+    // blocks until user provides a new address. AMBIGUOUS has suggestions so isn't a failure.
+    const isNoMatchFailure = locationResult.failureReason === "NO_MATCH";
+
     return {
       stage: "collecting",
       locationLookupTriggered: shouldMarkLookupComplete,
+      locationLookupFailed: isNoMatchFailure,
       locationSuggestions: (locationResult.suggestions ?? []).map((suggestion) => ({
         placeId: suggestion.placeId,
         description: suggestion.description,
       })),
       response: { text: suggestionText },
+      error: null,
       outboxItems: [
         {
           conversationId: state.conversationId,

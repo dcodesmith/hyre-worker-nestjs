@@ -73,6 +73,7 @@ describe("LangGraphGraphService", () => {
     error: null,
     locationSuggestions: [],
     locationLookupTriggered: false,
+    locationLookupFailed: false,
   });
 
   const buildVehicleOption = (overrides?: Partial<VehicleSearchOption>): VehicleSearchOption => ({
@@ -1441,7 +1442,7 @@ describe("LangGraphGraphService", () => {
       expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
     });
 
-    it("does not re-validate pickup location after NO_MATCH when locationLookupTriggered is true", async () => {
+    it("does not re-validate pickup location after NO_MATCH when locationLookupFailed is true", async () => {
       const existingState = buildInitialState();
       existingState.stage = "collecting";
       existingState.draft = {
@@ -1452,9 +1453,10 @@ describe("LangGraphGraphService", () => {
         pickupLocation: "Xyzzyville",
         dropoffLocation: "Xyzzyville",
       };
-      // After a NO_MATCH, locationLookupTriggered should be true and suggestions empty
+      // After a NO_MATCH, locationLookupTriggered should be true, suggestions empty, and locationLookupFailed true
       existingState.locationLookupTriggered = true;
       existingState.locationSuggestions = [];
+      existingState.locationLookupFailed = true;
       stateServiceMock.loadState.mockResolvedValue(existingState);
       stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
 
@@ -1521,6 +1523,73 @@ describe("LangGraphGraphService", () => {
       // Should go back to collecting stage with error message
       expect(result.stage).toBe("collecting");
       expect(result.error).toContain("No vehicles matching your criteria");
+    });
+
+    it("allows re-search after successful search when user modifies non-location criteria", async () => {
+      // This test verifies the fix for the bug where locationLookupTriggered=true and
+      // locationSuggestions=[] after a successful search incorrectly blocked re-search.
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker Hotel, Ikoyi",
+        vehicleType: "SUV",
+      };
+      existingState.availableOptions = [buildVehicleOption()];
+      existingState.lastShownOptions = [buildVehicleOption()];
+      // After a successful search, these flags are set:
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [];
+      existingState.locationLookupFailed = false; // Key: NOT failed, just completed successfully
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      // User wants a different vehicle type (same location)
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "update_info",
+        draftPatch: { vehicleType: "SEDAN" },
+        confidence: 0.9,
+      });
+
+      // Search returns new results for SEDAN
+      const sedanVehicle = buildVehicleOption({
+        id: "sedan_1",
+        make: "Toyota",
+        model: "Camry",
+        vehicleType: "SEDAN",
+      });
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [sedanVehicle],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are the sedan options!",
+        vehicleCards: [
+          {
+            vehicleId: sedanVehicle.id,
+            imageUrl: null,
+            caption: "Toyota Camry",
+            buttonId: `select_vehicle:${sedanVehicle.id}`,
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Show me sedans instead",
+      });
+
+      // Should successfully search and present new options
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+      expect(result.stage).toBe("presenting_options");
+      expect(result.draft.vehicleType).toBe("SEDAN");
     });
   });
 

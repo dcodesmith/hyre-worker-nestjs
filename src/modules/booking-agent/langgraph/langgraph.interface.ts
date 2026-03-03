@@ -148,6 +148,8 @@ export interface BookingAgentState {
   error: string | null;
   locationSuggestions?: LocationSuggestionOption[];
   locationLookupTriggered?: boolean;
+  /** True when location lookup failed with NO_MATCH (no suggestions available) */
+  locationLookupFailed?: boolean;
 }
 
 export interface LangGraphInvokeInput {
@@ -205,6 +207,8 @@ export interface PersistedState {
   bookingId: string | null;
   locationSuggestions?: LocationSuggestionOption[];
   locationLookupTriggered?: boolean;
+  /** True when location lookup failed with NO_MATCH (no suggestions available) */
+  locationLookupFailed?: boolean;
   updatedAt: string;
 }
 
