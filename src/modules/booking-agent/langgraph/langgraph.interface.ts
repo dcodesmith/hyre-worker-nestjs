@@ -145,7 +145,10 @@ export interface BookingAgentState {
   response: AgentResponse | null;
   outboxItems: LangGraphOutboxItem[];
   nextNode: string | null;
+  /** Service/system errors only (e.g., API failures, timeouts). Not for business messages. */
   error: string | null;
+  /** Business status messages (e.g., "vehicle unavailable", "no results found"). Not errors. */
+  statusMessage: string | null;
   locationSuggestions?: LocationSuggestionOption[];
   locationLookupTriggered?: boolean;
   /** True when location lookup failed with NO_MATCH (no suggestions available) */

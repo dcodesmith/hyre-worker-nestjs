@@ -280,8 +280,8 @@ describe("LangGraphResponderService", () => {
 
       const state = buildState({
         stage: "presenting_options",
-        error:
-          "That vehicle is no longer available for your selected date and time. Here are updated available options.",
+        statusMessage:
+          "That vehicle is no longer available for your selected date and time. Here are some alternatives.",
         availableOptions: options,
       });
 

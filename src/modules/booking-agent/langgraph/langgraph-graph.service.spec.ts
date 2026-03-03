@@ -72,6 +72,7 @@ describe("LangGraphGraphService", () => {
     extraction: null,
     nextNode: null,
     error: null,
+    statusMessage: null,
     locationSuggestions: [],
     locationLookupTriggered: false,
     locationLookupFailed: false,
@@ -869,8 +870,8 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.stage).toBe("presenting_options");
-      expect(result.error).toContain("no longer available");
-      expect(result.error).not.toContain("Car Not Available Exception");
+      // Vehicle unavailability is a business status message, not an error
+      expect(result.error).toBeNull();
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
       expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
     });
@@ -908,7 +909,7 @@ describe("LangGraphGraphService", () => {
 
       expect(result.stage).toBe("confirming");
       expect(result.error).toBe(
-        "I couldn't create your booking just now. Please try again or type AGENT to speak with someone.",
+        "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.",
       );
       expect(result.error).not.toContain("postgres timeout");
     });
@@ -1519,9 +1520,9 @@ describe("LangGraphGraphService", () => {
         message: "Search for me",
       });
 
-      // Should go back to collecting stage with error message
+      // Should go back to collecting stage (no results is a status message, not an error)
       expect(result.stage).toBe("collecting");
-      expect(result.error).toContain("No vehicles matching your criteria");
+      expect(result.error).toBeNull();
     });
 
     it("allows re-search after successful search when user modifies non-location criteria", async () => {
@@ -1752,7 +1753,8 @@ describe("LangGraphGraphService", () => {
       // Should preserve the validated/normalized address
       expect(result.draft.pickupLocation).toBe("The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos");
       expect(result.stage).toBe("collecting");
-      expect(result.error).toContain("type of vehicle");
+      // Precondition prompt is a status message, not an error
+      expect(result.error).toBeNull();
       // Should preserve locationLookupTriggered so we don't re-validate on next turn
       expect(savedState).not.toBeNull();
       if (savedState) {

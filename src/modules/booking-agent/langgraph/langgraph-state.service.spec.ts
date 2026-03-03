@@ -302,6 +302,7 @@ describe("LangGraphStateService", () => {
         extraction: null,
         nextNode: null,
         error: null,
+        statusMessage: null,
       };
 
       await service.saveState(conversationId, state);
@@ -338,6 +339,7 @@ describe("LangGraphStateService", () => {
         extraction: null,
         nextNode: null,
         error: null,
+        statusMessage: null,
       };
 
       await service.saveState(conversationId, state);
@@ -370,6 +372,7 @@ describe("LangGraphStateService", () => {
         extraction: null,
         nextNode: null,
         error: null,
+        statusMessage: null,
       };
 
       await expect(service.saveState(conversationId, state)).rejects.toThrow();

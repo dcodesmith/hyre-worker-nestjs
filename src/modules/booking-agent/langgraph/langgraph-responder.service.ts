@@ -96,8 +96,16 @@ export class LangGraphResponderService {
   }
 
   private getDeterministicResponse(state: BookingAgentState): AgentResponse | null {
-    const { extraction, stage, availableOptions, draft, selectedOption, paymentLink, error } =
-      state;
+    const {
+      extraction,
+      stage,
+      availableOptions,
+      draft,
+      selectedOption,
+      paymentLink,
+      error,
+      statusMessage,
+    } = state;
 
     if (extraction?.intent === "reset") {
       return {
@@ -105,16 +113,17 @@ export class LangGraphResponderService {
       };
     }
 
+    // Service/system errors - show generic error message
     if (error && availableOptions.length === 0 && stage === "collecting") {
       return {
-        text: "Sorry, I couldn't complete that just now. Please try again or type AGENT to continue with a human agent.",
+        text: error,
       };
     }
 
     if (stage === "presenting_options" && availableOptions.length > 0) {
       return {
-        text: error
-          ? `${error}\n\nHere are your options! Tap Select on the one you'd like to book.`
+        text: statusMessage
+          ? `${statusMessage}\n\nHere are your options! Tap Select on the one you'd like to book.`
           : "Here are your options! Tap Select on the one you'd like to book.",
         vehicleCards: this.buildVehicleCards(stage, availableOptions, draft),
       };

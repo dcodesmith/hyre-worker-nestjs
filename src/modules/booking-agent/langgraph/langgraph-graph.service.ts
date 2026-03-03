@@ -7,7 +7,11 @@ import { GooglePlacesService } from "../../maps/google-places.service";
 import type { AddressLookupResult } from "../../maps/maps.interface";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
-import { LANGGRAPH_NODE_NAMES, LANGGRAPH_OUTBOUND_MODE } from "./langgraph.const";
+import {
+  LANGGRAPH_NODE_NAMES,
+  LANGGRAPH_OUTBOUND_MODE,
+  LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./langgraph.const";
 import { LangGraphExecutionFailedException } from "./langgraph.error";
 import type {
   AgentResponse,
@@ -120,6 +124,7 @@ const BookingAgentAnnotation = Annotation.Root({
   }),
   nextNode: AnnotationWithDefault<string | null>(null),
   error: AnnotationWithDefault<string | null>(null),
+  statusMessage: AnnotationWithDefault<string | null>(null),
 });
 
 type AnnotationState = typeof BookingAgentAnnotation.State;
@@ -241,13 +246,19 @@ export class LangGraphGraphService {
       return { extraction };
     } catch (error) {
       this.logger.error("Extract node failed", { error });
+      // When extraction fails (external service error), clear state and show user-friendly message.
+      // Don't expose raw errors like "429 quota exceeded" to users.
       return {
         extraction: {
           intent: "unknown",
           draftPatch: {},
           confidence: 0,
         },
-        error: error instanceof Error ? error.message : String(error),
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        availableOptions: [],
+        lastShownOptions: [],
+        selectedOption: null,
+        stage: "greeting",
       };
     }
   }
@@ -418,7 +429,7 @@ export class LangGraphGraphService {
           availableOptions: [],
           lastShownOptions: [],
           stage: "collecting",
-          error: searchResult.precondition.prompt,
+          statusMessage: searchResult.precondition.prompt,
           locationSuggestions: [],
           locationLookupTriggered: true,
           locationLookupFailed: false,
@@ -445,8 +456,8 @@ export class LangGraphGraphService {
         })),
       });
 
-      // If no vehicles found, set an error message so the responder can inform the user
-      const noResultsError =
+      // If no vehicles found, set a status message so the responder can inform the user
+      const noResultsMessage =
         options.length === 0
           ? "No vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?"
           : null;
@@ -456,7 +467,7 @@ export class LangGraphGraphService {
         availableOptions: options,
         lastShownOptions: options,
         stage: newStage,
-        error: noResultsError,
+        statusMessage: noResultsMessage,
         locationSuggestions: [],
         locationLookupTriggered: true,
         // Clear failed state on successful search - this allows re-search with same location
@@ -472,8 +483,7 @@ export class LangGraphGraphService {
       // Setting it to false would cause an unnecessary re-validation on the next turn.
       return {
         stage: "collecting",
-        error:
-          "I couldn't check availability right now. Please try again or adjust your booking details.",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         availableOptions: [],
         lastShownOptions: [],
       };
@@ -703,8 +713,8 @@ export class LangGraphGraphService {
             availableOptions: fallbackOptions,
             lastShownOptions: fallbackOptions,
             stage: "presenting_options",
-            error:
-              "That vehicle is no longer available for your selected date and time. Here are updated available options.",
+            statusMessage:
+              "That vehicle is no longer available for your selected date and time. Here are some alternatives.",
           };
         }
 
@@ -713,15 +723,14 @@ export class LangGraphGraphService {
           availableOptions: [],
           lastShownOptions: [],
           stage: "collecting",
-          error:
+          statusMessage:
             "That vehicle is no longer available for your selected date and time. Please adjust your date, booking type, or vehicle preference.",
         };
       }
 
       // Keep a user-safe fallback message for unexpected booking failures.
       return {
-        error:
-          "I couldn't create your booking just now. Please try again or type AGENT to speak with someone.",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         stage: "confirming",
       };
     }

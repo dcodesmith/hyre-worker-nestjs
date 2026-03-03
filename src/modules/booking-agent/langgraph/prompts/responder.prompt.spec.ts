@@ -26,6 +26,7 @@ describe("responder.prompt contract", () => {
       outboxItems: [],
       nextNode: null,
       error: null,
+      statusMessage: null,
     });
 
     expect(prompt).toContain("YOUR PERSONALITY:");
@@ -58,6 +59,7 @@ describe("responder.prompt contract", () => {
         outboxItems: [],
         nextNode: null,
         error: null,
+        statusMessage: null,
       },
       { maxContextFieldChars: 300, maxDraftContextChars: 600, maxOptionContextItems: 5 },
     );
