@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
+import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import { buildVehicleOption } from "./langgraph.factory";
@@ -42,6 +43,9 @@ describe("LangGraphGraphService", () => {
       findUnique: ReturnType<typeof vi.fn>;
     };
   };
+  let googlePlacesServiceMock: {
+    validateAddressWithSuggestions: ReturnType<typeof vi.fn>;
+  };
 
   const conversationId = "conv_test";
   const messageId = "msg_test";
@@ -68,6 +72,9 @@ describe("LangGraphGraphService", () => {
     extraction: null,
     nextNode: null,
     error: null,
+    locationSuggestions: [],
+    locationLookupTriggered: false,
+    locationLookupFailed: false,
   });
 
   beforeEach(async () => {
@@ -120,6 +127,14 @@ describe("LangGraphGraphService", () => {
       },
     };
 
+    googlePlacesServiceMock = {
+      validateAddressWithSuggestions: vi.fn().mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+        suggestions: [],
+      }),
+    };
+
     moduleRef = await Test.createTestingModule({
       providers: [
         LangGraphGraphService,
@@ -130,6 +145,7 @@ describe("LangGraphGraphService", () => {
         { provide: BookingAgentWindowPolicyService, useValue: windowPolicyServiceMock },
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
       ],
     }).compile();
 
@@ -362,7 +378,7 @@ describe("LangGraphGraphService", () => {
 
   describe("graph flow - collecting info", () => {
     it("updates draft with extracted info", async () => {
-      extractorServiceMock.extract.mockResolvedValue({
+      extractorServiceMock.extract.mockResolvedValueOnce({
         intent: "provide_info",
         draftPatch: {
           bookingType: "DAY",
@@ -372,15 +388,24 @@ describe("LangGraphGraphService", () => {
         confidence: 0.9,
       });
 
+      // Explicitly stub the geocoding lookup for this test
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValueOnce({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+        suggestions: [],
+      });
+
       const result = await service.invoke({
         conversationId,
         messageId,
         message: "I need a day booking tomorrow in Lagos",
       });
 
+      // Verify normalization lookup was called with the raw pickupLocation
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Lagos");
       expect(result.draft.bookingType).toBe("DAY");
       expect(result.draft.pickupDate).toBe("2026-03-01");
-      expect(result.draft.pickupLocation).toBe("Lagos");
+      expect(result.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
     });
 
     it("triggers search when all required fields collected", async () => {
@@ -443,6 +468,13 @@ describe("LangGraphGraphService", () => {
         confidence: 0.9,
       });
 
+      // Mock Google Places to return the same address (already specific enough)
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "5 Glover Road, Ikoyi",
+        suggestions: [],
+      });
+
       toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
         exactMatches: [buildVehicleOption()],
         alternatives: [],
@@ -455,6 +487,99 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.draft.dropoffLocation).toBe("5 Glover Road, Ikoyi");
+    });
+
+    it("keeps dropoffLocation in sync when pickupLocation is normalized and they were equal", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Glover Road Ikoyi", // Same as pickup (via "same location" instruction)
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Google Places normalizes the address
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+        suggestions: [],
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Both pickup and dropoff should be normalized to the same address
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+    });
+
+    it("does not update dropoffLocation when it differs from pickupLocation before normalization", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Lekki Phase 1", // Different from pickup
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+        suggestions: [],
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Pickup should be normalized, but dropoff should remain unchanged
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("Lekki Phase 1");
     });
 
     it("passes availableOptions to responder after search", async () => {
@@ -499,6 +624,49 @@ describe("LangGraphGraphService", () => {
       expect(responderArg.availableOptions).toHaveLength(1);
       expect(responderArg.availableOptions[0].id).toBe("veh_search_result");
       expect(responderArg.stage).toBe("presenting_options");
+    });
+
+    it("validates pickup immediately in collecting stage when user provides vague area", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "pick me up from Ikoyi",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: { pickupLocation: "Ikoyi" },
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [],
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pick me up from Ikoyi",
+      });
+
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Ikoyi");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("looks like a general area");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
     });
   });
 
@@ -1181,6 +1349,139 @@ describe("LangGraphGraphService", () => {
   });
 
   describe("search - no results", () => {
+    it("sends checking message and top suggestions when pickup address is not found", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheabaker Ikoyi",
+        dropoffLocation: "Wheabaker Ikoyi",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [
+          { placeId: "1", description: "The Wheatbaker, Ikoyi, Lagos" },
+          { placeId: "2", description: "The Wheatbaker Hotel, Onitolo Road, Ikoyi, Lagos" },
+          { placeId: "3", description: "Wheatbaker Street, Ikoyi, Lagos" },
+          { placeId: "4", description: "Wheatbaker Bus Stop, Ikoyi, Lagos" },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pickup is wheabaker ikoyi",
+      });
+
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("Did you mean one of these?");
+      expect(result.outboxItems[1]?.textBody).toContain("1. The Wheatbaker, Ikoyi, Lagos");
+    });
+
+    it("re-validates pickup location on next turn after invalid lookup", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [
+        { placeId: "1", description: "The Wheatbaker, Ikoyi, Lagos" },
+      ];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: false,
+        suggestions: [],
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "yes",
+      });
+
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Ikoyi");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("looks like a general area");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+
+    it("does not re-validate pickup location after NO_MATCH when locationLookupFailed is true", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Xyzzyville",
+        dropoffLocation: "Xyzzyville",
+      };
+      // After a NO_MATCH, locationLookupTriggered should be true, suggestions empty, and locationLookupFailed true
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [];
+      existingState.locationLookupFailed = true;
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "I still need a valid pickup location. Please share a more specific address.",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "yes",
+      });
+
+      // Should NOT re-validate because locationLookupTriggered is true and suggestions are empty
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).not.toHaveBeenCalled();
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      // Should go to responder with meaningful error so it can ask for a more precise pickup address
+      expect(result.stage).toBe("collecting");
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("Xyzzyville");
+      expect(result.error).toContain("more specific pickup location");
+    });
+
     it("sets error message when search returns no vehicles", async () => {
       const existingState = buildInitialState();
       existingState.stage = "collecting";
@@ -1221,6 +1522,73 @@ describe("LangGraphGraphService", () => {
       // Should go back to collecting stage with error message
       expect(result.stage).toBe("collecting");
       expect(result.error).toContain("No vehicles matching your criteria");
+    });
+
+    it("allows re-search after successful search when user modifies non-location criteria", async () => {
+      // This test verifies the fix for the bug where locationLookupTriggered=true and
+      // locationSuggestions=[] after a successful search incorrectly blocked re-search.
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker Hotel, Ikoyi",
+        vehicleType: "SUV",
+      };
+      existingState.availableOptions = [buildVehicleOption()];
+      existingState.lastShownOptions = [buildVehicleOption()];
+      // After a successful search, these flags are set:
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [];
+      existingState.locationLookupFailed = false; // Key: NOT failed, just completed successfully
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      // User wants a different vehicle type (same location)
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "update_info",
+        draftPatch: { vehicleType: "SEDAN" },
+        confidence: 0.9,
+      });
+
+      // Search returns new results for SEDAN
+      const sedanVehicle = buildVehicleOption({
+        id: "sedan_1",
+        make: "Toyota",
+        model: "Camry",
+        vehicleType: "SEDAN",
+      });
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [sedanVehicle],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are the sedan options!",
+        vehicleCards: [
+          {
+            vehicleId: sedanVehicle.id,
+            imageUrl: null,
+            caption: "Toyota Camry",
+            buttonId: `select_vehicle:${sedanVehicle.id}`,
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Show me sedans instead",
+      });
+
+      // Should successfully search and present new options
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+      expect(result.stage).toBe("presenting_options");
+      expect(result.draft.vehicleType).toBe("SEDAN");
     });
   });
 
@@ -1265,6 +1633,132 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.error).toBeDefined();
+    });
+
+    it("does not reset locationLookupTriggered to false when search fails after validation", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      // Location was previously validated
+      existingState.locationLookupTriggered = true;
+      existingState.locationSuggestions = [];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Search fails after validation succeeded (but validation was skipped due to locationLookupTriggered=true)
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockRejectedValue(
+        new Error("Database timeout"),
+      );
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "I couldn't check availability right now.",
+      });
+
+      // Capture the state that gets saved
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      // Verify search was actually called (and rejected) so the catch path is exercised
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+
+      // The catch block should NOT reset locationLookupTriggered to false
+      // (we omit locationLookupTriggered/locationSuggestions from the catch return,
+      // so the existing state is preserved)
+      expect(savedState).not.toBeNull();
+      if (savedState) {
+        expect(savedState.locationLookupTriggered).toBe(true);
+        expect(savedState.stage).toBe("collecting");
+      }
+    });
+
+    it("preserves validated draft and location state when search returns precondition", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationLookupTriggered = false;
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Google Places validates and normalizes the address
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos",
+        placeId: "ChIJ123",
+        suggestions: [],
+      });
+
+      // Search returns precondition (e.g., missing vehicle type for a search that requires it)
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        precondition: {
+          field: "vehicleType",
+          prompt: "What type of vehicle would you prefer?",
+        },
+        exactMatches: [],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "What type of vehicle would you prefer?",
+      });
+
+      // Capture the state that gets saved
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for cars",
+      });
+
+      // Should preserve the validated/normalized address
+      expect(result.draft.pickupLocation).toBe("The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos");
+      expect(result.stage).toBe("collecting");
+      expect(result.error).toContain("type of vehicle");
+      // Should preserve locationLookupTriggered so we don't re-validate on next turn
+      expect(savedState).not.toBeNull();
+      if (savedState) {
+        expect(savedState.locationLookupTriggered).toBe(true);
+        expect(savedState.locationSuggestions).toEqual([]);
+      }
     });
   });
 

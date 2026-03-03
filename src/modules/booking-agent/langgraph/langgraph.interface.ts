@@ -107,6 +107,11 @@ export interface AgentResponse {
   vehicleCards?: VehicleCard[];
 }
 
+export interface LocationSuggestionOption {
+  placeId: string;
+  description: string;
+}
+
 export interface LangGraphOutboxItem {
   conversationId: string;
   dedupeKey: string;
@@ -141,6 +146,10 @@ export interface BookingAgentState {
   outboxItems: LangGraphOutboxItem[];
   nextNode: string | null;
   error: string | null;
+  locationSuggestions?: LocationSuggestionOption[];
+  locationLookupTriggered?: boolean;
+  /** True when location lookup failed with NO_MATCH (no suggestions available) */
+  locationLookupFailed?: boolean;
 }
 
 export interface LangGraphInvokeInput {
@@ -196,6 +205,10 @@ export interface PersistedState {
   holdId: string | null;
   holdExpiresAt: string | null;
   bookingId: string | null;
+  locationSuggestions?: LocationSuggestionOption[];
+  locationLookupTriggered?: boolean;
+  /** True when location lookup failed with NO_MATCH (no suggestions available) */
+  locationLookupFailed?: boolean;
   updatedAt: string;
 }
 

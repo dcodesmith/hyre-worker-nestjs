@@ -1,6 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { Queue } from "bullmq";
+import type { Queue } from "bullmq";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "../booking-agent.const";
 import type {

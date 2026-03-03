@@ -53,6 +53,9 @@ export class LangGraphStateService {
         holdId: persisted.holdId ?? null,
         holdExpiresAt: persisted.holdExpiresAt ?? null,
         bookingId: persisted.bookingId ?? null,
+        locationSuggestions: persisted.locationSuggestions ?? [],
+        locationLookupTriggered: persisted.locationLookupTriggered ?? false,
+        locationLookupFailed: persisted.locationLookupFailed ?? false,
       };
     } catch (error) {
       this.logger.error("Failed to load LangGraph state", {
@@ -82,6 +85,9 @@ export class LangGraphStateService {
       holdId: state.holdId,
       holdExpiresAt: state.holdExpiresAt,
       bookingId: state.bookingId,
+      locationSuggestions: state.locationSuggestions ?? [],
+      locationLookupTriggered: state.locationLookupTriggered ?? false,
+      locationLookupFailed: state.locationLookupFailed ?? false,
       updatedAt: new Date().toISOString(),
     };
 
@@ -146,6 +152,9 @@ export class LangGraphStateService {
       outboxItems: [],
       nextNode: null,
       error: null,
+      locationSuggestions: [],
+      locationLookupTriggered: false,
+      locationLookupFailed: false,
     };
   }
 
@@ -179,6 +188,9 @@ export class LangGraphStateService {
       outboxItems: [],
       nextNode: null,
       error: null,
+      locationSuggestions: existingState.locationSuggestions ?? [],
+      locationLookupTriggered: existingState.locationLookupTriggered ?? false,
+      locationLookupFailed: existingState.locationLookupFailed ?? false,
     };
   }
 
