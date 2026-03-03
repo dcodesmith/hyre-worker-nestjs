@@ -384,6 +384,7 @@ export class LangGraphGraphService {
           error: null,
           locationSuggestions: [],
           locationLookupTriggered: true,
+          locationLookupFailed: false,
         };
       }
 
@@ -416,6 +417,7 @@ export class LangGraphGraphService {
           error: searchResult.precondition.prompt,
           locationSuggestions: [],
           locationLookupTriggered: true,
+          locationLookupFailed: false,
         };
       }
 
@@ -587,20 +589,22 @@ export class LangGraphGraphService {
             ...(locationResult.suggestions ?? []),
           ]);
 
-    // For NO_MATCH and AMBIGUOUS, set locationLookupTriggered to true to prevent infinite
-    // re-validation loops. For AREA_ONLY, keep it false so re-validation occurs when the
-    // user provides a more specific address (since suggestions are empty for AREA_ONLY).
-    const shouldMarkLookupComplete =
-      locationResult.failureReason === "NO_MATCH" || locationResult.failureReason === "AMBIGUOUS";
+    // Set locationLookupTriggered to true for all failure reasons to prevent infinite
+    // re-validation loops. The mergeNode resets this flag when pickupLocationChanged,
+    // so re-validation will occur when the user provides a new address.
+    const shouldMarkLookupComplete = true;
 
-    // NO_MATCH means the address couldn't be found at all - mark as failed so searchNode
-    // blocks until user provides a new address. AMBIGUOUS has suggestions so isn't a failure.
-    const isNoMatchFailure = locationResult.failureReason === "NO_MATCH";
+    // NO_MATCH and AREA_ONLY should mark as failed so searchNode blocks until user provides
+    // a new address. AMBIGUOUS has suggestions for the user to choose from, so isn't a failure.
+    // AREA_ONLY must also set locationLookupFailed to prevent area-only addresses from
+    // bypassing validation and reaching the vehicle search.
+    const isLocationFailure =
+      locationResult.failureReason === "NO_MATCH" || locationResult.failureReason === "AREA_ONLY";
 
     return {
       stage: "collecting",
       locationLookupTriggered: shouldMarkLookupComplete,
-      locationLookupFailed: isNoMatchFailure,
+      locationLookupFailed: isLocationFailure,
       locationSuggestions: (locationResult.suggestions ?? []).map((suggestion) => ({
         placeId: suggestion.placeId,
         description: suggestion.description,

@@ -391,7 +391,7 @@ describe("LangGraphGraphService", () => {
 
   describe("graph flow - collecting info", () => {
     it("updates draft with extracted info", async () => {
-      extractorServiceMock.extract.mockResolvedValue({
+      extractorServiceMock.extract.mockResolvedValueOnce({
         intent: "provide_info",
         draftPatch: {
           bookingType: "DAY",
@@ -401,12 +401,21 @@ describe("LangGraphGraphService", () => {
         confidence: 0.9,
       });
 
+      // Explicitly stub the geocoding lookup for this test
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValueOnce({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+        suggestions: [],
+      });
+
       const result = await service.invoke({
         conversationId,
         messageId,
         message: "I need a day booking tomorrow in Lagos",
       });
 
+      // Verify normalization lookup was called with the raw pickupLocation
+      expect(googlePlacesServiceMock.validateAddressWithSuggestions).toHaveBeenCalledWith("Lagos");
       expect(result.draft.bookingType).toBe("DAY");
       expect(result.draft.pickupDate).toBe("2026-03-01");
       expect(result.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
@@ -1680,6 +1689,9 @@ describe("LangGraphGraphService", () => {
         messageId,
         message: "Search",
       });
+
+      // Verify search was actually called (and rejected) so the catch path is exercised
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
 
       // The catch block should NOT reset locationLookupTriggered to false
       // (we omit locationLookupTriggered/locationSuggestions from the catch return,
