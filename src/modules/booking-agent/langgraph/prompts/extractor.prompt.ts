@@ -138,9 +138,11 @@ RULES:
 2. Parse relative dates to absolute YYYY-MM-DD format
 3. Parse times to 24-hour HH:mm format
 4. If user says "for X days", set durationDays AND calculate dropoffDate from pickupDate
-5. ONLY set dropoffLocation if user EXPLICITLY says "same location", "same as pickup", or specifies a different location
+5. Set dropoffLocation when supported by context:
+   - explicit phrases like "same location", "same as pickup", or a different address
+   - OR an affirmative reply ("yes", "yup", "yeah", "please") when recent assistant message asked whether dropoff is same as pickup
 6. If user says "from tomorrow for 3 days", calculate: pickupDate=tomorrow, dropoffDate=pickupDate+3days
-7. NEVER assume dropoffLocation equals pickupLocation unless user explicitly says so
+7. Never set dropoffLocation to pickupLocation without either explicit wording OR clear conversational context from the immediately preceding assistant question
 8. Be conservative with confidence - if unsure, use lower value
 9. If message is ambiguous, prefer ask_question intent`;
 }

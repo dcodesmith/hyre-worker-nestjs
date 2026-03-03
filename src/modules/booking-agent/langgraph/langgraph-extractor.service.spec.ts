@@ -369,6 +369,126 @@ describe("LangGraphExtractorService", () => {
       expect(openaiMock.invoke).not.toHaveBeenCalled();
     });
 
+    it("uses deterministic same-dropoff mapping for affirmative collecting reply with context", async () => {
+      const state = buildState({
+        inboundMessage: "yes please",
+        stage: "collecting",
+        draft: {
+          pickupLocation: "6 Gerrard Road, Ikoyi",
+          pickupDate: "2026-03-04",
+          dropoffDate: "2026-03-07",
+          pickupTime: "09:00",
+          bookingType: "DAY",
+        },
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "Just need to know where you'd like to be dropped off each day, or will it be the same location as pickup?",
+            timestamp: "2026-03-01T09:00:00Z",
+          },
+        ],
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.dropoffLocation).toBe("6 Gerrard Road, Ikoyi");
+      expect(result.confidence).toBe(1);
+      expect(openaiMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("uses deterministic same-dropoff mapping for 'sure' with context", async () => {
+      const state = buildState({
+        inboundMessage: "sure",
+        stage: "collecting",
+        draft: {
+          pickupLocation: "6 Gerrard Road, Ikoyi",
+          pickupDate: "2026-03-04",
+          dropoffDate: "2026-03-07",
+          pickupTime: "09:00",
+          bookingType: "DAY",
+        },
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "Just need to know where you'd like to be dropped off each day, or will it be the same location as pickup?",
+            timestamp: "2026-03-01T09:00:00Z",
+          },
+        ],
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.dropoffLocation).toBe("6 Gerrard Road, Ikoyi");
+      expect(result.confidence).toBe(1);
+      expect(openaiMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("uses deterministic same-dropoff mapping for 'that would be nice' with context", async () => {
+      const state = buildState({
+        inboundMessage: "that would be nice",
+        stage: "collecting",
+        draft: {
+          pickupLocation: "6 Gerrard Road, Ikoyi",
+          pickupDate: "2026-03-04",
+          dropoffDate: "2026-03-07",
+          pickupTime: "09:00",
+          bookingType: "DAY",
+        },
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "Just need to know where you'd like to be dropped off each day, or will it be the same location as pickup?",
+            timestamp: "2026-03-01T09:00:00Z",
+          },
+        ],
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.dropoffLocation).toBe("6 Gerrard Road, Ikoyi");
+      expect(result.confidence).toBe(1);
+      expect(openaiMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("does not infer same-dropoff without contextual assistant question", async () => {
+      openaiMock.invoke.mockResolvedValue({
+        content: JSON.stringify({
+          intent: "provide_info",
+          draftPatch: {},
+          confidence: 0.7,
+        }),
+      });
+
+      const state = buildState({
+        inboundMessage: "yes",
+        stage: "collecting",
+        draft: {
+          pickupLocation: "6 Gerrard Road, Ikoyi",
+          pickupDate: "2026-03-04",
+          dropoffDate: "2026-03-07",
+          pickupTime: "09:00",
+          bookingType: "DAY",
+        },
+        messages: [
+          {
+            role: "assistant",
+            content: "Would you like me to continue with your booking?",
+            timestamp: "2026-03-01T09:00:00Z",
+          },
+        ],
+      });
+
+      await service.extract(state);
+
+      expect(openaiMock.invoke).toHaveBeenCalled();
+    });
+
     it("uses low-confidence cancel intent for bare cancel in confirming stage", async () => {
       const state = buildState({
         inboundMessage: "cancel",
@@ -625,14 +745,14 @@ describe("LangGraphExtractorService", () => {
     it("includes conversation history in system prompt for context", async () => {
       openaiMock.invoke.mockResolvedValue({
         content: JSON.stringify({
-          intent: "confirm",
+          intent: "ask_question",
           draftPatch: {},
           confidence: 0.95,
         }),
       });
 
       const state = buildState({
-        inboundMessage: "Absolutely, that works",
+        inboundMessage: "Can you repeat the summary?",
         stage: "confirming",
         messages: [
           { role: "user", content: "I want a car tomorrow", timestamp: "2026-02-28T10:00:00Z" },

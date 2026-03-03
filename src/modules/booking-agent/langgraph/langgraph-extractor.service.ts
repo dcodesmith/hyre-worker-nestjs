@@ -74,7 +74,7 @@ export class LangGraphExtractorService {
       return this.handleInteractiveReply(inboundInteractive, lastShownOptions);
     }
 
-    const deterministicResult = this.getDeterministicTextResult(inboundMessage, stage);
+    const deterministicResult = this.getDeterministicTextResult(state);
     if (deterministicResult) {
       return deterministicResult;
     }
@@ -251,10 +251,8 @@ export class LangGraphExtractorService {
     };
   }
 
-  private getDeterministicTextResult(
-    inboundMessage: string,
-    stage: BookingAgentState["stage"],
-  ): ExtractionResult | null {
+  private getDeterministicTextResult(state: BookingAgentState): ExtractionResult | null {
+    const { inboundMessage, stage, draft, messages } = state;
     const normalized = normalizeControlText(inboundMessage);
     if (!normalized) {
       return null;
@@ -281,6 +279,35 @@ export class LangGraphExtractorService {
       }
     }
 
+    if (
+      stage === "collecting" &&
+      !draft.dropoffLocation &&
+      !!draft.pickupLocation &&
+      isLikelyAffirmativeControl(normalized) &&
+      this.didAssistantAskSameDropoffLocation(messages)
+    ) {
+      return {
+        intent: "provide_info",
+        draftPatch: { dropoffLocation: draft.pickupLocation },
+        confidence: 1,
+      };
+    }
+
     return null;
+  }
+
+  private didAssistantAskSameDropoffLocation(messages: BookingAgentState["messages"]): boolean {
+    const lastAssistantMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (!lastAssistantMessage?.content) {
+      return false;
+    }
+
+    const normalizedAssistantMessage = normalizeControlText(lastAssistantMessage.content);
+    return (
+      /\b(dropoff|drop off|dropped off|dropped)\b/.test(normalizedAssistantMessage) &&
+      /\b(same|pickup|pick up)\b/.test(normalizedAssistantMessage)
+    );
   }
 }

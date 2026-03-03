@@ -31,6 +31,10 @@ export function isLikelyAffirmativeControl(normalizedText: string): boolean {
     "retry",
     "retry booking",
     "continue",
+    "sure",
+    "sounds fine",
+    "works for me",
+    "that would be nice",
     "lets go",
     "that works",
     "sounds good",
@@ -44,6 +48,9 @@ export function isLikelyAffirmativeControl(normalizedText: string): boolean {
     /\byes\b.*\b(please|go ahead|confirm|book|proceed|continue)\b/,
     /\b(ok|okay|alright)\b.*\b(confirm|book|go ahead|proceed|continue)\b/,
     /\b(please|kindly)\b.*\b(confirm|book|proceed|continue)\b/,
+    /\b(sure|absolutely|definitely)\b/,
+    /\b(that|this)\b.*\b(works|is fine|is good|would be nice)\b/,
+    /\b(works|sounds)\b.*\b(for me|fine|good)\b/,
   ];
 
   return phraseAffirmatives.some((pattern) => pattern.test(normalizedText));

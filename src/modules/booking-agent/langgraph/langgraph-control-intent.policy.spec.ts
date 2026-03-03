@@ -17,6 +17,10 @@ describe("langgraph-control-intent.policy", () => {
     expect(isLikelyAffirmativeControl("yes")).toBe(true);
     expect(isLikelyAffirmativeControl("yes please go ahead")).toBe(true);
     expect(isLikelyAffirmativeControl("okay confirm")).toBe(true);
+    expect(isLikelyAffirmativeControl("sure")).toBe(true);
+    expect(isLikelyAffirmativeControl("that would be nice")).toBe(true);
+    expect(isLikelyAffirmativeControl("works for me")).toBe(true);
+    expect(isLikelyAffirmativeControl("sounds fine")).toBe(true);
   });
 
   it("detects negative control phrases", () => {

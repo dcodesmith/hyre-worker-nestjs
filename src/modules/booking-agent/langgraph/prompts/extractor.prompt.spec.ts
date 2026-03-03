@@ -14,6 +14,8 @@ describe("extractor.prompt contract", () => {
     expect(prompt).toContain("CURRENT STAGE:");
     expect(prompt).toContain("RECENT CONVERSATION HISTORY:");
     expect(prompt).toContain("RULES:");
-    expect(prompt).toContain("NEVER assume dropoffLocation equals pickupLocation");
+    expect(prompt).toContain(
+      "Never set dropoffLocation to pickupLocation without either explicit wording OR clear conversational context",
+    );
   });
 });
