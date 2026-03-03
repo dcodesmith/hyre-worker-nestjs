@@ -259,7 +259,7 @@ export class GooglePlacesService {
     );
     const hasStreetNumber = componentTypes.has("street_number");
     const hasRoute = componentTypes.has("route");
-    if (hasStreetNumber || hasRoute) {
+    if (hasStreetNumber && hasRoute) {
       return false;
     }
 

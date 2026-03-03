@@ -119,6 +119,39 @@ describe("GooglePlacesService", () => {
     expect(result.placeId).toBe("place_glover_12");
   });
 
+  it("marks route-only address as area-only (no street number)", async () => {
+    mockHttpClient.post.mockResolvedValueOnce({
+      data: {
+        suggestions: [
+          {
+            placePrediction: {
+              placeId: "place_glover_road",
+              text: { text: "Glover Road, Ikoyi, Lagos, Nigeria" },
+              types: ["route"],
+            },
+          },
+        ],
+      },
+    });
+    mockHttpClient.get.mockResolvedValueOnce({
+      data: {
+        id: "place_glover_road",
+        types: ["route"],
+        formattedAddress: "Glover Road, Ikoyi, Lagos, Nigeria",
+        addressComponents: [
+          { longText: "Glover Road", types: ["route"] },
+          { longText: "Ikoyi", types: ["neighborhood", "political"] },
+          { longText: "Lagos", types: ["locality", "political"] },
+        ],
+      },
+    });
+
+    const result = await service.validateAddressWithSuggestions("Glover Road Ikoyi");
+
+    expect(result.isValid).toBe(false);
+    expect(result.failureReason).toBe("AREA_ONLY");
+  });
+
   it("accepts venue address when place details include street number and route", async () => {
     mockHttpClient.post.mockResolvedValueOnce({
       data: {

@@ -469,6 +469,13 @@ describe("LangGraphGraphService", () => {
         confidence: 0.9,
       });
 
+      // Mock Google Places to return the same address (already specific enough)
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "5 Glover Road, Ikoyi",
+        suggestions: [],
+      });
+
       toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
         exactMatches: [buildVehicleOption()],
         alternatives: [],
@@ -481,6 +488,99 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.draft.dropoffLocation).toBe("5 Glover Road, Ikoyi");
+    });
+
+    it("keeps dropoffLocation in sync when pickupLocation is normalized and they were equal", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Glover Road Ikoyi", // Same as pickup (via "same location" instruction)
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Google Places normalizes the address
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+        suggestions: [],
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Both pickup and dropoff should be normalized to the same address
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+    });
+
+    it("does not update dropoffLocation when it differs from pickupLocation before normalization", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Lekki Phase 1", // Different from pickup
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddressWithSuggestions.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+        suggestions: [],
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Pickup should be normalized, but dropoff should remain unchanged
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("Lekki Phase 1");
     });
 
     it("passes availableOptions to responder after search", async () => {

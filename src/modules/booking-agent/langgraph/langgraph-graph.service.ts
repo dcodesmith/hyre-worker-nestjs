@@ -346,26 +346,11 @@ export class LangGraphGraphService {
 
   private async searchNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
     try {
-      let validatedDraft = state.draft;
-      const shouldValidatePickupLocation =
-        !!state.draft.pickupLocation &&
-        (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
-      if (shouldValidatePickupLocation) {
-        const locationResult = await this.googlePlacesService.validateAddressWithSuggestions(
-          state.draft.pickupLocation,
-        );
-
-        if (!locationResult.isValid) {
-          return this.buildInvalidPickupLocationResult(state, locationResult);
-        }
-
-        if (locationResult.normalizedAddress) {
-          validatedDraft = {
-            ...state.draft,
-            pickupLocation: locationResult.normalizedAddress,
-          };
-        }
+      const validationResult = await this.validateAndNormalizePickupLocation(state);
+      if (validationResult.earlyReturn) {
+        return validationResult.earlyReturn;
       }
+      const validatedDraft = validationResult.draft;
 
       const missingFields = getMissingRequiredFields(validatedDraft);
       if (missingFields.length > 0) {
@@ -519,6 +504,46 @@ export class LangGraphGraphService {
       "",
       "Please share a specific pickup address (for example: building number + street, or a hotel/landmark name in Lagos).",
     ].join("\n");
+  }
+
+  private async validateAndNormalizePickupLocation(state: AnnotationState): Promise<{
+    draft: BookingDraft;
+    earlyReturn?: Partial<AnnotationState>;
+  }> {
+    const shouldValidate =
+      !!state.draft.pickupLocation &&
+      (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
+
+    if (!shouldValidate) {
+      return { draft: state.draft };
+    }
+
+    const locationResult = await this.googlePlacesService.validateAddressWithSuggestions(
+      state.draft.pickupLocation,
+    );
+
+    if (!locationResult.isValid) {
+      return {
+        draft: state.draft,
+        earlyReturn: this.buildInvalidPickupLocationResult(state, locationResult),
+      };
+    }
+
+    if (!locationResult.normalizedAddress) {
+      return { draft: state.draft };
+    }
+
+    const wasDropoffSameAsPickup = state.draft.dropoffLocation === state.draft.pickupLocation;
+    return {
+      draft: {
+        ...state.draft,
+        pickupLocation: locationResult.normalizedAddress,
+        // Keep dropoff in sync if it was auto-filled from pickup via "same location"
+        ...(wasDropoffSameAsPickup && {
+          dropoffLocation: locationResult.normalizedAddress,
+        }),
+      },
+    };
   }
 
   private buildInvalidPickupLocationResult(
