@@ -1488,8 +1488,11 @@ describe("LangGraphGraphService", () => {
       // Should NOT re-validate because locationLookupTriggered is true and suggestions are empty
       expect(googlePlacesServiceMock.validateAddressWithSuggestions).not.toHaveBeenCalled();
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
-      // Should go to responder to ask for valid address
+      // Should go to responder with meaningful error so it can ask for a more precise pickup address
       expect(result.stage).toBe("collecting");
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("Xyzzyville");
+      expect(result.error).toContain("more specific pickup location");
     });
 
     it("sets error message when search returns no vehicles", async () => {

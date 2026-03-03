@@ -361,14 +361,18 @@ export class LangGraphGraphService {
       // don't proceed to search - stay in collecting stage to get a valid address.
       // Note: We use the explicit `locationLookupFailed` flag rather than inferring from
       // empty suggestions, because a successful search also clears suggestions.
+      // Provide a meaningful error so the responder can craft a specific prompt for a more precise pickup address.
       if (state.locationLookupFailed && validatedDraft.pickupLocation) {
         return {
           draft: validatedDraft,
           stage: "collecting",
           availableOptions: [],
           lastShownOptions: [],
-          error: null,
-          locationSuggestions: [],
+          error: this.buildLocationSuggestionText(
+            validatedDraft.pickupLocation,
+            state.locationSuggestions ?? [],
+          ),
+          locationSuggestions: state.locationSuggestions ?? [],
           locationLookupTriggered: true,
           locationLookupFailed: true,
         };
