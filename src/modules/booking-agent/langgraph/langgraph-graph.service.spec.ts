@@ -863,6 +863,11 @@ describe("LangGraphGraphService", () => {
         alternatives: [],
         precondition: null,
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -873,6 +878,7 @@ describe("LangGraphGraphService", () => {
       expect(result.stage).toBe("presenting_options");
       // Vehicle unavailability is a business status message, not an error
       expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("no longer available");
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
       expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
     });
@@ -1512,6 +1518,11 @@ describe("LangGraphGraphService", () => {
       responderServiceMock.generateResponse.mockResolvedValue({
         text: "Unfortunately, no vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?",
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -1522,6 +1533,7 @@ describe("LangGraphGraphService", () => {
       // Should go back to collecting stage (no results is a status message, not an error)
       expect(result.stage).toBe("collecting");
       expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("No vehicles matching your criteria");
     });
 
     it("allows re-search after successful search when user modifies non-location criteria", async () => {
@@ -1754,6 +1766,7 @@ describe("LangGraphGraphService", () => {
       expect(result.stage).toBe("collecting");
       // Precondition prompt is a status message, not an error
       expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toBe("What type of vehicle would you prefer?");
       // Should preserve locationLookupTriggered so we don't re-validate on next turn
       expect(savedState).not.toBeNull();
       if (savedState) {

@@ -113,14 +113,15 @@ export class LangGraphResponderService {
       };
     }
 
-    // Surface user-safe system messages deterministically in early stages without options.
+    // Surface user-safe outage messages deterministically in greeting, or when explicitly marked.
+    const isServiceUnavailableError = error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE;
     if (
       error &&
       availableOptions.length === 0 &&
-      (stage === "greeting" || stage === "collecting")
+      (stage === "greeting" || isServiceUnavailableError)
     ) {
       return {
-        text: statusMessage || LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        text: error,
       };
     }
 

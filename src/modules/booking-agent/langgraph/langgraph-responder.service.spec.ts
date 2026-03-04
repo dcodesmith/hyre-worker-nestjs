@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
 import { LangGraphResponderService } from "./langgraph-responder.service";
@@ -341,14 +342,28 @@ describe("LangGraphResponderService", () => {
     it("returns greeting error deterministically without LLM call", async () => {
       const state = buildState({
         stage: "greeting",
-        error:
-          "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         availableOptions: [],
       });
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toContain("temporarily unavailable");
+      expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("prefers system error over status message when both are present", async () => {
+      const state = buildState({
+        stage: "greeting",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        statusMessage: "What type of vehicle would you prefer?",
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).not.toBe("What type of vehicle would you prefer?");
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 

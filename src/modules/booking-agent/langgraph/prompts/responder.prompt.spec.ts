@@ -103,5 +103,8 @@ describe("responder.prompt contract", () => {
 
     expect(context).toContain("STATUS MESSAGE:");
     expect(context).toContain("No vehicles matching your criteria");
+    expect(context).toContain(
+      "INSTRUCTION: Include this status update clearly before asking for next details.",
+    );
   });
 });

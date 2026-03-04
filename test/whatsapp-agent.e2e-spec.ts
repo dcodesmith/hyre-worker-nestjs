@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
+import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/langgraph/langgraph.const";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "../src/modules/booking-agent/langgraph/langgraph.tokens";
 import { LangGraphExtractorService } from "../src/modules/booking-agent/langgraph/langgraph-extractor.service";
 import { DatabaseService } from "../src/modules/database/database.service";
@@ -36,6 +37,16 @@ describe("Booking Agent", () => {
     return car;
   };
 
+  const setDefaultValidateAddressMock = () => {
+    googlePlacesService.validateAddressWithSuggestions.mockImplementation(
+      async (address: string) => ({
+        isValid: true,
+        normalizedAddress: address,
+        suggestions: [],
+      }),
+    );
+  };
+
   beforeAll(async () => {
     extractorService = {
       extract: vi.fn(),
@@ -48,14 +59,7 @@ describe("Booking Agent", () => {
     googlePlacesService = {
       validateAddressWithSuggestions: vi.fn(),
     };
-
-    googlePlacesService.validateAddressWithSuggestions.mockImplementation(
-      async (address: string) => ({
-        isValid: true,
-        normalizedAddress: address,
-        suggestions: [],
-      }),
-    );
+    setDefaultValidateAddressMock();
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -100,13 +104,7 @@ describe("Booking Agent", () => {
       content: "Please share the missing booking details.",
     });
     googlePlacesService.validateAddressWithSuggestions.mockReset();
-    googlePlacesService.validateAddressWithSuggestions.mockImplementation(
-      async (address: string) => ({
-        isValid: true,
-        normalizedAddress: address,
-        suggestions: [],
-      }),
-    );
+    setDefaultValidateAddressMock();
   });
 
   afterAll(async () => {
@@ -167,6 +165,25 @@ describe("Booking Agent", () => {
     expect(
       result.enqueueOutbox.some((item) => item.dedupeKey.startsWith("langgraph:msg_s1:vehicle:")),
     ).toBe(true);
+  });
+
+  it("returns fallback unavailable message when extractor service is down", async () => {
+    extractorService.extract.mockRejectedValueOnce(new Error("service unavailable"));
+
+    const result = await orchestratorService.decide({
+      messageId: "msg_outage_1",
+      conversationId: "conv_outage_1",
+      body: "I need a black Toyota Prado tomorrow",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+    });
+
+    const text = result.enqueueOutbox[0]?.textBody ?? "";
+    expect(text).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(text).not.toContain("Here are your options");
+    expect(extractorService.extract).toHaveBeenCalled();
+    expect(claudeService.invoke).not.toHaveBeenCalled();
+    expect(googlePlacesService.validateAddressWithSuggestions).not.toHaveBeenCalled();
   });
 
   it("Scenario 2: asks for booking type when all other required fields are present", async () => {
