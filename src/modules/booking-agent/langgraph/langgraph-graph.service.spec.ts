@@ -1471,6 +1471,11 @@ describe("LangGraphGraphService", () => {
       responderServiceMock.generateResponse.mockResolvedValue({
         text: "I still need a valid pickup location. Please share a more specific address.",
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -1481,11 +1486,11 @@ describe("LangGraphGraphService", () => {
       // Should NOT re-validate because locationLookupTriggered is true and suggestions are empty
       expect(googlePlacesServiceMock.validateAddressWithSuggestions).not.toHaveBeenCalled();
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
-      // Should go to responder with meaningful error so it can ask for a more precise pickup address
+      // Should persist a meaningful status message for a more precise pickup address prompt
       expect(result.stage).toBe("collecting");
-      expect(result.error).toBeDefined();
-      expect(result.error).toContain("Xyzzyville");
-      expect(result.error).toContain("more specific pickup location");
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("Xyzzyville");
+      expect(savedState?.statusMessage).toContain("more specific pickup location");
     });
 
     it("sets error message when search returns no vehicles", async () => {

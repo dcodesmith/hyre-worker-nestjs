@@ -339,6 +339,21 @@ describe("LangGraphResponderService", () => {
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
+    it("returns collecting location guidance from statusMessage without LLM call", async () => {
+      const state = buildState({
+        stage: "collecting",
+        statusMessage:
+          'I couldn\'t find an exact match for "Xyzzyville". Please share a more specific pickup location.',
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Xyzzyville");
+      expect(response.text).toContain("more specific pickup location");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("returns greeting error deterministically without LLM call", async () => {
       const state = buildState({
         stage: "greeting",
@@ -352,7 +367,8 @@ describe("LangGraphResponderService", () => {
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
-    it("prefers system error over status message when both are present", async () => {
+    it("service-unavailable override: prefers system error over statusMessage", async () => {
+      // generateResponse should prioritize the state's system error over statusMessage.
       const state = buildState({
         stage: "greeting",
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,

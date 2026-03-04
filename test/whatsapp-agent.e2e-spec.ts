@@ -23,6 +23,19 @@ describe("Booking Agent", () => {
   let googlePlacesService: { validateAddressWithSuggestions: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
+  const DAY_IN_MS = 24 * 60 * 60 * 1000;
+  const TEST_BASE_DATE_UTC = Date.UTC(2099, 2, 1, 10, 0, 0);
+  const generateFutureDate = (daysAhead: number): string =>
+    new Date(TEST_BASE_DATE_UTC + daysAhead * DAY_IN_MS).toISOString().slice(0, 10);
+  const generateFutureDateTime = (daysAhead: number): Date =>
+    new Date(TEST_BASE_DATE_UTC + daysAhead * DAY_IN_MS);
+  const FUTURE_PICKUP_DATE = generateFutureDate(6);
+  const FUTURE_DROPOFF_DATE = generateFutureDate(11);
+  const FUTURE_NEXT_DAY_DROPOFF_DATE = generateFutureDate(7);
+  const FUTURE_THREE_DAY_DROPOFF_DATE = generateFutureDate(8);
+  const FUTURE_LATER_PICKUP_DATE = generateFutureDate(9);
+  const FUTURE_WINDOW_EXPIRES_AT = generateFutureDateTime(5);
+  const FUTURE_LATER_WINDOW_EXPIRES_AT = generateFutureDateTime(8);
 
   const seedCar = async (
     overrides?: Parameters<TestDataFactory["createCar"]>[1],
@@ -142,8 +155,8 @@ describe("Booking Agent", () => {
         color: "Black",
         vehicleType: "SUV",
         bookingType: "DAY",
-        pickupDate: "2026-03-07",
-        dropoffDate: "2026-03-12",
+        pickupDate: FUTURE_PICKUP_DATE,
+        dropoffDate: FUTURE_DROPOFF_DATE,
         pickupTime: "9:00 AM",
         pickupLocation: "Wheatbaker hotel, Ikoyi",
         dropoffLocation: "Wheatbaker hotel, Ikoyi",
@@ -156,7 +169,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s1",
       body: "I need a black Toyota Prado from tomorrow for 5 days",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s1:intro");
@@ -175,7 +188,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_outage_1",
       body: "I need a black Toyota Prado tomorrow",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
@@ -201,8 +214,8 @@ describe("Booking Agent", () => {
         model: "Prado",
         color: "White",
         vehicleType: "SUV",
-        pickupDate: "2026-03-07",
-        dropoffDate: "2026-03-08",
+        pickupDate: FUTURE_PICKUP_DATE,
+        dropoffDate: FUTURE_NEXT_DAY_DROPOFF_DATE,
         pickupTime: "9:00 AM",
         pickupLocation: "Wheatbaker hotel, Ikoyi",
         dropoffLocation: "Wheatbaker hotel, Ikoyi",
@@ -215,7 +228,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s2",
       body: "Book me an SUV for next weekend",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
@@ -251,8 +264,8 @@ describe("Booking Agent", () => {
       .mockResolvedValueOnce({
         intent: "provide_info",
         draftPatch: {
-          pickupDate: "2026-03-07",
-          dropoffDate: "2026-03-09",
+          pickupDate: FUTURE_PICKUP_DATE,
+          dropoffDate: FUTURE_THREE_DAY_DROPOFF_DATE,
         },
         confidence: 0.95,
       });
@@ -262,7 +275,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s3",
       body: "I need a black Toyota SUV",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
     expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_first");
 
@@ -271,7 +284,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s3",
       body: "from tomorrow for 3 days",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_second:intro");
@@ -312,16 +325,16 @@ describe("Booking Agent", () => {
       .mockResolvedValueOnce({
         intent: "provide_info",
         draftPatch: {
-          pickupDate: "2026-03-07",
-          dropoffDate: "2026-03-09",
+          pickupDate: FUTURE_PICKUP_DATE,
+          dropoffDate: FUTURE_THREE_DAY_DROPOFF_DATE,
         },
         confidence: 0.95,
       })
       .mockResolvedValueOnce({
         intent: "provide_info",
         draftPatch: {
-          pickupDate: "2026-03-07",
-          dropoffDate: "2026-03-09",
+          pickupDate: FUTURE_PICKUP_DATE,
+          dropoffDate: FUTURE_THREE_DAY_DROPOFF_DATE,
         },
         confidence: 0.95,
       });
@@ -329,17 +342,17 @@ describe("Booking Agent", () => {
     await orchestratorService.decide({
       messageId: "msg_s4_seed",
       conversationId: "conv_s4",
-      body: "I need a black Toyota Prado from 2026-03-07",
+      body: `I need a black Toyota Prado from ${FUTURE_PICKUP_DATE}`,
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     const beforeResetFollowup = await orchestratorService.decide({
       messageId: "msg_s4_before_reset",
       conversationId: "conv_s4",
-      body: "until 2026-03-09",
+      body: `until ${FUTURE_THREE_DAY_DROPOFF_DATE}`,
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
     expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
       "langgraph:msg_s4_before_reset:intro",
@@ -351,7 +364,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s4",
       body: "start over",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     expect(reset.enqueueOutbox).toHaveLength(1);
@@ -361,9 +374,9 @@ describe("Booking Agent", () => {
     const afterResetFollowup = await orchestratorService.decide({
       messageId: "msg_s4_after_reset",
       conversationId: "conv_s4",
-      body: "until 2026-03-09",
+      body: `until ${FUTURE_THREE_DAY_DROPOFF_DATE}`,
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
     expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_after_reset");
     const afterResetText = afterResetFollowup.enqueueOutbox[0]?.textBody ?? "";
@@ -384,8 +397,8 @@ describe("Booking Agent", () => {
         color: "Black",
         vehicleType: "SUV",
         bookingType: "DAY",
-        pickupDate: "2026-03-07",
-        dropoffDate: "2026-03-09",
+        pickupDate: FUTURE_PICKUP_DATE,
+        dropoffDate: FUTURE_THREE_DAY_DROPOFF_DATE,
         pickupTime: "25:99",
         pickupLocation: "Wheatbaker hotel, Ikoyi",
         dropoffLocation: "Wheatbaker hotel, Ikoyi",
@@ -396,9 +409,9 @@ describe("Booking Agent", () => {
     const result = await orchestratorService.decide({
       messageId: "msg_s5",
       conversationId: "conv_s5",
-      body: "I need a black Prado from tomorrow to 2026-03-09 at 25:99",
+      body: `I need a black Prado from tomorrow to ${FUTURE_THREE_DAY_DROPOFF_DATE} at 25:99`,
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-06T10:00:00Z"),
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
     expect(result.enqueueOutbox).toHaveLength(1);
@@ -425,8 +438,8 @@ describe("Booking Agent", () => {
           model: "Prado",
           vehicleType: "SUV",
           color: "White",
-          pickupDate: "2026-03-10",
-          dropoffDate: "2026-03-12",
+          pickupDate: FUTURE_LATER_PICKUP_DATE,
+          dropoffDate: FUTURE_DROPOFF_DATE,
           pickupTime: "9 AM",
           pickupLocation: "Wheatbaker hotel, Ikoyi",
           dropoffLocation: "Wheatbaker hotel, Ikoyi",
@@ -446,7 +459,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s6",
       body: "I'd like to book a white Toyota SUV for 2 days from tomorrow starting at 9am, pick up and drop off at Wheatbaker hotel, Ikoyi",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+      windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
     expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_first");
     expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("missing booking details");
@@ -456,7 +469,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s6",
       body: "DAY",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+      windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
 
     const secondTurnText = secondTurn.enqueueOutbox[0]?.textBody ?? "";
@@ -486,8 +499,8 @@ describe("Booking Agent", () => {
         model: "Prado",
         vehicleType: "SUV",
         color: "White",
-        pickupDate: "2026-03-10",
-        dropoffDate: "2026-03-12",
+        pickupDate: FUTURE_LATER_PICKUP_DATE,
+        dropoffDate: FUTURE_DROPOFF_DATE,
         bookingType: "DAY",
         pickupTime: "9 AM",
         pickupLocation: "Wheatbaker hotel, Ikoyi",
@@ -501,7 +514,7 @@ describe("Booking Agent", () => {
       conversationId: "conv_s7",
       body: "I'd like to book a white Toyota SUV for 2 days from tomorrow starting at 9am, day booking type, pick up and drop off at Wheatbaker hotel, Ikoyi",
       kind: WhatsAppMessageKind.TEXT,
-      windowExpiresAt: new Date("2026-03-09T10:00:00Z"),
+      windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
