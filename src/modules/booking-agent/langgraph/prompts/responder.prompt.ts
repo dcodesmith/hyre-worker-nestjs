@@ -90,7 +90,8 @@ export function buildResponderUserContext(
   state: BookingAgentState,
   options: BuildResponderUserContextOptions,
 ): string {
-  const { stage, draft, extraction, availableOptions, selectedOption, holdId } = state;
+  const { stage, draft, extraction, availableOptions, selectedOption, holdId, statusMessage } =
+    state;
   const missingFields = getMissingRequiredFields(draft);
 
   let context = `CURRENT STATE: ${stage}\n`;
@@ -98,6 +99,10 @@ export function buildResponderUserContext(
   context += `DRAFT: ${truncate(JSON.stringify(draft), options.maxDraftContextChars)}\n`;
   context += formatExtractionContext(extraction);
   context += `LATEST MESSAGE: ${truncate(state.inboundMessage, options.maxContextFieldChars)}\n`;
+  if (statusMessage) {
+    context += `STATUS MESSAGE: ${truncate(statusMessage, options.maxContextFieldChars)}\n`;
+    context += "INSTRUCTION: Include this status update clearly before asking for next details.\n";
+  }
 
   if (missingFields.length > 0) {
     context += `MISSING REQUIRED FIELDS: ${missingFields.join(", ")}\n`;

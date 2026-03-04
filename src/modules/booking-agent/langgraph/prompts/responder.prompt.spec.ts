@@ -69,4 +69,39 @@ describe("responder.prompt contract", () => {
     expect(context).toContain("MISSING REQUIRED FIELDS:");
     expect(context).toContain("INSTRUCTION: Ask for ALL missing fields");
   });
+
+  it("includes status message in user context when present", () => {
+    const context = buildResponderUserContext(
+      {
+        messages: [],
+        conversationId: "conv_1",
+        customerId: null,
+        inboundMessage: "Okay",
+        inboundMessageId: "msg_1",
+        inboundInteractive: undefined,
+        draft: {},
+        stage: "collecting",
+        turnCount: 3,
+        extraction: null,
+        availableOptions: [],
+        lastShownOptions: [],
+        selectedOption: null,
+        holdId: null,
+        holdExpiresAt: null,
+        bookingId: null,
+        paymentLink: null,
+        preferences: {},
+        response: null,
+        outboxItems: [],
+        nextNode: null,
+        error: null,
+        statusMessage:
+          "No vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?",
+      },
+      { maxContextFieldChars: 300, maxDraftContextChars: 600, maxOptionContextItems: 5 },
+    );
+
+    expect(context).toContain("STATUS MESSAGE:");
+    expect(context).toContain("No vehicles matching your criteria");
+  });
 });

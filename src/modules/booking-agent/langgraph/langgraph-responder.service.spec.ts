@@ -324,6 +324,34 @@ describe("LangGraphResponderService", () => {
       expect(response.interactive?.buttons?.[2].id).toBe("fullday");
     });
 
+    it("returns collecting status message deterministically without LLM call", async () => {
+      const state = buildState({
+        stage: "collecting",
+        statusMessage:
+          "That vehicle is no longer available for your selected date and time. Please adjust your date, booking type, or vehicle preference.",
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("no longer available");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("returns greeting error deterministically without LLM call", async () => {
+      const state = buildState({
+        stage: "greeting",
+        error:
+          "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.",
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("temporarily unavailable");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("returns no interactive when booking type is set", async () => {
       claudeMock.invoke.mockResolvedValue({ content: "When do you need pickup?" });
 

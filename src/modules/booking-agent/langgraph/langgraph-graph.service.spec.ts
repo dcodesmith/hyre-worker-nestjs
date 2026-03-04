@@ -6,6 +6,7 @@ import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
+import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildVehicleOption } from "./langgraph.factory";
 import type { BookingAgentState } from "./langgraph.interface";
 import { LangGraphExtractorService } from "./langgraph-extractor.service";
@@ -908,9 +909,7 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.stage).toBe("confirming");
-      expect(result.error).toBe(
-        "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.",
-      );
+      expect(result.error).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
       expect(result.error).not.toContain("postgres timeout");
     });
 

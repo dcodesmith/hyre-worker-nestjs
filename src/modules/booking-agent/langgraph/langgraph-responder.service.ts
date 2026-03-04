@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
-import { LANGGRAPH_BUTTON_ID } from "./langgraph.const";
+import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
 import type {
   AgentResponse,
@@ -113,10 +113,21 @@ export class LangGraphResponderService {
       };
     }
 
-    // Service/system errors - show generic error message
-    if (error && availableOptions.length === 0 && stage === "collecting") {
+    // Surface user-safe system messages deterministically in early stages without options.
+    if (
+      error &&
+      availableOptions.length === 0 &&
+      (stage === "greeting" || stage === "collecting")
+    ) {
       return {
-        text: error,
+        text: statusMessage || LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+      };
+    }
+
+    // Business status updates are scoped to collecting stage without options.
+    if (statusMessage && availableOptions.length === 0 && stage === "collecting") {
+      return {
+        text: statusMessage,
       };
     }
 
