@@ -107,12 +107,30 @@ export class LangGraphResponderService {
       statusMessage,
     } = state;
 
-    if (extraction?.intent === "reset") {
+    return (
+      this.buildResetResponse(extraction?.intent) ??
+      this.buildGreetingErrorResponse(stage, availableOptions, error) ??
+      this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
+      this.buildPresentingOptionsResponse(stage, availableOptions, statusMessage, draft) ??
+      this.buildConfirmingResponse(state, error, draft, selectedOption) ??
+      this.buildAwaitingPaymentResponse(stage, paymentLink, selectedOption)
+    );
+  }
+
+  private buildResetResponse(intent?: string): AgentResponse | null {
+    if (intent === "reset") {
       return {
         text: "Done — I've cleared your booking details. Ready to start fresh! What do you need?",
       };
     }
+    return null;
+  }
 
+  private buildGreetingErrorResponse(
+    stage: BookingStage,
+    availableOptions: VehicleSearchOption[],
+    error: string | null,
+  ): AgentResponse | null {
     // Surface user-safe outage messages deterministically in greeting.
     // Keep confirming-stage errors on the confirming path so retry/agent actions are preserved.
     if (
@@ -121,60 +139,87 @@ export class LangGraphResponderService {
       stage === "greeting" &&
       error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE
     ) {
-      return {
-        text: error,
-      };
+      return { text: error };
     }
+    return null;
+  }
 
+  private buildCollectingStatusResponse(
+    stage: BookingStage,
+    availableOptions: VehicleSearchOption[],
+    statusMessage: string | null,
+  ): AgentResponse | null {
     // Business status updates are scoped to collecting stage without options.
     if (statusMessage && availableOptions.length === 0 && stage === "collecting") {
+      return { text: statusMessage };
+    }
+    return null;
+  }
+
+  private buildPresentingOptionsResponse(
+    stage: BookingStage,
+    availableOptions: VehicleSearchOption[],
+    statusMessage: string | null,
+    draft: BookingDraft,
+  ): AgentResponse | null {
+    if (stage !== "presenting_options" || availableOptions.length === 0) {
+      return null;
+    }
+
+    return {
+      text: statusMessage
+        ? `${statusMessage}\n\nHere are your options! Tap Select on the one you'd like to book.`
+        : "Here are your options! Tap Select on the one you'd like to book.",
+      vehicleCards: this.buildVehicleCards(stage, availableOptions, draft),
+    };
+  }
+
+  private buildConfirmingResponse(
+    state: BookingAgentState,
+    error: string | null,
+    draft: BookingDraft,
+    selectedOption: VehicleSearchOption | null,
+  ): AgentResponse | null {
+    if (state.stage !== "confirming" || !selectedOption) {
+      return null;
+    }
+
+    if (shouldClarifyCancelIntent(state)) {
       return {
-        text: statusMessage,
+        text: "Do you want to cancel this booking request entirely, or see other car options?",
+        interactive: {
+          type: "buttons",
+          buttons: [
+            { id: LANGGRAPH_BUTTON_ID.CANCEL, title: "✕ Cancel Booking" },
+            { id: LANGGRAPH_BUTTON_ID.SHOW_OTHERS, title: "↻ Show Others" },
+          ],
+        },
       };
     }
 
-    if (stage === "presenting_options" && availableOptions.length > 0) {
+    if (error) {
       return {
-        text: statusMessage
-          ? `${statusMessage}\n\nHere are your options! Tap Select on the one you'd like to book.`
-          : "Here are your options! Tap Select on the one you'd like to book.",
-        vehicleCards: this.buildVehicleCards(stage, availableOptions, draft),
+        text: `${error}\n\nWould you like me to try again or connect you to an agent?`,
+        interactive: this.determineInteractive(state.stage, draft, selectedOption, error),
       };
     }
 
-    if (stage === "confirming" && selectedOption) {
-      if (shouldClarifyCancelIntent(state)) {
-        return {
-          text: "Do you want to cancel this booking request entirely, or see other car options?",
-          interactive: {
-            type: "buttons",
-            buttons: [
-              { id: LANGGRAPH_BUTTON_ID.CANCEL, title: "✕ Cancel Booking" },
-              { id: LANGGRAPH_BUTTON_ID.SHOW_OTHERS, title: "↻ Show Others" },
-            ],
-          },
-        };
-      }
+    return {
+      text: this.buildBookingSummary(draft, selectedOption),
+      interactive: this.determineInteractive(state.stage, draft, selectedOption, error),
+    };
+  }
 
-      if (error) {
-        return {
-          text: `${error}\n\nWould you like me to try again or connect you to an agent?`,
-          interactive: this.determineInteractive(stage, draft, selectedOption, error),
-        };
-      }
-
-      return {
-        text: this.buildBookingSummary(draft, selectedOption),
-        interactive: this.determineInteractive(stage, draft, selectedOption, error),
-      };
-    }
-
+  private buildAwaitingPaymentResponse(
+    stage: BookingStage,
+    paymentLink: string | null,
+    selectedOption: VehicleSearchOption | null,
+  ): AgentResponse | null {
     if (stage === "awaiting_payment" && paymentLink) {
       return {
         text: this.buildPaymentMessage(selectedOption),
       };
     }
-
     return null;
   }
 

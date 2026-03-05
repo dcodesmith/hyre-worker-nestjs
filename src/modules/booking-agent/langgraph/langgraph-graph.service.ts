@@ -282,21 +282,7 @@ export class LangGraphGraphService {
       : { ...draft };
     const newDraft = applyDerivedDraftFields(baseDraft, state.inboundMessage);
 
-    const newPreferences = { ...preferences };
-    if (extraction.preferenceHint) {
-      if (extraction.preferenceHint === "cheaper" || extraction.preferenceHint === "budget") {
-        newPreferences.pricePreference = "budget";
-      } else if (
-        extraction.preferenceHint === "premium" ||
-        extraction.preferenceHint === "luxury"
-      ) {
-        newPreferences.pricePreference = "premium";
-      }
-      if (!newPreferences.notes) {
-        newPreferences.notes = [];
-      }
-      newPreferences.notes.push(extraction.preferenceHint);
-    }
+    const newPreferences = this.mergePreferencesWithHint(preferences, extraction.preferenceHint);
 
     const draftChanged = hasDraftChanged(draft, newDraft);
     const pickupLocationChanged = draft.pickupLocation !== newDraft.pickupLocation;
@@ -317,6 +303,26 @@ export class LangGraphGraphService {
       locationLookupTriggered: pickupLocationChanged ? false : !!state.locationLookupTriggered,
       locationLookupFailed: pickupLocationChanged ? false : !!state.locationLookupFailed,
     };
+  }
+
+  private mergePreferencesWithHint(
+    preferences: BookingAgentState["preferences"],
+    preferenceHint: string | undefined,
+  ): BookingAgentState["preferences"] {
+    const newPreferences = { ...preferences };
+    if (!preferenceHint) {
+      return newPreferences;
+    }
+
+    if (preferenceHint === "cheaper" || preferenceHint === "budget") {
+      newPreferences.pricePreference = "budget";
+    } else if (preferenceHint === "premium" || preferenceHint === "luxury") {
+      newPreferences.pricePreference = "premium";
+    }
+
+    const existingNotes = newPreferences.notes ?? [];
+    newPreferences.notes = [...existingNotes, preferenceHint];
+    return newPreferences;
   }
 
   private routeNode(state: AnnotationState): Partial<AnnotationState> {
@@ -376,7 +382,7 @@ export class LangGraphGraphService {
 
   private async searchNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
     try {
-      const validationResult = await this.validateAndNormalizePickupLocation(state);
+      const validationResult = await this.validateAndNormalizeLocations(state);
       if (validationResult.earlyReturn) {
         return validationResult.earlyReturn;
       }
@@ -395,6 +401,7 @@ export class LangGraphGraphService {
           lastShownOptions: [],
           statusMessage: this.buildLocationSuggestionText(
             validatedDraft.pickupLocation,
+            "pickup",
             state.locationSuggestions ?? [],
           ),
           locationSuggestions: state.locationSuggestions ?? [],
@@ -472,10 +479,10 @@ export class LangGraphGraphService {
       });
 
       // If no vehicles found, set a status message so the responder can inform the user
-      const noResultsMessage =
-        options.length === 0
-          ? "No vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?"
-          : null;
+      const noResultsMessage = this.buildSearchStatusMessage(
+        options.length,
+        searchResult.exactMatches.length,
+      );
 
       return {
         draft: validatedDraft,
@@ -502,8 +509,22 @@ export class LangGraphGraphService {
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         availableOptions: [],
         lastShownOptions: [],
+        statusMessage:
+          "I couldn't complete the car search right now. Please try again in a moment, and I'll search again.",
       };
     }
+  }
+
+  private buildSearchStatusMessage(optionsCount: number, exactMatchCount: number): string | null {
+    if (optionsCount === 0) {
+      return "No vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?";
+    }
+
+    if (exactMatchCount === 0) {
+      return "I couldn't find an exact match, but I found close alternatives you can choose from.";
+    }
+
+    return null;
   }
 
   private async respondNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
@@ -540,32 +561,50 @@ export class LangGraphGraphService {
   }
 
   private buildLocationSuggestionText(
-    pickupLocation: string,
+    locationValue: string,
+    locationLabel: "pickup" | "drop-off" = "pickup",
     suggestions: BookingAgentState["locationSuggestions"] = [],
   ): string {
+    const locationNoun = locationLabel === "pickup" ? "pickup location" : "drop-off location";
     if (suggestions.length === 0) {
-      return `I couldn't find "${pickupLocation}" on Google Maps. Please share a more specific pickup location (for example: street + area in Lagos).`;
+      return `I couldn't find "${locationValue}" on Google Maps. Please share a more specific ${locationNoun} (for example: street + area in Lagos).`;
     }
 
     const list = suggestions.slice(0, 4).map((suggestion, index) => {
       return `${index + 1}. ${suggestion.description}`;
     });
     return [
-      `I couldn't find an exact Google Maps match for "${pickupLocation}".`,
+      `I couldn't find an exact Google Maps match for "${locationValue}".`,
       "",
       "Did you mean one of these?",
       ...list,
       "",
-      "Reply with the full address you want from the list, or send a clearer pickup address.",
+      `Reply with the full address you want from the list, or send a clearer ${locationNoun}.`,
     ].join("\n");
   }
 
-  private buildAreaOnlyLocationPrompt(pickupLocation: string): string {
+  private buildAreaOnlyLocationPrompt(
+    locationValue: string,
+    locationLabel: "pickup" | "drop-off" = "pickup",
+  ): string {
+    const locationNoun = locationLabel === "pickup" ? "pickup address" : "drop-off address";
     return [
-      `"${pickupLocation}" looks like a general area, not a full pickup address.`,
+      `"${locationValue}" looks like a general area, not a full ${locationNoun}.`,
       "",
-      "Please share a specific pickup address (for example: building number + street, or a hotel/landmark name in Lagos).",
+      `Please share a specific ${locationNoun} (for example: building number + street, or a hotel/landmark name in Lagos).`,
     ].join("\n");
+  }
+
+  private async validateAndNormalizeLocations(state: AnnotationState): Promise<{
+    draft: BookingDraft;
+    earlyReturn?: Partial<AnnotationState>;
+  }> {
+    const pickupResult = await this.validateAndNormalizePickupLocation(state);
+    if (pickupResult.earlyReturn) {
+      return pickupResult;
+    }
+
+    return this.validateAndNormalizeDropoffLocation(state, pickupResult.draft);
   }
 
   private async validateAndNormalizePickupLocation(state: AnnotationState): Promise<{
@@ -608,6 +647,41 @@ export class LangGraphGraphService {
     };
   }
 
+  private async validateAndNormalizeDropoffLocation(
+    state: AnnotationState,
+    draft: BookingDraft,
+  ): Promise<{
+    draft: BookingDraft;
+    earlyReturn?: Partial<AnnotationState>;
+  }> {
+    const pickupLocation = draft.pickupLocation?.trim();
+    const dropoffLocation = draft.dropoffLocation?.trim();
+
+    if (!pickupLocation || !dropoffLocation || pickupLocation === dropoffLocation) {
+      return { draft };
+    }
+
+    const locationResult =
+      await this.googlePlacesService.validateAddressWithSuggestions(dropoffLocation);
+    if (!locationResult.isValid) {
+      return {
+        draft,
+        earlyReturn: this.buildInvalidDropoffLocationResult(state, dropoffLocation, locationResult),
+      };
+    }
+
+    if (!locationResult.normalizedAddress) {
+      return { draft };
+    }
+
+    return {
+      draft: {
+        ...draft,
+        dropoffLocation: locationResult.normalizedAddress,
+      },
+    };
+  }
+
   private buildInvalidPickupLocationResult(
     state: AnnotationState,
     locationResult: AddressLookupResult,
@@ -615,9 +689,11 @@ export class LangGraphGraphService {
     const suggestionText =
       locationResult.failureReason === "AREA_ONLY"
         ? this.buildAreaOnlyLocationPrompt(state.draft.pickupLocation ?? "that location")
-        : this.buildLocationSuggestionText(state.draft.pickupLocation ?? "that location", [
-            ...(locationResult.suggestions ?? []),
-          ]);
+        : this.buildLocationSuggestionText(
+            state.draft.pickupLocation ?? "that location",
+            "pickup",
+            [...(locationResult.suggestions ?? [])],
+          );
 
     // Set locationLookupTriggered to true for all failure reasons to prevent infinite
     // re-validation loops. The mergeNode resets this flag when pickupLocationChanged,
@@ -651,6 +727,39 @@ export class LangGraphGraphService {
         {
           conversationId: state.conversationId,
           dedupeKey: `langgraph:${state.inboundMessageId}:address-suggestions`,
+          mode: LANGGRAPH_OUTBOUND_MODE.FREE_FORM,
+          textBody: suggestionText,
+        },
+      ],
+    };
+  }
+
+  private buildInvalidDropoffLocationResult(
+    state: AnnotationState,
+    dropoffLocation: string,
+    locationResult: AddressLookupResult,
+  ): Partial<AnnotationState> {
+    const suggestionText =
+      locationResult.failureReason === "AREA_ONLY"
+        ? this.buildAreaOnlyLocationPrompt(dropoffLocation, "drop-off")
+        : this.buildLocationSuggestionText(dropoffLocation, "drop-off", [
+            ...(locationResult.suggestions ?? []),
+          ]);
+
+    return {
+      stage: "collecting",
+      response: { text: suggestionText },
+      error: null,
+      outboxItems: [
+        {
+          conversationId: state.conversationId,
+          dedupeKey: `langgraph:${state.inboundMessageId}:dropoff-address-checking`,
+          mode: LANGGRAPH_OUTBOUND_MODE.FREE_FORM,
+          textBody: "Thanks - I'm checking that drop-off address on Google Maps now...",
+        },
+        {
+          conversationId: state.conversationId,
+          dedupeKey: `langgraph:${state.inboundMessageId}:dropoff-address-suggestions`,
           mode: LANGGRAPH_OUTBOUND_MODE.FREE_FORM,
           textBody: suggestionText,
         },
