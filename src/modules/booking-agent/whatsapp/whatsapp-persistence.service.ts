@@ -327,6 +327,15 @@ export class WhatsAppPersistenceService {
     });
   }
 
+  async getConversationActivity(
+    conversationId: string,
+  ): Promise<{ lastInboundAt: Date | null } | null> {
+    return this.databaseService.whatsAppConversation.findUnique({
+      where: { id: conversationId },
+      select: { lastInboundAt: true },
+    });
+  }
+
   isUniqueViolation(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
   }
