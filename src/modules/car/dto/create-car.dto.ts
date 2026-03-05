@@ -39,8 +39,8 @@ export const carBaseBodySchema = z.object({
   airportPickupRate: z.number().int().positive(),
   fuelUpgradeRate: z.number().int().positive().nullable().optional(),
   pricingIncludesFuel: z.boolean(),
-  vehicleType: z.enum(VehicleType),
-  serviceTier: z.enum(ServiceTier),
+  vehicleType: z.enum(Object.values(VehicleType)),
+  serviceTier: z.enum(Object.values(ServiceTier)),
   passengerCapacity: z.number().int().min(1).max(15),
 });
 
@@ -108,8 +108,8 @@ export const createCarMultipartBodySchema = z
       z.coerce.number().int().positive().nullable().optional(),
     ),
     pricingIncludesFuel: z.preprocess(parseBoolean, z.boolean()),
-    vehicleType: z.enum(VehicleType),
-    serviceTier: z.enum(ServiceTier),
+    vehicleType: z.enum(Object.values(VehicleType)),
+    serviceTier: z.enum(Object.values(ServiceTier)),
     passengerCapacity: z.coerce.number().int().min(1).max(15),
   })
   .superRefine(validateFuelUpgradeRate);
