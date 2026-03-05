@@ -47,6 +47,7 @@ export interface OrchestratorResult {
   markAsHandoff?: {
     reason: string;
   };
+  resultingStage?: string;
 }
 
 export interface InteractiveReply {

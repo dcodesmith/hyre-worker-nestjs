@@ -132,6 +132,7 @@ export class BookingAgentOrchestratorService {
 
       return {
         enqueueOutbox: outboxItems,
+        resultingStage: result.stage,
         ...(hasHandoffOutbox ? { markAsHandoff: { reason: "USER_REQUESTED_AGENT" } } : {}),
       };
     } catch (error) {
