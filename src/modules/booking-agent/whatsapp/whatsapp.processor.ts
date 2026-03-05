@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
+import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import { WhatsAppMessageKind } from "@prisma/client";
-import { Job } from "bullmq";
+import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
+import { Job, type Queue } from "bullmq";
 import {
+  PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
+  PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
   PROCESS_WHATSAPP_INBOUND_JOB,
   PROCESS_WHATSAPP_OUTBOX_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
 import {
+  WHATSAPP_INACTIVITY_CLEAR_DELAY_MS,
+  WHATSAPP_INACTIVITY_NUDGE_DELAY_MS,
   WHATSAPP_LOCK_ACQUIRE_INITIAL_BACKOFF_MS,
   WHATSAPP_LOCK_ACQUIRE_JITTER_MS,
   WHATSAPP_LOCK_ACQUIRE_MAX_BACKOFF_MS,
@@ -20,16 +24,23 @@ import {
 } from "../booking-agent.error";
 import type {
   InboundMessageContext,
+  ProcessWhatsAppInactivityClearJobData,
+  ProcessWhatsAppInactivityNudgeJobData,
   ProcessWhatsAppInboundJobData,
   ProcessWhatsAppOutboxJobData,
 } from "../booking-agent.interface";
 import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.service";
+import { LangGraphStateService } from "../langgraph/langgraph-state.service";
 import { parseInteractiveReply } from "./whatsapp-agent.utils";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
-type WhatsAppAgentJobData = ProcessWhatsAppInboundJobData | ProcessWhatsAppOutboxJobData;
+type WhatsAppAgentJobData =
+  | ProcessWhatsAppInboundJobData
+  | ProcessWhatsAppOutboxJobData
+  | ProcessWhatsAppInactivityNudgeJobData
+  | ProcessWhatsAppInactivityClearJobData;
 
 @Injectable()
 @Processor(WHATSAPP_AGENT_QUEUE, { concurrency: 10 })
@@ -39,8 +50,11 @@ export class WhatsAppProcessor extends WorkerHost {
   constructor(
     private readonly persistenceService: WhatsAppPersistenceService,
     private readonly bookingAgentOrchestratorService: BookingAgentOrchestratorService,
+    private readonly langGraphStateService: LangGraphStateService,
     private readonly senderService: WhatsAppSenderService,
     private readonly audioTranscriptionService: WhatsAppAudioTranscriptionService,
+    @InjectQueue(WHATSAPP_AGENT_QUEUE)
+    private readonly whatsappAgentQueue: Queue<WhatsAppAgentJobData>,
   ) {
     super();
   }
@@ -53,6 +67,18 @@ export class WhatsAppProcessor extends WorkerHost {
 
       case PROCESS_WHATSAPP_OUTBOX_JOB:
         await this.processOutbox(job as Job<ProcessWhatsAppOutboxJobData, unknown, string>);
+        return { success: true };
+
+      case PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB:
+        await this.processInactivityNudge(
+          job as Job<ProcessWhatsAppInactivityNudgeJobData, unknown, string>,
+        );
+        return { success: true };
+
+      case PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB:
+        await this.processInactivityClear(
+          job as Job<ProcessWhatsAppInactivityClearJobData, unknown, string>,
+        );
         return { success: true };
 
       default:
@@ -78,6 +104,8 @@ export class WhatsAppProcessor extends WorkerHost {
       if (!context) {
         return;
       }
+
+      await this.cancelPendingInactivityJobs(conversationId);
 
       // Parse interactive reply data from rawPayload if present
       const interactive = parseInteractiveReply(context.rawPayload);
@@ -123,6 +151,10 @@ export class WhatsAppProcessor extends WorkerHost {
           context.conversationId,
           result.markAsHandoff.reason,
         );
+      }
+
+      if (this.isNudgeableStage(result.resultingStage)) {
+        await this.scheduleInactivityNudge(conversationId, messageId);
       }
 
       await this.persistenceService.markInboundMessageProcessed(messageId);
@@ -184,6 +216,110 @@ export class WhatsAppProcessor extends WorkerHost {
     job: Job<ProcessWhatsAppOutboxJobData, unknown, string>,
   ): Promise<void> {
     await this.senderService.processOutbox(job.data.outboxId);
+  }
+
+  private async processInactivityNudge(
+    job: Job<ProcessWhatsAppInactivityNudgeJobData, unknown, string>,
+  ): Promise<void> {
+    const { conversationId, messageId, scheduledAtMs } = job.data;
+    const state = await this.langGraphStateService.loadState(conversationId);
+    if (!this.isNudgeableStage(state?.stage)) {
+      return;
+    }
+
+    await this.senderService.enqueueOutbound({
+      conversationId,
+      dedupeKey: `inactivity-nudge:${conversationId}:${scheduledAtMs}`,
+      mode: WhatsAppDeliveryMode.FREE_FORM,
+      textBody:
+        "Still there? Your session will expire in 5 minutes. Reply to continue or your booking details will be cleared.",
+      templateName: undefined,
+      templateVariables: undefined,
+    });
+
+    await this.whatsappAgentQueue.add(
+      PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
+      { conversationId, nudgeScheduledAtMs: scheduledAtMs },
+      {
+        jobId: this.getInactivityClearJobId(conversationId),
+        delay: WHATSAPP_INACTIVITY_CLEAR_DELAY_MS,
+      },
+    );
+
+    this.logger.log("Scheduled inactivity clear after nudge", {
+      conversationId,
+      messageId,
+      nudgeScheduledAtMs: scheduledAtMs,
+    });
+  }
+
+  private async processInactivityClear(
+    job: Job<ProcessWhatsAppInactivityClearJobData, unknown, string>,
+  ): Promise<void> {
+    const { conversationId, nudgeScheduledAtMs } = job.data;
+    const activity = await this.persistenceService.getConversationActivity(conversationId);
+    const lastInboundMs = activity?.lastInboundAt
+      ? new Date(activity.lastInboundAt).getTime()
+      : null;
+
+    if (lastInboundMs && lastInboundMs > nudgeScheduledAtMs) {
+      this.logger.debug("Skipping inactivity clear because user responded during grace period", {
+        conversationId,
+        lastInboundMs,
+        nudgeScheduledAtMs,
+      });
+      return;
+    }
+
+    await this.langGraphStateService.clearState(conversationId);
+    this.logger.log("Cleared LangGraph state after inactivity grace period elapsed", {
+      conversationId,
+      nudgeScheduledAtMs,
+    });
+  }
+
+  private async scheduleInactivityNudge(conversationId: string, messageId: string): Promise<void> {
+    const scheduledAtMs = Date.now();
+    await this.whatsappAgentQueue.add(
+      PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
+      {
+        conversationId,
+        messageId,
+        scheduledAtMs,
+      },
+      {
+        jobId: this.getInactivityNudgeJobId(conversationId),
+        delay: WHATSAPP_INACTIVITY_NUDGE_DELAY_MS,
+      },
+    );
+  }
+
+  private async cancelPendingInactivityJobs(conversationId: string): Promise<void> {
+    const nudgeJob = await this.whatsappAgentQueue.getJob(
+      this.getInactivityNudgeJobId(conversationId),
+    );
+    if (nudgeJob) {
+      await nudgeJob.remove();
+    }
+
+    const clearJob = await this.whatsappAgentQueue.getJob(
+      this.getInactivityClearJobId(conversationId),
+    );
+    if (clearJob) {
+      await clearJob.remove();
+    }
+  }
+
+  private isNudgeableStage(stage?: string): boolean {
+    return stage === "presenting_options" || stage === "confirming" || stage === "awaiting_payment";
+  }
+
+  private getInactivityNudgeJobId(conversationId: string): string {
+    return `whatsapp-inactivity-nudge_${conversationId}`;
+  }
+
+  private getInactivityClearJobId(conversationId: string): string {
+    return `whatsapp-inactivity-clear_${conversationId}`;
   }
 
   @OnWorkerEvent("failed")
