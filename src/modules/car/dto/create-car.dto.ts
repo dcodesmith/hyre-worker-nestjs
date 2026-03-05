@@ -21,41 +21,41 @@ const registrationNumberSchema = z
     ),
   );
 
-const carBaseSchema = z
-  .object({
-    make: z.string().trim().min(1),
-    model: z.string().trim().min(1),
-    year: z
-      .number()
-      .int()
-      .min(2015)
-      .max(new Date().getFullYear() + 1),
-    color: z.string().trim().default(""),
-    registrationNumber: registrationNumberSchema,
-    status: z.enum([Status.AVAILABLE, Status.HOLD, Status.IN_SERVICE]).optional(),
-    dayRate: z.number().int().positive(),
-    hourlyRate: z.number().int().positive(),
-    nightRate: z.number().int().positive(),
-    fullDayRate: z.number().int().positive(),
-    airportPickupRate: z.number().int().positive(),
-    fuelUpgradeRate: z.number().int().positive().nullable().optional(),
-    pricingIncludesFuel: z.boolean(),
-    vehicleType: z.enum(VehicleType),
-    serviceTier: z.enum(ServiceTier),
-    passengerCapacity: z.number().int().min(1).max(15),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      !data.pricingIncludesFuel &&
-      (data.fuelUpgradeRate === null || data.fuelUpgradeRate === undefined)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Fuel upgrade rate is required when pricing does not include fuel",
-        path: ["fuelUpgradeRate"],
-      });
-    }
-  });
+export const carBaseBodySchema = z.object({
+  make: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  year: z
+    .number()
+    .int()
+    .min(2015)
+    .max(new Date().getFullYear() + 1),
+  color: z.string().trim().default(""),
+  registrationNumber: registrationNumberSchema,
+  status: z.enum([Status.AVAILABLE, Status.HOLD, Status.IN_SERVICE]).optional(),
+  dayRate: z.number().int().positive(),
+  hourlyRate: z.number().int().positive(),
+  nightRate: z.number().int().positive(),
+  fullDayRate: z.number().int().positive(),
+  airportPickupRate: z.number().int().positive(),
+  fuelUpgradeRate: z.number().int().positive().nullable().optional(),
+  pricingIncludesFuel: z.boolean(),
+  vehicleType: z.enum(VehicleType),
+  serviceTier: z.enum(ServiceTier),
+  passengerCapacity: z.number().int().min(1).max(15),
+});
+
+const carBaseSchema = carBaseBodySchema.superRefine((data, ctx) => {
+  if (
+    !data.pricingIncludesFuel &&
+    (data.fuelUpgradeRate === null || data.fuelUpgradeRate === undefined)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Fuel upgrade rate is required when pricing does not include fuel",
+      path: ["fuelUpgradeRate"],
+    });
+  }
+});
 
 const parseBoolean = (value: unknown): unknown => {
   if (typeof value === "boolean") return value;

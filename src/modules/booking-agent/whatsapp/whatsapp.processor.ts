@@ -272,6 +272,16 @@ export class WhatsAppProcessor extends WorkerHost {
     }
 
     await this.langGraphStateService.clearState(conversationId);
+    await this.senderService.enqueueOutbound({
+      conversationId,
+      dedupeKey: `inactivity-clear:${conversationId}:${nudgeScheduledAtMs}`,
+      mode: WhatsAppDeliveryMode.FREE_FORM,
+      textBody:
+        "Your previous booking details have been cleared due to inactivity. Send a message when you're ready to start again.",
+      templateName: undefined,
+      templateVariables: undefined,
+    });
+
     this.logger.log("Cleared LangGraph state after inactivity grace period elapsed", {
       conversationId,
       nudgeScheduledAtMs,
@@ -299,19 +309,53 @@ export class WhatsAppProcessor extends WorkerHost {
       this.getInactivityNudgeJobId(conversationId),
     );
     if (nudgeJob) {
-      await nudgeJob.remove();
+      await this.removeJobSafely(nudgeJob, conversationId);
     }
 
     const clearJob = await this.whatsappAgentQueue.getJob(
       this.getInactivityClearJobId(conversationId),
     );
     if (clearJob) {
-      await clearJob.remove();
+      await this.removeJobSafely(clearJob, conversationId);
     }
   }
 
+  private async removeJobSafely(
+    job: Pick<Job, "id" | "name" | "remove">,
+    conversationId: string,
+  ): Promise<void> {
+    try {
+      await job.remove();
+    } catch (error) {
+      if (this.isBullMqActiveRemoveRace(error)) {
+        this.logger.debug("Skipping inactivity job removal because it is already active", {
+          conversationId,
+          jobId: job.id,
+          jobName: job.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private isBullMqActiveRemoveRace(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return message.includes("active") || message.includes("locked");
+  }
+
   private isNudgeableStage(stage?: string): boolean {
-    return stage === "presenting_options" || stage === "confirming" || stage === "awaiting_payment";
+    return (
+      stage === "collecting" ||
+      stage === "presenting_options" ||
+      stage === "confirming" ||
+      stage === "awaiting_payment"
+    );
   }
 
   private getInactivityNudgeJobId(conversationId: string): string {

@@ -1,10 +1,10 @@
 import { Status } from "@prisma/client";
 import { z } from "zod";
-import { createCarBodySchema } from "./create-car.dto";
+import { carBaseBodySchema } from "./create-car.dto";
 
 export const carIdParamSchema = z.cuid();
 
-export const updateCarBodySchema = createCarBodySchema
+export const updateCarBodySchema = carBaseBodySchema
   .partial()
   .extend({
     status: z.enum([Status.AVAILABLE, Status.HOLD, Status.IN_SERVICE]).optional(),

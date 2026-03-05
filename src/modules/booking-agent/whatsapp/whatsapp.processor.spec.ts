@@ -336,6 +336,43 @@ describe("WhatsAppProcessor", () => {
     );
   });
 
+  it("schedules inactivity nudge when resulting stage is collecting", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.getInboundMessageContext.mockResolvedValue({
+      id: "msg-1",
+      conversationId: "conv-1",
+      body: "book me an suv",
+      kind: WhatsAppMessageKind.TEXT,
+      mediaUrl: null,
+      mediaContentType: null,
+      rawPayload: {},
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+    });
+    orchestratorService.decide.mockResolvedValue({
+      enqueueOutbox: [],
+      resultingStage: "collecting",
+    });
+
+    await processor.process(
+      buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        dedupeKey: "dedupe-1",
+      }),
+    );
+
+    expect(whatsappAgentQueue.add).toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
+      expect.objectContaining({
+        conversationId: "conv-1",
+        messageId: "msg-1",
+      }),
+      expect.objectContaining({
+        jobId: "whatsapp-inactivity-nudge_conv-1",
+      }),
+    );
+  });
+
   it("cancels pending inactivity jobs when a new inbound message arrives", async () => {
     const removeNudge = vi.fn().mockResolvedValue(undefined);
     const removeClear = vi.fn().mockResolvedValue(undefined);
@@ -371,6 +408,47 @@ describe("WhatsAppProcessor", () => {
     expect(whatsappAgentQueue.getJob).toHaveBeenCalledWith("whatsapp-inactivity-clear_conv-1");
     expect(removeNudge).toHaveBeenCalledTimes(1);
     expect(removeClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues inbound processing when removing an inactivity job races with activation", async () => {
+    const removeNudge = vi
+      .fn()
+      .mockRejectedValue(new Error("Could not remove job because it is active"));
+    const removeClear = vi.fn().mockResolvedValue(undefined);
+    whatsappAgentQueue.getJob
+      .mockResolvedValueOnce({ remove: removeNudge })
+      .mockResolvedValueOnce({ remove: removeClear });
+
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.getInboundMessageContext.mockResolvedValue({
+      id: "msg-1",
+      conversationId: "conv-1",
+      body: "hello",
+      kind: WhatsAppMessageKind.TEXT,
+      mediaUrl: null,
+      mediaContentType: null,
+      rawPayload: {},
+      conversation: { windowExpiresAt: null },
+    });
+    orchestratorService.decide.mockResolvedValue({
+      enqueueOutbox: [],
+      resultingStage: "collecting",
+    });
+
+    await expect(
+      processor.process(
+        buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          dedupeKey: "dedupe-1",
+        }),
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(removeNudge).toHaveBeenCalledTimes(1);
+    expect(removeClear).toHaveBeenCalledTimes(1);
+    expect(persistenceService.markInboundMessageProcessed).toHaveBeenCalledWith("msg-1");
+    expect(persistenceService.markInboundMessageFailed).not.toHaveBeenCalled();
   });
 
   it("processes inactivity nudge job and schedules clear job", async () => {
@@ -413,6 +491,13 @@ describe("WhatsAppProcessor", () => {
     );
 
     expect(langGraphStateService.clearState).toHaveBeenCalledWith("conv-1");
+    expect(senderService.enqueueOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "conv-1",
+        dedupeKey: "inactivity-clear:conv-1:1000",
+        mode: WhatsAppDeliveryMode.FREE_FORM,
+      }),
+    );
   });
 
   it("does not clear state when user replies during grace period", async () => {
@@ -428,5 +513,6 @@ describe("WhatsAppProcessor", () => {
     );
 
     expect(langGraphStateService.clearState).not.toHaveBeenCalled();
+    expect(senderService.enqueueOutbound).not.toHaveBeenCalled();
   });
 });
