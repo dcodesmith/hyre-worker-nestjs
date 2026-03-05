@@ -194,7 +194,7 @@ export class WhatsAppProcessor extends WorkerHost {
       );
     }
 
-    if (this.isNudgeableStage(result.resultingStage)) {
+    if (!result.markAsHandoff && this.isNudgeableStage(result.resultingStage)) {
       await this.scheduleInactivityNudge(conversationId, messageId);
     }
   }

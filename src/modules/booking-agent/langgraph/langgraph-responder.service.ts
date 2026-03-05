@@ -113,7 +113,7 @@ export class LangGraphResponderService {
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
       this.buildPresentingOptionsResponse(stage, availableOptions, statusMessage, draft) ??
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
-      this.buildAwaitingPaymentResponse(stage, paymentLink, selectedOption)
+      this.buildAwaitingPaymentResponse(stage, paymentLink, selectedOption, draft)
     );
   }
 
@@ -214,10 +214,12 @@ export class LangGraphResponderService {
     stage: BookingStage,
     paymentLink: string | null,
     selectedOption: VehicleSearchOption | null,
+    draft: BookingDraft,
   ): AgentResponse | null {
     if (stage === "awaiting_payment" && paymentLink) {
       return {
         text: this.buildPaymentMessage(selectedOption),
+        interactive: this.determineInteractive(stage, draft, selectedOption, null),
       };
     }
     return null;

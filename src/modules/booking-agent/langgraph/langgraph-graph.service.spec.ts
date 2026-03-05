@@ -1286,6 +1286,39 @@ describe("LangGraphGraphService", () => {
 
       expect(result.draft).toBeDefined();
     });
+
+    it("does not duplicate preference notes when hint already exists", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.preferences = {
+        pricePreference: "budget",
+        notes: ["budget"],
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        preferenceHint: "budget",
+        confidence: 0.9,
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "I still want a budget option",
+      });
+
+      expect(stateServiceMock.saveState).toHaveBeenCalledWith(
+        conversationId,
+        expect.objectContaining({
+          preferences: expect.objectContaining({
+            notes: ["budget"],
+          }),
+        }),
+      );
+    });
   });
 
   describe("vehicle card template sending", () => {

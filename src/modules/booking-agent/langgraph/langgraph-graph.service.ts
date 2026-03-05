@@ -321,7 +321,9 @@ export class LangGraphGraphService {
     }
 
     const existingNotes = newPreferences.notes ?? [];
-    newPreferences.notes = [...existingNotes, preferenceHint];
+    newPreferences.notes = existingNotes.includes(preferenceHint)
+      ? existingNotes
+      : [...existingNotes, preferenceHint];
     return newPreferences;
   }
 
