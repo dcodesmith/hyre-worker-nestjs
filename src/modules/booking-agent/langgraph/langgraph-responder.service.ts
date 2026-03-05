@@ -113,12 +113,13 @@ export class LangGraphResponderService {
       };
     }
 
-    // Surface user-safe outage messages deterministically in greeting, or when explicitly marked.
-    const isServiceUnavailableError = error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE;
+    // Surface user-safe outage messages deterministically in greeting.
+    // Keep confirming-stage errors on the confirming path so retry/agent actions are preserved.
     if (
       error &&
       availableOptions.length === 0 &&
-      (stage === "greeting" || isServiceUnavailableError)
+      stage === "greeting" &&
+      error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE
     ) {
       return {
         text: error,

@@ -383,6 +383,32 @@ describe("LangGraphResponderService", () => {
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
+    it("keeps confirming retry/agent actions for service-unavailable booking error", async () => {
+      const state = buildState({
+        stage: "confirming",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        selectedOption: buildVehicleOption(),
+        availableOptions: [],
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toContain("Would you like me to try again or connect you to an agent?");
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons?.[0].id).toBe("retry_booking");
+      expect(response.interactive?.buttons?.[1].id).toBe("show_others");
+      expect(response.interactive?.buttons?.[2].id).toBe("agent");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("returns no interactive when booking type is set", async () => {
       claudeMock.invoke.mockResolvedValue({ content: "When do you need pickup?" });
 

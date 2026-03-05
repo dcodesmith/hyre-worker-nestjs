@@ -243,7 +243,8 @@ export class LangGraphGraphService {
         draftPatch: extraction.draftPatch,
         confidence: extraction.confidence,
       });
-      return { extraction };
+      // Clear any prior system outage state once extraction succeeds.
+      return { extraction, error: null };
     } catch (error) {
       this.logger.error("Extract node failed", { error });
       // When extraction fails (external service error), clear state and show user-friendly message.
@@ -255,9 +256,15 @@ export class LangGraphGraphService {
           confidence: 0,
         },
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        statusMessage: null,
+        draft: { __clear: true },
+        preferences: { __clear: true },
         availableOptions: [],
         lastShownOptions: [],
         selectedOption: null,
+        locationSuggestions: [],
+        locationLookupTriggered: false,
+        locationLookupFailed: false,
         stage: "greeting",
       };
     }
@@ -314,6 +321,13 @@ export class LangGraphGraphService {
 
   private routeNode(state: AnnotationState): Partial<AnnotationState> {
     const { extraction, draft, stage, availableOptions, selectedOption } = state;
+
+    if (state.error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE) {
+      return {
+        nextNode: LANGGRAPH_NODE_NAMES.RESPOND,
+        stage: "greeting",
+      };
+    }
 
     const missingFields = getMissingRequiredFields(draft);
     this.logger.log("Route node decision", {
@@ -429,6 +443,7 @@ export class LangGraphGraphService {
           availableOptions: [],
           lastShownOptions: [],
           stage: "collecting",
+          error: null,
           statusMessage: searchResult.precondition.prompt,
           locationSuggestions: [],
           locationLookupTriggered: true,
@@ -467,6 +482,7 @@ export class LangGraphGraphService {
         availableOptions: options,
         lastShownOptions: options,
         stage: newStage,
+        error: null,
         statusMessage: noResultsMessage,
         locationSuggestions: [],
         locationLookupTriggered: true,
@@ -723,6 +739,7 @@ export class LangGraphGraphService {
           availableOptions: [],
           lastShownOptions: [],
           stage: "collecting",
+          error: null,
           statusMessage:
             "That vehicle is no longer available for your selected date and time. Please adjust your date, booking type, or vehicle preference.",
         };
@@ -731,6 +748,7 @@ export class LangGraphGraphService {
       // Keep a user-safe fallback message for unexpected booking failures.
       return {
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        statusMessage: null,
         stage: "confirming",
       };
     }
