@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
 import { LangGraphResponderService } from "./langgraph-responder.service";
@@ -280,8 +281,8 @@ describe("LangGraphResponderService", () => {
 
       const state = buildState({
         stage: "presenting_options",
-        error:
-          "That vehicle is no longer available for your selected date and time. Here are updated available options.",
+        statusMessage:
+          "That vehicle is no longer available for your selected date and time. Here are some alternatives.",
         availableOptions: options,
       });
 
@@ -322,6 +323,90 @@ describe("LangGraphResponderService", () => {
       expect(response.interactive?.buttons?.[0].id).toBe("day");
       expect(response.interactive?.buttons?.[1].id).toBe("night");
       expect(response.interactive?.buttons?.[2].id).toBe("fullday");
+    });
+
+    it("returns collecting status message deterministically without LLM call", async () => {
+      const state = buildState({
+        stage: "collecting",
+        statusMessage:
+          "That vehicle is no longer available for your selected date and time. Please adjust your date, booking type, or vehicle preference.",
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("no longer available");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("returns collecting location guidance from statusMessage without LLM call", async () => {
+      const state = buildState({
+        stage: "collecting",
+        statusMessage:
+          'I couldn\'t find an exact match for "Xyzzyville". Please share a more specific pickup location.',
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Xyzzyville");
+      expect(response.text).toContain("more specific pickup location");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("returns greeting error deterministically without LLM call", async () => {
+      const state = buildState({
+        stage: "greeting",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("service-unavailable override: prefers system error over statusMessage", async () => {
+      // generateResponse should prioritize the state's system error over statusMessage.
+      const state = buildState({
+        stage: "greeting",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        statusMessage: "What type of vehicle would you prefer?",
+        availableOptions: [],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).not.toBe("What type of vehicle would you prefer?");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("keeps confirming retry/agent actions for service-unavailable booking error", async () => {
+      const state = buildState({
+        stage: "confirming",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        selectedOption: buildVehicleOption(),
+        availableOptions: [],
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toContain("Would you like me to try again or connect you to an agent?");
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons?.[0].id).toBe("retry_booking");
+      expect(response.interactive?.buttons?.[1].id).toBe("show_others");
+      expect(response.interactive?.buttons?.[2].id).toBe("agent");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
     it("returns no interactive when booking type is set", async () => {

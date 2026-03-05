@@ -6,6 +6,7 @@ import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
+import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildVehicleOption } from "./langgraph.factory";
 import type { BookingAgentState } from "./langgraph.interface";
 import { LangGraphExtractorService } from "./langgraph-extractor.service";
@@ -72,6 +73,7 @@ describe("LangGraphGraphService", () => {
     extraction: null,
     nextNode: null,
     error: null,
+    statusMessage: null,
     locationSuggestions: [],
     locationLookupTriggered: false,
     locationLookupFailed: false,
@@ -861,6 +863,11 @@ describe("LangGraphGraphService", () => {
         alternatives: [],
         precondition: null,
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -869,8 +876,9 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.stage).toBe("presenting_options");
-      expect(result.error).toContain("no longer available");
-      expect(result.error).not.toContain("Car Not Available Exception");
+      // Vehicle unavailability is a business status message, not an error
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("no longer available");
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
       expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
     });
@@ -907,9 +915,7 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.stage).toBe("confirming");
-      expect(result.error).toBe(
-        "I couldn't create your booking just now. Please try again or type AGENT to speak with someone.",
-      );
+      expect(result.error).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
       expect(result.error).not.toContain("postgres timeout");
     });
 
@@ -1465,6 +1471,11 @@ describe("LangGraphGraphService", () => {
       responderServiceMock.generateResponse.mockResolvedValue({
         text: "I still need a valid pickup location. Please share a more specific address.",
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -1475,11 +1486,11 @@ describe("LangGraphGraphService", () => {
       // Should NOT re-validate because locationLookupTriggered is true and suggestions are empty
       expect(googlePlacesServiceMock.validateAddressWithSuggestions).not.toHaveBeenCalled();
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
-      // Should go to responder with meaningful error so it can ask for a more precise pickup address
+      // Should persist a meaningful status message for a more precise pickup address prompt
       expect(result.stage).toBe("collecting");
-      expect(result.error).toBeDefined();
-      expect(result.error).toContain("Xyzzyville");
-      expect(result.error).toContain("more specific pickup location");
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("Xyzzyville");
+      expect(savedState?.statusMessage).toContain("more specific pickup location");
     });
 
     it("sets error message when search returns no vehicles", async () => {
@@ -1512,6 +1523,11 @@ describe("LangGraphGraphService", () => {
       responderServiceMock.generateResponse.mockResolvedValue({
         text: "Unfortunately, no vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?",
       });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
 
       const result = await service.invoke({
         conversationId,
@@ -1519,9 +1535,10 @@ describe("LangGraphGraphService", () => {
         message: "Search for me",
       });
 
-      // Should go back to collecting stage with error message
+      // Should go back to collecting stage (no results is a status message, not an error)
       expect(result.stage).toBe("collecting");
-      expect(result.error).toContain("No vehicles matching your criteria");
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("No vehicles matching your criteria");
     });
 
     it("allows re-search after successful search when user modifies non-location criteria", async () => {
@@ -1752,7 +1769,9 @@ describe("LangGraphGraphService", () => {
       // Should preserve the validated/normalized address
       expect(result.draft.pickupLocation).toBe("The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos");
       expect(result.stage).toBe("collecting");
-      expect(result.error).toContain("type of vehicle");
+      // Precondition prompt is a status message, not an error
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toBe("What type of vehicle would you prefer?");
       // Should preserve locationLookupTriggered so we don't re-validate on next turn
       expect(savedState).not.toBeNull();
       if (savedState) {

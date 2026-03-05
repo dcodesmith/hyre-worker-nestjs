@@ -16,6 +16,13 @@ export const LANGGRAPH_RESPONSE_TIMEOUT_MS = 15_000;
 
 export const LANGGRAPH_HOLD_TTL_MINUTES = 15;
 
+/**
+ * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.
+ * This replaces raw technical errors like "429 quota exceeded" or "500 internal server error".
+ */
+export const LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE =
+  "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.";
+
 // Twilio Content Template for vehicle selection cards
 // Template variables: {{1}}=title, {{2}}=body, {{3}}=mediaUrl, {{4}}=buttonText, {{5}}=vehicleId
 export const VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";

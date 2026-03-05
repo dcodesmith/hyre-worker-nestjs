@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
-import { LANGGRAPH_BUTTON_ID } from "./langgraph.const";
+import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
 import type {
   AgentResponse,
@@ -96,8 +96,16 @@ export class LangGraphResponderService {
   }
 
   private getDeterministicResponse(state: BookingAgentState): AgentResponse | null {
-    const { extraction, stage, availableOptions, draft, selectedOption, paymentLink, error } =
-      state;
+    const {
+      extraction,
+      stage,
+      availableOptions,
+      draft,
+      selectedOption,
+      paymentLink,
+      error,
+      statusMessage,
+    } = state;
 
     if (extraction?.intent === "reset") {
       return {
@@ -105,16 +113,30 @@ export class LangGraphResponderService {
       };
     }
 
-    if (error && availableOptions.length === 0 && stage === "collecting") {
+    // Surface user-safe outage messages deterministically in greeting.
+    // Keep confirming-stage errors on the confirming path so retry/agent actions are preserved.
+    if (
+      error &&
+      availableOptions.length === 0 &&
+      stage === "greeting" &&
+      error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE
+    ) {
       return {
-        text: "Sorry, I couldn't complete that just now. Please try again or type AGENT to continue with a human agent.",
+        text: error,
+      };
+    }
+
+    // Business status updates are scoped to collecting stage without options.
+    if (statusMessage && availableOptions.length === 0 && stage === "collecting") {
+      return {
+        text: statusMessage,
       };
     }
 
     if (stage === "presenting_options" && availableOptions.length > 0) {
       return {
-        text: error
-          ? `${error}\n\nHere are your options! Tap Select on the one you'd like to book.`
+        text: statusMessage
+          ? `${statusMessage}\n\nHere are your options! Tap Select on the one you'd like to book.`
           : "Here are your options! Tap Select on the one you'd like to book.",
         vehicleCards: this.buildVehicleCards(stage, availableOptions, draft),
       };

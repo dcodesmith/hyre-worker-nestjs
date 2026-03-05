@@ -23,6 +23,7 @@ export function buildState(overrides?: Partial<BookingAgentState>): BookingAgent
     extraction: null,
     nextNode: null,
     error: null,
+    statusMessage: null,
     ...overrides,
   };
 }
