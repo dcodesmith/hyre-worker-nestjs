@@ -10,6 +10,8 @@ export const WHATSAPP_AGENT_QUEUE = "whatsapp-agent-queue";
 export const CREATE_FLIGHT_ALERT_JOB = "create-flight-alert";
 export const PROCESS_WHATSAPP_INBOUND_JOB = "process-whatsapp-inbound";
 export const PROCESS_WHATSAPP_OUTBOX_JOB = "process-whatsapp-outbox";
+export const PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB = "process-whatsapp-inactivity-nudge";
+export const PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB = "process-whatsapp-inactivity-clear";
 
 export const EVERY_HOUR = "0 * * * *";
 export const CONFIRMED_TO_ACTIVE = "confirmed-to-active";

@@ -1,0 +1,29 @@
+name: Lockfile Integrity
+
+on:
+  push:
+    branches: [ main, "feature/*", chore/*, bug/*, refactor/* ]
+  pull_request:
+    branches: [ main, "feature/*", chore/*, bug/*, refactor/* ]
+
+jobs:
+  lockfile:
+    name: Validate pnpm lockfile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Verify lockfile with frozen install
+        run: pnpm install --frozen-lockfile

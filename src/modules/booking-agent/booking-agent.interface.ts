@@ -32,6 +32,17 @@ export interface ProcessWhatsAppOutboxJobData {
   outboxId: string;
 }
 
+export interface ProcessWhatsAppInactivityNudgeJobData {
+  conversationId: string;
+  messageId: string;
+  scheduledAtMs: number;
+}
+
+export interface ProcessWhatsAppInactivityClearJobData {
+  conversationId: string;
+  nudgeScheduledAtMs: number;
+}
+
 export interface CreateOutboxInput {
   conversationId: string;
   dedupeKey: string;
@@ -47,6 +58,7 @@ export interface OrchestratorResult {
   markAsHandoff?: {
     reason: string;
   };
+  resultingStage?: string;
 }
 
 export interface InteractiveReply {
