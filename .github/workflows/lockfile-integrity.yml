@@ -10,6 +10,9 @@ jobs:
   lockfile:
     name: Validate pnpm lockfile
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +24,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10.20.0
 
       - name: Verify lockfile with frozen install
         run: pnpm install --frozen-lockfile

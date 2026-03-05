@@ -332,6 +332,7 @@ describe("WhatsAppProcessor", () => {
       }),
       expect.objectContaining({
         jobId: "whatsapp-inactivity-nudge_conv-1",
+        delay: 10 * 60 * 1000,
       }),
     );
   });
@@ -369,6 +370,7 @@ describe("WhatsAppProcessor", () => {
       }),
       expect.objectContaining({
         jobId: "whatsapp-inactivity-nudge_conv-1",
+        delay: 10 * 60 * 1000,
       }),
     );
   });
@@ -474,6 +476,7 @@ describe("WhatsAppProcessor", () => {
       { conversationId: "conv-1", nudgeScheduledAtMs: 1000 },
       expect.objectContaining({
         jobId: "whatsapp-inactivity-clear_conv-1",
+        delay: 5 * 60 * 1000,
       }),
     );
   });

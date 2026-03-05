@@ -1,6 +1,6 @@
 import { Status } from "@prisma/client";
 import { z } from "zod";
-import { carBaseBodySchema } from "./create-car.dto";
+import { carBaseBodySchema, validateFuelUpgradeRate } from "./create-car.dto";
 
 export const carIdParamSchema = z.cuid();
 
@@ -13,17 +13,6 @@ export const updateCarBodySchema = carBaseBodySchema
     message: "At least one update field is required",
     path: ["make"],
   })
-  .superRefine((data, ctx) => {
-    if (
-      data.pricingIncludesFuel === false &&
-      (data.fuelUpgradeRate === null || data.fuelUpgradeRate === undefined)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Fuel upgrade rate is required when pricing does not include fuel",
-        path: ["fuelUpgradeRate"],
-      });
-    }
-  });
+  .superRefine(validateFuelUpgradeRate);
 
 export type UpdateCarBodyDto = z.infer<typeof updateCarBodySchema>;
