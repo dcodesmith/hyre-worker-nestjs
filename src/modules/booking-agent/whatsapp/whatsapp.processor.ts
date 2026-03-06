@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
@@ -24,6 +24,7 @@ import {
 } from "../booking-agent.error";
 import type {
   InboundMessageContext,
+  OrchestratorResult,
   ProcessWhatsAppInactivityClearJobData,
   ProcessWhatsAppInactivityNudgeJobData,
   ProcessWhatsAppInboundJobData,
@@ -33,6 +34,7 @@ import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.s
 import { LangGraphStateService } from "../langgraph/langgraph-state.service";
 import { parseInteractiveReply } from "./whatsapp-agent.utils";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
+import type { InboundMessageContextRecord } from "./whatsapp-persistence.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
@@ -106,56 +108,10 @@ export class WhatsAppProcessor extends WorkerHost {
       }
 
       await this.cancelPendingInactivityJobs(conversationId);
-
-      // Parse interactive reply data from rawPayload if present
-      const interactive = parseInteractiveReply(context.rawPayload);
-      let inboundBody = context.body ?? undefined;
-      let inboundKind = context.kind;
-
-      if (context.kind === WhatsAppMessageKind.AUDIO) {
-        try {
-          const transcript = await this.audioTranscriptionService.transcribeInboundAudio({
-            mediaUrl: context.mediaUrl,
-            mediaContentType: context.mediaContentType,
-            traceId,
-          });
-          if (transcript) {
-            inboundBody = transcript;
-            inboundKind = WhatsAppMessageKind.TEXT;
-          }
-        } catch (error) {
-          this.logger.warn("Audio transcription failed; falling back to media flow", {
-            traceId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      const orchestratorContext: InboundMessageContext & { windowExpiresAt?: Date | null } = {
-        messageId: context.id,
-        conversationId: context.conversationId,
-        body: inboundBody,
-        kind: inboundKind,
-        windowExpiresAt: context.conversation.windowExpiresAt,
-        interactive: interactive ?? undefined,
-      };
+      const orchestratorContext = await this.buildOrchestratorContext(context, traceId);
 
       const result = await this.bookingAgentOrchestratorService.decide(orchestratorContext);
-
-      for (const outbound of result.enqueueOutbox) {
-        await this.senderService.enqueueOutbound(outbound);
-      }
-
-      if (result.markAsHandoff) {
-        await this.persistenceService.markConversationHandoff(
-          context.conversationId,
-          result.markAsHandoff.reason,
-        );
-      }
-
-      if (this.isNudgeableStage(result.resultingStage)) {
-        await this.scheduleInactivityNudge(conversationId, messageId);
-      }
+      await this.handleInboundOrchestratorResult(result, context.conversationId, messageId);
 
       await this.persistenceService.markInboundMessageProcessed(messageId);
       this.logger.log("Processed inbound WhatsApp message", {
@@ -174,6 +130,72 @@ export class WhatsAppProcessor extends WorkerHost {
       throw error;
     } finally {
       await this.persistenceService.releaseProcessingLock(conversationId, lockToken);
+    }
+  }
+
+  private async buildOrchestratorContext(
+    context: InboundMessageContextRecord,
+    traceId: string,
+  ): Promise<InboundMessageContext & { windowExpiresAt?: Date | null }> {
+    const interactive = parseInteractiveReply(context.rawPayload);
+    const resolvedInbound = await this.resolveInboundMessageContent(context, traceId);
+
+    return {
+      messageId: context.id,
+      conversationId: context.conversationId,
+      body: resolvedInbound.body,
+      kind: resolvedInbound.kind,
+      windowExpiresAt: context.conversation.windowExpiresAt,
+      interactive: interactive ?? undefined,
+    };
+  }
+
+  private async resolveInboundMessageContent(
+    context: InboundMessageContextRecord,
+    traceId: string,
+  ): Promise<{ body?: string; kind: WhatsAppMessageKind }> {
+    if (context.kind !== WhatsAppMessageKind.AUDIO) {
+      return { body: context.body ?? undefined, kind: context.kind };
+    }
+
+    try {
+      const transcript = await this.audioTranscriptionService.transcribeInboundAudio({
+        mediaUrl: context.mediaUrl,
+        mediaContentType: context.mediaContentType,
+        traceId,
+      });
+      if (!transcript) {
+        return { body: context.body ?? undefined, kind: context.kind };
+      }
+
+      return { body: transcript, kind: WhatsAppMessageKind.TEXT };
+    } catch (error) {
+      this.logger.warn("Audio transcription failed; falling back to media flow", {
+        traceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { body: context.body ?? undefined, kind: context.kind };
+    }
+  }
+
+  private async handleInboundOrchestratorResult(
+    result: OrchestratorResult,
+    conversationId: string,
+    messageId: string,
+  ): Promise<void> {
+    for (const outbound of result.enqueueOutbox) {
+      await this.senderService.enqueueOutbound(outbound);
+    }
+
+    if (result.markAsHandoff) {
+      await this.persistenceService.markConversationHandoff(
+        conversationId,
+        result.markAsHandoff.reason,
+      );
+    }
+
+    if (!result.markAsHandoff && this.isNudgeableStage(result.resultingStage)) {
+      await this.scheduleInactivityNudge(conversationId, messageId);
     }
   }
 
@@ -199,7 +221,7 @@ export class WhatsAppProcessor extends WorkerHost {
         break;
       }
 
-      const jitterMs = Math.floor(Math.random() * WHATSAPP_LOCK_ACQUIRE_JITTER_MS);
+      const jitterMs = randomInt(WHATSAPP_LOCK_ACQUIRE_JITTER_MS);
       const sleepMs = Math.min(delayMs + jitterMs, remainingMs);
       await this.sleep(sleepMs);
       delayMs = Math.min(delayMs * 2, WHATSAPP_LOCK_ACQUIRE_MAX_BACKOFF_MS);

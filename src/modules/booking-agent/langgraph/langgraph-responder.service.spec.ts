@@ -308,6 +308,22 @@ describe("LangGraphResponderService", () => {
       expect(response.interactive?.buttons?.[1].id).toBe("agent");
     });
 
+    it("returns deterministic awaiting payment response with controls when payment link exists", async () => {
+      const state = buildState({
+        stage: "awaiting_payment",
+        paymentLink: "https://pay.example.com/invoice/123",
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booking Created");
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons).toHaveLength(2);
+      expect(response.interactive?.buttons?.[0].id).toBe("cancel");
+      expect(response.interactive?.buttons?.[1].id).toBe("agent");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("returns booking type buttons when collecting without booking type", async () => {
       claudeMock.invoke.mockResolvedValue({ content: "What type of booking?" });
 

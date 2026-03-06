@@ -189,6 +189,11 @@ describe("WhatsAppProcessor", () => {
       "conv-1",
       "USER_REQUESTED_AGENT",
     );
+    expect(whatsappAgentQueue.add).not.toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
+      expect.anything(),
+      expect.anything(),
+    );
     expect(persistenceService.markInboundMessageProcessed).toHaveBeenCalledWith("msg-1");
     expect(persistenceService.releaseProcessingLock).toHaveBeenCalledWith(
       "conv-1",

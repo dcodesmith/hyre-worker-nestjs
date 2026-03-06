@@ -5,6 +5,31 @@ import { DatabaseService } from "../../database/database.service";
 import { WHATSAPP_PROCESSING_LOCK_TTL_MS } from "../booking-agent.const";
 import type { CreateOutboxInput, TwilioInboundWebhookPayload } from "../booking-agent.interface";
 
+export const INBOUND_MESSAGE_CONTEXT_SELECT = Prisma.validator<Prisma.WhatsAppMessageSelect>()({
+  id: true,
+  conversationId: true,
+  direction: true,
+  kind: true,
+  body: true,
+  mediaUrl: true,
+  mediaContentType: true,
+  status: true,
+  rawPayload: true,
+  conversation: {
+    select: {
+      id: true,
+      phoneE164: true,
+      status: true,
+      windowExpiresAt: true,
+      lastInboundAt: true,
+    },
+  },
+});
+
+export type InboundMessageContextRecord = Prisma.WhatsAppMessageGetPayload<{
+  select: typeof INBOUND_MESSAGE_CONTEXT_SELECT;
+}>;
+
 @Injectable()
 export class WhatsAppPersistenceService {
   private readonly logger = new Logger(WhatsAppPersistenceService.name);
@@ -279,29 +304,10 @@ export class WhatsAppPersistenceService {
     });
   }
 
-  async getInboundMessageContext(messageId: string) {
+  async getInboundMessageContext(messageId: string): Promise<InboundMessageContextRecord | null> {
     const message = await this.databaseService.whatsAppMessage.findUnique({
       where: { id: messageId },
-      select: {
-        id: true,
-        conversationId: true,
-        direction: true,
-        kind: true,
-        body: true,
-        mediaUrl: true,
-        mediaContentType: true,
-        status: true,
-        rawPayload: true,
-        conversation: {
-          select: {
-            id: true,
-            phoneE164: true,
-            status: true,
-            windowExpiresAt: true,
-            lastInboundAt: true,
-          },
-        },
-      },
+      select: INBOUND_MESSAGE_CONTEXT_SELECT,
     });
 
     if (!message) {
