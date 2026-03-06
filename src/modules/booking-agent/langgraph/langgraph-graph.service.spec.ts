@@ -638,6 +638,7 @@ describe("LangGraphGraphService", () => {
       );
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
       expect(result.stage).toBe("collecting");
+      expect(result.draft.pickupLocation).toBe("Wheatbaker Hotel, Ikoyi, Lagos, Nigeria");
       expect(result.outboxItems[1]?.dedupeKey).toContain(":dropoff-address-suggestions");
       expect(result.outboxItems[1]?.textBody).toContain("drop-off address");
     });

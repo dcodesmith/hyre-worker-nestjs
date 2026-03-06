@@ -386,7 +386,10 @@ export class LangGraphGraphService {
     try {
       const validationResult = await this.validateAndNormalizeLocations(state);
       if (validationResult.earlyReturn) {
-        return validationResult.earlyReturn;
+        return {
+          ...validationResult.earlyReturn,
+          draft: validationResult.draft,
+        };
       }
       const validatedDraft = validationResult.draft;
 
