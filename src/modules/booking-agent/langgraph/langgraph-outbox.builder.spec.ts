@@ -38,7 +38,9 @@ describe("langgraph-outbox.builder", () => {
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[1].mode).toBe("TEMPLATE");
     expect(outbox[1].templateVariables?.["1"]).toBe("Lexus GX");
+    expect(outbox[1].templateVariables?.["2"]).toContain("incl. VAT");
     expect(outbox[2].templateVariables?.["1"]).toBe("Toyota Prado");
+    expect(outbox[2].templateVariables?.["2"]).toContain("incl. VAT");
   });
 
   it("falls back to single free-form message when cards do not map to available options", () => {

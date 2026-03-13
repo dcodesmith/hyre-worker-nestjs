@@ -11,6 +11,7 @@ import {
   LangGraphStatePersistFailedException,
 } from "./langgraph.error";
 import type { BookingAgentState, PersistedState } from "./langgraph.interface";
+import { createDefaultLocationValidationState } from "./langgraph.interface";
 import type { LangGraphRedisClient } from "./langgraph.tokens";
 import { LANGGRAPH_REDIS_CLIENT } from "./langgraph.tokens";
 
@@ -40,6 +41,7 @@ export class LangGraphStateService {
       }
 
       const persisted = JSON.parse(raw) as PersistedState;
+      const locationValidation = this.resolvePersistedLocationValidation(persisted);
 
       return {
         messages: persisted.messages ?? [],
@@ -53,9 +55,7 @@ export class LangGraphStateService {
         holdId: persisted.holdId ?? null,
         holdExpiresAt: persisted.holdExpiresAt ?? null,
         bookingId: persisted.bookingId ?? null,
-        locationSuggestions: persisted.locationSuggestions ?? [],
-        locationLookupTriggered: persisted.locationLookupTriggered ?? false,
-        locationLookupFailed: persisted.locationLookupFailed ?? false,
+        locationValidation,
       };
     } catch (error) {
       this.logger.error("Failed to load LangGraph state", {
@@ -85,9 +85,7 @@ export class LangGraphStateService {
       holdId: state.holdId,
       holdExpiresAt: state.holdExpiresAt,
       bookingId: state.bookingId,
-      locationSuggestions: state.locationSuggestions ?? [],
-      locationLookupTriggered: state.locationLookupTriggered ?? false,
-      locationLookupFailed: state.locationLookupFailed ?? false,
+      locationValidation: state.locationValidation ?? createDefaultLocationValidationState(),
       updatedAt: new Date().toISOString(),
     };
 
@@ -153,9 +151,7 @@ export class LangGraphStateService {
       nextNode: null,
       error: null,
       statusMessage: null,
-      locationSuggestions: [],
-      locationLookupTriggered: false,
-      locationLookupFailed: false,
+      locationValidation: createDefaultLocationValidationState(),
     };
   }
 
@@ -190,10 +186,15 @@ export class LangGraphStateService {
       nextNode: null,
       error: null,
       statusMessage: null,
-      locationSuggestions: existingState.locationSuggestions ?? [],
-      locationLookupTriggered: existingState.locationLookupTriggered ?? false,
-      locationLookupFailed: existingState.locationLookupFailed ?? false,
+      locationValidation:
+        existingState.locationValidation ?? createDefaultLocationValidationState(),
     };
+  }
+
+  private resolvePersistedLocationValidation(
+    persisted: PersistedState,
+  ): NonNullable<BookingAgentState["locationValidation"]> {
+    return persisted.locationValidation ?? createDefaultLocationValidationState();
   }
 
   private async sleep(ms: number): Promise<void> {

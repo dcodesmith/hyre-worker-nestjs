@@ -4,7 +4,6 @@ import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
-import type { AddressLookupResult } from "../../maps/maps.interface";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import {
@@ -15,6 +14,7 @@ import {
 import { LangGraphExecutionFailedException } from "./langgraph.error";
 import type {
   AgentResponse,
+  BookingAgentLocationValidationState,
   BookingAgentState,
   BookingDraft,
   BookingStage,
@@ -24,10 +24,14 @@ import type {
   LangGraphInvokeInput,
   LangGraphInvokeResult,
   LangGraphOutboxItem,
+  LocationValidationState,
   UserPreferences,
   VehicleSearchOption,
 } from "./langgraph.interface";
-import { convertToExtractedParams } from "./langgraph.interface";
+import {
+  convertToExtractedParams,
+  createDefaultLocationValidationState,
+} from "./langgraph.interface";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./langgraph-booking-orchestrator";
 import {
   applyDerivedDraftFields,
@@ -110,17 +114,9 @@ const BookingAgentAnnotation = Annotation.Root({
     reducer: (_, update) => update,
     default: () => [],
   }),
-  locationSuggestions: Annotation({
-    reducer: (_, update: BookingAgentState["locationSuggestions"]) => update,
-    default: () => [],
-  }),
-  locationLookupTriggered: Annotation<boolean>({
+  locationValidation: Annotation<BookingAgentState["locationValidation"]>({
     reducer: (_, update) => update,
-    default: () => false,
-  }),
-  locationLookupFailed: Annotation<boolean>({
-    reducer: (_, update) => update,
-    default: () => false,
+    default: () => createDefaultLocationValidationState(),
   }),
   nextNode: AnnotationWithDefault<string | null>(null),
   error: AnnotationWithDefault<string | null>(null),
@@ -262,9 +258,7 @@ export class LangGraphGraphService {
         availableOptions: [],
         lastShownOptions: [],
         selectedOption: null,
-        locationSuggestions: [],
-        locationLookupTriggered: false,
-        locationLookupFailed: false,
+        locationValidation: createDefaultLocationValidationState(),
         stage: "greeting",
       };
     }
@@ -286,6 +280,7 @@ export class LangGraphGraphService {
 
     const draftChanged = hasDraftChanged(draft, newDraft);
     const pickupLocationChanged = draft.pickupLocation !== newDraft.pickupLocation;
+    const dropoffLocationChanged = draft.dropoffLocation !== newDraft.dropoffLocation;
     const shouldClearOptions = draftChanged && state.availableOptions.length > 0;
 
     this.logger.debug("Merge node completed", {
@@ -294,14 +289,18 @@ export class LangGraphGraphService {
       autoFilledDropoffDate: !draft.dropoffDate && !!newDraft.dropoffDate,
     });
 
+    const nextLocationValidation = this.nextLocationValidationOnDraftMerge(
+      state.locationValidation,
+      pickupLocationChanged,
+      dropoffLocationChanged,
+    );
+
     return {
       draft: newDraft,
       preferences: newPreferences,
       availableOptions: shouldClearOptions ? [] : state.availableOptions,
       lastShownOptions: shouldClearOptions ? [] : state.lastShownOptions,
-      locationSuggestions: pickupLocationChanged ? [] : (state.locationSuggestions ?? []),
-      locationLookupTriggered: pickupLocationChanged ? false : !!state.locationLookupTriggered,
-      locationLookupFailed: pickupLocationChanged ? false : !!state.locationLookupFailed,
+      locationValidation: nextLocationValidation,
     };
   }
 
@@ -325,6 +324,75 @@ export class LangGraphGraphService {
       ? existingNotes
       : [...existingNotes, preferenceHint];
     return newPreferences;
+  }
+
+  private getLocationValidationState(
+    state: Pick<BookingAgentState, "locationValidation">,
+  ): BookingAgentLocationValidationState {
+    return state.locationValidation ?? createDefaultLocationValidationState();
+  }
+
+  private nextLocationValidationOnDraftMerge(
+    current: BookingAgentState["locationValidation"],
+    pickupLocationChanged: boolean,
+    dropoffLocationChanged: boolean,
+  ): BookingAgentLocationValidationState {
+    const previous = current ?? createDefaultLocationValidationState();
+    return {
+      pickup: pickupLocationChanged
+        ? {
+            status: "unvalidated",
+            lastValidatedInput: null,
+            normalizedAddress: null,
+          }
+        : previous.pickup,
+      dropoff: dropoffLocationChanged
+        ? {
+            status: "unvalidated",
+            lastValidatedInput: null,
+            normalizedAddress: null,
+          }
+        : previous.dropoff,
+    };
+  }
+
+  private shouldValidateLocationField(
+    locationValue: string | undefined,
+    validation: LocationValidationState,
+  ): boolean {
+    const normalizedInput = locationValue?.trim();
+    if (!normalizedInput) {
+      return false;
+    }
+
+    if (validation.lastValidatedInput !== normalizedInput) {
+      return true;
+    }
+
+    return validation.status === "unvalidated";
+  }
+
+  private shouldBlockSearchForInvalidLocation(
+    locationValue: string | undefined,
+    validation: LocationValidationState,
+  ): boolean {
+    if (!locationValue?.trim()) {
+      return false;
+    }
+
+    return validation.status === "invalid";
+  }
+
+  private buildLocationFailureStatusMessage(
+    locationValue: string | undefined,
+    locationLabel: "pickup" | "drop-off",
+  ): string {
+    const value = locationValue?.trim() || "that location";
+    return this.buildFullAddressPrompt(value, locationLabel);
+  }
+
+  private resolveInvalidLocationStatus(): LocationValidationState["status"] {
+    return "invalid";
   }
 
   private routeNode(state: AnnotationState): Partial<AnnotationState> {
@@ -366,7 +434,10 @@ export class LangGraphGraphService {
       (decision.nextNode ?? LANGGRAPH_NODE_NAMES.RESPOND) === LANGGRAPH_NODE_NAMES.RESPOND &&
       (decision.stage ?? stage) === "collecting" &&
       !!draft.pickupLocation &&
-      (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
+      this.shouldValidateLocationField(
+        draft.pickupLocation,
+        this.getLocationValidationState(state).pickup,
+      );
     if (shouldRunEarlyPickupValidation) {
       return {
         ...decision,
@@ -389,29 +460,47 @@ export class LangGraphGraphService {
         return {
           ...validationResult.earlyReturn,
           draft: validationResult.draft,
+          locationValidation: validationResult.locationValidation,
         };
       }
       const validatedDraft = validationResult.draft;
+      const locationValidation = validationResult.locationValidation;
 
-      // If location lookup previously failed (NO_MATCH) and user hasn't provided a new address,
-      // don't proceed to search - stay in collecting stage to get a valid address.
-      // Note: We use the explicit `locationLookupFailed` flag rather than inferring from
-      // empty suggestions, because a successful search also clears suggestions.
-      // Provide a meaningful status message so the responder can ask for a more precise pickup address.
-      if (state.locationLookupFailed && validatedDraft.pickupLocation) {
+      if (
+        this.shouldBlockSearchForInvalidLocation(
+          validatedDraft.pickupLocation,
+          locationValidation.pickup,
+        )
+      ) {
         return {
           draft: validatedDraft,
           stage: "collecting",
           availableOptions: [],
           lastShownOptions: [],
-          statusMessage: this.buildLocationSuggestionText(
+          statusMessage: this.buildLocationFailureStatusMessage(
             validatedDraft.pickupLocation,
             "pickup",
-            state.locationSuggestions ?? [],
           ),
-          locationSuggestions: state.locationSuggestions ?? [],
-          locationLookupTriggered: true,
-          locationLookupFailed: true,
+          locationValidation,
+        };
+      }
+
+      if (
+        this.shouldBlockSearchForInvalidLocation(
+          validatedDraft.dropoffLocation,
+          locationValidation.dropoff,
+        )
+      ) {
+        return {
+          draft: validatedDraft,
+          stage: "collecting",
+          availableOptions: [],
+          lastShownOptions: [],
+          statusMessage: this.buildLocationFailureStatusMessage(
+            validatedDraft.dropoffLocation,
+            "drop-off",
+          ),
+          locationValidation,
         };
       }
 
@@ -423,9 +512,7 @@ export class LangGraphGraphService {
           availableOptions: [],
           lastShownOptions: [],
           error: null,
-          locationSuggestions: [],
-          locationLookupTriggered: true,
-          locationLookupFailed: false,
+          locationValidation,
         };
       }
 
@@ -457,16 +544,21 @@ export class LangGraphGraphService {
           stage: "collecting",
           error: null,
           statusMessage: searchResult.precondition.prompt,
-          locationSuggestions: [],
-          locationLookupTriggered: true,
-          locationLookupFailed: false,
+          locationValidation,
         };
       }
 
-      const options: VehicleSearchOption[] = [
-        ...searchResult.exactMatches,
-        ...searchResult.alternatives,
-      ].slice(0, 5);
+      const hasStrictVehicleFilters = this.hasStrictVehicleFilters(validatedDraft);
+      const allowAlternativeMatches = this.shouldAllowAlternativeMatches(state.preferences);
+      const shouldSuppressAlternatives =
+        searchResult.exactMatches.length === 0 &&
+        searchResult.alternatives.length > 0 &&
+        hasStrictVehicleFilters &&
+        !allowAlternativeMatches;
+
+      const options: VehicleSearchOption[] = shouldSuppressAlternatives
+        ? []
+        : [...searchResult.exactMatches, ...searchResult.alternatives].slice(0, 5);
 
       const newStage: BookingStage = options.length > 0 ? "presenting_options" : "collecting";
 
@@ -484,10 +576,13 @@ export class LangGraphGraphService {
       });
 
       // If no vehicles found, set a status message so the responder can inform the user
-      const noResultsMessage = this.buildSearchStatusMessage(
-        options.length,
-        searchResult.exactMatches.length,
-      );
+      const noResultsMessage = this.buildSearchStatusMessage({
+        optionsCount: options.length,
+        exactMatchCount: searchResult.exactMatches.length,
+        alternativeCount: searchResult.alternatives.length,
+        shouldSuppressAlternatives,
+        draft: validatedDraft,
+      });
 
       return {
         draft: validatedDraft,
@@ -496,19 +591,13 @@ export class LangGraphGraphService {
         stage: newStage,
         error: null,
         statusMessage: noResultsMessage,
-        locationSuggestions: [],
-        locationLookupTriggered: true,
-        // Clear failed state on successful search - this allows re-search with same location
-        locationLookupFailed: false,
+        locationValidation,
       };
     } catch (error) {
       this.logger.error("Search node failed", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
-      // Preserve locationLookupTriggered state - if we reached the catch block,
-      // validation may have already succeeded before the error occurred.
-      // Setting it to false would cause an unnecessary re-validation on the next turn.
       return {
         stage: "collecting",
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
@@ -520,7 +609,33 @@ export class LangGraphGraphService {
     }
   }
 
-  private buildSearchStatusMessage(optionsCount: number, exactMatchCount: number): string | null {
+  private shouldAllowAlternativeMatches(preferences: BookingAgentState["preferences"]): boolean {
+    return Boolean(preferences.notes?.includes("show_alternatives"));
+  }
+
+  private hasStrictVehicleFilters(draft: BookingDraft): boolean {
+    return Boolean(
+      draft.color?.trim() ||
+        draft.vehicleType ||
+        draft.serviceTier ||
+        draft.make?.trim() ||
+        draft.model?.trim(),
+    );
+  }
+
+  private buildSearchStatusMessage(input: {
+    optionsCount: number;
+    exactMatchCount: number;
+    alternativeCount: number;
+    shouldSuppressAlternatives: boolean;
+    draft: BookingDraft;
+  }): string | null {
+    const { optionsCount, exactMatchCount, alternativeCount, shouldSuppressAlternatives, draft } =
+      input;
+    if (shouldSuppressAlternatives && alternativeCount > 0) {
+      return `I couldn't find an exact match for ${this.buildVehicleConstraintLabel(draft)}. I found close alternatives instead - would you like me to show them?`;
+    }
+
     if (optionsCount === 0) {
       return "No vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?";
     }
@@ -530,6 +645,18 @@ export class LangGraphGraphService {
     }
 
     return null;
+  }
+
+  private buildVehicleConstraintLabel(draft: BookingDraft): string {
+    const parts = [draft.color?.trim(), draft.vehicleType?.toLowerCase().replaceAll("_", " ")]
+      .filter(Boolean)
+      .map(String);
+    if (parts.length > 0) {
+      return `a ${parts.join(" ")}`;
+    }
+
+    const makeModel = [draft.make?.trim(), draft.model?.trim()].filter(Boolean).join(" ");
+    return makeModel ? `"${makeModel}"` : "your requested vehicle";
   }
 
   private async respondNode(state: AnnotationState): Promise<Partial<AnnotationState>> {
@@ -565,81 +692,100 @@ export class LangGraphGraphService {
     }
   }
 
-  private buildLocationSuggestionText(
-    locationValue: string,
-    locationLabel: "pickup" | "drop-off" = "pickup",
-    suggestions: BookingAgentState["locationSuggestions"] = [],
-  ): string {
-    const locationNoun = locationLabel === "pickup" ? "pickup location" : "drop-off location";
-    if (suggestions.length === 0) {
-      return `I couldn't find "${locationValue}" on Google Maps. Please share a more specific ${locationNoun} (for example: street + area in Lagos).`;
-    }
-
-    const list = suggestions.slice(0, 4).map((suggestion, index) => {
-      return `${index + 1}. ${suggestion.description}`;
-    });
-    return [
-      `I couldn't find an exact Google Maps match for "${locationValue}".`,
-      "",
-      "Did you mean one of these?",
-      ...list,
-      "",
-      `Reply with the full address you want from the list, or send a clearer ${locationNoun}.`,
-    ].join("\n");
-  }
-
-  private buildAreaOnlyLocationPrompt(
+  private buildFullAddressPrompt(
     locationValue: string,
     locationLabel: "pickup" | "drop-off" = "pickup",
   ): string {
     const locationNoun = locationLabel === "pickup" ? "pickup address" : "drop-off address";
     return [
-      `"${locationValue}" looks like a general area, not a full ${locationNoun}.`,
+      `I couldn't confirm "${locationValue}" as a complete ${locationNoun}.`,
       "",
-      `Please share a specific ${locationNoun} (for example: building number + street, or a hotel/landmark name in Lagos).`,
+      `Please share the full ${locationNoun} (for example: building number + street, or a hotel/landmark name in Lagos).`,
     ].join("\n");
   }
 
   private async validateAndNormalizeLocations(state: AnnotationState): Promise<{
     draft: BookingDraft;
+    locationValidation: BookingAgentLocationValidationState;
     earlyReturn?: Partial<AnnotationState>;
   }> {
     const pickupResult = await this.validateAndNormalizePickupLocation(state);
-    if (pickupResult.earlyReturn) {
-      return pickupResult;
-    }
+    const dropoffResult = await this.validateAndNormalizeDropoffLocation(
+      state,
+      pickupResult.draft,
+      pickupResult.locationValidation,
+    );
 
-    return this.validateAndNormalizeDropoffLocation(state, pickupResult.draft);
+    // Validate both fields in the same turn, but prioritize pickup prompt when both are invalid.
+    const earlyReturn = pickupResult.earlyReturn ?? dropoffResult.earlyReturn;
+
+    return {
+      draft: dropoffResult.draft,
+      locationValidation: dropoffResult.locationValidation,
+      earlyReturn,
+    };
   }
 
   private async validateAndNormalizePickupLocation(state: AnnotationState): Promise<{
     draft: BookingDraft;
+    locationValidation: BookingAgentLocationValidationState;
     earlyReturn?: Partial<AnnotationState>;
   }> {
-    const shouldValidate =
-      !!state.draft.pickupLocation &&
-      (!state.locationLookupTriggered || (state.locationSuggestions ?? []).length > 0);
-
-    if (!shouldValidate) {
-      return { draft: state.draft };
-    }
-
-    const locationResult = await this.googlePlacesService.validateAddressWithSuggestions(
+    const locationValidation = this.getLocationValidationState(state);
+    const pickupValidation = locationValidation.pickup;
+    const shouldValidate = this.shouldValidateLocationField(
       state.draft.pickupLocation,
+      pickupValidation,
     );
 
+    if (!shouldValidate) {
+      return { draft: state.draft, locationValidation };
+    }
+
+    const pickupInput = state.draft.pickupLocation?.trim() ?? "";
+    const locationResult = await this.googlePlacesService.validateAddress(pickupInput);
+
     if (!locationResult.isValid) {
+      const nextLocationValidation: BookingAgentLocationValidationState = {
+        ...locationValidation,
+        pickup: {
+          status: this.resolveInvalidLocationStatus(),
+          lastValidatedInput: pickupInput,
+          normalizedAddress: null,
+        },
+      };
       return {
         draft: state.draft,
-        earlyReturn: this.buildInvalidPickupLocationResult(state, locationResult),
+        locationValidation: nextLocationValidation,
+        earlyReturn: this.buildInvalidPickupLocationResult(
+          state,
+          pickupInput,
+          nextLocationValidation,
+        ),
       };
     }
 
     if (!locationResult.normalizedAddress) {
-      return { draft: state.draft };
+      return { draft: state.draft, locationValidation };
     }
 
     const wasDropoffSameAsPickup = state.draft.dropoffLocation === state.draft.pickupLocation;
+    const nextLocationValidation: BookingAgentLocationValidationState = {
+      ...locationValidation,
+      pickup: {
+        status: "valid",
+        lastValidatedInput: pickupInput,
+        normalizedAddress: locationResult.normalizedAddress,
+      },
+      ...(wasDropoffSameAsPickup && {
+        dropoff: {
+          status: "valid",
+          lastValidatedInput: pickupInput,
+          normalizedAddress: locationResult.normalizedAddress,
+        },
+      }),
+    };
+
     return {
       draft: {
         ...state.draft,
@@ -649,34 +795,86 @@ export class LangGraphGraphService {
           dropoffLocation: locationResult.normalizedAddress,
         }),
       },
+      locationValidation: nextLocationValidation,
     };
   }
 
   private async validateAndNormalizeDropoffLocation(
     state: AnnotationState,
     draft: BookingDraft,
+    locationValidation: BookingAgentLocationValidationState,
   ): Promise<{
     draft: BookingDraft;
+    locationValidation: BookingAgentLocationValidationState;
     earlyReturn?: Partial<AnnotationState>;
   }> {
     const pickupLocation = draft.pickupLocation?.trim();
     const dropoffLocation = draft.dropoffLocation?.trim();
 
-    if (!pickupLocation || !dropoffLocation || pickupLocation === dropoffLocation) {
-      return { draft };
+    if (!pickupLocation || !dropoffLocation) {
+      return { draft, locationValidation };
     }
 
-    const locationResult =
-      await this.googlePlacesService.validateAddressWithSuggestions(dropoffLocation);
+    if (pickupLocation === dropoffLocation) {
+      if (locationValidation.pickup.status === "valid") {
+        return {
+          draft,
+          locationValidation: {
+            ...locationValidation,
+            dropoff: {
+              status: "valid",
+              lastValidatedInput: dropoffLocation,
+              normalizedAddress: pickupLocation,
+            },
+          },
+        };
+      }
+
+      if (
+        locationValidation.pickup.status === "invalid" &&
+        locationValidation.pickup.lastValidatedInput === pickupLocation
+      ) {
+        return {
+          draft,
+          locationValidation: {
+            ...locationValidation,
+            dropoff: {
+              status: "invalid",
+              lastValidatedInput: dropoffLocation,
+              normalizedAddress: null,
+            },
+          },
+        };
+      }
+    }
+
+    if (!this.shouldValidateLocationField(dropoffLocation, locationValidation.dropoff)) {
+      return { draft, locationValidation };
+    }
+
+    const locationResult = await this.googlePlacesService.validateAddress(dropoffLocation);
     if (!locationResult.isValid) {
+      const nextLocationValidation: BookingAgentLocationValidationState = {
+        ...locationValidation,
+        dropoff: {
+          status: this.resolveInvalidLocationStatus(),
+          lastValidatedInput: dropoffLocation,
+          normalizedAddress: null,
+        },
+      };
       return {
         draft,
-        earlyReturn: this.buildInvalidDropoffLocationResult(state, dropoffLocation, locationResult),
+        locationValidation: nextLocationValidation,
+        earlyReturn: this.buildInvalidDropoffLocationResult(
+          state,
+          dropoffLocation,
+          nextLocationValidation,
+        ),
       };
     }
 
     if (!locationResult.normalizedAddress) {
-      return { draft };
+      return { draft, locationValidation };
     }
 
     return {
@@ -684,42 +882,34 @@ export class LangGraphGraphService {
         ...draft,
         dropoffLocation: locationResult.normalizedAddress,
       },
+      locationValidation: {
+        ...locationValidation,
+        dropoff: {
+          status: "valid",
+          lastValidatedInput: dropoffLocation,
+          normalizedAddress: locationResult.normalizedAddress,
+        },
+      },
     };
   }
 
   private buildInvalidPickupLocationResult(
     state: AnnotationState,
-    locationResult: AddressLookupResult,
+    pickupLocation: string,
+    locationValidation: BookingAgentLocationValidationState,
   ): Partial<AnnotationState> {
-    const suggestionText =
-      locationResult.failureReason === "AREA_ONLY"
-        ? this.buildAreaOnlyLocationPrompt(state.draft.pickupLocation ?? "that location")
-        : this.buildLocationSuggestionText(
-            state.draft.pickupLocation ?? "that location",
-            "pickup",
-            [...(locationResult.suggestions ?? [])],
-          );
-
-    // Set locationLookupTriggered to true for all failure reasons to prevent infinite
-    // re-validation loops. The mergeNode resets this flag when pickupLocationChanged,
-    // so re-validation will occur when the user provides a new address.
-    const shouldMarkLookupComplete = true;
-
-    // NO_MATCH and AREA_ONLY should mark as failed so searchNode blocks until user provides
-    // a new address. AMBIGUOUS has suggestions for the user to choose from, so isn't a failure.
-    // AREA_ONLY must also set locationLookupFailed to prevent area-only addresses from
-    // bypassing validation and reaching the vehicle search.
-    const isLocationFailure =
-      locationResult.failureReason === "NO_MATCH" || locationResult.failureReason === "AREA_ONLY";
+    const suggestionText = this.buildFullAddressPrompt(pickupLocation || "that location", "pickup");
 
     return {
       stage: "collecting",
-      locationLookupTriggered: shouldMarkLookupComplete,
-      locationLookupFailed: isLocationFailure,
-      locationSuggestions: (locationResult.suggestions ?? []).map((suggestion) => ({
-        placeId: suggestion.placeId,
-        description: suggestion.description,
-      })),
+      locationValidation: {
+        ...locationValidation,
+        pickup: {
+          status: this.resolveInvalidLocationStatus(),
+          lastValidatedInput: pickupLocation,
+          normalizedAddress: null,
+        },
+      },
       response: { text: suggestionText },
       error: null,
       outboxItems: [
@@ -742,17 +932,20 @@ export class LangGraphGraphService {
   private buildInvalidDropoffLocationResult(
     state: AnnotationState,
     dropoffLocation: string,
-    locationResult: AddressLookupResult,
+    locationValidation: BookingAgentLocationValidationState,
   ): Partial<AnnotationState> {
-    const suggestionText =
-      locationResult.failureReason === "AREA_ONLY"
-        ? this.buildAreaOnlyLocationPrompt(dropoffLocation, "drop-off")
-        : this.buildLocationSuggestionText(dropoffLocation, "drop-off", [
-            ...(locationResult.suggestions ?? []),
-          ]);
+    const suggestionText = this.buildFullAddressPrompt(dropoffLocation, "drop-off");
 
     return {
       stage: "collecting",
+      locationValidation: {
+        ...locationValidation,
+        dropoff: {
+          status: this.resolveInvalidLocationStatus(),
+          lastValidatedInput: dropoffLocation,
+          normalizedAddress: null,
+        },
+      },
       response: { text: suggestionText },
       error: null,
       outboxItems: [

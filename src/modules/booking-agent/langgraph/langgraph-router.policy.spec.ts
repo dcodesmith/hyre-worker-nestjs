@@ -124,4 +124,34 @@ describe("langgraph-router.policy", () => {
     expect(decision.draft).toEqual({ __clear: true });
     expect(decision.availableOptions).toEqual([]);
   });
+
+  it("routes reject+show_alternatives to search when required fields are complete", () => {
+    const state = buildState({
+      draft: {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffDate: "2026-03-01",
+        dropoffLocation: "Lekki",
+        vehicleType: "SUV",
+        color: "white",
+      },
+      extraction: {
+        intent: "reject",
+        draftPatch: {},
+        preferenceHint: "show_alternatives",
+        confidence: 1,
+      },
+      selectedOption: buildVehicleOption(),
+      availableOptions: [buildVehicleOption()],
+    });
+
+    const decision = resolveRouteDecision(state);
+    expect(decision.nextNode).toBe("search");
+    expect(decision.stage).toBe("searching");
+    expect(decision.selectedOption).toBeNull();
+    expect(decision.availableOptions).toEqual([]);
+    expect(decision.lastShownOptions).toEqual([]);
+  });
 });

@@ -76,13 +76,12 @@ describe("GooglePlacesService", () => {
       },
     });
 
-    const result = await service.validateAddressWithSuggestions("Ikoyi");
+    const result = await service.validateAddress("Ikoyi");
 
     expect(result.isValid).toBe(false);
     expect(result.normalizedAddress).toBeUndefined();
     expect(result.placeId).toBeUndefined();
     expect(result.failureReason).toBe("AREA_ONLY");
-    expect(result.suggestions).toHaveLength(0);
   });
 
   it("accepts numbered street addresses as valid", async () => {
@@ -112,7 +111,7 @@ describe("GooglePlacesService", () => {
       },
     });
 
-    const result = await service.validateAddressWithSuggestions("12 Glover Road Ikoyi");
+    const result = await service.validateAddress("12 Glover Road Ikoyi");
 
     expect(result.isValid).toBe(true);
     expect(result.normalizedAddress).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
@@ -146,7 +145,7 @@ describe("GooglePlacesService", () => {
       },
     });
 
-    const result = await service.validateAddressWithSuggestions("Glover Road Ikoyi");
+    const result = await service.validateAddress("Glover Road Ikoyi");
 
     expect(result.isValid).toBe(false);
     expect(result.failureReason).toBe("AREA_ONLY");
@@ -180,7 +179,7 @@ describe("GooglePlacesService", () => {
       },
     });
 
-    const result = await service.validateAddressWithSuggestions("Wheatbaker Hotel Ikoyi");
+    const result = await service.validateAddress("Wheatbaker Hotel Ikoyi");
 
     expect(result.isValid).toBe(true);
     expect(result.normalizedAddress).toBe("30 Lugard Ave, Ikoyi, Lagos 106104, Lagos, Nigeria");

@@ -60,24 +60,25 @@ export class GooglePlacesService {
     });
   }
 
-  async validateAddressWithSuggestions(input: string): Promise<AddressLookupResult> {
+  async validateAddress(input: string): Promise<AddressLookupResult> {
     const query = input.trim();
     if (!query) {
-      return { isValid: false, suggestions: [] };
+      return { isValid: false };
     }
 
     const suggestions = await this.fetchAutocompleteSuggestions(query);
     if (suggestions.length === 0) {
-      return { isValid: false, suggestions: [], failureReason: "NO_MATCH" };
+      this.logger.debug("Address validation failed", { failureReason: "NO_MATCH" });
+      return { isValid: false, failureReason: "NO_MATCH" };
     }
 
     const topMatch = suggestions[0];
     const details = topMatch?.placeId ? await this.fetchPlaceDetails(topMatch.placeId) : null;
 
     if (details && this.isAreaOnlyFromPlaceDetails(details)) {
+      this.logger.debug("Address validation failed", { failureReason: "AREA_ONLY" });
       return {
         isValid: false,
-        suggestions: [],
         failureReason: "AREA_ONLY",
       };
     }
@@ -87,14 +88,13 @@ export class GooglePlacesService {
         isValid: true,
         normalizedAddress: details.formattedAddress ?? topMatch?.description,
         placeId: topMatch?.placeId,
-        suggestions,
       };
     }
 
     if (!details && this.isAreaOnlyInput(query, suggestions)) {
+      this.logger.debug("Address validation failed", { failureReason: "AREA_ONLY" });
       return {
         isValid: false,
-        suggestions: [],
         failureReason: "AREA_ONLY",
       };
     }
@@ -103,13 +103,16 @@ export class GooglePlacesService {
       this.isSpecificAddressQuery(query) &&
       this.isLikelyExactAddressMatch(query, topMatch?.description ?? "");
 
-    return {
+    const result: AddressLookupResult = {
       isValid,
       normalizedAddress: isValid ? topMatch?.description : undefined,
       placeId: isValid ? topMatch?.placeId : undefined,
-      suggestions: isValid ? suggestions : suggestions.slice(0, this.maxSuggestions),
       failureReason: isValid ? undefined : "AMBIGUOUS",
     };
+    if (!result.isValid) {
+      this.logger.debug("Address validation failed", { failureReason: result.failureReason });
+    }
+    return result;
   }
 
   private async fetchAutocompleteSuggestions(query: string): Promise<PlaceSuggestion[]> {

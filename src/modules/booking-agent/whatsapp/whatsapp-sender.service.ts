@@ -145,6 +145,16 @@ export class WhatsAppSenderService {
           ? JSON.stringify(outbox.templateVariables)
           : undefined;
 
+      this.logger.log(
+        {
+          outboxId: outbox.id,
+          contentSid: outbox.templateName,
+          contentVariables: variables ?? null,
+          toPhoneE164,
+        },
+        "Sending WhatsApp template via Twilio",
+      );
+
       return this.twilioClient.messages.create({
         to: `whatsapp:${toPhoneE164}`,
         from: `whatsapp:${this.whatsAppNumber}`,
