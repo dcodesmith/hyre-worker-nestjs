@@ -38,7 +38,9 @@ describe("langgraph-outbox.builder", () => {
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[1].mode).toBe("TEMPLATE");
     expect(outbox[1].templateVariables?.["1"]).toBe("Lexus GX");
+    expect(outbox[1].templateVariables?.["2"]).toContain("incl. VAT");
     expect(outbox[2].templateVariables?.["1"]).toBe("Toyota Prado");
+    expect(outbox[2].templateVariables?.["2"]).toContain("incl. VAT");
   });
 
   it("falls back to single free-form message when cards do not map to available options", () => {
@@ -65,6 +67,40 @@ describe("langgraph-outbox.builder", () => {
     expect(outbox).toHaveLength(1);
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[0].templateName).toBeUndefined();
+  });
+
+  it("uses vehicle estimated total for template pricing", () => {
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "presenting_options",
+        inboundMessage: "show me options",
+        availableOptions: [
+          buildVehicleOption({
+            id: "veh_1",
+            make: "Toyota",
+            model: "Corolla",
+            estimatedTotalInclVat: 210000,
+          }),
+        ],
+      }),
+      {
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "veh_1",
+            imageUrl: null,
+            caption: "Fallback caption ₦222,000",
+            priceLabel: "₦180,000",
+            priceValue: 195000,
+            buttonId: "select_vehicle:veh_1",
+            buttonTitle: "Select",
+          },
+        ],
+      },
+    );
+
+    expect(outbox).toHaveLength(2);
+    expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000 incl. VAT");
   });
 
   it("builds checkout link as template in awaiting_payment stage", () => {

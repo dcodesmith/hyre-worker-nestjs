@@ -1,4 +1,5 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
@@ -154,5 +155,62 @@ describe("WhatsAppSenderService", () => {
         kind: WhatsAppMessageKind.TEXT,
       }),
     );
+  });
+
+  it("logs template sends with redacted metadata only", async () => {
+    const twilioCreateMock = vi.fn().mockResolvedValue({
+      sid: "SM_TEMPLATE_1",
+      status: "queued",
+      errorCode: null,
+      errorMessage: null,
+      dateCreated: new Date("2026-03-01T00:00:00.000Z"),
+      dateUpdated: new Date("2026-03-01T00:00:00.000Z"),
+    });
+    Object.defineProperty(service as object, "twilioClient", {
+      value: {
+        messages: {
+          create: twilioCreateMock,
+        },
+      },
+    });
+
+    const loggerSpy = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+
+    await (service as unknown as SenderTestInternals).sendViaTwilio("+2348012345678", {
+      id: "outbox-template-1",
+      mode: "TEMPLATE",
+      textBody: null,
+      mediaUrl: null,
+      templateName: "HX123456",
+      templateVariables: {
+        "1": "John Doe",
+        "2": "Ikeja",
+      },
+    });
+
+    expect(twilioCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "whatsapp:+2348012345678",
+        contentSid: "HX123456",
+        contentVariables: JSON.stringify({ "1": "John Doe", "2": "Ikeja" }),
+      }),
+    );
+
+    expect(loggerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outboxId: "outbox-template-1",
+        contentSid: "HX123456",
+        variablesPresent: true,
+        variableKeys: ["1", "2"],
+        maskedPhone: "*****5678",
+      }),
+      "Sending WhatsApp template via Twilio",
+    );
+
+    const redactedLogPayload = loggerSpy.mock.calls.find(
+      (call) => call[1] === "Sending WhatsApp template via Twilio",
+    )?.[0] as Record<string, unknown>;
+    expect(redactedLogPayload).not.toHaveProperty("toPhoneE164");
+    expect(redactedLogPayload).not.toHaveProperty("contentVariables");
   });
 });

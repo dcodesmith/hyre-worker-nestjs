@@ -32,11 +32,12 @@ function extractCheckoutToken(checkoutUrl: string): string | null {
   }
 }
 
+function normalizePriceLabel(price: string): string {
+  return /\bincl\.\s*VAT\b/i.test(price) ? price : `${price} incl. VAT`;
+}
+
 function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
-  if (vehicle.estimatedTotalInclVat === undefined) {
-    return "Price unavailable";
-  }
-  return `₦${vehicle.estimatedTotalInclVat.toLocaleString()} incl. VAT`;
+  return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
 }
 
 export function buildOutboxItems(
@@ -65,18 +66,32 @@ export function buildOutboxItems(
         return;
       }
 
+      const priceLabel = formatPriceForTemplate(vehicle);
+      const templateVariables = {
+        "1": `${vehicle.make} ${vehicle.model}`,
+        "2": priceLabel,
+        "3": card.imageUrl ?? "",
+        "4": "Select",
+        "5": vehicle.id,
+      } as const;
+
+      logger.log(
+        {
+          conversationId: state.conversationId,
+          inboundMessageId: state.inboundMessageId,
+          vehicleId: vehicle.id,
+          templateName: VEHICLE_CARD_CONTENT_SID,
+          templateVariables,
+        },
+        "Vehicle card template variables set",
+      );
+
       outboxItems.push({
         conversationId: state.conversationId,
         dedupeKey: `langgraph:${state.inboundMessageId}:vehicle:${index}`,
         mode: LANGGRAPH_OUTBOUND_MODE.TEMPLATE,
         templateName: VEHICLE_CARD_CONTENT_SID,
-        templateVariables: {
-          "1": `${vehicle.make} ${vehicle.model}`,
-          "2": formatPriceForTemplate(vehicle),
-          "3": card.imageUrl ?? "",
-          "4": "Select",
-          "5": vehicle.id,
-        },
+        templateVariables,
       });
     });
 

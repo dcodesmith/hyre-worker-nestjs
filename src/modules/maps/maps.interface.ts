@@ -24,7 +24,6 @@ export interface AddressLookupResult {
   isValid: boolean;
   normalizedAddress?: string;
   placeId?: string;
-  suggestions: PlaceSuggestion[];
   failureReason?: "AREA_ONLY" | "NO_MATCH" | "AMBIGUOUS";
 }
 

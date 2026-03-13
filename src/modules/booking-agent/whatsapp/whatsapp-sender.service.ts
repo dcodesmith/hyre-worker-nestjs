@@ -144,6 +144,18 @@ export class WhatsAppSenderService {
         outbox.templateVariables && typeof outbox.templateVariables === "object"
           ? JSON.stringify(outbox.templateVariables)
           : undefined;
+      const variableKeys = this.extractTemplateVariableKeys(outbox.templateVariables);
+
+      this.logger.log(
+        {
+          outboxId: outbox.id,
+          contentSid: outbox.templateName,
+          variablesPresent: variableKeys.length > 0,
+          variableKeys,
+          maskedPhone: this.maskPhoneForLogs(toPhoneE164),
+        },
+        "Sending WhatsApp template via Twilio",
+      );
 
       return this.twilioClient.messages.create({
         to: `whatsapp:${toPhoneE164}`,
@@ -197,5 +209,26 @@ export class WhatsAppSenderService {
       return WhatsAppMessageKind.TEXT;
     }
     return WhatsAppMessageKind.UNKNOWN;
+  }
+
+  private extractTemplateVariableKeys(templateVariables: unknown): string[] {
+    if (
+      !templateVariables ||
+      typeof templateVariables !== "object" ||
+      Array.isArray(templateVariables)
+    ) {
+      return [];
+    }
+
+    return Object.keys(templateVariables);
+  }
+
+  private maskPhoneForLogs(phone: string): string {
+    const digitsOnly = phone.replaceAll(/\D/g, "");
+    if (!digitsOnly) {
+      return "***";
+    }
+    const last4 = digitsOnly.slice(-4);
+    return `*****${last4}`;
   }
 }

@@ -30,6 +30,7 @@ export class VehicleSearchAlternativeRanker {
         fullDay: car.fullDayRate,
         airportPickup: car.airportPickupRate,
       },
+      estimatedTotalInclVat: car.dayRate,
     };
   }
 

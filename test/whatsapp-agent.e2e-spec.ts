@@ -20,7 +20,7 @@ describe("Booking Agent", () => {
   let orchestratorService: BookingAgentOrchestratorService;
   let extractorService: { extract: ReturnType<typeof vi.fn> };
   let claudeService: { invoke: ReturnType<typeof vi.fn> };
-  let googlePlacesService: { validateAddressWithSuggestions: ReturnType<typeof vi.fn> };
+  let googlePlacesService: { validateAddress: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
   const DAY_IN_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +41,15 @@ describe("Booking Agent", () => {
     overrides?: Parameters<TestDataFactory["createCar"]>[1],
   ): Promise<{ id: string }> => {
     const car = await factory.createCar(ownerId, overrides);
+    if (overrides?.vehicleType || overrides?.serviceTier) {
+      await databaseService.car.update({
+        where: { id: car.id },
+        data: {
+          vehicleType: overrides.vehicleType,
+          serviceTier: overrides.serviceTier,
+        },
+      });
+    }
     await databaseService.vehicleImage.create({
       data: {
         carId: car.id,
@@ -51,13 +60,10 @@ describe("Booking Agent", () => {
   };
 
   const setDefaultValidateAddressMock = () => {
-    googlePlacesService.validateAddressWithSuggestions.mockImplementation(
-      async (address: string) => ({
-        isValid: true,
-        normalizedAddress: address,
-        suggestions: [],
-      }),
-    );
+    googlePlacesService.validateAddress.mockImplementation(async (address: string) => ({
+      isValid: true,
+      normalizedAddress: address,
+    }));
   };
 
   beforeAll(async () => {
@@ -70,7 +76,7 @@ describe("Booking Agent", () => {
     };
 
     googlePlacesService = {
-      validateAddressWithSuggestions: vi.fn(),
+      validateAddress: vi.fn(),
     };
     setDefaultValidateAddressMock();
 
@@ -116,7 +122,7 @@ describe("Booking Agent", () => {
     claudeService.invoke.mockResolvedValue({
       content: "Please share the missing booking details.",
     });
-    googlePlacesService.validateAddressWithSuggestions.mockReset();
+    googlePlacesService.validateAddress.mockReset();
     setDefaultValidateAddressMock();
   });
 
@@ -161,6 +167,7 @@ describe("Booking Agent", () => {
         pickupLocation: "Wheatbaker hotel, Ikoyi",
         dropoffLocation: "Wheatbaker hotel, Ikoyi",
       },
+      preferenceHint: "show_alternatives",
       confidence: 0.95,
     });
 
@@ -196,7 +203,7 @@ describe("Booking Agent", () => {
     expect(text).not.toContain("Here are your options");
     expect(extractorService.extract).toHaveBeenCalled();
     expect(claudeService.invoke).not.toHaveBeenCalled();
-    expect(googlePlacesService.validateAddressWithSuggestions).not.toHaveBeenCalled();
+    expect(googlePlacesService.validateAddress).not.toHaveBeenCalled();
   });
 
   it("Scenario 2: asks for booking type when all other required fields are present", async () => {

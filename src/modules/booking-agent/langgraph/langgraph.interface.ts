@@ -97,6 +97,8 @@ export interface VehicleCard {
   vehicleId: string;
   imageUrl: string | null;
   caption: string;
+  priceLabel?: string;
+  priceValue?: number;
   buttonId: string;
   buttonTitle: string;
 }
@@ -107,9 +109,32 @@ export interface AgentResponse {
   vehicleCards?: VehicleCard[];
 }
 
-export interface LocationSuggestionOption {
-  placeId: string;
-  description: string;
+export type LocationValidationStatus = "unvalidated" | "valid" | "invalid";
+
+export interface LocationValidationState {
+  status: LocationValidationStatus;
+  lastValidatedInput: string | null;
+  normalizedAddress: string | null;
+}
+
+export interface BookingAgentLocationValidationState {
+  pickup: LocationValidationState;
+  dropoff: LocationValidationState;
+}
+
+export function createUnvalidatedLocationState(): LocationValidationState {
+  return {
+    status: "unvalidated",
+    lastValidatedInput: null,
+    normalizedAddress: null,
+  };
+}
+
+export function createDefaultLocationValidationState(): BookingAgentLocationValidationState {
+  return {
+    pickup: createUnvalidatedLocationState(),
+    dropoff: createUnvalidatedLocationState(),
+  };
 }
 
 export interface LangGraphOutboxItem {
@@ -149,10 +174,7 @@ export interface BookingAgentState {
   error: string | null;
   /** Business status messages (e.g., "vehicle unavailable", "no results found"). Not errors. */
   statusMessage: string | null;
-  locationSuggestions?: LocationSuggestionOption[];
-  locationLookupTriggered?: boolean;
-  /** True when location lookup failed with NO_MATCH (no suggestions available) */
-  locationLookupFailed?: boolean;
+  locationValidation?: BookingAgentLocationValidationState;
 }
 
 export interface LangGraphInvokeInput {
@@ -208,10 +230,7 @@ export interface PersistedState {
   holdId: string | null;
   holdExpiresAt: string | null;
   bookingId: string | null;
-  locationSuggestions?: LocationSuggestionOption[];
-  locationLookupTriggered?: boolean;
-  /** True when location lookup failed with NO_MATCH (no suggestions available) */
-  locationLookupFailed?: boolean;
+  locationValidation?: BookingAgentLocationValidationState;
   updatedAt: string;
 }
 

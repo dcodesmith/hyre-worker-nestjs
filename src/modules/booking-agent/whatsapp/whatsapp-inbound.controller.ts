@@ -4,7 +4,7 @@ import { WHATSAPP_AGENT_ACK_XML } from "../booking-agent.const";
 import type { TwilioInboundWebhookPayload } from "../booking-agent.interface";
 import { WhatsAppIngressService } from "./whatsapp-ingress.service";
 
-@Controller("api/whatsapp-agent")
+@Controller("api")
 export class WhatsAppInboundController {
   constructor(private readonly whatsappIngressService: WhatsAppIngressService) {}
 

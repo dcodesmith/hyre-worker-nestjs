@@ -15,6 +15,7 @@ describe("VehicleSearchAlternativeRanker", () => {
       serviceTier: "STANDARD",
       imageUrl: null,
       rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
+      estimatedTotalInclVat: 65000,
     },
     {
       id: "car_alt",
@@ -26,6 +27,7 @@ describe("VehicleSearchAlternativeRanker", () => {
       serviceTier: "STANDARD",
       imageUrl: null,
       rates: { day: 66000, night: 71000, fullDay: 111000, airportPickup: 41000 },
+      estimatedTotalInclVat: 66000,
     },
   ];
 

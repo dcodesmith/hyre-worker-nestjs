@@ -130,7 +130,7 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
     case "confirm":
       return selectedOption ? { nextNode: LANGGRAPH_NODE_NAMES.CREATE_BOOKING } : null;
     case "reject":
-      return buildRejectDecision();
+      return buildRejectDecision(state);
     default:
       return null;
   }
@@ -211,11 +211,24 @@ function buildSelectionDecision(
   };
 }
 
-function buildRejectDecision(): LangGraphRouteDecision {
+function buildRejectDecision(state: BookingAgentState): LangGraphRouteDecision {
+  const shouldShowAlternatives = state.extraction?.preferenceHint === "show_alternatives";
+  const hasNoMissingFields = getMissingRequiredFields(state.draft).length === 0;
+  if (shouldShowAlternatives && hasNoMissingFields) {
+    return {
+      nextNode: LANGGRAPH_NODE_NAMES.SEARCH,
+      stage: "searching",
+      selectedOption: null,
+      availableOptions: [],
+      lastShownOptions: [],
+    };
+  }
+
   return {
     nextNode: LANGGRAPH_NODE_NAMES.RESPOND,
     stage: "collecting",
     selectedOption: null,
     availableOptions: [],
+    lastShownOptions: [],
   };
 }

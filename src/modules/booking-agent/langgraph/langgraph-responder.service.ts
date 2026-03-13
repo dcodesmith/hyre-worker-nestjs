@@ -255,17 +255,19 @@ export class LangGraphResponderService {
     }
 
     return availableOptions.map((opt, index) => {
-      const priceFormatted = opt.estimatedTotalInclVat
-        ? `₦${opt.estimatedTotalInclVat.toLocaleString()}`
-        : "Price on request";
+      const priceFormatted = this.formatRequiredPrice(opt.estimatedTotalInclVat);
 
       const caption = this.formatVehicleCaption(opt, index + 1, priceFormatted, draft);
       const buttonTitle = `✓ Select ${opt.make} ${opt.model}`.slice(0, 20);
+
+      const priceLabel = `${priceFormatted} incl. VAT`;
 
       return {
         vehicleId: opt.id,
         imageUrl: opt.imageUrl,
         caption,
+        priceLabel,
+        priceValue: opt.estimatedTotalInclVat,
         buttonId: `select_vehicle:${opt.id}`,
         buttonTitle,
       };
@@ -309,9 +311,7 @@ export class LangGraphResponderService {
   }
 
   private buildBookingSummary(draft: BookingDraft, selectedOption: VehicleSearchOption): string {
-    const priceFormatted = selectedOption.estimatedTotalInclVat
-      ? `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`
-      : "Price on request";
+    const priceFormatted = this.formatRequiredPrice(selectedOption.estimatedTotalInclVat);
     const durationDays = this.resolveDurationDays(draft);
     const durationLine =
       durationDays === null
@@ -362,6 +362,10 @@ export class LangGraphResponderService {
     }
 
     return dayDifference;
+  }
+
+  private formatRequiredPrice(estimatedTotalInclVat: number): string {
+    return `₦${estimatedTotalInclVat.toLocaleString()}`;
   }
 
   private buildPaymentMessage(selectedOption: VehicleSearchOption | null): string {

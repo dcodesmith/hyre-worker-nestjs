@@ -109,6 +109,7 @@
   "pnpm": {
     "overrides": {
       "body-parser": "2.2.1",
+      "flatted": "3.4.0",
       "lodash": "4.17.23",
       "minimatch": "10.2.3",
       "multer": "2.1.1",

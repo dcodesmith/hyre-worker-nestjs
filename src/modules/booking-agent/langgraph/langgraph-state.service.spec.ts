@@ -265,6 +265,42 @@ describe("LangGraphStateService", () => {
       expect(state?.stage).toBe("collecting");
     });
 
+    it("hydrates nested defaults for partially persisted location validation", async () => {
+      const storedState = {
+        messages: [],
+        draft: { pickupLocation: "Ikeja" },
+        stage: "collecting",
+        turnCount: 1,
+        availableOptions: [],
+        lastShownOptions: [],
+        preferences: {},
+        holdId: null,
+        holdExpiresAt: null,
+        bookingId: null,
+        locationValidation: {
+          pickup: {
+            status: "valid",
+          },
+        },
+        updatedAt: new Date().toISOString(),
+      };
+
+      redisMock.get.mockResolvedValue(JSON.stringify(storedState));
+
+      const state = await service.loadState(conversationId);
+
+      expect(state?.locationValidation?.pickup).toEqual({
+        status: "valid",
+        lastValidatedInput: null,
+        normalizedAddress: null,
+      });
+      expect(state?.locationValidation?.dropoff).toEqual({
+        status: "unvalidated",
+        lastValidatedInput: null,
+        normalizedAddress: null,
+      });
+    });
+
     it("throws on parse error", async () => {
       redisMock.get.mockResolvedValue("invalid json {{{");
 

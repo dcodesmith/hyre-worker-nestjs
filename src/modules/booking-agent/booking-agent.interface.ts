@@ -91,7 +91,7 @@ export interface VehicleSearchOption {
     fullDay: number | null;
     airportPickup: number | null;
   };
-  estimatedTotalInclVat?: number;
+  estimatedTotalInclVat: number;
   estimatedSubtotal?: number;
   estimatedVatAmount?: number;
   estimateBasis?: string;

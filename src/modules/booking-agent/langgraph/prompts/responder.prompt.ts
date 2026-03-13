@@ -112,7 +112,7 @@ export function buildResponderUserContext(
   if (availableOptions.length > 0 && stage !== "presenting_options") {
     context += "AVAILABLE OPTIONS:\n";
     availableOptions.slice(0, options.maxOptionContextItems).forEach((opt, i) => {
-      context += `${i + 1}. ${opt.make} ${opt.model} (${opt.color ?? "any"}) - ₦${opt.estimatedTotalInclVat?.toLocaleString() ?? "N/A"} incl. VAT\n`;
+      context += `${i + 1}. ${opt.make} ${opt.model} (${opt.color ?? "any"}) - ₦${opt.estimatedTotalInclVat.toLocaleString()} incl. VAT\n`;
     });
     context += "INSTRUCTION: Present these options conversationally. Mention the prices.\n";
   } else if (availableOptions.length > 0 && stage === "presenting_options") {
@@ -120,10 +120,7 @@ export function buildResponderUserContext(
   }
 
   if (selectedOption) {
-    const selectedPrice =
-      typeof selectedOption.estimatedTotalInclVat === "number"
-        ? `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`
-        : "N/A";
+    const selectedPrice = `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`;
     context += `SELECTED: ${selectedOption.make} ${selectedOption.model} - ${selectedPrice}\n`;
   }
 
