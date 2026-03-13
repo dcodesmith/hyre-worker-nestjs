@@ -69,7 +69,7 @@ describe("langgraph-outbox.builder", () => {
     expect(outbox[0].templateName).toBeUndefined();
   });
 
-  it("uses structured card price label when vehicle estimated total is unavailable", () => {
+  it("uses vehicle estimated total for template pricing", () => {
     const outbox = buildOutboxItems(
       buildState({
         stage: "presenting_options",
@@ -79,7 +79,7 @@ describe("langgraph-outbox.builder", () => {
             id: "veh_1",
             make: "Toyota",
             model: "Corolla",
-            estimatedTotalInclVat: undefined,
+            estimatedTotalInclVat: 210000,
           }),
         ],
       }),
@@ -91,38 +91,6 @@ describe("langgraph-outbox.builder", () => {
             imageUrl: null,
             caption: "Fallback caption ₦222,000",
             priceLabel: "₦180,000",
-            buttonId: "select_vehicle:veh_1",
-            buttonTitle: "Select",
-          },
-        ],
-      },
-    );
-
-    expect(outbox).toHaveLength(2);
-    expect(outbox[1].templateVariables?.["2"]).toBe("₦180,000 incl. VAT");
-  });
-
-  it("falls back to card priceValue before caption parsing", () => {
-    const outbox = buildOutboxItems(
-      buildState({
-        stage: "presenting_options",
-        inboundMessage: "show me options",
-        availableOptions: [
-          buildVehicleOption({
-            id: "veh_1",
-            make: "Toyota",
-            model: "Corolla",
-            estimatedTotalInclVat: undefined,
-          }),
-        ],
-      }),
-      {
-        text: "Here are your options!",
-        vehicleCards: [
-          {
-            vehicleId: "veh_1",
-            imageUrl: null,
-            caption: "Fallback caption ₦222,000",
             priceValue: 195000,
             buttonId: "select_vehicle:veh_1",
             buttonTitle: "Select",
@@ -132,7 +100,7 @@ describe("langgraph-outbox.builder", () => {
     );
 
     expect(outbox).toHaveLength(2);
-    expect(outbox[1].templateVariables?.["2"]).toBe("₦195,000 incl. VAT");
+    expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000 incl. VAT");
   });
 
   it("builds checkout link as template in awaiting_payment stage", () => {

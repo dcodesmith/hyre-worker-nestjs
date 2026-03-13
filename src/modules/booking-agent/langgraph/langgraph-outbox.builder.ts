@@ -8,7 +8,6 @@ import type {
   AgentResponse,
   BookingStage,
   LangGraphOutboxItem,
-  VehicleCard,
   VehicleSearchOption,
 } from "./langgraph.interface";
 
@@ -37,25 +36,8 @@ function normalizePriceLabel(price: string): string {
   return /\bincl\.\s*VAT\b/i.test(price) ? price : `${price} incl. VAT`;
 }
 
-function extractPriceFromCardCaption(card: VehicleCard): string | null {
-  const match = /₦[\d,]+(?:\.\d+)?(?:\s*incl\.\s*VAT)?/i.exec(card.caption);
-  if (!match?.[0]) {
-    return null;
-  }
-  return normalizePriceLabel(match[0].trim());
-}
-
-function formatPriceForTemplate(vehicle: VehicleSearchOption, card: VehicleCard): string {
-  if (vehicle.estimatedTotalInclVat !== undefined) {
-    return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
-  }
-  if (card.priceLabel?.trim()) {
-    return normalizePriceLabel(card.priceLabel.trim());
-  }
-  if (typeof card.priceValue === "number") {
-    return normalizePriceLabel(`₦${card.priceValue.toLocaleString()}`);
-  }
-  return extractPriceFromCardCaption(card) ?? "Price unavailable";
+function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
+  return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
 }
 
 export function buildOutboxItems(
@@ -84,7 +66,7 @@ export function buildOutboxItems(
         return;
       }
 
-      const priceLabel = formatPriceForTemplate(vehicle, card);
+      const priceLabel = formatPriceForTemplate(vehicle);
       const templateVariables = {
         "1": `${vehicle.make} ${vehicle.model}`,
         "2": priceLabel,
