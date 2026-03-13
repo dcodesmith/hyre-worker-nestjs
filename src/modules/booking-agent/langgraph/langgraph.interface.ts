@@ -97,6 +97,8 @@ export interface VehicleCard {
   vehicleId: string;
   imageUrl: string | null;
   caption: string;
+  priceLabel?: string;
+  priceValue?: number;
   buttonId: string;
   buttonTitle: string;
 }

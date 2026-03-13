@@ -1671,6 +1671,7 @@ describe("LangGraphGraphService", () => {
         pickupLocation: "Wheatbaker, Ikoyi",
         dropoffLocation: "6 Glover Road, Ikoyi",
         vehicleType: "SEDAN",
+        serviceTier: "LUXURY",
       };
       stateServiceMock.loadState.mockResolvedValue(existingState);
       stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
@@ -1744,6 +1745,44 @@ describe("LangGraphGraphService", () => {
       expect(responderServiceMock.generateResponse).toHaveBeenCalled();
       const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
       expect(responderArg.availableOptions).toHaveLength(0);
+      expect(responderArg.statusMessage).toContain("would you like me to show them?");
+    });
+
+    it("uses service tier in strict filter label when tier is the only strict constraint", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupTime: "23:00",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Wheatbaker, Ikoyi",
+        dropoffLocation: "6 Glover Road, Ikoyi",
+        serviceTier: "LUXURY",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [buildVehicleOption({ id: "alt-tier-only-1" })],
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for me",
+      });
+
+      const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
+      expect(responderArg.availableOptions).toHaveLength(0);
+      expect(responderArg.statusMessage).toContain("luxury");
       expect(responderArg.statusMessage).toContain("would you like me to show them?");
     });
 

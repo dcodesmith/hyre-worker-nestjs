@@ -262,10 +262,17 @@ export class LangGraphResponderService {
       const caption = this.formatVehicleCaption(opt, index + 1, priceFormatted, draft);
       const buttonTitle = `✓ Select ${opt.make} ${opt.model}`.slice(0, 20);
 
+      const priceLabel =
+        opt.estimatedTotalInclVat === undefined
+          ? "Price on request"
+          : `${priceFormatted} incl. VAT`;
+
       return {
         vehicleId: opt.id,
         imageUrl: opt.imageUrl,
         caption,
+        priceLabel,
+        priceValue: opt.estimatedTotalInclVat,
         buttonId: `select_vehicle:${opt.id}`,
         buttonTitle,
       };

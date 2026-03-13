@@ -46,10 +46,16 @@ function extractPriceFromCardCaption(card: VehicleCard): string | null {
 }
 
 function formatPriceForTemplate(vehicle: VehicleSearchOption, card: VehicleCard): string {
-  if (vehicle.estimatedTotalInclVat === undefined) {
-    return extractPriceFromCardCaption(card) ?? "Price unavailable";
+  if (vehicle.estimatedTotalInclVat !== undefined) {
+    return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
   }
-  return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
+  if (card.priceLabel?.trim()) {
+    return normalizePriceLabel(card.priceLabel.trim());
+  }
+  if (typeof card.priceValue === "number") {
+    return normalizePriceLabel(`₦${card.priceValue.toLocaleString()}`);
+  }
+  return extractPriceFromCardCaption(card) ?? "Price unavailable";
 }
 
 export function buildOutboxItems(

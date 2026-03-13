@@ -194,7 +194,22 @@ export class LangGraphStateService {
   private resolvePersistedLocationValidation(
     persisted: PersistedState,
   ): NonNullable<BookingAgentState["locationValidation"]> {
-    return persisted.locationValidation ?? createDefaultLocationValidationState();
+    const defaults = createDefaultLocationValidationState();
+    const existing = persisted.locationValidation;
+    if (!existing) {
+      return defaults;
+    }
+
+    return {
+      pickup: {
+        ...defaults.pickup,
+        ...existing.pickup,
+      },
+      dropoff: {
+        ...defaults.dropoff,
+        ...existing.dropoff,
+      },
+    };
   }
 
   private async sleep(ms: number): Promise<void> {

@@ -648,7 +648,11 @@ export class LangGraphGraphService {
   }
 
   private buildVehicleConstraintLabel(draft: BookingDraft): string {
-    const parts = [draft.color?.trim(), draft.vehicleType?.toLowerCase().replaceAll("_", " ")]
+    const parts = [
+      draft.color?.trim(),
+      draft.vehicleType?.toLowerCase().replaceAll("_", " "),
+      draft.serviceTier?.toLowerCase().replaceAll("_", " "),
+    ]
       .filter(Boolean)
       .map(String);
     if (parts.length > 0) {
@@ -769,19 +773,20 @@ export class LangGraphGraphService {
       return { draft: state.draft, locationValidation };
     }
 
+    const normalizedAddress = locationResult.normalizedAddress;
     const wasDropoffSameAsPickup = state.draft.dropoffLocation === state.draft.pickupLocation;
     const nextLocationValidation: BookingAgentLocationValidationState = {
       ...locationValidation,
       pickup: {
         status: "valid",
-        lastValidatedInput: pickupInput,
-        normalizedAddress: locationResult.normalizedAddress,
+        lastValidatedInput: normalizedAddress,
+        normalizedAddress,
       },
       ...(wasDropoffSameAsPickup && {
         dropoff: {
           status: "valid",
-          lastValidatedInput: pickupInput,
-          normalizedAddress: locationResult.normalizedAddress,
+          lastValidatedInput: normalizedAddress,
+          normalizedAddress,
         },
       }),
     };
@@ -789,10 +794,10 @@ export class LangGraphGraphService {
     return {
       draft: {
         ...state.draft,
-        pickupLocation: locationResult.normalizedAddress,
+        pickupLocation: normalizedAddress,
         // Keep dropoff in sync if it was auto-filled from pickup via "same location"
         ...(wasDropoffSameAsPickup && {
-          dropoffLocation: locationResult.normalizedAddress,
+          dropoffLocation: normalizedAddress,
         }),
       },
       locationValidation: nextLocationValidation,
@@ -817,14 +822,15 @@ export class LangGraphGraphService {
 
     if (pickupLocation === dropoffLocation) {
       if (locationValidation.pickup.status === "valid") {
+        const normalizedAddress = locationValidation.pickup.normalizedAddress ?? pickupLocation;
         return {
           draft,
           locationValidation: {
             ...locationValidation,
             dropoff: {
               status: "valid",
-              lastValidatedInput: dropoffLocation,
-              normalizedAddress: pickupLocation,
+              lastValidatedInput: normalizedAddress,
+              normalizedAddress,
             },
           },
         };
@@ -877,17 +883,18 @@ export class LangGraphGraphService {
       return { draft, locationValidation };
     }
 
+    const normalizedAddress = locationResult.normalizedAddress;
     return {
       draft: {
         ...draft,
-        dropoffLocation: locationResult.normalizedAddress,
+        dropoffLocation: normalizedAddress,
       },
       locationValidation: {
         ...locationValidation,
         dropoff: {
           status: "valid",
-          lastValidatedInput: dropoffLocation,
-          normalizedAddress: locationResult.normalizedAddress,
+          lastValidatedInput: normalizedAddress,
+          normalizedAddress,
         },
       },
     };
