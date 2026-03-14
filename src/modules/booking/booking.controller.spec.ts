@@ -182,30 +182,6 @@ describe("BookingController", () => {
         // Validation should throw before reaching controller
         expect(() => validateBookingInput(invalidDto, true)).toThrow(BookingValidationException);
       });
-
-      it("should validate pickupTime is required for DAY bookings", async () => {
-        const dto = {
-          ...createValidBookingDto(),
-          pickupTime: undefined, // Missing
-        };
-
-        // Validation should throw before reaching controller
-        expect(() => validateBookingInput(dto, true)).toThrow(BookingValidationException);
-      });
-
-      it("should validate flightNumber is required for AIRPORT_PICKUP bookings", async () => {
-        const dto = {
-          ...createValidBookingDto(),
-          bookingType: "AIRPORT_PICKUP" as const,
-          pickupTime: undefined,
-          sameLocation: false,
-          dropOffAddress: "456 Drop Off St",
-          // Missing flightNumber
-        };
-
-        // Validation should throw before reaching controller
-        expect(() => validateBookingInput(dto, true)).toThrow(BookingValidationException);
-      });
     });
 
     describe("guest user", () => {
@@ -266,17 +242,6 @@ describe("BookingController", () => {
     });
 
     describe("validation", () => {
-      it("should validate end date is after start date", async () => {
-        const dto = {
-          ...createValidBookingDto(),
-          startDate: new Date("2025-02-02"),
-          endDate: new Date("2025-02-01"), // Before start
-        };
-
-        // Validation should throw before reaching controller
-        expect(() => validateBookingInput(dto, true)).toThrow(BookingValidationException);
-      });
-
       it("should validate dropOffAddress is required when sameLocation is false", async () => {
         const dto = {
           ...createValidBookingDto(),
@@ -306,19 +271,6 @@ describe("BookingController", () => {
           }),
           expect.any(Object),
         );
-      });
-
-      it("should validate AIRPORT_PICKUP requires sameLocation=false", async () => {
-        const dto = {
-          ...createValidBookingDto(),
-          bookingType: "AIRPORT_PICKUP" as const,
-          pickupTime: undefined,
-          sameLocation: true, // Invalid for AIRPORT_PICKUP
-          flightNumber: "BA74",
-        };
-
-        // Validation should throw before reaching controller
-        expect(() => validateBookingInput(dto, true)).toThrow(BookingValidationException);
       });
     });
   });

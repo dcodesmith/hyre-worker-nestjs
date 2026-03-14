@@ -3,6 +3,15 @@ name: Validate Fly.io Deployment
 on:
   pull_request:
     branches: [ main ]
+    paths:
+      - ".github/workflows/fly-deploy.yml"
+      - ".github/workflows/fly-validate.yml"
+      - "fly.toml"
+      - "Dockerfile"
+      - "package.json"
+      - "pnpm-lock.yaml"
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   validate:
@@ -24,8 +33,13 @@ jobs:
           --health-retries 10
     # if: false  # Temporarily disabled - remove this line to re-enable
     steps:
-      # Pin to v6.0.1 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
-      - uses: actions/checkout@v6.0.1
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Lint deploy workflows
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
+          ./actionlint -color -oneline .github/workflows/fly-deploy.yml .github/workflows/fly-validate.yml
 
       # Pin to v4 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
       - name: Setup pnpm
@@ -45,9 +59,10 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3.12.0
       
-      - name: Setup Fly.io CLI
-        # Pin to v1.4 - check for updates with: gh api repos/superfly/flyctl-actions/tags --jq '.[0].name'
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+      - name: Install Flyctl
+        run: |
+          curl -fsSL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
       
       - name: Validate Fly.io config
         run: flyctl config validate
