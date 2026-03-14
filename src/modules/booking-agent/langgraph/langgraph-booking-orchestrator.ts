@@ -1,4 +1,7 @@
-import { normalizeBookingTimeWindow } from "../../../shared/booking-time-window.helper";
+import {
+  getDefaultPickupTime,
+  normalizeBookingTimeWindow,
+} from "../../../shared/booking-time-window.helper";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type {
   BookingDraft,
@@ -27,11 +30,14 @@ export function buildBookingInputFromDraft(
   normalizedStartDate: Date;
   normalizedEndDate: Date;
 } {
+  const bookingType = draft.bookingType ?? "DAY";
+  const pickupTime = draft.pickupTime ?? getDefaultPickupTime(bookingType);
+
   const { startDate, endDate } = normalizeBookingTimeWindow({
-    bookingType: draft.bookingType ?? "DAY",
+    bookingType,
     startDate: new Date(draft.pickupDate),
     endDate: new Date(draft.dropoffDate),
-    pickupTime: draft.pickupTime,
+    pickupTime,
   });
 
   const sameLocation = draft.pickupLocation === draft.dropoffLocation;
@@ -42,8 +48,8 @@ export function buildBookingInputFromDraft(
       startDate,
       endDate,
       pickupAddress: draft.pickupLocation ?? "",
-      bookingType: draft.bookingType ?? "DAY",
-      pickupTime: normalizePickupTimeTo12Hour(draft.pickupTime ?? "9:00 AM"),
+      bookingType,
+      pickupTime: normalizePickupTimeTo12Hour(pickupTime),
       flightNumber: draft.flightNumber,
       includeSecurityDetail: false,
       requiresFullTank: false,

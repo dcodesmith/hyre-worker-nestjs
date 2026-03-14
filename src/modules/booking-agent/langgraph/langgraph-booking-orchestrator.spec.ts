@@ -95,4 +95,22 @@ describe("buildBookingInputFromDraft", () => {
     expect(normalizedEndDate.getHours()).toBe(5);
     expect(normalizedEndDate.getTime() - normalizedStartDate.getTime()).toBe(6 * 60 * 60 * 1000);
   });
+
+  it("uses shared DAY default pickup time when draft pickupTime is missing", () => {
+    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft(
+      {
+        pickupDate: "2026-03-03",
+        dropoffDate: "2026-03-03",
+        bookingType: "DAY",
+        pickupLocation: "Wheat Baker Hotel, Ikoyi",
+        dropoffLocation: "Wheat Baker Hotel, Ikoyi",
+      },
+      selectedOption,
+      guestIdentity,
+    );
+
+    expect(input.pickupTime).toBe("7:00 AM");
+    expect(normalizedStartDate.toISOString()).toBe("2026-03-03T07:00:00.000Z");
+    expect(normalizedEndDate.toISOString()).toBe("2026-03-03T19:00:00.000Z");
+  });
 });

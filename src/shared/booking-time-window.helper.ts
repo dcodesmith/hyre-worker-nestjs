@@ -40,7 +40,7 @@ export function normalizeBookingTimeWindow(input: NormalizationInput): {
   }
 }
 
-function getDefaultPickupTime(bookingType: BookingType): string {
+export function getDefaultPickupTime(bookingType: BookingType): string {
   switch (bookingType) {
     case "DAY":
       return "7:00 AM";
