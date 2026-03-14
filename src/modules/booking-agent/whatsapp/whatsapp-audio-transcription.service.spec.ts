@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OPENAI_SDK_CLIENT } from "../../openai-sdk/openai-sdk.tokens";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 
@@ -15,6 +15,10 @@ type TranscriptionServiceInternals = {
 describe("WhatsAppAudioTranscriptionService", () => {
   let moduleRef: TestingModule;
   let service: WhatsAppAudioTranscriptionService;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(async () => {
     moduleRef = await Test.createTestingModule({
@@ -90,5 +94,38 @@ describe("WhatsAppAudioTranscriptionService", () => {
         traceId: "conv-1:msg-1",
       }),
     ).resolves.toBeNull();
+  });
+
+  it("rejects media URL with non-Twilio domain", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const transcribeSpy = vi.spyOn(
+      service as unknown as TranscriptionServiceInternals,
+      "transcribeAudioBinary",
+    );
+
+    await expect(
+      service.transcribeInboundAudio({
+        mediaUrl: "https://example.com/media/123",
+        mediaContentType: "audio/ogg",
+        traceId: "conv-1:msg-1",
+      }),
+    ).rejects.toThrow("Invalid WhatsApp media URL domain");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(transcribeSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects media URL with non-HTTPS protocol", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      service.transcribeInboundAudio({
+        mediaUrl: "http://api.twilio.com/media/123",
+        mediaContentType: "audio/ogg",
+        traceId: "conv-1:msg-1",
+      }),
+    ).rejects.toThrow("Invalid WhatsApp media URL protocol");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

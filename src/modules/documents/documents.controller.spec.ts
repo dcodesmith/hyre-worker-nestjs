@@ -71,4 +71,32 @@ describe("DocumentsController", () => {
       expect.stringContaining("sample.pdf"),
     );
   });
+
+  it("escapes filename content before writing Content-Disposition header", async () => {
+    const stream = {
+      on: vi.fn(),
+      pipe: vi.fn(),
+    };
+    vi.mocked(documentProxyService.getPdfByDocumentId).mockResolvedValue({
+      stream: stream as unknown as Readable,
+      fileName: 'report\\final"2026\r\n.pdf',
+      contentType: "application/pdf",
+      contentLength: undefined,
+    });
+
+    const response = {
+      setHeader: vi.fn(),
+      status: vi.fn().mockReturnThis(),
+      end: vi.fn(),
+      headersSent: false,
+    };
+
+    await controller.proxyPdf("doc-1", response as unknown as Response);
+
+    const escapedFileName = String.raw`report\\final\"2026.pdf`;
+    expect(response.setHeader).toHaveBeenCalledWith(
+      "Content-Disposition",
+      `inline; filename="${escapedFileName}"`,
+    );
+  });
 });
