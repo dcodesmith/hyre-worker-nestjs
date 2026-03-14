@@ -234,7 +234,6 @@ describe("CarSearchService", () => {
       databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
       databaseServiceMock.car.count.mockResolvedValueOnce(1);
       databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
-      databaseServiceMock.booking.findMany.mockResolvedValueOnce([]);
 
       const result = await service.searchCars({
         from: new Date("2024-03-01"),
@@ -246,14 +245,71 @@ describe("CarSearchService", () => {
 
       expect(result.cars).toHaveLength(1);
       expect(result.cars[0].id).toBe("car-available");
-      expect(databaseServiceMock.car.findMany).toHaveBeenCalled();
-      expect(databaseServiceMock.booking.findMany).toHaveBeenCalledWith(
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: ["CONFIRMED", "ACTIVE"] },
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                bookings: {
+                  none: expect.objectContaining({
+                    paymentStatus: "PAID",
+                    status: { in: ["CONFIRMED", "ACTIVE"] },
+                  }),
+                },
+              }),
+            ]),
           }),
         }),
       );
+    });
+
+    it("applies default DAY pickup time availability filtering when pickupTime is omitted", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({
+        from: new Date("2024-03-10T00:00:00.000Z"),
+        to: new Date("2024-03-10T00:00:00.000Z"),
+        bookingType: BookingType.DAY,
+        page: 1,
+        limit: 12,
+      });
+
+      expect(databaseServiceMock.car.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                bookings: {
+                  none: expect.objectContaining({
+                    startDate: { lt: new Date("2024-03-10T21:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T05:00:00.000Z") },
+                  }),
+                },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it("uses the same availability-aware where for count and list queries", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(7);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([createMockCar({ id: "car-1" })]);
+
+      await service.searchCars({
+        from: new Date("2024-03-01"),
+        to: new Date("2024-03-02"),
+        bookingType: BookingType.FULL_DAY,
+        page: 1,
+        limit: 12,
+      });
+
+      const countArgs = databaseServiceMock.car.count.mock.calls[0][0];
+      const findManyArgs = databaseServiceMock.car.findMany.mock.calls[0][0];
+      expect(findManyArgs.where).toEqual(countArgs.where);
     });
 
     it("sets bookingType in filters when provided", async () => {

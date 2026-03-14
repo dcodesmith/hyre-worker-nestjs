@@ -16,7 +16,6 @@ import type {
   CarSearchResponseDto,
   MappedQueryFilters,
   PublicCarDetailDto,
-  SearchCarDto,
 } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
 
@@ -179,35 +178,30 @@ export class CarSearchService {
     return normalized;
   }
 
-  private async filterCarsByExactAvailability(
-    cars: SearchCarDto[],
+  private applyAvailabilityExclusionToWhere(
+    whereClause: Prisma.CarWhereInput,
     interval: AvailabilityInterval | null,
-  ): Promise<SearchCarDto[]> {
-    if (!interval || cars.length === 0) {
-      return cars;
+  ): Prisma.CarWhereInput {
+    if (!interval) {
+      return whereClause;
     }
 
-    const carIds = cars.map((car) => car.id);
     const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval(interval);
-
-    const conflictingBookings = await this.databaseService.booking.findMany({
-      where: {
-        carId: { in: carIds },
-        paymentStatus: PaymentStatus.PAID,
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-        startDate: { lt: bufferedEnd },
-        endDate: { gt: bufferedStart },
-      },
-      select: { carId: true },
-      distinct: ["carId"],
-    });
-
-    if (conflictingBookings.length === 0) {
-      return cars;
-    }
-
-    const conflictingIds = new Set(conflictingBookings.map((booking) => booking.carId));
-    return cars.filter((car) => !conflictingIds.has(car.id));
+    return {
+      AND: [
+        whereClause,
+        {
+          bookings: {
+            none: {
+              paymentStatus: PaymentStatus.PAID,
+              status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+              startDate: { lt: bufferedEnd },
+              endDate: { gt: bufferedStart },
+            },
+          },
+        },
+      ],
+    };
   }
 
   /**
@@ -231,6 +225,8 @@ export class CarSearchService {
         query.to &&
         query.bookingType &&
         (query.pickupTime ||
+          query.bookingType === BookingType.DAY ||
+          query.bookingType === BookingType.FULL_DAY ||
           query.bookingType === BookingType.NIGHT ||
           (query.bookingType === BookingType.AIRPORT_PICKUP && query.flightNumber));
       const availabilityInterval = canFilterByAvailability
@@ -249,15 +245,19 @@ export class CarSearchService {
         },
         fleetOwnersToExclude,
       );
+      const searchWhereClause = this.applyAvailabilityExclusionToWhere(
+        whereClause,
+        availabilityInterval,
+      );
 
       // Pagination setup
       const take = query.limit;
       const skip = (query.page - 1) * query.limit;
 
-      const [totalCount, queriedCars] = await Promise.all([
-        this.databaseService.car.count({ where: whereClause }),
+      const [totalCount, cars] = await Promise.all([
+        this.databaseService.car.count({ where: searchWhereClause }),
         this.databaseService.car.findMany({
-          where: whereClause,
+          where: searchWhereClause,
           select: {
             id: true,
             make: true,
@@ -280,7 +280,6 @@ export class CarSearchService {
           take,
         }),
       ]);
-      const cars = await this.filterCarsByExactAvailability(queriedCars, availabilityInterval);
 
       // Calculate pagination
       const totalPages = Math.ceil(totalCount / query.limit);
