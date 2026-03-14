@@ -22,6 +22,9 @@ export function normalizeBookingTimeWindow(input: NormalizationInput): {
     case "NIGHT":
       startDate.setHours(23, 0, 0, 0);
       endDate.setHours(5, 0, 0, 0);
+      if (endDate.getTime() <= startDate.getTime()) {
+        endDate.setDate(endDate.getDate() + 1);
+      }
       return { startDate, endDate };
     case "FULL_DAY": {
       parseAndApplyPickupTime(startDate, pickupTime);

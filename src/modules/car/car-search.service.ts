@@ -228,7 +228,7 @@ export class CarSearchService {
           query.bookingType === BookingType.DAY ||
           query.bookingType === BookingType.FULL_DAY ||
           query.bookingType === BookingType.NIGHT ||
-          (query.bookingType === BookingType.AIRPORT_PICKUP && query.flightNumber));
+          query.bookingType === BookingType.AIRPORT_PICKUP);
       const availabilityInterval = canFilterByAvailability
         ? this.buildRequestedAvailabilityInterval(query)
         : null;

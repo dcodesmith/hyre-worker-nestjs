@@ -294,6 +294,37 @@ describe("CarSearchService", () => {
       );
     });
 
+    it("applies a valid overnight availability window for NIGHT when from equals to", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({
+        from: new Date("2024-03-10T00:00:00.000Z"),
+        to: new Date("2024-03-10T00:00:00.000Z"),
+        bookingType: BookingType.NIGHT,
+        page: 1,
+        limit: 12,
+      });
+
+      expect(databaseServiceMock.car.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                bookings: {
+                  none: expect.objectContaining({
+                    startDate: { lt: new Date("2024-03-11T07:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T21:00:00.000Z") },
+                  }),
+                },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
     it("uses the same availability-aware where for count and list queries", async () => {
       databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
       databaseServiceMock.car.count.mockResolvedValueOnce(7);

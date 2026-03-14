@@ -58,4 +58,15 @@ describe("normalizeBookingTimeWindow", () => {
     expect(startDate.toISOString()).toBe("2026-03-03T23:00:00.000Z");
     expect(endDate.toISOString()).toBe("2026-03-04T05:00:00.000Z");
   });
+
+  it("rolls NIGHT end date to next day when from and to are the same date", () => {
+    const { startDate, endDate } = normalizeBookingTimeWindow({
+      bookingType: "NIGHT",
+      startDate: new Date("2026-03-03T00:00:00.000Z"),
+      endDate: new Date("2026-03-03T00:00:00.000Z"),
+    });
+
+    expect(startDate.toISOString()).toBe("2026-03-03T23:00:00.000Z");
+    expect(endDate.toISOString()).toBe("2026-03-04T05:00:00.000Z");
+  });
 });
