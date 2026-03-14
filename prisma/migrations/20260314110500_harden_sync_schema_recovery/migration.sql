@@ -68,9 +68,9 @@ BEGIN
     ) duplicates;
 
     IF duplicate_count > 0 THEN
-      RAISE EXCEPTION 'Cannot create unique index FlightStatusEvent_flightId_eventType_eventTime_key: % duplicate key groups found', duplicate_count;
+      RAISE WARNING 'Skipping unique index FlightStatusEvent_flightId_eventType_eventTime_key: % duplicate key groups found', duplicate_count;
+    ELSE
+      EXECUTE 'CREATE UNIQUE INDEX "FlightStatusEvent_flightId_eventType_eventTime_key" ON "FlightStatusEvent"("flightId", "eventType", "eventTime")';
     END IF;
-
-    EXECUTE 'CREATE UNIQUE INDEX "FlightStatusEvent_flightId_eventType_eventTime_key" ON "FlightStatusEvent"("flightId", "eventType", "eventTime")';
   END IF;
 END $$;
