@@ -1,4 +1,4 @@
-import { normalizeBookingTimeWindow } from "../../booking/booking-time-window.helper";
+import { normalizeBookingTimeWindow } from "../../../shared/booking-time-window.helper";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type {
   BookingDraft,

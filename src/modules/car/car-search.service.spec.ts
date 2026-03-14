@@ -45,6 +45,7 @@ describe("CarSearchService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.booking.findMany.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarSearchService, { provide: DatabaseService, useValue: databaseServiceMock }],
     }).compile();
@@ -233,6 +234,7 @@ describe("CarSearchService", () => {
       databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
       databaseServiceMock.car.count.mockResolvedValueOnce(1);
       databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      databaseServiceMock.booking.findMany.mockResolvedValueOnce([]);
 
       const result = await service.searchCars({
         from: new Date("2024-03-01"),
@@ -244,18 +246,11 @@ describe("CarSearchService", () => {
 
       expect(result.cars).toHaveLength(1);
       expect(result.cars[0].id).toBe("car-available");
-      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalled();
+      expect(databaseServiceMock.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            AND: expect.arrayContaining([
-              expect.objectContaining({
-                bookings: expect.objectContaining({
-                  none: expect.objectContaining({
-                    status: { in: ["CONFIRMED", "ACTIVE"] },
-                  }),
-                }),
-              }),
-            ]),
+            status: { in: ["CONFIRMED", "ACTIVE"] },
           }),
         }),
       );

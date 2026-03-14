@@ -3,10 +3,10 @@ import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma
 import { Decimal } from "@prisma/client/runtime/library";
 import type { FieldError } from "src/common/errors/problem-details.interface";
 import { maskEmail } from "src/shared/helper";
+import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
-  BOOKING_BUFFER_HOURS,
   PRICE_TOLERANCE,
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
@@ -154,8 +154,7 @@ export class BookingValidationService {
     }
 
     // Calculate buffered time window
-    const bufferedStart = new Date(startDate.getTime() - BOOKING_BUFFER_HOURS * 60 * 60 * 1000);
-    const bufferedEnd = new Date(endDate.getTime() + BOOKING_BUFFER_HOURS * 60 * 60 * 1000);
+    const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval({ startDate, endDate });
 
     // Find conflicting bookings
     const conflictingBookings = await this.databaseService.booking.findMany({
