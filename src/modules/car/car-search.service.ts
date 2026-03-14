@@ -220,15 +220,8 @@ export class CarSearchService {
         : [];
 
       // Check if we have all required params for exact availability filtering
-      const canFilterByAvailability =
-        query.from &&
-        query.to &&
-        query.bookingType &&
-        (query.pickupTime ||
-          query.bookingType === BookingType.DAY ||
-          query.bookingType === BookingType.FULL_DAY ||
-          query.bookingType === BookingType.NIGHT ||
-          query.bookingType === BookingType.AIRPORT_PICKUP);
+      const canFilterByAvailability = Boolean(query.from && query.to && query.bookingType);
+
       const availabilityInterval = canFilterByAvailability
         ? this.buildRequestedAvailabilityInterval(query)
         : null;

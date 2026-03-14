@@ -1,12 +1,6 @@
 import { Decimal } from "@prisma/client/runtime/library";
 
 /**
- * Buffer time in hours between bookings for car preparation/turnaround.
- * This extends existing booking windows by 2 hours on each side.
- */
-export const BOOKING_BUFFER_HOURS = 2;
-
-/**
  * Cutoff hour for same-day DAY bookings (11 AM Lagos time).
  * Same-day DAY bookings are not allowed at or after this hour.
  */

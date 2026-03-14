@@ -1,5 +1,11 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
+import {
+  BookingStatus,
+  BookingType,
+  PaymentStatus,
+  ServiceTier,
+  VehicleType,
+} from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
@@ -252,8 +258,8 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    paymentStatus: "PAID",
-                    status: { in: ["CONFIRMED", "ACTIVE"] },
+                    paymentStatus: PaymentStatus.PAID,
+                    status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
                   }),
                 },
               }),
