@@ -53,6 +53,7 @@ export class WhatsAppAudioTranscriptionService {
   }
 
   private async downloadMediaBinary(mediaUrl: string): Promise<Uint8Array> {
+    this.validateTwilioMediaUrl(mediaUrl);
     const basicAuth = Buffer.from(`${this.twilioAccountSid}:${this.twilioAuthToken}`).toString(
       "base64",
     );
@@ -88,6 +89,26 @@ export class WhatsAppAudioTranscriptionService {
 
     const arrayBuffer = await response.arrayBuffer();
     return new Uint8Array(arrayBuffer);
+  }
+
+  private validateTwilioMediaUrl(mediaUrl: string): void {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(mediaUrl);
+    } catch {
+      throw new Error(`Invalid WhatsApp media URL: ${mediaUrl}`);
+    }
+
+    if (parsedUrl.protocol !== "https:") {
+      throw new Error(`Invalid WhatsApp media URL protocol: ${parsedUrl.protocol}`);
+    }
+
+    const host = parsedUrl.hostname.toLowerCase();
+    const isTwilioHost =
+      host === "twilio.com" || host.endsWith(".twilio.com") || host.endsWith(".twiliocdn.com");
+    if (!isTwilioHost) {
+      throw new Error(`Invalid WhatsApp media URL domain: ${parsedUrl.hostname}`);
+    }
   }
 
   private async transcribeAudioBinary(

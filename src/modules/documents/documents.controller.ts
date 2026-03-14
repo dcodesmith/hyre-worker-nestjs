@@ -22,7 +22,10 @@ export class DocumentsController {
     const proxiedFile = await this.documentProxyService.getPdfByDocumentId(documentId);
 
     response.setHeader("Content-Type", proxiedFile.contentType);
-    response.setHeader("Content-Disposition", `inline; filename="${proxiedFile.fileName}"`);
+    response.setHeader(
+      "Content-Disposition",
+      `inline; filename="${this.escapeFilenameForHeader(proxiedFile.fileName)}"`,
+    );
     response.setHeader("Cache-Control", "max-age=300");
 
     if (proxiedFile.contentLength !== undefined) {
@@ -38,5 +41,9 @@ export class DocumentsController {
     });
 
     proxiedFile.stream.pipe(response);
+  }
+
+  private escapeFilenameForHeader(fileName: string): string {
+    return fileName.replaceAll(/[\r\n]/g, "").replaceAll(/["\\]/g, String.raw`\$&`);
   }
 }

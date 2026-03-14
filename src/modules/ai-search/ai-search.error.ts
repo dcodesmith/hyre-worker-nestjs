@@ -6,6 +6,7 @@ export const AiSearchErrorCode = {
   AI_SEARCH_TIMEOUT: "AI_SEARCH_TIMEOUT",
   AI_SEARCH_PROVIDER_RESPONSE_INVALID: "AI_SEARCH_PROVIDER_RESPONSE_INVALID",
   AI_SEARCH_PROVIDER_AUTHENTICATION_FAILED: "AI_SEARCH_PROVIDER_AUTHENTICATION_FAILED",
+  AI_SEARCH_RATE_LIMIT_EXCEEDED: "AI_SEARCH_RATE_LIMIT_EXCEEDED",
 } as const;
 
 export class AiSearchException extends AppException {}
@@ -57,6 +58,19 @@ export class AiSearchProviderAuthenticationException extends AiSearchException {
       HttpStatus.BAD_GATEWAY,
       {
         title: "AI Provider Authentication Failed",
+      },
+    );
+  }
+}
+
+export class AiSearchRateLimitExceededException extends AiSearchException {
+  constructor() {
+    super(
+      AiSearchErrorCode.AI_SEARCH_RATE_LIMIT_EXCEEDED,
+      "Too many AI search requests. Please try again shortly.",
+      HttpStatus.TOO_MANY_REQUESTS,
+      {
+        title: "Too Many Requests",
       },
     );
   }
