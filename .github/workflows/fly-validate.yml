@@ -8,10 +8,38 @@ jobs:
   validate:
     name: Validate deployment config and build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: prisma_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d prisma_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     # if: false  # Temporarily disabled - remove this line to re-enable
     steps:
       # Pin to v6.0.1 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
       - uses: actions/checkout@v6.0.1
+
+      # Pin to v4 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # Pin to v4 - check for updates with: gh api repos/actions/setup-node/tags --jq '.[0].name'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       
       # Pin to v3.12.0 - check for updates with: gh api repos/docker/setup-buildx-action/tags --jq '.[0].name'
       - name: Setup Docker Buildx
@@ -25,6 +53,11 @@ jobs:
         run: flyctl config validate
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Validate Prisma migrations on clean Postgres
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/prisma_ci?schema=public
       
       - name: Build Docker image (dry run)
         uses: docker/build-push-action@v5
