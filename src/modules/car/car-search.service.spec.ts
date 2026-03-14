@@ -15,6 +15,7 @@ import { mapQueryToFilters } from "./dto/car-search.dto";
 
 describe("CarSearchService", () => {
   let service: CarSearchService;
+  let mockCarIdCounter = 0;
 
   const databaseServiceMock = {
     car: {
@@ -31,7 +32,7 @@ describe("CarSearchService", () => {
   };
 
   const createMockCar = (overrides: Partial<SearchCarDto> = {}): SearchCarDto => ({
-    id: `car-${Math.random().toString(36).slice(2, 9)}`,
+    id: `car-${mockCarIdCounter++}`,
     make: "Toyota",
     model: "Camry",
     year: 2022,
@@ -51,6 +52,7 @@ describe("CarSearchService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockCarIdCounter = 0;
     databaseServiceMock.booking.findMany.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarSearchService, { provide: DatabaseService, useValue: databaseServiceMock }],

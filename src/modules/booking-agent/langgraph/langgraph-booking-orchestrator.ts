@@ -13,7 +13,7 @@ export function buildGuestIdentity(
   phoneE164: string,
   profileName: string | null,
 ): WhatsAppGuestIdentity {
-  const phoneDigits = phoneE164.replaceAll(/\D/g, "");
+  const phoneDigits = stripNonDigits(phoneE164);
   return {
     guestEmail: `whatsapp.${phoneDigits}@tripdly.com`,
     guestName: profileName ?? "WhatsApp Customer",
@@ -72,25 +72,77 @@ export function buildBookingInputFromDraft(
 }
 
 function normalizePickupTimeTo12Hour(pickupTime: string): string {
-  if (/\s*(AM|PM)$/i.test(pickupTime)) {
+  if (hasMeridiemSuffix(pickupTime)) {
     return pickupTime;
   }
 
-  const time24Match = /^(\d{1,2}):(\d{2})$/.exec(pickupTime);
-  if (time24Match) {
-    let hours = Number.parseInt(time24Match[1], 10);
-    const minutes = Number.parseInt(time24Match[2], 10);
-
-    const period = hours >= 12 ? "PM" : "AM";
-    if (hours === 0) {
-      hours = 12;
-    } else if (hours > 12) {
-      hours -= 12;
-    }
-
-    const minuteStr = minutes > 0 ? `:${minutes.toString().padStart(2, "0")}` : "";
-    return `${hours}${minuteStr} ${period}`;
+  const parsed = parse24HourTime(pickupTime);
+  if (parsed) {
+    return to12HourTime(parsed.hours24, parsed.minutes);
   }
 
   return pickupTime;
+}
+
+function parse24HourTime(value: string): { hours24: number; minutes: number } | null {
+  const parts = value.split(":");
+  if (parts.length !== 2 || !isAsciiDigits(parts[0], 1, 2) || !isAsciiDigits(parts[1], 2, 2)) {
+    return null;
+  }
+
+  const hours24 = Number.parseInt(parts[0], 10);
+  const minutes = Number.parseInt(parts[1], 10);
+  if (hours24 < 0 || hours24 > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return { hours24, minutes };
+}
+
+function to12HourTime(hours24: number, minutes: number): string {
+  let hours12 = hours24;
+  const period = hours24 >= 12 ? "PM" : "AM";
+  if (hours12 === 0) {
+    hours12 = 12;
+  } else if (hours12 > 12) {
+    hours12 -= 12;
+  }
+
+  const minuteStr = minutes > 0 ? `:${minutes.toString().padStart(2, "0")}` : "";
+  return `${hours12}${minuteStr} ${period}`;
+}
+
+function hasMeridiemSuffix(value: string): boolean {
+  const trimmed = value.trimEnd().toUpperCase();
+  return trimmed.endsWith("AM") || trimmed.endsWith("PM");
+}
+
+function isAsciiDigits(value: string, minLength: number, maxLength: number): boolean {
+  if (value.length < minLength || value.length > maxLength) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.codePointAt(index);
+    if (code === undefined) {
+      return false;
+    }
+    if (code < 48 || code > 57) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function stripNonDigits(value: string): string {
+  let digits = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.codePointAt(index);
+    if (code === undefined) {
+      continue;
+    }
+    if (code >= 48 && code <= 57) {
+      digits += value[index];
+    }
+  }
+  return digits;
 }
