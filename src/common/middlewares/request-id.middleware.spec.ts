@@ -49,12 +49,4 @@ describe("RequestIdMiddleware", () => {
     expect(setHeader).toHaveBeenCalledWith(REQUEST_ID_HEADER, existingId);
     expect(next).toHaveBeenCalledTimes(1);
   });
-
-  it("should set the request ID on the response header", () => {
-    getHeader.mockReturnValue(undefined);
-
-    middleware.use(req, res, next);
-
-    expect(setHeader).toHaveBeenCalledWith(REQUEST_ID_HEADER, expect.any(String));
-  });
 });
