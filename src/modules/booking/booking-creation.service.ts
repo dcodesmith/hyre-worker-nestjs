@@ -13,6 +13,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { Queue } from "bullmq";
 import { format } from "date-fns";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -42,7 +43,6 @@ import type {
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingLegService } from "./booking-leg.service";
-import { normalizeBookingTimeWindow } from "./booking-time-window.helper";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";

@@ -1,5 +1,11 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
+import {
+  BookingStatus,
+  BookingType,
+  PaymentStatus,
+  ServiceTier,
+  VehicleType,
+} from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
@@ -45,6 +51,7 @@ describe("CarSearchService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.booking.findMany.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarSearchService, { provide: DatabaseService, useValue: databaseServiceMock }],
     }).compile();
@@ -249,16 +256,97 @@ describe("CarSearchService", () => {
           where: expect.objectContaining({
             AND: expect.arrayContaining([
               expect.objectContaining({
-                bookings: expect.objectContaining({
+                bookings: {
                   none: expect.objectContaining({
-                    status: { in: ["CONFIRMED", "ACTIVE"] },
+                    paymentStatus: PaymentStatus.PAID,
+                    status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
                   }),
-                }),
+                },
               }),
             ]),
           }),
         }),
       );
+    });
+
+    it("applies default DAY pickup time availability filtering when pickupTime is omitted", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({
+        from: new Date("2024-03-10T00:00:00.000Z"),
+        to: new Date("2024-03-10T00:00:00.000Z"),
+        bookingType: BookingType.DAY,
+        page: 1,
+        limit: 12,
+      });
+
+      expect(databaseServiceMock.car.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                bookings: {
+                  none: expect.objectContaining({
+                    startDate: { lt: new Date("2024-03-10T21:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T05:00:00.000Z") },
+                  }),
+                },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it("applies a valid overnight availability window for NIGHT when from equals to", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({
+        from: new Date("2024-03-10T00:00:00.000Z"),
+        to: new Date("2024-03-10T00:00:00.000Z"),
+        bookingType: BookingType.NIGHT,
+        page: 1,
+        limit: 12,
+      });
+
+      expect(databaseServiceMock.car.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                bookings: {
+                  none: expect.objectContaining({
+                    startDate: { lt: new Date("2024-03-11T07:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T21:00:00.000Z") },
+                  }),
+                },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it("uses the same availability-aware where for count and list queries", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(7);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([createMockCar({ id: "car-1" })]);
+
+      await service.searchCars({
+        from: new Date("2024-03-01"),
+        to: new Date("2024-03-02"),
+        bookingType: BookingType.FULL_DAY,
+        page: 1,
+        limit: 12,
+      });
+
+      const countArgs = databaseServiceMock.car.count.mock.calls[0][0];
+      const findManyArgs = databaseServiceMock.car.findMany.mock.calls[0][0];
+      expect(findManyArgs.where).toEqual(countArgs.where);
     });
 
     it("sets bookingType in filters when provided", async () => {

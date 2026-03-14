@@ -1,5 +1,14 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { BookingStatus, BookingType, CarApprovalStatus, Prisma, Status } from "@prisma/client";
+import {
+  BookingStatus,
+  BookingType,
+  CarApprovalStatus,
+  PaymentStatus,
+  Prisma,
+  Status,
+} from "@prisma/client";
+import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
+import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
 import type {
@@ -10,9 +19,9 @@ import type {
 } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
 
-interface AvailabilityWindow {
-  fromStart: Date;
-  endWindow: Date;
+interface AvailabilityInterval {
+  startDate: Date;
+  endDate: Date;
 }
 
 @Injectable()
@@ -63,7 +72,6 @@ export class CarSearchService {
       makeModelQuery: string | null;
     },
     fleetOwnersToExclude: string[],
-    availabilityWindow: AvailabilityWindow | null,
   ): Prisma.CarWhereInput {
     return {
       AND: [
@@ -90,17 +98,6 @@ export class CarSearchService {
               { make: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
               { model: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
             ],
-          }),
-          ...(availabilityWindow && {
-            bookings: {
-              none: {
-                status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-                AND: [
-                  { startDate: { lt: availabilityWindow.endWindow } },
-                  { endDate: { gt: availabilityWindow.fromStart } },
-                ],
-              },
-            },
           }),
         },
       ],
@@ -153,17 +150,58 @@ export class CarSearchService {
     return unavailableOwners.map((owner) => owner.id);
   }
 
-  private buildAvailabilityWindow(from: Date, to: Date): AvailabilityWindow {
-    // Normalize from date to start of day in UTC
-    const fromStart = new Date(from);
-    fromStart.setUTCHours(0, 0, 0, 0);
+  private buildRequestedAvailabilityInterval(
+    query: CarSearchQueryDto,
+  ): AvailabilityInterval | null {
+    if (!query.from || !query.to || !query.bookingType) {
+      return null;
+    }
 
-    // End window is end of next day at 5 AM UTC
-    const endWindow = new Date(to);
-    endWindow.setUTCDate(endWindow.getUTCDate() + 1);
-    endWindow.setUTCHours(5, 0, 0, 0);
+    const normalized = normalizeBookingTimeWindow({
+      bookingType: query.bookingType,
+      startDate: query.from,
+      endDate: query.to,
+      pickupTime: query.pickupTime,
+    });
 
-    return { fromStart, endWindow };
+    // Keep airport pickup search usable when only date-level bounds are provided.
+    if (
+      query.bookingType === BookingType.AIRPORT_PICKUP &&
+      normalized.endDate.getTime() <= normalized.startDate.getTime()
+    ) {
+      return {
+        startDate: normalized.startDate,
+        endDate: new Date(normalized.startDate.getTime() + 3 * 60 * 60 * 1000),
+      };
+    }
+
+    return normalized;
+  }
+
+  private applyAvailabilityExclusionToWhere(
+    whereClause: Prisma.CarWhereInput,
+    interval: AvailabilityInterval | null,
+  ): Prisma.CarWhereInput {
+    if (!interval) {
+      return whereClause;
+    }
+
+    const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval(interval);
+    return {
+      AND: [
+        whereClause,
+        {
+          bookings: {
+            none: {
+              paymentStatus: PaymentStatus.PAID,
+              status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+              startDate: { lt: bufferedEnd },
+              endDate: { gt: bufferedStart },
+            },
+          },
+        },
+      ],
+    };
   }
 
   /**
@@ -181,16 +219,11 @@ export class CarSearchService {
         ? await this.getUnavailableFleetOwners(query.from)
         : [];
 
-      // Check if we have all required params for availability filtering
-      const canFilterByAvailability =
-        query.from &&
-        query.to &&
-        query.bookingType &&
-        (query.pickupTime ||
-          query.bookingType === BookingType.NIGHT ||
-          (query.bookingType === BookingType.AIRPORT_PICKUP && query.flightNumber));
-      const availabilityWindow = canFilterByAvailability
-        ? this.buildAvailabilityWindow(query.from, query.to)
+      // Check if we have all required params for exact availability filtering
+      const canFilterByAvailability = Boolean(query.from && query.to && query.bookingType);
+
+      const availabilityInterval = canFilterByAvailability
+        ? this.buildRequestedAvailabilityInterval(query)
         : null;
 
       // Build where clause
@@ -204,7 +237,10 @@ export class CarSearchService {
           makeModelQuery,
         },
         fleetOwnersToExclude,
-        availabilityWindow,
+      );
+      const searchWhereClause = this.applyAvailabilityExclusionToWhere(
+        whereClause,
+        availabilityInterval,
       );
 
       // Pagination setup
@@ -212,9 +248,9 @@ export class CarSearchService {
       const skip = (query.page - 1) * query.limit;
 
       const [totalCount, cars] = await Promise.all([
-        this.databaseService.car.count({ where: whereClause }),
+        this.databaseService.car.count({ where: searchWhereClause }),
         this.databaseService.car.findMany({
-          where: whereClause,
+          where: searchWhereClause,
           select: {
             id: true,
             make: true,

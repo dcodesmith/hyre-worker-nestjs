@@ -14,7 +14,7 @@ export function normalizeBookingTimeWindow(input: NormalizationInput): {
 } {
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);
-  const pickupTime = input.pickupTime ?? "9:00 AM";
+  const pickupTime = input.pickupTime ?? getDefaultPickupTime(input.bookingType);
 
   switch (input.bookingType) {
     case "AIRPORT_PICKUP":
@@ -22,6 +22,9 @@ export function normalizeBookingTimeWindow(input: NormalizationInput): {
     case "NIGHT":
       startDate.setHours(23, 0, 0, 0);
       endDate.setHours(5, 0, 0, 0);
+      if (endDate.getTime() <= startDate.getTime()) {
+        endDate.setDate(endDate.getDate() + 1);
+      }
       return { startDate, endDate };
     case "FULL_DAY": {
       parseAndApplyPickupTime(startDate, pickupTime);
@@ -34,6 +37,17 @@ export function normalizeBookingTimeWindow(input: NormalizationInput): {
       adjustedEndDate.setHours(startDate.getHours() + 12, startDate.getMinutes(), 0, 0);
       return { startDate, endDate: adjustedEndDate };
     }
+  }
+}
+
+export function getDefaultPickupTime(bookingType: BookingType): string {
+  switch (bookingType) {
+    case "DAY":
+      return "7:00 AM";
+    case "FULL_DAY":
+      return "6:00 AM";
+    default:
+      return "9:00 AM";
   }
 }
 
