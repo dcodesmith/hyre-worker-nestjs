@@ -98,9 +98,35 @@ jobs:
             exit 1
           fi
 
+  fly_auth_check:
+    name: Verify Fly auth and org permissions
+    needs: setup
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Verify token can access apps list
+        run: flyctl apps list >/dev/null
+
+      - name: Verify app create/destroy permission in org
+        run: |
+          TEST_APP="hyre-worker-auth-check-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [ -z "${FLY_ORG:-}" ]; then
+            echo "FLY_ORG is not set. Add repository variable FLY_ORG (e.g., personal)."
+            exit 1
+          fi
+
+          echo "Checking app create permission in org '${FLY_ORG}'..."
+          flyctl apps create "$TEST_APP" --org "$FLY_ORG" --yes
+          flyctl apps destroy "$TEST_APP" --yes
+
   provision_redis:
     name: Provision Redis per PR
-    needs: setup
+    needs: [setup, fly_auth_check]
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     outputs:
