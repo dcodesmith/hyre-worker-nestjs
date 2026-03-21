@@ -42,6 +42,7 @@ env:
   BULL_BOARD_USERNAME: ${{ secrets.BULL_BOARD_USERNAME }}
   BULL_BOARD_PASSWORD: ${{ secrets.BULL_BOARD_PASSWORD }}
   PREVIEW_REDIS_PASSWORD: ${{ secrets.PREVIEW_REDIS_PASSWORD }}
+  FLY_ORG: ${{ vars.FLY_ORG }}
 
 jobs:
   setup:
@@ -147,7 +148,20 @@ jobs:
           fi
 
           # Ensure a Redis machine is running. Start stopped machine if present, otherwise create one.
-          MACHINES_JSON="$(flyctl machine list -a "$REDIS_APP" --json)"
+          MACHINES_JSON=""
+          for i in {1..10}; do
+            if MACHINES_JSON="$(flyctl machine list -a "$REDIS_APP" --json 2>/dev/null)"; then
+              break
+            fi
+            echo "Waiting for machine API on '$REDIS_APP'... (${i}/10)"
+            sleep 2
+          done
+
+          if [ -z "$MACHINES_JSON" ]; then
+            echo "Failed to list Redis machines for app '$REDIS_APP' after retries."
+            exit 1
+          fi
+
           RUNNING_COUNT="$(printf '%s' "$MACHINES_JSON" | jq '[.[] | select(.state == "started")] | length')"
           if [ "$RUNNING_COUNT" = "0" ]; then
             STOPPED_MACHINE_ID="$(
