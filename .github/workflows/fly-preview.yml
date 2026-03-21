@@ -116,6 +116,10 @@ jobs:
         id: redis
         run: |
           REDIS_APP="hyre-worker-redis-pr-${{ github.event.number }}"
+          app_exists() {
+            flyctl status -a "$REDIS_APP" >/dev/null 2>&1
+          }
+
           if [ -z "${PREVIEW_REDIS_PASSWORD:-}" ]; then
             echo "Missing required secret PREVIEW_REDIS_PASSWORD"
             exit 1
@@ -123,18 +127,19 @@ jobs:
           REDIS_PASSWORD="$PREVIEW_REDIS_PASSWORD"
           echo "::add-mask::$REDIS_PASSWORD"
 
-          if ! flyctl apps show "$REDIS_APP" > /dev/null 2>&1; then
+          if ! app_exists; then
+            echo "Redis app '$REDIS_APP' does not exist yet; creating..."
             if [ -n "${FLY_ORG:-}" ]; then
-              flyctl apps create "$REDIS_APP" --org "$FLY_ORG"
+              flyctl apps create "$REDIS_APP" --org "$FLY_ORG" --yes
             else
-              flyctl apps create "$REDIS_APP"
+              flyctl apps create "$REDIS_APP" --yes
             fi
           fi
 
           # Fly app creation can be eventually consistent; wait until app is visible.
           APP_READY=false
           for i in {1..10}; do
-            if flyctl apps show "$REDIS_APP" > /dev/null 2>&1; then
+            if app_exists; then
               APP_READY=true
               break
             fi
@@ -144,6 +149,7 @@ jobs:
 
           if [ "$APP_READY" != "true" ]; then
             echo "Redis app '$REDIS_APP' is not available after creation."
+            flyctl apps list || true
             exit 1
           fi
 
