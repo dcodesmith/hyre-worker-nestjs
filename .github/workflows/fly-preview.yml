@@ -123,7 +123,27 @@ jobs:
           echo "::add-mask::$REDIS_PASSWORD"
 
           if ! flyctl apps show "$REDIS_APP" > /dev/null 2>&1; then
-            flyctl apps create "$REDIS_APP"
+            if [ -n "${FLY_ORG:-}" ]; then
+              flyctl apps create "$REDIS_APP" --org "$FLY_ORG"
+            else
+              flyctl apps create "$REDIS_APP"
+            fi
+          fi
+
+          # Fly app creation can be eventually consistent; wait until app is visible.
+          APP_READY=false
+          for i in {1..10}; do
+            if flyctl apps show "$REDIS_APP" > /dev/null 2>&1; then
+              APP_READY=true
+              break
+            fi
+            echo "Waiting for Redis app '$REDIS_APP' to become available... (${i}/10)"
+            sleep 2
+          done
+
+          if [ "$APP_READY" != "true" ]; then
+            echo "Redis app '$REDIS_APP' is not available after creation."
+            exit 1
           fi
 
           # Ensure a Redis machine is running. Start stopped machine if present, otherwise create one.
@@ -141,11 +161,11 @@ jobs:
               flyctl machine start "$STOPPED_MACHINE_ID" -a "$REDIS_APP"
             else
               flyctl machine run flyio/redis:7.2 \
-              --app "$REDIS_APP" \
-              --region lhr \
-              --name redis \
-              --env REDIS_PASSWORD="$REDIS_PASSWORD" \
-              --env PRIMARY_REGION=lhr
+                --app "$REDIS_APP" \
+                --region lhr \
+                --name redis \
+                --env REDIS_PASSWORD="$REDIS_PASSWORD" \
+                --env PRIMARY_REGION=lhr
             fi
           fi
 
