@@ -50,6 +50,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /tmp/node_modules_prod ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 
 # Install prisma CLI (version range matches package.json)
 RUN pnpm add -D prisma@7.5.0
