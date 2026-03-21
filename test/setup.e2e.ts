@@ -65,7 +65,11 @@ async function initializeWorkerIsolation(): Promise<void> {
   process.env.E2E_WORKER_SCHEMA = schema;
 
   const adminPrisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: baseDatabaseUrl }),
+    adapter: new PrismaPg({
+      connectionString: baseDatabaseUrl,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 300_000,
+    }),
   });
   try {
     await adminPrisma.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
@@ -87,7 +91,11 @@ async function initializeWorkerIsolation(): Promise<void> {
   }
 
   const workerPrisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: workerDatabaseUrl }),
+    adapter: new PrismaPg({
+      connectionString: workerDatabaseUrl,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 300_000,
+    }),
   });
   try {
     const roles = ["user", "fleetOwner", "admin", "staff"];
