@@ -328,6 +328,7 @@ jobs:
         with:
           name: ${{ needs.setup.outputs.preview_app }}
           config: fly.preview.toml
+          ha: false
           secrets: >-
             NODE_ENV=${{ env.NODE_ENV }}
             DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
