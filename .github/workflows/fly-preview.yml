@@ -366,6 +366,12 @@ jobs:
             BULL_BOARD_USERNAME=${{ env.BULL_BOARD_USERNAME }}
             BULL_BOARD_PASSWORD=${{ env.BULL_BOARD_PASSWORD }}
 
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Enforce single-machine preview scale
+        run: flyctl scale count app=1 -a "${{ needs.setup.outputs.preview_app }}" --yes
+
   cleanup:
     name: Delete preview resources
     needs: setup
