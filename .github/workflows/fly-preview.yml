@@ -227,7 +227,7 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     env:
-      REDIS_URL: ${{ needs.provision_redis.outputs.redis_url }}
+      REDIS_URL: redis://default:${{ secrets.PREVIEW_REDIS_PASSWORD }}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379
       DOMAIN: ${{ needs.setup.outputs.preview_url }}
       TWILIO_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
       FLUTTERWAVE_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
@@ -280,6 +280,8 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
         run: |
+          if [ -z "${BULL_BOARD_PASSWORD:-}" ]; then unset BULL_BOARD_PASSWORD; fi
+          if [ -z "${BULL_BOARD_USERNAME:-}" ]; then unset BULL_BOARD_USERNAME; fi
           node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
 
   deploy_preview:
@@ -313,7 +315,7 @@ jobs:
           secrets: >-
             NODE_ENV=${{ env.NODE_ENV }}
             DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
-            REDIS_URL=${{ needs.provision_redis.outputs.redis_url }}
+            REDIS_URL=redis://default:${{ secrets.PREVIEW_REDIS_PASSWORD }}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379
             RESEND_API_KEY=${{ env.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ env.RESEND_FROM_EMAIL }}
             APP_NAME=Tripdly_API_Preview
