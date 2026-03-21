@@ -227,7 +227,6 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     env:
-      REDIS_URL: redis://default:${{ secrets.PREVIEW_REDIS_PASSWORD }}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379
       DOMAIN: ${{ needs.setup.outputs.preview_url }}
       TWILIO_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
       FLUTTERWAVE_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
@@ -244,6 +243,13 @@ jobs:
 
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Build REDIS_URL for validation and migrations
+        run: |
+          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
+          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          echo "::add-mask::$REDIS_URL_VALUE"
+          echo "REDIS_URL=$REDIS_URL_VALUE" >> "$GITHUB_ENV"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -306,6 +312,14 @@ jobs:
           branch_name: ${{ needs.setup.outputs.neon_branch }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
+      - name: Build encoded REDIS_URL for deploy
+        id: redis_url
+        run: |
+          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
+          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          echo "::add-mask::$REDIS_URL_VALUE"
+          echo "redis_url=$REDIS_URL_VALUE" >> "$GITHUB_OUTPUT"
+
       - name: Deploy PR app to Fly.io
         id: deploy
         uses: superfly/fly-pr-review-apps@6f79ec3a7d017082ed11e7c464dae298ca75b21b
@@ -315,7 +329,7 @@ jobs:
           secrets: >-
             NODE_ENV=${{ env.NODE_ENV }}
             DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
-            REDIS_URL=redis://default:${{ secrets.PREVIEW_REDIS_PASSWORD }}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379
+            REDIS_URL=${{ steps.redis_url.outputs.redis_url }}
             RESEND_API_KEY=${{ env.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ env.RESEND_FROM_EMAIL }}
             APP_NAME=Tripdly_API_Preview
