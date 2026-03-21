@@ -206,7 +206,7 @@ jobs:
             if [ -n "$STOPPED_MACHINE_ID" ]; then
               flyctl machine start "$STOPPED_MACHINE_ID" -a "$REDIS_APP"
             else
-              flyctl machine run flyio/redis:7.2 \
+              flyctl machine run redis:7.2-alpine3.21 \
                 --app "$REDIS_APP" \
                 --region lhr \
                 --name redis \
