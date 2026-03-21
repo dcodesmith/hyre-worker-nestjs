@@ -3,6 +3,11 @@ FROM node:22.12.0-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Build-time placeholder so `prisma generate` can resolve env during `pnpm build`.
+# Runtime containers must still provide the real DATABASE_URL.
+ARG DATABASE_URL=postgresql://ci:ci@localhost:5432/ci?schema=public
+ENV DATABASE_URL=${DATABASE_URL}
+
 # Install openssl so Prisma can detect the correct engine binary
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
@@ -46,8 +51,8 @@ COPY --from=builder /tmp/node_modules_prod ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
-# Install prisma CLI (version range matches @prisma/client in package.json)
-RUN pnpm add -D prisma@^6.19.0
+# Install prisma CLI (version range matches package.json)
+RUN pnpm add -D prisma@^7.5.0
 
 # Copy entrypoint script
 COPY --from=builder /app/entrypoint.sh ./
