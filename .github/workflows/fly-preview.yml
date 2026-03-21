@@ -12,6 +12,37 @@ concurrency:
   group: preview-pr-${{ github.event.number }}
   cancel-in-progress: true
 
+env:
+  NODE_ENV: production
+  APP_NAME: Tripdly API Preview
+  SENDER_NAME: Yomide
+  AWS_REGION: eu-west-2
+  AWS_BUCKET_NAME: s3-car-rentals-dev-bucket
+  FLUTTERWAVE_BASE_URL: https://api.flutterwave.com
+  ENABLE_MANUAL_TRIGGERS: "false"
+  RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+  RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+  TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+  TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+  TWILIO_SECRET: ${{ secrets.TWILIO_SECRET }}
+  TWILIO_WHATSAPP_NUMBER: ${{ secrets.TWILIO_WHATSAPP_NUMBER }}
+  FLUTTERWAVE_SECRET_KEY: ${{ secrets.FLUTTERWAVE_SECRET_KEY }}
+  FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
+  FLUTTERWAVE_WEBHOOK_SECRET: ${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
+  HMAC_KEY: ${{ secrets.HMAC_KEY }}
+  FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
+  FLIGHTAWARE_WEBHOOK_SECRET: ${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
+  GOOGLE_DISTANCE_MATRIX_API_KEY: ${{ secrets.GOOGLE_DISTANCE_MATRIX_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  API_KEY: ${{ secrets.API_KEY }}
+  BULL_BOARD_USERNAME: ${{ secrets.BULL_BOARD_USERNAME }}
+  BULL_BOARD_PASSWORD: ${{ secrets.BULL_BOARD_PASSWORD }}
+  PREVIEW_REDIS_PASSWORD: ${{ secrets.PREVIEW_REDIS_PASSWORD }}
+
 jobs:
   setup:
     name: Setup
@@ -35,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       db_url: ${{ steps.create_neon_branch.outputs.db_url }}
-      db_url_pooled: ${{ steps.create_neon_branch.outputs.db_url_pooled || steps.create_neon_branch.outputs.db_url_pooler || steps.create_neon_branch.outputs.db_url_with_pooler || steps.create_neon_branch.outputs.db_url }}
+      db_url_with_pooler: ${{ steps.create_neon_branch.outputs.db_url_pooled }}
     permissions:
       contents: read
       pull-requests: write
@@ -59,6 +90,13 @@ jobs:
           compare_branch: ${{ needs.setup.outputs.neon_branch }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
+      - name: Verify Neon pooled URL output
+        run: |
+          if [ -z "${{ steps.create_neon_branch.outputs.db_url_pooled }}" ]; then
+            echo "Neon action did not return db_url_pooled output."
+            exit 1
+          fi
+
   provision_redis:
     name: Provision Redis per PR
     needs: setup
@@ -77,21 +115,38 @@ jobs:
         id: redis
         run: |
           REDIS_APP="hyre-worker-redis-pr-${{ github.event.number }}"
-          REDIS_PASSWORD="$(printf '%s' '${{ github.repository }}-pr-${{ github.event.number }}-redis' | sha256sum | cut -c1-32)"
+          if [ -z "${PREVIEW_REDIS_PASSWORD:-}" ]; then
+            echo "Missing required secret PREVIEW_REDIS_PASSWORD"
+            exit 1
+          fi
+          REDIS_PASSWORD="$PREVIEW_REDIS_PASSWORD"
+          echo "::add-mask::$REDIS_PASSWORD"
 
           if ! flyctl apps show "$REDIS_APP" > /dev/null 2>&1; then
             flyctl apps create "$REDIS_APP"
           fi
 
-          # Ensure a machine exists for this Redis app.
-          MACHINE_COUNT="$(flyctl machine list -a "$REDIS_APP" --json | jq 'length')"
-          if [ "$MACHINE_COUNT" = "0" ]; then
-            flyctl machine run flyio/redis:6.2 \
+          # Ensure a Redis machine is running. Start stopped machine if present, otherwise create one.
+          MACHINES_JSON="$(flyctl machine list -a "$REDIS_APP" --json)"
+          RUNNING_COUNT="$(printf '%s' "$MACHINES_JSON" | jq '[.[] | select(.state == "started")] | length')"
+          if [ "$RUNNING_COUNT" = "0" ]; then
+            STOPPED_MACHINE_ID="$(
+              printf '%s' "$MACHINES_JSON" | jq -r '
+                [.[] | select(.state == "stopped" or .state == "created" or .state == "suspended")] |
+                .[0].id // empty
+              '
+            )"
+
+            if [ -n "$STOPPED_MACHINE_ID" ]; then
+              flyctl machine start "$STOPPED_MACHINE_ID" -a "$REDIS_APP"
+            else
+              flyctl machine run flyio/redis:7.2 \
               --app "$REDIS_APP" \
               --region lhr \
               --name redis \
               --env REDIS_PASSWORD="$REDIS_PASSWORD" \
               --env PRIMARY_REGION=lhr
+            fi
           fi
 
           echo "redis_app=$REDIS_APP" >> "$GITHUB_OUTPUT"
@@ -103,41 +158,13 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     env:
-      NODE_ENV: production
-      DATABASE_URL: ${{ needs.create_neon_branch.outputs.db_url_pooled }}
+      DATABASE_URL: ${{ needs.create_neon_branch.outputs.db_url_with_pooler }}
       REDIS_URL: ${{ needs.provision_redis.outputs.redis_url }}
-      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
-      APP_NAME: Tripdly API Preview
       DOMAIN: ${{ needs.setup.outputs.preview_url }}
-      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-      TWILIO_SECRET: ${{ secrets.TWILIO_SECRET }}
-      TWILIO_WHATSAPP_NUMBER: ${{ secrets.TWILIO_WHATSAPP_NUMBER }}
       TWILIO_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
-      FLUTTERWAVE_SECRET_KEY: ${{ secrets.FLUTTERWAVE_SECRET_KEY }}
-      FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
-      FLUTTERWAVE_BASE_URL: https://api.flutterwave.com
-      FLUTTERWAVE_WEBHOOK_SECRET: ${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
       FLUTTERWAVE_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
-      HMAC_KEY: ${{ secrets.HMAC_KEY }}
-      FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
-      FLIGHTAWARE_WEBHOOK_SECRET: ${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
-      GOOGLE_DISTANCE_MATRIX_API_KEY: ${{ secrets.GOOGLE_DISTANCE_MATRIX_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
       AUTH_BASE_URL: ${{ needs.setup.outputs.preview_url }}
       TRUSTED_ORIGINS: ${{ needs.setup.outputs.preview_url }}
-      SENDER_NAME: Yomide
-      AWS_REGION: eu-west-2
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_BUCKET_NAME: s3-car-rentals-dev-bucket
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ENABLE_MANUAL_TRIGGERS: "false"
-      API_KEY: ${{ secrets.API_KEY }}
-      BULL_BOARD_USERNAME: ${{ secrets.BULL_BOARD_USERNAME }}
-      BULL_BOARD_PASSWORD: ${{ secrets.BULL_BOARD_PASSWORD }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -171,7 +198,7 @@ jobs:
 
       - name: Validate required env keys from canonical schema
         run: |
-          node -e "const { validateEnvironment } = require('./dist/config/env.config.js'); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
+          node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
 
   deploy_preview:
     name: Deploy Fly preview app
@@ -189,46 +216,46 @@ jobs:
 
       - name: Deploy PR app to Fly.io
         id: deploy
-        uses: superfly/fly-pr-review-apps@1.2.1
+        uses: superfly/fly-pr-review-apps@6f79ec3a7d017082ed11e7c464dae298ca75b21b
         with:
           name: ${{ needs.setup.outputs.preview_app }}
           config: fly.preview.toml
           secrets: >-
-            NODE_ENV=production
-            DATABASE_URL=${{ needs.create_neon_branch.outputs.db_url_pooled }}
+            NODE_ENV=${{ env.NODE_ENV }}
+            DATABASE_URL=${{ needs.create_neon_branch.outputs.db_url_with_pooler }}
             REDIS_URL=${{ needs.provision_redis.outputs.redis_url }}
-            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
-            RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
-            APP_NAME=Tripdly API Preview
+            RESEND_API_KEY=${{ env.RESEND_API_KEY }}
+            RESEND_FROM_EMAIL=${{ env.RESEND_FROM_EMAIL }}
+            APP_NAME=${{ env.APP_NAME }}
             DOMAIN=${{ needs.setup.outputs.preview_url }}
-            TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
-            TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
-            TWILIO_SECRET=${{ secrets.TWILIO_SECRET }}
-            TWILIO_WHATSAPP_NUMBER=${{ secrets.TWILIO_WHATSAPP_NUMBER }}
+            TWILIO_ACCOUNT_SID=${{ env.TWILIO_ACCOUNT_SID }}
+            TWILIO_AUTH_TOKEN=${{ env.TWILIO_AUTH_TOKEN }}
+            TWILIO_SECRET=${{ env.TWILIO_SECRET }}
+            TWILIO_WHATSAPP_NUMBER=${{ env.TWILIO_WHATSAPP_NUMBER }}
             TWILIO_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
-            FLUTTERWAVE_SECRET_KEY=${{ secrets.FLUTTERWAVE_SECRET_KEY }}
-            FLUTTERWAVE_PUBLIC_KEY=${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
-            FLUTTERWAVE_BASE_URL=https://api.flutterwave.com
-            FLUTTERWAVE_WEBHOOK_SECRET=${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
+            FLUTTERWAVE_SECRET_KEY=${{ env.FLUTTERWAVE_SECRET_KEY }}
+            FLUTTERWAVE_PUBLIC_KEY=${{ env.FLUTTERWAVE_PUBLIC_KEY }}
+            FLUTTERWAVE_BASE_URL=${{ env.FLUTTERWAVE_BASE_URL }}
+            FLUTTERWAVE_WEBHOOK_SECRET=${{ env.FLUTTERWAVE_WEBHOOK_SECRET }}
             FLUTTERWAVE_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
-            HMAC_KEY=${{ secrets.HMAC_KEY }}
-            FLIGHTAWARE_API_KEY=${{ secrets.FLIGHTAWARE_API_KEY }}
-            FLIGHTAWARE_WEBHOOK_SECRET=${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
-            GOOGLE_DISTANCE_MATRIX_API_KEY=${{ secrets.GOOGLE_DISTANCE_MATRIX_API_KEY }}
-            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-            SESSION_SECRET=${{ secrets.SESSION_SECRET }}
+            HMAC_KEY=${{ env.HMAC_KEY }}
+            FLIGHTAWARE_API_KEY=${{ env.FLIGHTAWARE_API_KEY }}
+            FLIGHTAWARE_WEBHOOK_SECRET=${{ env.FLIGHTAWARE_WEBHOOK_SECRET }}
+            GOOGLE_DISTANCE_MATRIX_API_KEY=${{ env.GOOGLE_DISTANCE_MATRIX_API_KEY }}
+            OPENAI_API_KEY=${{ env.OPENAI_API_KEY }}
+            SESSION_SECRET=${{ env.SESSION_SECRET }}
             AUTH_BASE_URL=${{ needs.setup.outputs.preview_url }}
             TRUSTED_ORIGINS=${{ needs.setup.outputs.preview_url }}
-            SENDER_NAME=Yomide
-            AWS_REGION=eu-west-2
-            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            AWS_BUCKET_NAME=s3-car-rentals-dev-bucket
-            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            ENABLE_MANUAL_TRIGGERS=false
-            API_KEY=${{ secrets.API_KEY }}
-            BULL_BOARD_USERNAME=${{ secrets.BULL_BOARD_USERNAME }}
-            BULL_BOARD_PASSWORD=${{ secrets.BULL_BOARD_PASSWORD }}
+            SENDER_NAME=${{ env.SENDER_NAME }}
+            AWS_REGION=${{ env.AWS_REGION }}
+            AWS_ACCESS_KEY_ID=${{ env.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ env.AWS_SECRET_ACCESS_KEY }}
+            AWS_BUCKET_NAME=${{ env.AWS_BUCKET_NAME }}
+            ANTHROPIC_API_KEY=${{ env.ANTHROPIC_API_KEY }}
+            ENABLE_MANUAL_TRIGGERS=${{ env.ENABLE_MANUAL_TRIGGERS }}
+            API_KEY=${{ env.API_KEY }}
+            BULL_BOARD_USERNAME=${{ env.BULL_BOARD_USERNAME }}
+            BULL_BOARD_PASSWORD=${{ env.BULL_BOARD_PASSWORD }}
 
   cleanup:
     name: Delete preview resources
@@ -249,7 +276,19 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@v1.4
 
       - name: Destroy Fly preview app
-        run: flyctl apps destroy "${{ needs.setup.outputs.preview_app }}" --yes || true
+        run: |
+          if flyctl apps destroy "${{ needs.setup.outputs.preview_app }}" --yes; then
+            echo "Destroyed preview app '${{ needs.setup.outputs.preview_app }}'."
+          else
+            status=$?
+            echo "Failed to destroy preview app '${{ needs.setup.outputs.preview_app }}' (exit=${status})."
+          fi
 
       - name: Destroy PR Redis app
-        run: flyctl apps destroy "hyre-worker-redis-pr-${{ github.event.number }}" --yes || true
+        run: |
+          if flyctl apps destroy "hyre-worker-redis-pr-${{ github.event.number }}" --yes; then
+            echo "Destroyed redis app 'hyre-worker-redis-pr-${{ github.event.number }}'."
+          else
+            status=$?
+            echo "Failed to destroy redis app 'hyre-worker-redis-pr-${{ github.event.number }}' (exit=${status})."
+          fi

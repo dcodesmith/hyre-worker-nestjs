@@ -4,6 +4,7 @@
 primary_region = "lhr"
 
 [env]
+  # Intentional: app/business logic uses Lagos local time while Fly region uses nearest suitable region.
   TZ = "Africa/Lagos"
 
 [http_service]
