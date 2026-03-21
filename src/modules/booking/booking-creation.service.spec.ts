@@ -1,7 +1,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { createBookingFinancials, createCar, createUser } from "../../shared/helper.fixtures";

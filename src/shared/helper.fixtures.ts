@@ -16,7 +16,7 @@ import {
   Status,
   VehicleType,
 } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import type { BookingFinancials } from "../modules/booking/booking-calculation.interface";
 import { BookingWithRelations, ExtensionWithBookingLeg, PaymentWithRelations } from "../types";
 

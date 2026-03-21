@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RatesService } from "../rates/rates.service";
 import type { GeneratedLeg } from "./booking.interface";

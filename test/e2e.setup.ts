@@ -86,7 +86,7 @@ export async function setup() {
     try {
       // Use db push for e2e tests since it syncs the full schema without requiring migrations
       // This ensures all tables (including auth tables) are created regardless of migration state
-      execSync("npx prisma db push --skip-generate", {
+      execSync("npx prisma db push", {
         env: prismaEnv,
         stdio: "inherit",
       });
@@ -99,8 +99,11 @@ export async function setup() {
     // Seed roles for authentication tests
     // Dynamic import to avoid loading before prisma generate runs
     console.log("Seeding roles...");
-    const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+    const [{ PrismaClient }, { PrismaPg }] = await Promise.all([
+      import("@prisma/client"),
+      import("@prisma/adapter-pg"),
+    ]);
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
     try {
       const roles = ["user", "fleetOwner", "admin", "staff"];
       for (const roleName of roles) {

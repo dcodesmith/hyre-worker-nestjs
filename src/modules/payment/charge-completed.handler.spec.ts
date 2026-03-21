@@ -1,6 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentAttemptStatus } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBooking, createExtension, createPaymentRecord } from "../../shared/helper.fixtures";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";

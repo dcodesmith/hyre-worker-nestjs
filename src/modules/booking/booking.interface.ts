@@ -1,5 +1,5 @@
 import type { BookingStatus, BookingType } from "@prisma/client";
-import type { Decimal } from "@prisma/client/runtime/library";
+import type Decimal from "decimal.js";
 import type { CarPricing } from "./booking-calculation.interface";
 
 /**

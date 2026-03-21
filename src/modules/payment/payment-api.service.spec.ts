@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";

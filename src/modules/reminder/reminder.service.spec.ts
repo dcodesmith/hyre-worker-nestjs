@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
 import { addHours } from "date-fns";
+import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import {

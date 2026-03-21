@@ -1,5 +1,5 @@
 import type { BookingType, Car } from "@prisma/client";
-import type { Decimal } from "@prisma/client/runtime/library";
+import type Decimal from "decimal.js";
 import type { GeneratedLeg } from "./booking.interface";
 
 /**
