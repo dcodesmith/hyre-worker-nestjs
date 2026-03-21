@@ -20,6 +20,7 @@ lerna-debug.log*
 .env.development
 .env.test
 .env.production
+.env.preview
 
 # temp directory
 .temp
@@ -28,3 +29,6 @@ lerna-debug.log*
 
 *.md
 !README.md
+
+scripts/deploy-secrets.sh
+scripts/set-preview-secrets.sh

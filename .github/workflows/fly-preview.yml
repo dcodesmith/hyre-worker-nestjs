@@ -1,0 +1,400 @@
+name: Preview Environment (Neon + Fly)
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+concurrency:
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: production
+  APP_NAME: Tripdly API Preview
+  SENDER_NAME: Yomide
+  AWS_REGION: eu-west-2
+  AWS_BUCKET_NAME: s3-car-rentals-dev-bucket
+  FLUTTERWAVE_BASE_URL: https://api.flutterwave.com
+  ENABLE_MANUAL_TRIGGERS: "false"
+  RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+  RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+  TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+  TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+  TWILIO_SECRET: ${{ secrets.TWILIO_SECRET }}
+  TWILIO_WHATSAPP_NUMBER: ${{ secrets.TWILIO_WHATSAPP_NUMBER }}
+  FLUTTERWAVE_SECRET_KEY: ${{ secrets.FLUTTERWAVE_SECRET_KEY }}
+  FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
+  FLUTTERWAVE_WEBHOOK_SECRET: ${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
+  HMAC_KEY: ${{ secrets.HMAC_KEY }}
+  FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
+  FLIGHTAWARE_WEBHOOK_SECRET: ${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
+  GOOGLE_DISTANCE_MATRIX_API_KEY: ${{ secrets.GOOGLE_DISTANCE_MATRIX_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  API_KEY: ${{ secrets.API_KEY }}
+  BULL_BOARD_USERNAME: ${{ secrets.BULL_BOARD_USERNAME }}
+  BULL_BOARD_PASSWORD: ${{ secrets.BULL_BOARD_PASSWORD }}
+  PREVIEW_REDIS_PASSWORD: ${{ secrets.PREVIEW_REDIS_PASSWORD }}
+  FLY_ORG: ${{ vars.FLY_ORG }}
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      neon_branch: ${{ steps.meta.outputs.neon_branch }}
+      preview_app: ${{ steps.meta.outputs.preview_app }}
+      preview_url: ${{ steps.meta.outputs.preview_url }}
+    steps:
+      - name: Compute preview metadata
+        id: meta
+        run: |
+          echo "neon_branch=preview/pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          echo "preview_app=hyre-worker-nestjs-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          echo "preview_url=https://pr-${{ github.event.number }}-${{ github.repository_owner }}-${{ github.event.repository.name }}.fly.dev" >> "$GITHUB_OUTPUT"
+
+  create_neon_branch:
+    name: Create Neon Branch
+    needs: setup
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Get branch expiration date (2 weeks from now)
+        run: echo "EXPIRES_AT=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Create Neon branch
+        id: create_neon_branch
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ needs.setup.outputs.neon_branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ env.EXPIRES_AT }}
+
+      - name: Post schema diff comment to PR
+        uses: neondatabase/schema-diff-action@80cfa8521628e890015b60f5291a7738926617dc
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          compare_branch: ${{ needs.setup.outputs.neon_branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Verify Neon pooled URL output
+        env:
+          DB_URL_POOLED: ${{ steps.create_neon_branch.outputs.db_url_pooled }}
+        run: |
+          if [ -z "$DB_URL_POOLED" ]; then
+            echo "Neon action did not return db_url_pooled output."
+            exit 1
+          fi
+
+  fly_auth_check:
+    name: Verify Fly auth and org permissions
+    needs: setup
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Verify token can access apps list
+        run: flyctl apps list >/dev/null
+
+      - name: Verify app create/destroy permission in org
+        run: |
+          TEST_APP="hyre-worker-auth-check-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [ -z "${FLY_ORG:-}" ]; then
+            echo "FLY_ORG is not set. Add repository variable FLY_ORG (e.g., personal)."
+            exit 1
+          fi
+
+          echo "Checking app create permission in org '${FLY_ORG}'..."
+          flyctl apps create "$TEST_APP" --org "$FLY_ORG" --yes
+          flyctl apps destroy "$TEST_APP" --yes
+
+  provision_redis:
+    name: Provision Redis per PR
+    needs: [setup, fly_auth_check]
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    outputs:
+      redis_url: ${{ steps.redis.outputs.redis_url }}
+      redis_app: ${{ steps.redis.outputs.redis_app }}
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Create or reuse PR Redis app
+        id: redis
+        run: |
+          REDIS_APP="hyre-worker-redis-pr-${{ github.event.number }}"
+          app_exists() {
+            flyctl status -a "$REDIS_APP" >/dev/null 2>&1
+          }
+
+          if [ -z "${PREVIEW_REDIS_PASSWORD:-}" ]; then
+            echo "Missing required secret PREVIEW_REDIS_PASSWORD"
+            exit 1
+          fi
+          REDIS_PASSWORD="$PREVIEW_REDIS_PASSWORD"
+          echo "::add-mask::$REDIS_PASSWORD"
+
+          if ! app_exists; then
+            echo "Redis app '$REDIS_APP' does not exist yet; creating..."
+            if [ -n "${FLY_ORG:-}" ]; then
+              flyctl apps create "$REDIS_APP" --org "$FLY_ORG" --yes
+            else
+              flyctl apps create "$REDIS_APP" --yes
+            fi
+          fi
+
+          # Fly app creation can be eventually consistent; wait until app is visible.
+          APP_READY=false
+          for i in {1..10}; do
+            if app_exists; then
+              APP_READY=true
+              break
+            fi
+            echo "Waiting for Redis app '$REDIS_APP' to become available... (${i}/10)"
+            sleep 2
+          done
+
+          if [ "$APP_READY" != "true" ]; then
+            echo "Redis app '$REDIS_APP' is not available after creation."
+            flyctl apps list || true
+            exit 1
+          fi
+
+          # Ensure a Redis machine is running with the current REDIS_PASSWORD value.
+          # REDIS_PASSWORD is sourced from PREVIEW_REDIS_PASSWORD above.
+          # Do not `flyctl machine start` a STOPPED_MACHINE_ID because it preserves old env vars.
+          # Instead, destroy stopped machines and recreate with `flyctl machine run --env REDIS_PASSWORD=...`.
+          MACHINES_JSON=""
+          for i in {1..10}; do
+            if MACHINES_JSON="$(flyctl machine list -a "$REDIS_APP" --json 2>/dev/null)"; then
+              break
+            fi
+            echo "Waiting for machine API on '$REDIS_APP'... (${i}/10)"
+            sleep 2
+          done
+
+          if [ -z "$MACHINES_JSON" ]; then
+            echo "Failed to list Redis machines for app '$REDIS_APP' after retries."
+            exit 1
+          fi
+
+          RUNNING_COUNT="$(printf '%s' "$MACHINES_JSON" | jq '[.[] | select(.state == "started")] | length')"
+          if [ "$RUNNING_COUNT" = "0" ]; then
+            STOPPED_MACHINE_ID="$(
+              printf '%s' "$MACHINES_JSON" | jq -r '
+                [.[] | select(.state == "stopped" or .state == "created" or .state == "suspended")] |
+                .[0].id // empty
+              '
+            )"
+
+            if [ -n "$STOPPED_MACHINE_ID" ]; then
+              echo "Destroying stopped Redis machine '$STOPPED_MACHINE_ID' to apply current REDIS_PASSWORD."
+              flyctl machine destroy "$STOPPED_MACHINE_ID" -a "$REDIS_APP" --force
+            fi
+
+            flyctl machine run redis:7.2-alpine3.21 \
+              --app "$REDIS_APP" \
+              --region lhr \
+              --name redis \
+              --env REDIS_PASSWORD="$REDIS_PASSWORD" \
+              --env PRIMARY_REGION=lhr
+          fi
+
+          echo "redis_app=$REDIS_APP" >> "$GITHUB_OUTPUT"
+          echo "redis_url=redis://default:${REDIS_PASSWORD}@${REDIS_APP}.internal:6379" >> "$GITHUB_OUTPUT"
+
+  preflight:
+    name: Preflight checks (env + migrations)
+    needs: [setup, create_neon_branch, provision_redis]
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    env:
+      DOMAIN: ${{ needs.setup.outputs.preview_url }}
+      TWILIO_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
+      FLUTTERWAVE_WEBHOOK_URL: ${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
+      AUTH_BASE_URL: ${{ needs.setup.outputs.preview_url }}
+      TRUSTED_ORIGINS: ${{ needs.setup.outputs.preview_url }}
+    steps:
+      - name: Resolve Neon pooled DATABASE_URL
+        id: neon_db
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ needs.setup.outputs.neon_branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build REDIS_URL for validation and migrations
+        run: |
+          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
+          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          echo "::add-mask::$REDIS_URL_VALUE"
+          echo "REDIS_URL=$REDIS_URL_VALUE" >> "$GITHUB_ENV"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.20.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure DATABASE_URL is available
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "DATABASE_URL is empty. Neon pooled URL could not be resolved in preflight."
+            exit 1
+          fi
+
+      - name: Run Prisma migrations on preview branch
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+        run: pnpm exec prisma migrate deploy
+
+      - name: Build app
+        run: pnpm build
+
+      - name: Validate required env keys from canonical schema
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+        run: |
+          if [ -z "${BULL_BOARD_PASSWORD:-}" ]; then unset BULL_BOARD_PASSWORD; fi
+          if [ -z "${BULL_BOARD_USERNAME:-}" ]; then unset BULL_BOARD_USERNAME; fi
+          node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
+
+  deploy_preview:
+    name: Deploy Fly preview app
+    needs: [setup, create_neon_branch, provision_redis, preflight]
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Resolve Neon pooled DATABASE_URL
+        id: neon_db
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ needs.setup.outputs.neon_branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Build encoded REDIS_URL for deploy
+        id: redis_url
+        run: |
+          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
+          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          echo "::add-mask::$REDIS_URL_VALUE"
+          echo "redis_url=$REDIS_URL_VALUE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy PR app to Fly.io
+        id: deploy
+        uses: superfly/fly-pr-review-apps@6f79ec3a7d017082ed11e7c464dae298ca75b21b
+        with:
+          name: ${{ needs.setup.outputs.preview_app }}
+          config: fly.preview.toml
+          secrets: >-
+            NODE_ENV=${{ env.NODE_ENV }}
+            DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
+            REDIS_URL=${{ steps.redis_url.outputs.redis_url }}
+            RESEND_API_KEY=${{ env.RESEND_API_KEY }}
+            RESEND_FROM_EMAIL=${{ env.RESEND_FROM_EMAIL }}
+            APP_NAME=Tripdly_API_Preview
+            DOMAIN=${{ needs.setup.outputs.preview_url }}
+            TWILIO_ACCOUNT_SID=${{ env.TWILIO_ACCOUNT_SID }}
+            TWILIO_AUTH_TOKEN=${{ env.TWILIO_AUTH_TOKEN }}
+            TWILIO_SECRET=${{ env.TWILIO_SECRET }}
+            TWILIO_WHATSAPP_NUMBER=${{ env.TWILIO_WHATSAPP_NUMBER }}
+            TWILIO_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/twilio
+            FLUTTERWAVE_SECRET_KEY=${{ env.FLUTTERWAVE_SECRET_KEY }}
+            FLUTTERWAVE_PUBLIC_KEY=${{ env.FLUTTERWAVE_PUBLIC_KEY }}
+            FLUTTERWAVE_BASE_URL=${{ env.FLUTTERWAVE_BASE_URL }}
+            FLUTTERWAVE_WEBHOOK_SECRET=${{ env.FLUTTERWAVE_WEBHOOK_SECRET }}
+            FLUTTERWAVE_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
+            HMAC_KEY=${{ env.HMAC_KEY }}
+            FLIGHTAWARE_API_KEY=${{ env.FLIGHTAWARE_API_KEY }}
+            FLIGHTAWARE_WEBHOOK_SECRET=${{ env.FLIGHTAWARE_WEBHOOK_SECRET }}
+            GOOGLE_DISTANCE_MATRIX_API_KEY=${{ env.GOOGLE_DISTANCE_MATRIX_API_KEY }}
+            OPENAI_API_KEY=${{ env.OPENAI_API_KEY }}
+            SESSION_SECRET=${{ env.SESSION_SECRET }}
+            AUTH_BASE_URL=${{ needs.setup.outputs.preview_url }}
+            TRUSTED_ORIGINS=${{ needs.setup.outputs.preview_url }}
+            SENDER_NAME=${{ env.SENDER_NAME }}
+            AWS_REGION=${{ env.AWS_REGION }}
+            AWS_ACCESS_KEY_ID=${{ env.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ env.AWS_SECRET_ACCESS_KEY }}
+            AWS_BUCKET_NAME=${{ env.AWS_BUCKET_NAME }}
+            ANTHROPIC_API_KEY=${{ env.ANTHROPIC_API_KEY }}
+            ENABLE_MANUAL_TRIGGERS=${{ env.ENABLE_MANUAL_TRIGGERS }}
+            API_KEY=${{ env.API_KEY }}
+            BULL_BOARD_USERNAME=${{ env.BULL_BOARD_USERNAME }}
+            BULL_BOARD_PASSWORD=${{ env.BULL_BOARD_PASSWORD }}
+
+  cleanup:
+    name: Delete preview resources
+    needs: setup
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Delete Neon branch
+        uses: neondatabase/delete-branch-action@c2005bb7d7caeba12ba3ec63857e9c9f9a4d695a
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: ${{ needs.setup.outputs.neon_branch }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Destroy Fly preview app
+        run: |
+          if flyctl apps destroy "${{ needs.setup.outputs.preview_app }}" --yes; then
+            echo "Destroyed preview app '${{ needs.setup.outputs.preview_app }}'."
+          else
+            status=$?
+            echo "Failed to destroy preview app '${{ needs.setup.outputs.preview_app }}' (exit=${status})."
+          fi
+
+      - name: Destroy PR Redis app
+        run: |
+          if flyctl apps destroy "hyre-worker-redis-pr-${{ github.event.number }}" --yes; then
+            echo "Destroyed redis app 'hyre-worker-redis-pr-${{ github.event.number }}'."
+          else
+            status=$?
+            echo "Failed to destroy redis app 'hyre-worker-redis-pr-${{ github.event.number }}' (exit=${status})."
+          fi
