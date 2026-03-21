@@ -280,6 +280,8 @@ jobs:
         run: pnpm exec prisma migrate deploy
 
       - name: Build app
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
         run: pnpm build
 
       - name: Validate required env keys from canonical schema
