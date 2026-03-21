@@ -41,7 +41,6 @@ env:
   API_KEY: ${{ secrets.API_KEY }}
   BULL_BOARD_USERNAME: ${{ secrets.BULL_BOARD_USERNAME }}
   BULL_BOARD_PASSWORD: ${{ secrets.BULL_BOARD_PASSWORD }}
-  PREVIEW_REDIS_PASSWORD: ${{ secrets.PREVIEW_REDIS_PASSWORD }}
   FLY_ORG: ${{ vars.FLY_ORG }}
 
 jobs:
@@ -145,13 +144,6 @@ jobs:
             flyctl status -a "$REDIS_APP" >/dev/null 2>&1
           }
 
-          if [ -z "${PREVIEW_REDIS_PASSWORD:-}" ]; then
-            echo "Missing required secret PREVIEW_REDIS_PASSWORD"
-            exit 1
-          fi
-          REDIS_PASSWORD="$PREVIEW_REDIS_PASSWORD"
-          echo "::add-mask::$REDIS_PASSWORD"
-
           if ! app_exists; then
             echo "Redis app '$REDIS_APP' does not exist yet; creating..."
             if [ -n "${FLY_ORG:-}" ]; then
@@ -178,10 +170,9 @@ jobs:
             exit 1
           fi
 
-          # Ensure a Redis machine is running with the current REDIS_PASSWORD value.
-          # REDIS_PASSWORD is sourced from PREVIEW_REDIS_PASSWORD above.
+          # Ensure a Redis machine is running.
           # Do not `flyctl machine start` a STOPPED_MACHINE_ID because it preserves old env vars.
-          # Instead, destroy stopped machines and recreate with `flyctl machine run --env REDIS_PASSWORD=...`.
+          # Instead, destroy stopped machines and recreate with `flyctl machine run`.
           MACHINES_JSON=""
           for i in {1..10}; do
             if MACHINES_JSON="$(flyctl machine list -a "$REDIS_APP" --json 2>/dev/null)"; then
@@ -206,7 +197,7 @@ jobs:
             )"
 
             if [ -n "$STOPPED_MACHINE_ID" ]; then
-              echo "Destroying stopped Redis machine '$STOPPED_MACHINE_ID' to apply current REDIS_PASSWORD."
+              echo "Destroying stopped Redis machine '$STOPPED_MACHINE_ID' to recreate a clean instance."
               flyctl machine destroy "$STOPPED_MACHINE_ID" -a "$REDIS_APP" --force
             fi
 
@@ -214,12 +205,11 @@ jobs:
               --app "$REDIS_APP" \
               --region lhr \
               --name redis \
-              --env REDIS_PASSWORD="$REDIS_PASSWORD" \
               --env PRIMARY_REGION=lhr
           fi
 
           echo "redis_app=$REDIS_APP" >> "$GITHUB_OUTPUT"
-          echo "redis_url=redis://default:${REDIS_PASSWORD}@${REDIS_APP}.internal:6379" >> "$GITHUB_OUTPUT"
+          echo "redis_url=redis://${REDIS_APP}.internal:6379" >> "$GITHUB_OUTPUT"
 
   preflight:
     name: Preflight checks (env + migrations)
@@ -246,8 +236,7 @@ jobs:
 
       - name: Build REDIS_URL for validation and migrations
         run: |
-          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
-          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          REDIS_URL_VALUE="redis://hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
           echo "::add-mask::$REDIS_URL_VALUE"
           echo "REDIS_URL=$REDIS_URL_VALUE" >> "$GITHUB_ENV"
 
@@ -314,11 +303,10 @@ jobs:
           branch_name: ${{ needs.setup.outputs.neon_branch }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
-      - name: Build encoded REDIS_URL for deploy
+      - name: Build REDIS_URL for deploy
         id: redis_url
         run: |
-          ENCODED_REDIS_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["PREVIEW_REDIS_PASSWORD"], safe=""))')"
-          REDIS_URL_VALUE="redis://default:${ENCODED_REDIS_PASSWORD}@hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
+          REDIS_URL_VALUE="redis://hyre-worker-redis-pr-${{ github.event.number }}.internal:6379"
           echo "::add-mask::$REDIS_URL_VALUE"
           echo "redis_url=$REDIS_URL_VALUE" >> "$GITHUB_OUTPUT"
 
