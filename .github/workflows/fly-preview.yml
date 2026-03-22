@@ -277,8 +277,6 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
         run: |
-          if [ -z "${BULL_BOARD_PASSWORD:-}" ]; then unset BULL_BOARD_PASSWORD; fi
-          if [ -z "${BULL_BOARD_USERNAME:-}" ]; then unset BULL_BOARD_USERNAME; fi
           node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
 
   deploy_preview:
