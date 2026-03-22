@@ -27,6 +27,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationDispatchError } from "./notification.processor.error";
+import { getSucceededChannels } from "./notification.processor.helper";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_CONFIRMED_TEMPLATE_KIND,
@@ -87,15 +88,7 @@ export class NotificationProcessor extends WorkerHost {
       bookingId: job.data.bookingId,
     });
 
-    const progressValue = job.progress;
-    const succeededChannels = new Set<NotificationChannel>(
-      typeof progressValue === "object" &&
-        progressValue !== null &&
-        "succeededChannels" in progressValue &&
-        Array.isArray((progressValue as { succeededChannels?: unknown }).succeededChannels)
-        ? ((progressValue as { succeededChannels: NotificationChannel[] }).succeededChannels ?? [])
-        : [],
-    );
+    const succeededChannels = new Set(getSucceededChannels(job.progress));
     const results: NotificationResult[] = [];
 
     // Process each channel
