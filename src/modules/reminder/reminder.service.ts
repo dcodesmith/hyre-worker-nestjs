@@ -19,6 +19,14 @@ import { DatabaseService } from "../database/database.service";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationService } from "../notification/notification.service";
 
+const REMINDER_LABEL_BY_TYPE = {
+  [NotificationType.BOOKING_REMINDER_START]: "start",
+  [NotificationType.BOOKING_REMINDER_END]: "end",
+} as const satisfies Record<
+  NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  "start" | "end"
+>;
+
 @Injectable()
 export class ReminderService {
   private readonly logger = new Logger(ReminderService.name);
@@ -84,16 +92,9 @@ export class ReminderService {
       for (const leg of legs) {
         this.logger.log(`Processing leg ${leg.id} legStartTime: ${leg.legStartTime}`);
 
-        try {
-          // Queue notification instead of sending directly
-          await this.notificationService.queueBookingReminderNotifications(
-            normaliseBookingLegDetails(leg),
-            NotificationType.BOOKING_REMINDER_START,
-          );
+        const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_START);
+        if (queued) {
           queuedCount++;
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger.error(`Failed to queue start reminder for leg ${leg.id}: ${errorMessage}`);
         }
       }
 
@@ -196,7 +197,7 @@ export class ReminderService {
           `Processing end reminder for leg ${leg.id} with effective end time: ${effectiveEndTime.toISOString()}`,
         );
 
-        const queued = await this.queueEndReminderForLeg(leg);
+        const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_END);
         if (queued) {
           queuedCount++;
         }
@@ -244,18 +245,34 @@ export class ReminderService {
     return effectiveEndTime;
   }
 
-  private async queueEndReminderForLeg(
+  private async queueReminderForLeg(
     leg: Parameters<typeof normaliseBookingLegDetails>[0],
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  ): Promise<boolean> {
+    return this.queueReminderNotification(
+      leg.id,
+      () =>
+        this.notificationService.queueBookingReminderNotifications(
+          normaliseBookingLegDetails(leg),
+          type,
+        ),
+      REMINDER_LABEL_BY_TYPE[type],
+    );
+  }
+
+  private async queueReminderNotification(
+    legId: string,
+    action: () => Promise<void>,
+    reminderLabel: "start" | "end",
   ): Promise<boolean> {
     try {
-      await this.notificationService.queueBookingReminderNotifications(
-        normaliseBookingLegDetails(leg),
-        NotificationType.BOOKING_REMINDER_END,
-      );
+      await action();
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to queue end reminder for leg ${leg.id}: ${errorMessage}`);
+      this.logger.error(
+        `Failed to queue ${reminderLabel} reminder for leg ${legId}: ${errorMessage}`,
+      );
       return false;
     }
   }

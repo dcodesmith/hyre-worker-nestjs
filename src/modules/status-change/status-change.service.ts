@@ -87,19 +87,12 @@ export class StatusChangeService {
             },
           });
 
-          try {
-            await this.notificationService.queueBookingStatusNotifications(
-              updatedBooking,
-              oldStatus,
-              BookingStatus.ACTIVE,
-            );
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            this.logger.error(
-              `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
-            );
-            // Continue without failing the transaction
-          }
+          await this.queueStatusNotification(
+            booking.id,
+            updatedBooking,
+            oldStatus,
+            BookingStatus.ACTIVE,
+          );
         }
       });
 
@@ -182,28 +175,21 @@ export class StatusChangeService {
             });
           }
 
-          try {
-            // Check if a review already exists for this booking
-            const existingReview = await tx.review.findUnique({
-              where: { bookingId: booking.id },
-            });
+          // Check if a review already exists for this booking
+          const existingReview = await tx.review.findUnique({
+            where: { bookingId: booking.id },
+          });
 
-            // Show review request only if no review exists and booking is completed
-            const showReviewRequest = !existingReview;
+          // Show review request only if no review exists and booking is completed
+          const showReviewRequest = !existingReview;
 
-            await this.notificationService.queueBookingStatusNotifications(
-              updatedBooking,
-              oldStatus,
-              BookingStatus.COMPLETED,
-              showReviewRequest,
-            );
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            this.logger.error(
-              `Failed to queue status notification for booking ${booking.id}: ${errorMessage}`,
-            );
-            // Continue without failing the transaction
-          }
+          await this.queueStatusNotification(
+            booking.id,
+            updatedBooking,
+            oldStatus,
+            BookingStatus.COMPLETED,
+            showReviewRequest,
+          );
         });
 
         try {
@@ -234,6 +220,29 @@ export class StatusChangeService {
     } catch (error) {
       this.logger.error(`Error updating booking statuses: ${error}`);
       throw error;
+    }
+  }
+
+  private async queueStatusNotification(
+    bookingId: string,
+    booking: Parameters<NotificationService["queueBookingStatusNotifications"]>[0],
+    oldStatus: string,
+    newStatus: string,
+    showReviewRequest = false,
+  ): Promise<void> {
+    try {
+      await this.notificationService.queueBookingStatusNotifications(
+        booking,
+        oldStatus,
+        newStatus,
+        showReviewRequest,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to queue status notification for booking ${bookingId}: ${errorMessage}`,
+      );
+      // Continue without failing booking status updates
     }
   }
 }
