@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Booking, Car, User } from "@prisma/client";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import {

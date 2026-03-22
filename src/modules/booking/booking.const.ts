@@ -1,4 +1,4 @@
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 
 /**
  * Cutoff hour for same-day DAY bookings (11 AM Lagos time).

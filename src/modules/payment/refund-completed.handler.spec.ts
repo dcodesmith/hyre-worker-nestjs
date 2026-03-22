@@ -1,6 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentAttemptStatus } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";

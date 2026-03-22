@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import type { FieldError } from "src/common/errors/problem-details.interface";
 import { maskEmail } from "src/shared/helper";
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";

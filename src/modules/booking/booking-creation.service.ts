@@ -9,9 +9,9 @@ import {
   ReferralReleaseCondition,
   ReferralRewardStatus,
 } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
 import { Queue } from "bullmq";
 import { format } from "date-fns";
+import Decimal from "decimal.js";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";

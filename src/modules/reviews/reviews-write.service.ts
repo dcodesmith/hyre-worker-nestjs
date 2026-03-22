@@ -115,10 +115,10 @@ export class ReviewsWriteService {
     if (!booking.chauffeurId) {
       throw new ReviewBookingChauffeurRequiredException();
     }
+
     if (!booking.chauffeur) {
       throw new ReviewBookingChauffeurRequiredException();
     }
-    const bookingWithChauffeur: ReviewCreationBookingWithChauffeur = booking;
 
     const thirtyDaysAgo = subDays(new Date(), 30);
     if (booking.endDate < thirtyDaysAgo) {
@@ -138,20 +138,17 @@ export class ReviewsWriteService {
           isVisible: true,
         },
       });
-      void this.sendReviewNotifications(bookingWithChauffeur, input).catch((error: unknown) => {
+
+      void this.sendReviewNotifications(booking, input).catch((error: unknown) => {
         this.logger.error("Failed to dispatch review notifications", {
-          bookingReference: bookingWithChauffeur.bookingReference,
+          bookingReference: booking.bookingReference,
           error: error instanceof Error ? error.message : String(error),
         });
       });
+
       return review;
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002" &&
-        Array.isArray(error.meta?.target) &&
-        error.meta.target.includes("bookingId")
-      ) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         throw new ReviewAlreadyExistsException();
       }
       throw error;

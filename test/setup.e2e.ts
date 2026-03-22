@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { vi } from "vitest";
 
@@ -63,7 +64,13 @@ async function initializeWorkerIsolation(): Promise<void> {
   process.env.REDIS_URL = workerRedisUrl;
   process.env.E2E_WORKER_SCHEMA = schema;
 
-  const adminPrisma = new PrismaClient({ datasourceUrl: baseDatabaseUrl });
+  const adminPrisma = new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: baseDatabaseUrl,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 300_000,
+    }),
+  });
   try {
     await adminPrisma.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
   } finally {
@@ -72,7 +79,7 @@ async function initializeWorkerIsolation(): Promise<void> {
 
   const prismaEnv = { ...process.env, DATABASE_URL: workerDatabaseUrl };
   try {
-    execSync("npx prisma db push --skip-generate", {
+    execSync("npx prisma db push", {
       env: prismaEnv,
       stdio: "inherit",
     });
@@ -83,7 +90,13 @@ async function initializeWorkerIsolation(): Promise<void> {
     );
   }
 
-  const workerPrisma = new PrismaClient({ datasourceUrl: workerDatabaseUrl });
+  const workerPrisma = new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: workerDatabaseUrl,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 300_000,
+    }),
+  });
   try {
     const roles = ["user", "fleetOwner", "admin", "staff"];
     for (const roleName of roles) {

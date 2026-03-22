@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
+import Decimal from "decimal.js";
 import { RatesService } from "../rates/rates.service";
 import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
 import type { GeneratedLeg } from "./booking.interface";
