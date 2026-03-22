@@ -26,6 +26,8 @@ import {
   NotificationResult,
   NotificationType,
 } from "./notification.interface";
+import { NotificationDispatchError } from "./notification.processor.error";
+import { getSucceededChannels } from "./notification.processor.helper";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_CONFIRMED_TEMPLATE_KIND,
@@ -86,15 +88,42 @@ export class NotificationProcessor extends WorkerHost {
       bookingId: job.data.bookingId,
     });
 
+    const succeededChannels = new Set(getSucceededChannels(job.progress));
     const results: NotificationResult[] = [];
 
     // Process each channel
     for (const channel of channels) {
+      if (succeededChannels.has(channel)) {
+        this.logger.log("Skipping already-succeeded notification channel", {
+          notificationId: id,
+          channel,
+        });
+        continue;
+      }
+
       const result = await this.processChannel(id, channel, type, recipients, templateData);
       if (result) results.push(result);
+      if (result?.success) {
+        succeededChannels.add(channel);
+      }
     }
 
+    await job.updateProgress({
+      succeededChannels: [...succeededChannels],
+    });
+
     this.logProcessingComplete(id, channels, results);
+
+    const failed = results.filter((result) => !result.success);
+    if (failed.length > 0) {
+      throw new NotificationDispatchError(
+        id,
+        failed.map((result) => result.channel),
+        job.attemptsMade + 1,
+        job.opts.attempts,
+      );
+    }
+
     return results;
   }
 
@@ -481,14 +510,21 @@ export class NotificationProcessor extends WorkerHost {
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<NotificationJobData, NotificationResult[]>, error: Error) {
+    const failedChannels =
+      error instanceof NotificationDispatchError ? error.failedChannels : undefined;
+    const attempt = error instanceof NotificationDispatchError ? error.attempt : job.attemptsMade;
+    const maxAttempts =
+      error instanceof NotificationDispatchError ? error.maxAttempts : job.opts.attempts;
+
     this.logger.error(`Notification job failed: ${job.data.type} [${job.id}]`, {
       notificationId: job.data.id,
       bookingId: job.data.bookingId,
       channels: job.data.channels,
+      failedChannels,
       error: error.message,
       stack: error.stack,
-      attempts: job.attemptsMade,
-      maxAttempts: job.opts.attempts,
+      attempts: attempt,
+      maxAttempts,
     });
   }
 

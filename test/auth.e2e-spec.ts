@@ -246,7 +246,7 @@ describe("Auth E2E Tests", () => {
     it("should enforce rate limiting on OTP send endpoint", async () => {
       const rateLimitEmail = uniqueEmail("rate-limit");
       // Isolate from parallel e2e workers: Better Auth keys rate limit by request metadata.
-      const forwardedFor = "198.51.100.42";
+      const forwardedFor = `198.51.100.${(Date.now() % 200) + 1}`;
 
       // Send multiple requests sequentially to same email
       // Rate limit is 5 requests per 60 seconds for this endpoint
@@ -258,6 +258,8 @@ describe("Auth E2E Tests", () => {
           .set("X-Forwarded-For", forwardedFor)
           .send({ email: rateLimitEmail, type: "sign-in" });
         responses.push(response);
+        // Give the database-backed rate limiter a short time slice to persist counters.
+        await new Promise((resolve) => setTimeout(resolve, 15));
       }
 
       // Better Auth may return a mix during boundary conditions; enforce at least one 429.
@@ -265,6 +267,10 @@ describe("Auth E2E Tests", () => {
       const rateLimitedCount = responses.filter(
         (r) => r.status === HttpStatus.TOO_MANY_REQUESTS,
       ).length;
+      const unexpectedStatuses = responses.filter(
+        (r) => r.status !== HttpStatus.OK && r.status !== HttpStatus.TOO_MANY_REQUESTS,
+      );
+      expect(unexpectedStatuses).toHaveLength(0);
       const rateLimitRows = await databaseService.rateLimit.findMany({
         select: { count: true },
       });

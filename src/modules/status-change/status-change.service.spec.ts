@@ -116,6 +116,7 @@ describe("StatusChangeService", () => {
       expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
       BookingStatus.CONFIRMED,
       BookingStatus.ACTIVE,
+      false,
     );
     expect(result).toBe("Updated 1 bookings from confirmed to active");
   });

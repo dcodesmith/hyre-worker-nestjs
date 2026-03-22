@@ -139,12 +139,7 @@ export class ReviewsWriteService {
         },
       });
 
-      void this.sendReviewNotifications(booking, input).catch((error: unknown) => {
-        this.logger.error("Failed to dispatch review notifications", {
-          bookingReference: booking.bookingReference,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      await this.queueReviewNotifications(booking, input);
 
       return review;
     } catch (error) {
@@ -196,7 +191,7 @@ export class ReviewsWriteService {
     });
   }
 
-  private async sendReviewNotifications(
+  private async queueReviewNotifications(
     booking: ReviewCreationBookingWithChauffeur,
     input: CreateReviewDto,
   ): Promise<void> {
@@ -206,27 +201,35 @@ export class ReviewsWriteService {
     const carName = booking.car.year
       ? `${booking.car.make} ${booking.car.model} (${booking.car.year})`
       : `${booking.car.make} ${booking.car.model}`;
-    await this.notificationService.queueReviewReceivedNotifications({
-      bookingId: booking.id,
-      owner: {
-        name: ownerName,
-        email: booking.car.owner.email,
-      },
-      chauffeur: {
-        name: chauffeurName,
-        email: booking.chauffeur.email,
-      },
-      review: {
-        customerName,
+    try {
+      await this.notificationService.queueReviewReceivedNotifications({
+        bookingId: booking.id,
+        owner: {
+          name: ownerName,
+          email: booking.car.owner.email,
+        },
+        chauffeur: {
+          name: chauffeurName,
+          email: booking.chauffeur.email,
+        },
+        review: {
+          customerName,
+          bookingReference: booking.bookingReference,
+          carName,
+          overallRating: input.overallRating,
+          carRating: input.carRating,
+          chauffeurRating: input.chauffeurRating,
+          serviceRating: input.serviceRating,
+          comment: input.comment ?? null,
+          reviewDate: new Date(),
+        },
+      });
+    } catch (error) {
+      this.logger.error("Failed to queue review received notifications", {
+        bookingId: booking.id,
         bookingReference: booking.bookingReference,
-        carName,
-        overallRating: input.overallRating,
-        carRating: input.carRating,
-        chauffeurRating: input.chauffeurRating,
-        serviceRating: input.serviceRating,
-        comment: input.comment ?? null,
-        reviewDate: new Date(),
-      },
-    });
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
