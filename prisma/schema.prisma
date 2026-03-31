@@ -424,7 +424,7 @@ model Review {
   moderationNotes String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-  booking         Booking   @relation("BookingReview", fields: [bookingId], references: [id])
+  booking         Booking   @relation("BookingReview", fields: [bookingId], references: [id], onDelete: Restrict)
   moderator       User?     @relation("ReviewModerator", fields: [moderatedBy], references: [id])
   user            User      @relation("CustomerReviews", fields: [userId], references: [id], onDelete: Cascade)
 
