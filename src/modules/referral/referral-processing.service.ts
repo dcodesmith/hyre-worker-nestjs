@@ -74,8 +74,8 @@ export class ReferralProcessingService {
       return;
     }
 
-    const booking = await this.databaseService.booking.findUnique({
-      where: { id: bookingId },
+    const booking = await this.databaseService.booking.findFirst({
+      where: { id: bookingId, deletedAt: null },
       select: {
         id: true,
         userId: true,

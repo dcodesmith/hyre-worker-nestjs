@@ -28,7 +28,7 @@ describe("ReferralProcessingService", () => {
               findMany: vi.fn(),
             },
             booking: {
-              findUnique: vi.fn(),
+              findFirst: vi.fn(),
               update: vi.fn(),
             },
             user: {
@@ -72,7 +72,7 @@ describe("ReferralProcessingService", () => {
       await service.processReferralCompletionForBooking("booking-123");
 
       expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
     });
 
     it("should skip processing when REFERRAL_RELEASE_CONDITION is PAID (not COMPLETED)", async () => {
@@ -89,7 +89,7 @@ describe("ReferralProcessingService", () => {
       await service.processReferralCompletionForBooking("booking-123");
 
       expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
     });
 
     it("should skip processing when REFERRAL_ENABLED is false AND REFERRAL_RELEASE_CONDITION is PAID", async () => {
@@ -106,7 +106,7 @@ describe("ReferralProcessingService", () => {
       await service.processReferralCompletionForBooking("booking-123");
 
       expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
     });
   });
 
@@ -124,12 +124,12 @@ describe("ReferralProcessingService", () => {
     });
 
     it("should skip processing when booking does not exist", async () => {
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(null);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(null);
 
       await service.processReferralCompletionForBooking("non-existent-booking");
 
-      expect(databaseService.booking.findUnique).toHaveBeenCalledWith({
-        where: { id: "non-existent-booking" },
+      expect(databaseService.booking.findFirst).toHaveBeenCalledWith({
+        where: { id: "non-existent-booking", deletedAt: null },
         select: {
           id: true,
           userId: true,
@@ -142,11 +142,11 @@ describe("ReferralProcessingService", () => {
 
     it("should skip processing when booking referralStatus is not APPLIED", async () => {
       const booking = createBooking({ id: "booking-1231" });
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
 
       await service.processReferralCompletionForBooking("booking-123");
 
-      expect(databaseService.booking.findUnique).toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).toHaveBeenCalled();
       expect(databaseService.$transaction).not.toHaveBeenCalled();
     });
 
@@ -158,11 +158,11 @@ describe("ReferralProcessingService", () => {
         userId: undefined,
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
 
       await service.processReferralCompletionForBooking("booking-123");
 
-      expect(databaseService.booking.findUnique).toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).toHaveBeenCalled();
       expect(databaseService.$transaction).not.toHaveBeenCalled();
     });
 
@@ -173,11 +173,11 @@ describe("ReferralProcessingService", () => {
         referralReferrerUserId: undefined,
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
 
       await service.processReferralCompletionForBooking("booking-123");
 
-      expect(databaseService.booking.findUnique).toHaveBeenCalled();
+      expect(databaseService.booking.findFirst).toHaveBeenCalled();
       expect(databaseService.$transaction).not.toHaveBeenCalled();
     });
   });
@@ -201,7 +201,7 @@ describe("ReferralProcessingService", () => {
         referralReferrerUserId: "referrer-123",
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
     });
 
     it("should skip processing when reward is already released (idempotency)", async () => {
@@ -244,7 +244,7 @@ describe("ReferralProcessingService", () => {
         referralReferrerUserId: "referrer-123",
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
     });
 
     it("should skip processing when referral has expired", async () => {
@@ -430,7 +430,7 @@ describe("ReferralProcessingService", () => {
         referralStatus: BookingReferralStatus.APPLIED,
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
     });
 
     it("should skip processing when no pending reward is found", async () => {
@@ -508,7 +508,7 @@ describe("ReferralProcessingService", () => {
         referralStatus: BookingReferralStatus.APPLIED,
       });
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(booking);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
     });
 
     it("should mark referee discount as used when not already marked", async () => {
@@ -644,7 +644,7 @@ describe("ReferralProcessingService", () => {
         { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
       ]);
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(
         createBooking({
           referralReferrerUserId: "referrer-123",
           referralStatus: BookingReferralStatus.APPLIED,
@@ -837,7 +837,7 @@ describe("ReferralProcessingService", () => {
         { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
       ]);
 
-      vi.mocked(databaseService.booking.findUnique).mockResolvedValue(
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(
         createBooking({
           id: "booking-123",
           userId: "user-123",
