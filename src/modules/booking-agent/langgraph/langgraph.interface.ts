@@ -12,7 +12,7 @@ export interface BookingDraft {
   durationDays?: number;
   pickupLocation?: string;
   dropoffLocation?: string;
-  vehicleType?: "SEDAN" | "SUV" | "LUXURY_SEDAN" | "LUXURY_SUV" | "VAN" | "CROSSOVER";
+  vehicleType?: "SEDAN" | "SUV" | "VAN" | "CROSSOVER";
   serviceTier?: "STANDARD" | "EXECUTIVE" | "LUXURY" | "ULTRA_LUXURY";
   color?: string;
   make?: string;

@@ -90,7 +90,7 @@ Extract the following fields when mentioned:
 - color: Vehicle color (e.g., "black", "white", "silver", "blue", "red")
 - make: Car brand (e.g., "Toyota", "Mercedes", "BMW", "Lexus")
 - model: Car model (e.g., "Camry", "E-Class", "X5")
-- vehicleType: One of: SEDAN, SUV, LUXURY_SEDAN, LUXURY_SUV, VAN, CROSSOVER
+- vehicleType: One of: SEDAN, SUV, VAN, CROSSOVER
 - serviceTier: One of: STANDARD, EXECUTIVE, LUXURY, ULTRA_LUXURY
 - from: Start date in YYYY-MM-DD format
 - to: End date in YYYY-MM-DD format
@@ -110,8 +110,8 @@ Date parsing rules:
 Vehicle type mapping:
 - "sedan", "car", "saloon" → SEDAN
 - "suv", "jeep" → SUV
-- "luxury sedan", "premium sedan" → LUXURY_SEDAN
-- "luxury suv", "premium suv" → LUXURY_SUV
+- "luxury sedan", "premium sedan" → SEDAN
+- "luxury suv", "premium suv" → SUV
 - "van", "bus", "minibus" → VAN
 - "crossover" → CROSSOVER
 

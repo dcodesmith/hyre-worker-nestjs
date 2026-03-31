@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider              = "prisma-client-js"
+  skipDefaultValidation = true
 }
 
 datasource db {
@@ -25,11 +26,10 @@ model Car {
   fuelUpgradeRate     Int?
   fullDayRate         Int
   airportPickupRate   Int
-  pricingIncludesFuel Boolean            @default(false)
-  // Vehicle categorization
   vehicleType         VehicleType        @default(SEDAN)
   serviceTier         ServiceTier        @default(STANDARD)
   passengerCapacity   Int                @default(4)
+  pricingIncludesFuel Boolean            @default(false)
   bookings            Booking[]
   owner               User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   documents           DocumentApproval[] @relation("CarDocuments")
@@ -49,9 +49,7 @@ model Car {
 model User {
   id                        String                     @id @default(cuid())
   email                     String                     @unique
-  emailVerified             Boolean                    @default(false)
   username                  String?                    @unique
-  image                     String?
   createdAt                 DateTime                   @default(now())
   updatedAt                 DateTime                   @updatedAt
   address                   String?
@@ -62,37 +60,40 @@ model User {
   fleetOwnerStatus          FleetOwnerStatus?          @default(PROCESSING)
   chauffeurApprovalStatus   ChauffeurApprovalStatus?   @default(PENDING)
   hasOnboarded              Boolean                    @default(false)
-  isOwnerDriver             Boolean                    @default(false)
-  // Referral fields
-  referralCode              String?                    @unique
-  referredByUserId          String?
   referralAttributionSource ReferralAttributionSource?
-  referralSignupAt          DateTime?
+  referralCode              String?                    @unique
   referralDiscountUsed      Boolean                    @default(false)
-
-  bankDetails           BankDetails?          @relation("UserBankDetails")
-  bookingsAsChauffeur   Booking[]             @relation("BookingChauffeur")
-  bookings              Booking[]             @relation("BookingCustomer")
-  cars                  Car[]
-  approvedDocuments     DocumentApproval[]    @relation("ApprovedBy")
-  documents             DocumentApproval[]    @relation("UserDocuments")
-  payoutsReceived       PayoutTransaction[]   @relation("FleetOwnerPayouts")
-  fleetOwner            User?                 @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  chauffeurs            User[]                @relation("FleetOwnerChauffeurs")
-  approvedVehicleImages VehicleImage[]        @relation("ApprovedVehicleImages")
-  roles                 Role[]                @relation("RoleToUser")
-  // Referral relations
-  referredBy            User?                 @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals             User[]                @relation("UserReferrals")
-  referralStats         UserReferralStats?
-  referralAttribution   ReferralAttribution?  @relation("RefereeAttribution")
-  referralAttributions  ReferralAttribution[] @relation("ReferrerAttributions")
-  referralRewardsEarned ReferralReward[]      @relation("ReferrerRewards")
-  referralRewardsFrom   ReferralReward[]      @relation("RefereeRewards")
-  bookingReferrals      Booking[]             @relation("BookingReferrals")
-  sessions              Session[]
-  reviewsWritten        Review[]              @relation("CustomerReviews")
-  moderatedReviews      Review[]              @relation("ReviewModerator")
+  referralSignupAt          DateTime?
+  referredByUserId          String?
+  isOwnerDriver             Boolean                    @default(false)
+  emailVerified             Boolean                    @default(false)
+  image                     String?
+  termsAcceptedAt           DateTime?
+  privacyAcceptedAt         DateTime?
+  marketingConsent          Boolean                    @default(false)
+  bankDetails               BankDetails?               @relation("UserBankDetails")
+  attributedBookings        Booking[]                  @relation("BookingAcquisitionPartner")
+  bookingsAsChauffeur       Booking[]                  @relation("BookingChauffeur")
+  bookingReferrals          Booking[]                  @relation("BookingReferrals")
+  bookings                  Booking[]                  @relation("BookingCustomer")
+  cars                      Car[]
+  approvedDocuments         DocumentApproval[]         @relation("ApprovedBy")
+  documents                 DocumentApproval[]         @relation("UserDocuments")
+  payoutsReceived           PayoutTransaction[]        @relation("FleetOwnerPayouts")
+  referralAttribution       ReferralAttribution?       @relation("RefereeAttribution")
+  referralAttributions      ReferralAttribution[]      @relation("ReferrerAttributions")
+  referralRewardsFrom       ReferralReward[]           @relation("RefereeRewards")
+  referralRewardsEarned     ReferralReward[]           @relation("ReferrerRewards")
+  moderatedReviews          Review[]                   @relation("ReviewModerator")
+  reviewsWritten            Review[]                   @relation("CustomerReviews")
+  fleetOwner                User?                      @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  chauffeurs                User[]                     @relation("FleetOwnerChauffeurs")
+  referredBy                User?                      @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals                 User[]                     @relation("UserReferrals")
+  referralStats             UserReferralStats?
+  approvedVehicleImages     VehicleImage[]             @relation("ApprovedVehicleImages")
+  sessions                  Session[]
+  roles                     Role[]                     @relation("RoleToUser")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -111,74 +112,41 @@ model Role {
   users       User[]   @relation("RoleToUser")
 }
 
-enum FlightStatus {
-  SCHEDULED // "Scheduled" - not yet departed
-  DEPARTED // "Departed" - just took off / taxiing out
-  EN_ROUTE // "En Route" - in the air
-  LANDED // "Landed" / "Arrived" - at destination
-  CANCELLED // "Cancelled"
-  DIVERTED // "Diverted"
-  UNKNOWN // "Unknown" / unrecognized status
-}
-
-enum FlightDataSource {
-  FLIGHTAWARE
-  MANUAL
-  CACHED
-}
-
 model Flight {
-  id String @id @default(cuid())
-
-  // Flight identification
-  flightNumber String // e.g., "P47579", "BA75"
-  flightDate   DateTime @db.Date // Date of flight (in Lagos timezone)
-  faFlightId   String? // FlightAware's unique flight ID
-
-  // Route information
-  originCode     String // ICAO code e.g., "EGLL"
-  originCodeIATA String? // IATA code e.g., "LHR"
-  originName     String? // e.g., "London Heathrow"
-  originCity     String? // e.g., "London"
-
-  destinationCode     String // ICAO code e.g., "DNMM"
-  destinationCodeIATA String? // IATA code e.g., "LOS"
-  destinationName     String? // e.g., "Murtala Muhammed International Airport"
-  destinationCity     String? // e.g., "Lagos"
-
-  // Timing
-  scheduledDeparture DateTime?
-  scheduledArrival   DateTime
-  estimatedDeparture DateTime?
-  estimatedArrival   DateTime?
-  actualDeparture    DateTime?
-  actualArrival      DateTime?
-
-  // Status
-  status       FlightStatus @default(SCHEDULED)
-  delayMinutes Int? // Current delay in minutes
-
-  // Additional details
-  aircraftType  String? // e.g., "B738"
-  registration  String? // Tail number
-  departureGate String?
-  arrivalGate   String?
-
-  // FlightAware alert management
-  alertId         String?   @unique // FlightAware alert ID
-  alertEnabled    Boolean   @default(false)
-  alertCreatedAt  DateTime?
-  alertDisabledAt DateTime?
-
-  // Metadata
-  lastUpdated DateTime         @updatedAt
-  createdAt   DateTime         @default(now())
-  dataSource  FlightDataSource @default(FLIGHTAWARE)
-  isLive      Boolean          @default(false) // Live data vs scheduled
-
-  // Relations
-  bookings     Booking[]           @relation("BookingFlight")
-  statusEvents FlightStatusEvent[]
+  id                  String              @id @default(cuid())
+  flightNumber        String
+  flightDate          DateTime            @db.Date
+  faFlightId          String?
+  originCode          String
+  originCodeIATA      String?
+  originName          String?
+  originCity          String?
+  destinationCode     String
+  destinationCodeIATA String?
+  destinationName     String?
+  destinationCity     String?
+  scheduledDeparture  DateTime?
+  scheduledArrival    DateTime
+  estimatedDeparture  DateTime?
+  estimatedArrival    DateTime?
+  actualDeparture     DateTime?
+  actualArrival       DateTime?
+  status              FlightStatus        @default(SCHEDULED)
+  delayMinutes        Int?
+  aircraftType        String?
+  registration        String?
+  departureGate       String?
+  arrivalGate         String?
+  alertId             String?             @unique
+  alertEnabled        Boolean             @default(false)
+  alertCreatedAt      DateTime?
+  alertDisabledAt     DateTime?
+  lastUpdated         DateTime            @updatedAt
+  createdAt           DateTime            @default(now())
+  dataSource          FlightDataSource    @default(FLIGHTAWARE)
+  isLive              Boolean             @default(false)
+  bookings            Booking[]           @relation("BookingFlight")
+  statusEvents        FlightStatusEvent[]
 
   @@unique([flightNumber, flightDate])
   @@index([flightNumber, flightDate])
@@ -189,25 +157,19 @@ model Flight {
 }
 
 model FlightStatusEvent {
-  id        String   @id @default(cuid())
-  flightId  String
-  eventType String // "departure", "arrival", "delay", "cancellation", etc.
-  eventTime DateTime // When event occurred (from FlightAware)
-  eventData Json // Full webhook payload from FlightAware
-
-  // Changes captured
-  oldStatus   FlightStatus?
-  newStatus   FlightStatus?
-  delayChange Int? // Change in delay minutes
-
-  // Notification tracking
-  processed         Boolean @default(false)
-  notificationsSent Boolean @default(false)
-  notifiedUserIds   Json? // Array of user IDs notified
-
-  createdAt DateTime @default(now())
-
-  flight Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  id                String        @id @default(cuid())
+  flightId          String
+  eventType         String
+  eventTime         DateTime
+  eventData         Json
+  oldStatus         FlightStatus?
+  newStatus         FlightStatus?
+  delayChange       Int?
+  processed         Boolean       @default(false)
+  notificationsSent Boolean       @default(false)
+  notifiedUserIds   Json?
+  createdAt         DateTime      @default(now())
+  flight            Flight        @relation(fields: [flightId], references: [id], onDelete: Cascade)
 
   @@unique([flightId, eventType, eventTime])
   @@index([flightId, eventTime])
@@ -216,14 +178,14 @@ model FlightStatusEvent {
 }
 
 model Booking {
-  id                                      String                   @id @default(cuid())
-  createdAt                               DateTime                 @default(now())
-  updatedAt                               DateTime                 @updatedAt
-  status                                  BookingStatus            @default(PENDING)
+  id                                      String                    @id @default(cuid())
+  createdAt                               DateTime                  @default(now())
+  updatedAt                               DateTime                  @updatedAt
+  status                                  BookingStatus             @default(PENDING)
   startDate                               DateTime
   endDate                                 DateTime
-  totalAmount                             Decimal                  @db.Decimal(10, 2)
-  paymentStatus                           PaymentStatus            @default(UNPAID)
+  totalAmount                             Decimal                   @db.Decimal(10, 2)
+  paymentStatus                           PaymentStatus             @default(UNPAID)
   paymentId                               String?
   carId                                   String
   userId                                  String?
@@ -233,44 +195,46 @@ model Booking {
   chauffeurId                             String?
   cancelledAt                             DateTime?
   cancellationReason                      String?
-  deletedAt                               DateTime? // Soft-delete: preserves review history and analytics
   guestUser                               Json?
-  type                                    BookingType              @default(DAY)
+  type                                    BookingType               @default(DAY)
   paymentIntent                           String?
-  fleetOwnerPayoutAmountNet               Decimal?                 @db.Decimal(10, 2)
-  netTotal                                Decimal?                 @db.Decimal(10, 2)
+  fleetOwnerPayoutAmountNet               Decimal?                  @db.Decimal(10, 2)
+  netTotal                                Decimal?                  @db.Decimal(10, 2)
   overallPayoutStatus                     PayoutTransactionStatus?
-  platformCustomerServiceFeeAmount        Decimal?                 @db.Decimal(10, 2)
-  platformCustomerServiceFeeRatePercent   Decimal?                 @db.Decimal(5, 2)
-  platformFleetOwnerCommissionAmount      Decimal?                 @db.Decimal(10, 2)
-  platformFleetOwnerCommissionRatePercent Decimal?                 @db.Decimal(5, 2)
-  subtotalBeforeVat                       Decimal?                 @db.Decimal(10, 2)
-  vatAmount                               Decimal?                 @db.Decimal(10, 2)
-  vatRatePercent                          Decimal?                 @db.Decimal(5, 2)
-  bookingReference                        String                   @unique
-  securityDetailCost                      Decimal?                 @db.Decimal(10, 2)
-  fuelUpgradeCost                         Decimal?                 @db.Decimal(10, 2)
+  platformCustomerServiceFeeAmount        Decimal?                  @db.Decimal(10, 2)
+  platformCustomerServiceFeeRatePercent   Decimal?                  @db.Decimal(5, 2)
+  platformFleetOwnerCommissionAmount      Decimal?                  @db.Decimal(10, 2)
+  platformFleetOwnerCommissionRatePercent Decimal?                  @db.Decimal(5, 2)
+  subtotalBeforeVat                       Decimal?                  @db.Decimal(10, 2)
+  vatAmount                               Decimal?                  @db.Decimal(10, 2)
+  vatRatePercent                          Decimal?                  @db.Decimal(5, 2)
+  bookingReference                        String                    @unique
+  securityDetailCost                      Decimal?                  @db.Decimal(10, 2)
+  fuelUpgradeCost                         Decimal?                  @db.Decimal(10, 2)
+  referralDiscountAmount                  Decimal                   @default(0) @db.Decimal(10, 2)
+  referralReferrerUserId                  String?
+  referralStatus                          BookingReferralStatus     @default(NONE)
+  referralCreditsUsed                     Decimal                   @default(0) @db.Decimal(10, 2)
+  referralCreditsReserved                 Decimal                   @default(0) @db.Decimal(10, 2)
   flightNumber                            String?
   estimatedDuration                       Int?
   flightId                                String?
-  // Referral fields
-  referralReferrerUserId                  String?
-  referralDiscountAmount                  Decimal                  @default(0) @db.Decimal(10, 2)
-  referralStatus                          BookingReferralStatus    @default(NONE)
-  referralCreditsUsed                     Decimal                  @default(0) @db.Decimal(10, 2)
-  referralCreditsReserved                 Decimal                  @default(0) @db.Decimal(10, 2)
-
-  car                Car                 @relation(fields: [carId], references: [id])
-  chauffeur          User?               @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
-  user               User?               @relation("BookingCustomer", fields: [userId], references: [id])
-  referralReferrer   User?               @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
-  flight             Flight?             @relation("BookingFlight", fields: [flightId], references: [id])
-  legs               BookingLeg[]
-  customerPayments   Payment[]           @relation("BookingCustomerPayments")
-  payoutTransactions PayoutTransaction[] @relation("BookingPayouts")
-  referralRewards    ReferralReward[]
-  review             Review?             @relation("BookingReview")
-  linkedDrafts       BookingDraft[]      @relation("LinkedBookingDraft")
+  deletedAt                               DateTime?
+  acquisitionChannel                      BookingAcquisitionChannel @default(GLOBAL)
+  acquisitionPartnerOwnerId               String?
+  acquisitionPartnerSlug                  String?
+  acquisitionPartnerOwner                 User?                     @relation("BookingAcquisitionPartner", fields: [acquisitionPartnerOwnerId], references: [id])
+  car                                     Car                       @relation(fields: [carId], references: [id])
+  chauffeur                               User?                     @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
+  flight                                  Flight?                   @relation("BookingFlight", fields: [flightId], references: [id])
+  referralReferrer                        User?                     @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
+  user                                    User?                     @relation("BookingCustomer", fields: [userId], references: [id])
+  legs                                    BookingLeg[]
+  customerPayments                        Payment[]                 @relation("BookingCustomerPayments")
+  payoutTransactions                      PayoutTransaction[]       @relation("BookingPayouts")
+  referralRewards                         ReferralReward[]
+  review                                  Review?                   @relation("BookingReview")
+  linkedDrafts                            BookingDraft[]            @relation("LinkedBookingDraft")
 
   @@index([bookingReference])
   @@index([carId])
@@ -284,6 +248,8 @@ model Booking {
   @@index([chauffeurId, status, startDate, endDate])
   @@index([carId, paymentStatus, status, startDate, endDate])
   @@index([type, endDate])
+  @@index([acquisitionChannel])
+  @@index([acquisitionPartnerOwnerId, createdAt])
   @@index([referralStatus])
   @@index([referralStatus, status])
   @@index([userId, paymentStatus, referralCreditsUsed])
@@ -368,7 +334,7 @@ model Payment {
   lastVerifiedAt           DateTime?
   webhookPayload           Json?
   verificationResponse     Json?
-  refundIdempotencyKey     String?              @unique // Idempotency key for refund requests to prevent duplicate refunds
+  refundIdempotencyKey     String?              @unique
   booking                  Booking?             @relation("BookingCustomerPayments", fields: [bookingId], references: [id])
   extension                Extension?           @relation("ExtensionCustomerPayments", fields: [extensionId], references: [id])
 
@@ -445,33 +411,23 @@ model VehicleImage {
 }
 
 model Review {
-  id        String @id @default(cuid())
-  bookingId String @unique // One review per booking
-  userId    String // Customer who wrote the review
-
-  // Ratings (1-5 stars)
-  overallRating   Int // Overall experience rating
-  carRating       Int // Car condition, cleanliness, comfort
-  chauffeurRating Int // Professionalism, driving, communication (required - all bookings have chauffeurs)
-  serviceRating   Int // Booking process, punctuality, communication
-
-  // Written feedback
-  comment String? // Optional text review, max 2000 chars
-
-  // Moderation
-  isVisible       Boolean   @default(true) // For admin moderation
+  id              String    @id @default(cuid())
+  bookingId       String    @unique
+  userId          String
+  overallRating   Int
+  carRating       Int
+  chauffeurRating Int
+  serviceRating   Int
+  comment         String?
+  isVisible       Boolean   @default(true)
   moderatedAt     DateTime?
   moderatedBy     String?
   moderationNotes String?
-
-  // Metadata
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  booking   Booking @relation("BookingReview", fields: [bookingId], references: [id], onDelete: Restrict) // Restrict prevents accidental deletion - reviews must persist for analytics/reputation
-  user      User    @relation("CustomerReviews", fields: [userId], references: [id], onDelete: Cascade) // Cascade: when user is deleted, their reviews are deleted too
-  moderator User?   @relation("ReviewModerator", fields: [moderatedBy], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  booking         Booking   @relation("BookingReview", fields: [bookingId], references: [id])
+  moderator       User?     @relation("ReviewModerator", fields: [moderatedBy], references: [id])
+  user            User      @relation("CustomerReviews", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([overallRating])
@@ -538,6 +494,222 @@ model BankDetails {
   user                 User      @relation("UserBankDetails", fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model UserReferralStats {
+  id                  String    @id @default(cuid())
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  userId              String    @unique
+  totalReferrals      Int       @default(0)
+  totalRewardsGranted Decimal   @default(0) @db.Decimal(10, 2)
+  totalRewardsPending Decimal   @default(0) @db.Decimal(10, 2)
+  lastReferralAt      DateTime?
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReferralAttribution {
+  id             String                    @id @default(cuid())
+  createdAt      DateTime                  @default(now())
+  refereeUserId  String                    @unique
+  referrerUserId String
+  referralCode   String
+  source         ReferralAttributionSource
+  ipAddress      String?
+  userAgent      String?
+  sessionId      String?
+  securityFlags  Json?
+  referee        User                      @relation("RefereeAttribution", fields: [refereeUserId], references: [id], onDelete: Cascade)
+  referrer       User                      @relation("ReferrerAttributions", fields: [referrerUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerUserId])
+}
+
+model ReferralReward {
+  id               String                   @id @default(cuid())
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  referrerUserId   String
+  refereeUserId    String
+  bookingId        String
+  amount           Decimal                  @db.Decimal(10, 2)
+  status           ReferralRewardStatus     @default(PENDING)
+  releaseCondition ReferralReleaseCondition
+  reason           String?
+  processedAt      DateTime?
+  booking          Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  referee          User                     @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
+  referrer         User                     @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerUserId])
+  @@index([refereeUserId])
+  @@index([bookingId])
+  @@index([status, createdAt])
+  @@index([status, bookingId])
+  @@index([status, processedAt])
+}
+
+model ReferralProgramConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("session")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@index([value])
+  @@map("verification")
+}
+
+model RateLimit {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  count       Int
+  lastRequest BigInt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("rateLimit")
+}
+
+model BookingDraft {
+  id                String             @id @default(cuid())
+  conversationId    String
+  status            BookingDraftStatus @default(NEW)
+  state             Json
+  selectedOptionId  String?
+  quoteExpiresAt    DateTime?
+  checkoutUrl       String?
+  checkoutExpiresAt DateTime?
+  linkedBookingId   String?
+  linkedBooking     Booking?           @relation("LinkedBookingDraft", fields: [linkedBookingId], references: [id], onDelete: SetNull)
+  paymentStatus     PaymentStatus?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  conversation           WhatsAppConversation   @relation("ConversationDrafts", fields: [conversationId], references: [id], onDelete: Cascade)
+  activeForConversations WhatsAppConversation[] @relation("ActiveConversationDraft")
+
+  @@index([conversationId, status])
+  @@index([updatedAt(sort: Desc)])
+}
+
+model WhatsAppConversation {
+  id                      String                     @id @default(cuid())
+  phoneE164               String                     @unique
+  waId                    String?                    @unique
+  profileName             String?
+  status                  WhatsAppConversationStatus @default(ACTIVE)
+  lastInboundAt           DateTime?
+  lastOutboundAt          DateTime?
+  windowExpiresAt         DateTime?
+  handoffReason           String?
+  handoffAt               DateTime?
+  activeBookingDraftId    String?
+  activeBookingDraft      BookingDraft?              @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
+  processingLockToken     String?
+  processingLockExpiresAt DateTime?
+  messages                WhatsAppMessage[]
+  outboxItems             WhatsAppOutbox[]
+  bookingDrafts           BookingDraft[]             @relation("ConversationDrafts")
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+
+  @@index([status])
+  @@index([windowExpiresAt])
+  @@index([processingLockExpiresAt])
+}
+
+model WhatsAppMessage {
+  id                   String                   @id
+  conversationId       String
+  providerMessageSid   String?                  @unique
+  dedupeKey            String                   @unique
+  direction            WhatsAppMessageDirection
+  kind                 WhatsAppMessageKind      @default(UNKNOWN)
+  status               WhatsAppMessageStatus    @default(RECEIVED)
+  body                 String?
+  mediaUrl             String?
+  mediaContentType     String?
+  providerStatus       String?
+  errorCode            String?
+  errorMessage         String?
+  rawPayload           Json
+  receivedAt           DateTime                 @default(now())
+  processedAt          DateTime?
+  sentAt               DateTime?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime
+  WhatsAppConversation WhatsAppConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, receivedAt(sort: Desc)])
+  @@index([direction, status])
+}
+
+model WhatsAppOutbox {
+  id                   String               @id
+  conversationId       String
+  dedupeKey            String               @unique
+  mode                 WhatsAppDeliveryMode
+  status               WhatsAppOutboxStatus @default(PENDING)
+  textBody             String?
+  mediaUrl             String?
+  templateName         String?
+  templateVariables    Json?
+  payload              Json?
+  providerMessageSid   String?
+  failureReason        String?
+  attempts             Int                  @default(0)
+  maxAttempts          Int                  @default(5)
+  nextAttemptAt        DateTime             @default(now())
+  lastAttemptAt        DateTime?
+  sentAt               DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime
+  WhatsAppConversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([status, nextAttemptAt])
+}
+
+enum FlightStatus {
+  SCHEDULED
+  DEPARTED
+  EN_ROUTE
+  LANDED
+  CANCELLED
+  DIVERTED
+  UNKNOWN
+}
+
+enum FlightDataSource {
+  FLIGHTAWARE
+  MANUAL
+  CACHED
+}
+
 enum Status {
   AVAILABLE
   BOOKED
@@ -570,6 +742,11 @@ enum BookingType {
   AIRPORT_PICKUP
 }
 
+enum BookingAcquisitionChannel {
+  GLOBAL
+  PARTNER
+}
+
 enum ExtensionEventType {
   HOURLY_ADDITION
   NEW_DAY_ADDITION
@@ -582,8 +759,8 @@ enum PaymentAttemptStatus {
   REFUNDED
   REFUND_PROCESSING
   REFUND_FAILED
-  REFUND_ERROR // Network/unknown error during refund - needs reconciliation
   PARTIALLY_REFUNDED
+  REFUND_ERROR
 }
 
 enum PayoutTransactionStatus {
@@ -604,8 +781,6 @@ enum CarApprovalStatus {
 enum VehicleType {
   SEDAN
   SUV
-  LUXURY_SEDAN
-  LUXURY_SUV
   VAN
   CROSSOVER
 }
@@ -639,11 +814,11 @@ enum DocumentStatus {
 enum DocumentType {
   NIN
   DRIVERS_LICENSE
-  LASDRI
   MOT_CERTIFICATE
   INSURANCE_CERTIFICATE
   VEHICLE_IMAGES
   CERTIFICATE_OF_INCORPORATION
+  LASDRI
 }
 
 enum PlatformFeeType {
@@ -679,75 +854,6 @@ enum BookingReferralStatus {
   REVERSED
 }
 
-model UserReferralStats {
-  id                  String    @id @default(cuid())
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  userId              String    @unique
-  totalReferrals      Int       @default(0)
-  totalRewardsGranted Decimal   @default(0) @db.Decimal(10, 2)
-  totalRewardsPending Decimal   @default(0) @db.Decimal(10, 2)
-  lastReferralAt      DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model ReferralAttribution {
-  id             String                    @id @default(cuid())
-  createdAt      DateTime                  @default(now())
-  refereeUserId  String                    @unique
-  referrerUserId String
-  referralCode   String
-  source         ReferralAttributionSource
-  ipAddress      String?
-  userAgent      String?
-  sessionId      String?
-  securityFlags  Json?
-
-  referee  User @relation("RefereeAttribution", fields: [refereeUserId], references: [id], onDelete: Cascade)
-  referrer User @relation("ReferrerAttributions", fields: [referrerUserId], references: [id], onDelete: Cascade)
-
-  @@index([referrerUserId])
-}
-
-model ReferralReward {
-  id               String                   @id @default(cuid())
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  referrerUserId   String
-  refereeUserId    String
-  bookingId        String
-  amount           Decimal                  @db.Decimal(10, 2)
-  status           ReferralRewardStatus     @default(PENDING)
-  releaseCondition ReferralReleaseCondition
-  reason           String?
-  processedAt      DateTime?
-
-  referrer User    @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
-  referee  User    @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
-  booking  Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-
-  @@index([referrerUserId])
-  @@index([refereeUserId])
-  @@index([bookingId])
-  @@index([status, createdAt])
-  @@index([status, bookingId])
-  @@index([status, processedAt])
-}
-
-model ReferralProgramConfig {
-  key       String   @id
-  value     Json
-  updatedAt DateTime @updatedAt
-  updatedBy String?
-}
-
-enum WhatsAppConversationStatus {
-  ACTIVE
-  HANDOFF
-  CLOSED
-}
-
 enum BookingDraftStatus {
   NEW
   COLLECTING
@@ -756,6 +862,17 @@ enum BookingDraftStatus {
   CONFIRMED
   CLOSED
   CANCELLED
+}
+
+enum WhatsAppConversationStatus {
+  ACTIVE
+  HANDOFF
+  CLOSED
+}
+
+enum WhatsAppDeliveryMode {
+  FREE_FORM
+  TEMPLATE
 }
 
 enum WhatsAppMessageDirection {
@@ -790,152 +907,4 @@ enum WhatsAppOutboxStatus {
   SENT
   FAILED
   DEAD_LETTER
-}
-
-enum WhatsAppDeliveryMode {
-  FREE_FORM
-  TEMPLATE
-}
-
-model WhatsAppConversation {
-  id                      String                     @id @default(cuid())
-  phoneE164               String                     @unique
-  waId                    String?                    @unique
-  profileName             String?
-  status                  WhatsAppConversationStatus @default(ACTIVE)
-  lastInboundAt           DateTime?
-  lastOutboundAt          DateTime?
-  windowExpiresAt         DateTime?
-  handoffReason           String?
-  handoffAt               DateTime?
-  activeBookingDraftId    String?
-  activeBookingDraft      BookingDraft?               @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
-  processingLockToken     String?
-  processingLockExpiresAt DateTime?
-  messages                WhatsAppMessage[]
-  outboxItems             WhatsAppOutbox[]
-  bookingDrafts           BookingDraft[]              @relation("ConversationDrafts")
-  createdAt               DateTime                   @default(now())
-  updatedAt               DateTime                   @updatedAt
-
-  @@index([status])
-  @@index([windowExpiresAt])
-  @@index([processingLockExpiresAt])
-}
-
-model WhatsAppMessage {
-  id                 String                   @id @default(cuid())
-  conversationId     String
-  providerMessageSid String?                  @unique
-  dedupeKey          String                   @unique
-  direction          WhatsAppMessageDirection
-  kind               WhatsAppMessageKind      @default(UNKNOWN)
-  status             WhatsAppMessageStatus    @default(RECEIVED)
-  body               String?
-  mediaUrl           String?
-  mediaContentType   String?
-  providerStatus     String?
-  errorCode          String?
-  errorMessage       String?
-  rawPayload         Json
-  receivedAt         DateTime                 @default(now())
-  processedAt        DateTime?
-  sentAt             DateTime?
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-
-  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  @@index([conversationId, receivedAt(sort: Desc)])
-  @@index([direction, status])
-}
-
-model WhatsAppOutbox {
-  id                 String               @id @default(cuid())
-  conversationId     String
-  dedupeKey          String               @unique
-  mode               WhatsAppDeliveryMode
-  status             WhatsAppOutboxStatus @default(PENDING)
-  textBody           String?
-  mediaUrl           String?
-  templateName       String?
-  templateVariables  Json?
-  payload            Json?
-  providerMessageSid String?
-  failureReason      String?
-  attempts           Int                  @default(0)
-  maxAttempts        Int                  @default(5)
-  nextAttemptAt      DateTime             @default(now())
-  lastAttemptAt      DateTime?
-  sentAt             DateTime?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-
-  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  @@index([conversationId, createdAt(sort: Desc)])
-  @@index([status, nextAttemptAt])
-}
-
-model BookingDraft {
-  id                String             @id @default(cuid())
-  conversationId    String
-  status            BookingDraftStatus @default(NEW)
-  state             Json
-  selectedOptionId  String?
-  quoteExpiresAt    DateTime?
-  checkoutUrl       String?
-  checkoutExpiresAt DateTime?
-  linkedBookingId   String?
-  linkedBooking     Booking?           @relation("LinkedBookingDraft", fields: [linkedBookingId], references: [id], onDelete: SetNull)
-  paymentStatus     PaymentStatus?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-
-  conversation          WhatsAppConversation   @relation("ConversationDrafts", fields: [conversationId], references: [id], onDelete: Cascade)
-  activeForConversations WhatsAppConversation[] @relation("ActiveConversationDraft")
-
-  @@index([conversationId, status])
-  @@index([updatedAt(sort: Desc)])
-}
-
-// Better-auth required tables
-model Session {
-  id        String   @id @default(cuid())
-  expiresAt DateTime
-  token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([token])
-  @@map("session")
-}
-
-model Verification {
-  id         String   @id @default(cuid())
-  identifier String
-  value      String
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([identifier])
-  @@index([value])
-  @@map("verification")
-}
-
-model RateLimit {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  count       Int
-  lastRequest BigInt
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("rateLimit")
 }

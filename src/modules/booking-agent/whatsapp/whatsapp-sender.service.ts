@@ -98,7 +98,10 @@ export class WhatsAppSenderService {
     const attemptsMade = outbox.attempts;
 
     try {
-      const providerMessage = await this.sendViaTwilio(outbox.conversation.phoneE164, outbox);
+      const providerMessage = await this.sendViaTwilio(
+        outbox.WhatsAppConversation.phoneE164,
+        outbox,
+      );
       const sentAt = new Date();
       await this.markOutboxSent(outbox, providerMessage, sentAt);
     } catch (error) {

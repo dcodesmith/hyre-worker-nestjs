@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
@@ -15,7 +16,7 @@ export const INBOUND_MESSAGE_CONTEXT_SELECT = Prisma.validator<Prisma.WhatsAppMe
   mediaContentType: true,
   status: true,
   rawPayload: true,
-  conversation: {
+  WhatsAppConversation: {
     select: {
       id: true,
       phoneE164: true,
@@ -77,7 +78,7 @@ export class WhatsAppPersistenceService {
       input;
     return this.databaseService.whatsAppMessage.create({
       data: {
-        conversationId,
+        id: randomUUID(),
         providerMessageSid: payload.MessageSid ?? null,
         dedupeKey,
         direction: "INBOUND",
@@ -88,6 +89,10 @@ export class WhatsAppPersistenceService {
         mediaContentType: mediaContentType ?? null,
         rawPayload: payload as unknown as Prisma.InputJsonValue,
         receivedAt: now,
+        updatedAt: now,
+        WhatsAppConversation: {
+          connect: { id: conversationId },
+        },
       },
       select: { id: true },
     });
@@ -101,9 +106,10 @@ export class WhatsAppPersistenceService {
     input: CreateOutboxInput,
     maxAttempts: number,
   ): Promise<{ id: string }> {
+    const now = new Date();
     return this.databaseService.whatsAppOutbox.create({
       data: {
-        conversationId: input.conversationId,
+        id: randomUUID(),
         dedupeKey: input.dedupeKey,
         mode: input.mode,
         textBody: input.textBody ?? null,
@@ -113,6 +119,10 @@ export class WhatsAppPersistenceService {
         templateVariables: input.templateVariables
           ? (input.templateVariables as unknown as Prisma.InputJsonValue)
           : undefined,
+        updatedAt: now,
+        WhatsAppConversation: {
+          connect: { id: input.conversationId },
+        },
       },
       select: { id: true },
     });
@@ -159,7 +169,7 @@ export class WhatsAppPersistenceService {
         templateName: true,
         templateVariables: true,
         nextAttemptAt: true,
-        conversation: { select: { phoneE164: true } },
+        WhatsAppConversation: { select: { phoneE164: true } },
       },
     });
   }
@@ -218,7 +228,7 @@ export class WhatsAppPersistenceService {
 
       await tx.whatsAppMessage.create({
         data: {
-          conversationId,
+          id: randomUUID(),
           providerMessageSid: providerMessage.sid,
           dedupeKey: `outbox:${outboxId}`,
           direction: "OUTBOUND",
@@ -233,6 +243,10 @@ export class WhatsAppPersistenceService {
           rawPayload: providerPayload as unknown as Prisma.InputJsonValue,
           receivedAt: sentAt,
           sentAt,
+          updatedAt: sentAt,
+          WhatsAppConversation: {
+            connect: { id: conversationId },
+          },
         },
       });
     });

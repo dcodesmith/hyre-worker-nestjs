@@ -22,7 +22,8 @@
     "db:generate": "prisma generate",
     "deploy": "pnpm run build && pnpm run db:generate",
     "prepare": "husky",
-    "type-check": "tsc --noEmit"
+    "pretype-check": "prisma generate",
+    "type-check": "pnpm run pretype-check && tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",

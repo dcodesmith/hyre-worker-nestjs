@@ -227,19 +227,21 @@ describe("BookingAgentSearchService", () => {
     expect(result.shouldClarifyBookingType).toBe(false);
   });
 
-  it("labels fallback options as similar price range when no class/model/color match but price is close", async () => {
+  it("does not label fallback options as similar price range when stronger match signals are absent", async () => {
     const fromDate = makeIsoDate(2);
 
     const suvOne = buildCar("car_suv_one", {
       make: "Toyota",
       model: "Land Cruiser",
       color: "White",
+      vehicleType: "VAN",
       dayRate: 80000,
     });
     const suvTwo = buildCar("car_suv_two", {
       make: "Lexus",
       model: "GX 460",
       color: "Grey",
+      vehicleType: "VAN",
       dayRate: 74000,
     });
     const sedanNearPrice = buildCar("car_sedan_near_price", {
@@ -254,7 +256,7 @@ describe("BookingAgentSearchService", () => {
       make: "BMW",
       model: "X7",
       color: "Blue",
-      vehicleType: "LUXURY_SUV",
+      vehicleType: "SUV",
       serviceTier: "ULTRA_LUXURY",
       dayRate: 110000,
     });
@@ -297,7 +299,7 @@ describe("BookingAgentSearchService", () => {
 
     expect(result.exactMatches).toHaveLength(0);
     expect(result.alternatives.some((option) => option.reason === "SIMILAR_PRICE_RANGE")).toBe(
-      true,
+      false,
     );
   });
 

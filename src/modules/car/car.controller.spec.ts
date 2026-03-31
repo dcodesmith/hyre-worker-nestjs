@@ -80,7 +80,7 @@ describe("CarController", () => {
             cars: [
               createMockCar({ id: "suv-1", vehicleType: VehicleType.SUV }),
               createMockCar({ id: "suv-2", vehicleType: VehicleType.SUV }),
-              createMockCar({ id: "suv-3", vehicleType: VehicleType.LUXURY_SUV }),
+              createMockCar({ id: "suv-3", vehicleType: VehicleType.SUV }),
             ],
           },
         ],

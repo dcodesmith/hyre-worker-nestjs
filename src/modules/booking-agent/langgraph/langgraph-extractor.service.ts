@@ -38,9 +38,7 @@ const extractionSchema = z.object({
     durationDays: z.number().optional(),
     pickupLocation: z.string().optional(),
     dropoffLocation: z.string().optional(),
-    vehicleType: z
-      .enum(["SEDAN", "SUV", "LUXURY_SEDAN", "LUXURY_SUV", "VAN", "CROSSOVER"])
-      .optional(),
+    vehicleType: z.enum(["SEDAN", "SUV", "VAN", "CROSSOVER"]).optional(),
     color: z.string().optional(),
     make: z.string().optional(),
     model: z.string().optional(),

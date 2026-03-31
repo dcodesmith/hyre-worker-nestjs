@@ -11,9 +11,7 @@ export const extractedAiSearchParamsSchema = z
     color: z.string().optional(),
     make: z.string().optional(),
     model: z.string().optional(),
-    vehicleType: z
-      .enum(["SEDAN", "SUV", "LUXURY_SEDAN", "LUXURY_SUV", "VAN", "CROSSOVER"])
-      .optional(),
+    vehicleType: z.enum(["SEDAN", "SUV", "VAN", "CROSSOVER"]).optional(),
     serviceTier: z.enum(["STANDARD", "EXECUTIVE", "LUXURY", "ULTRA_LUXURY"]).optional(),
     from: z.iso.date().optional(),
     to: z.iso.date().optional(),

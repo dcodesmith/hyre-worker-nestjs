@@ -32,7 +32,7 @@ describe("VehicleSearchQueryBuilder", () => {
   });
 
   it("maps vehicle category directly to vehicleType", () => {
-    expect(builder.mapVehicleCategory("LUXURY_SUV")).toEqual({ vehicleType: "LUXURY_SUV" });
+    expect(builder.mapVehicleCategory("SUV")).toEqual({ vehicleType: "SUV" });
   });
 
   it("builds interpretation from extracted values", () => {
