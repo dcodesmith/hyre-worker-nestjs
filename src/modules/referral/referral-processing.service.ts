@@ -193,7 +193,6 @@ export class ReferralProcessingService {
             lastReferralAt: new Date(),
           },
           update: {
-            totalReferrals: { increment: 1 },
             totalRewardsGranted: { increment: pendingReward.amount },
             totalRewardsPending: newPending,
             lastReferralAt: new Date(),

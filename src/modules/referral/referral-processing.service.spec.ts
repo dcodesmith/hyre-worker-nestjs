@@ -719,7 +719,6 @@ describe("ReferralProcessingService", () => {
           lastReferralAt: expect.any(Date),
         },
         update: {
-          totalReferrals: { increment: 1 },
           totalRewardsGranted: { increment: 1000 },
           totalRewardsPending: expect.anything(),
           lastReferralAt: expect.any(Date),
@@ -772,7 +771,6 @@ describe("ReferralProcessingService", () => {
         where: { userId: "referrer-123" },
         create: expect.anything(),
         update: {
-          totalReferrals: { increment: 1 },
           totalRewardsGranted: { increment: 500 },
           totalRewardsPending: expect.anything(),
           lastReferralAt: expect.any(Date),

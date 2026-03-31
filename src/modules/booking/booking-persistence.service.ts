@@ -191,6 +191,12 @@ export class BookingPersistenceService {
       );
     }
 
+    if (financials.numberOfLegs !== legs.length) {
+      throw new BookingCreationFailedException(
+        `Cannot create booking: financials.numberOfLegs (${financials.numberOfLegs}) does not match legs.length (${legs.length})`,
+      );
+    }
+
     const numberOfLegs = financials.numberOfLegs;
     const commissionPerLeg = financials.platformFleetOwnerCommissionAmount.div(numberOfLegs);
     const netPerLeg = financials.netTotal.div(numberOfLegs);

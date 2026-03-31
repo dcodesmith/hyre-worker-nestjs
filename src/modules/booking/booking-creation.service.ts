@@ -366,6 +366,7 @@ export class BookingCreationService {
     let flightRecordIdForAlert: string | null = null;
 
     let createdBooking: Booking;
+    let finalizedFinancials = financials;
 
     const bookingReference = generateBookingReference();
 
@@ -381,6 +382,43 @@ export class BookingCreationService {
             )
           : preliminaryReferralEligibility;
 
+        const recalculatedFinancials = await this.calculationService.calculateBookingCost({
+          bookingType: booking.bookingType,
+          legs,
+          car,
+          includeSecurityDetail: booking.includeSecurityDetail,
+          requiresFullTank: booking.requiresFullTank,
+          userCreditsBalance: undefined,
+          creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
+          referralDiscountAmount: verifiedReferralEligibility.discountAmount,
+        });
+
+        const referralEligibilityChanged =
+          verifiedReferralEligibility.eligible !== preliminaryReferralEligibility.eligible ||
+          verifiedReferralEligibility.referrerUserId !==
+            preliminaryReferralEligibility.referrerUserId ||
+          !verifiedReferralEligibility.discountAmount.eq(
+            preliminaryReferralEligibility.discountAmount,
+          );
+
+        if (referralEligibilityChanged) {
+          this.logger.warn("Referral eligibility changed during booking transaction", {
+            bookingReference,
+            userId: sessionUser?.id,
+            previousDiscountAmount: preliminaryReferralEligibility.discountAmount.toString(),
+            updatedDiscountAmount: verifiedReferralEligibility.discountAmount.toString(),
+          });
+          throw new BookingCreationFailedException(
+            "Referral eligibility changed during booking creation. Please retry.",
+          );
+        }
+
+        this.validationService.validatePriceMatch(
+          booking.clientTotalAmount,
+          recalculatedFinancials.totalAmount,
+        );
+        finalizedFinancials = recalculatedFinancials;
+
         const flightRecordId = await this.persistenceService.createFlightRecordIfNeeded(
           tx,
           booking,
@@ -395,7 +433,7 @@ export class BookingCreationService {
           userId: sessionUser?.id ?? null,
           guestUser,
           booking,
-          financials,
+          financials: finalizedFinancials,
           referralEligibility: verifiedReferralEligibility,
           flightRecordId,
           legs,
@@ -431,7 +469,7 @@ export class BookingCreationService {
     try {
       const paymentResult = await this.paymentService.createPaymentIntent(
         createdBooking,
-        financials,
+        finalizedFinancials,
         customerDetails,
       );
       checkoutUrl = paymentResult.checkoutUrl;

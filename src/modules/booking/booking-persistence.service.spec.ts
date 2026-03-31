@@ -172,4 +172,64 @@ describe("BookingPersistenceService", () => {
 
     expect(createBooking).toHaveBeenCalledTimes(1);
   });
+
+  it("throws when financials.numberOfLegs does not match legs length", async () => {
+    const databaseService = {
+      car: { findUnique: vi.fn() },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    const bookingInput: CreateBookingDto = {
+      carId: "car-1",
+      bookingType: "DAY",
+      startDate: new Date("2026-03-03T10:00:00.000Z"),
+      endDate: new Date("2026-03-03T22:00:00.000Z"),
+      pickupAddress: "Airport",
+      pickupTime: "10 AM",
+      sameLocation: true,
+      includeSecurityDetail: false,
+      requiresFullTank: false,
+      useCredits: 0,
+    };
+
+    await expect(
+      service.createBookingRecord(
+        { booking: { create: vi.fn() } } as unknown as Prisma.TransactionClient,
+        {
+          bookingReference: "BK-123",
+          car: createCar(),
+          userId: "user-1",
+          guestUser: null,
+          booking: bookingInput,
+          financials: createBookingFinancials({
+            numberOfLegs: 2,
+            legPrices: [
+              { legDate: new Date("2026-03-03T00:00:00.000Z"), price: new Decimal(10000) },
+            ],
+          }),
+          referralEligibility: {
+            eligible: false,
+            referrerUserId: null,
+            discountAmount: new Decimal(0),
+          },
+          flightRecordId: null,
+          legs: [
+            {
+              legDate: new Date("2026-03-03T00:00:00.000Z"),
+              legStartTime: new Date("2026-03-03T10:00:00.000Z"),
+              legEndTime: new Date("2026-03-03T22:00:00.000Z"),
+            },
+          ],
+        },
+      ),
+    ).rejects.toThrow(BookingCreationFailedException);
+  });
 });
