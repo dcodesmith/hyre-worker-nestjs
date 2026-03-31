@@ -465,7 +465,16 @@ export class BookingCreationService {
         bookingReference: createdBooking.bookingReference,
       });
 
-      await this.persistenceService.markBookingUnpaid(createdBooking.id);
+      try {
+        await this.persistenceService.markBookingUnpaid(createdBooking.id);
+      } catch (markUnpaidError) {
+        this.logger.error("Failed to mark booking as UNPAID after payment failure", {
+          bookingId: createdBooking.id,
+          bookingReference: createdBooking.bookingReference,
+          error:
+            markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
+        });
+      }
 
       // Re-throw payment exception
       if (error instanceof PaymentIntentFailedException) {

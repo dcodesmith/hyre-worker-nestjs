@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
@@ -19,6 +20,7 @@ describe("BookingPersistenceService", () => {
       providers: [
         BookingPersistenceService,
         { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
       ],
     }).compile();
 
@@ -47,6 +49,7 @@ describe("BookingPersistenceService", () => {
       providers: [
         BookingPersistenceService,
         { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
       ],
     }).compile();
 
@@ -63,6 +66,7 @@ describe("BookingPersistenceService", () => {
       providers: [
         BookingPersistenceService,
         { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
       ],
     }).compile();
 
@@ -113,6 +117,7 @@ describe("BookingPersistenceService", () => {
       providers: [
         BookingPersistenceService,
         { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
       ],
     }).compile();
 

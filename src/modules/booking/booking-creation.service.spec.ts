@@ -1,4 +1,5 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
@@ -134,6 +135,12 @@ describe("BookingCreationService", () => {
         BookingEligibilityService,
         BookingPaymentService,
         BookingPersistenceService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn().mockReturnValue("DNMM"),
+          },
+        },
         {
           provide: FlutterwaveService,
           useValue: {
@@ -427,6 +434,24 @@ describe("BookingCreationService", () => {
         where: { id: "booking-123" },
         data: { paymentStatus: PaymentStatus.UNPAID },
       });
+    });
+
+    it("preserves payment failure when markBookingUnpaid fails", async () => {
+      setupSuccessfulMocks();
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValue(
+        new FlutterwaveError("Payment failed", "PAYMENT_FAILED"),
+      );
+      vi.mocked(databaseService.booking.update).mockRejectedValueOnce(
+        new Error("db unavailable while marking unpaid"),
+      );
+
+      const booking = createBookingInput();
+      const user = createSessionUser();
+
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
+        PaymentIntentFailedException,
+      );
     });
 
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {

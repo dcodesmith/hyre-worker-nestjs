@@ -122,11 +122,12 @@ export class BookingEligibilityService {
       where: { userId: referralEligibility.referrerUserId },
       create: {
         userId: referralEligibility.referrerUserId,
-        totalReferrals: 0,
+        totalReferrals: 1,
         totalRewardsGranted: 0,
         totalRewardsPending: rewardAmount,
       },
       update: {
+        totalReferrals: { increment: 1 },
         totalRewardsPending: { increment: rewardAmount },
       },
     });
@@ -194,7 +195,7 @@ export class BookingEligibilityService {
     }
     if (typeof rawValue === "string") {
       const parsed = Number(rawValue);
-      return Number.isNaN(parsed) ? new Decimal(0) : new Decimal(parsed);
+      return Number.isFinite(parsed) ? new Decimal(parsed) : new Decimal(0);
     }
 
     this.logger.warn(`Invalid ${key} config value type`, {

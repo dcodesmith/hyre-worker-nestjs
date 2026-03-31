@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
   Booking,
   BookingReferralStatus,
@@ -8,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import Decimal from "decimal.js";
+import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { BookingCreationFailedException, CarNotFoundException } from "./booking.error";
 import type {
@@ -21,7 +23,10 @@ import type { CreateBookingInput } from "./dto/create-booking.dto";
 
 @Injectable()
 export class BookingPersistenceService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly configService: ConfigService<EnvConfig>,
+  ) {}
 
   async fetchCarWithPricing(carId: string): Promise<CarWithPricing> {
     const car = await this.databaseService.car.findUnique({
@@ -62,6 +67,8 @@ export class BookingPersistenceService {
 
     // Intentionally keep update empty: flight rows are treated as immutable snapshots.
     // Subsequent bookings should reuse the existing row rather than mutate it.
+    const defaultDestinationCode =
+      this.configService.get("DEFAULT_DESTINATION_CODE", { infer: true }) ?? "DNMM";
     const flightRecord = await tx.flight.upsert({
       where: { id: flightData.flightId },
       create: {
@@ -72,7 +79,7 @@ export class BookingPersistenceService {
         originCode: flightData.originCode ?? "UNKNOWN",
         originCodeIATA: flightData.originCodeIATA,
         originName: flightData.originName,
-        destinationCode: flightData.destinationCode ?? "DNMM",
+        destinationCode: flightData.destinationCode ?? defaultDestinationCode,
         destinationCodeIATA: flightData.destinationIATA,
         destinationName: flightData.destinationName,
         destinationCity: flightData.destinationCity,
