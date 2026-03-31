@@ -7,8 +7,6 @@ import { z } from "zod";
 export const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
   SEDAN: "Sedan",
   SUV: "SUV",
-  LUXURY_SEDAN: "Luxury Sedan",
-  LUXURY_SUV: "Luxury SUV",
   VAN: "Van",
   CROSSOVER: "Crossover",
 };

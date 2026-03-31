@@ -61,8 +61,7 @@ export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
   {
     name: "suvs",
     title: "SUV",
-    matcher: (car) =>
-      car.vehicleType === VehicleType.SUV || car.vehicleType === VehicleType.LUXURY_SUV,
+    matcher: (car) => car.vehicleType === VehicleType.SUV,
   },
   {
     name: "luxury",
@@ -78,8 +77,7 @@ export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
   {
     name: "sedans",
     title: "Sedans",
-    matcher: (car) =>
-      car.vehicleType === VehicleType.SEDAN || car.vehicleType === VehicleType.LUXURY_SEDAN,
+    matcher: (car) => car.vehicleType === VehicleType.SEDAN,
   },
   {
     name: "executive",

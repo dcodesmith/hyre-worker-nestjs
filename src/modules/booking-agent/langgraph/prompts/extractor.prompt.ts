@@ -51,7 +51,7 @@ CRITICAL: "for X days" ONLY sets durationDays. It does NOT set bookingType. The 
 - "for 3 days" → durationDays: 3, but NO bookingType (leave it out!)
 - "day service for 3 days" → durationDays: 3, bookingType: "DAY"
 
-VEHICLE TYPES: SEDAN, SUV, LUXURY_SEDAN, LUXURY_SUV, VAN, CROSSOVER
+VEHICLE TYPES: SEDAN, SUV, VAN, CROSSOVER
 
 YOUR TASK:
 Extract structured booking information from the user's message. Return a JSON object with:

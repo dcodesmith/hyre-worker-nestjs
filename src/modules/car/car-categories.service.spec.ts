@@ -63,7 +63,7 @@ describe("CarCategoriesService", () => {
       const suvCars = [
         createMockCar({ id: "suv-1", vehicleType: VehicleType.SUV }),
         createMockCar({ id: "suv-2", vehicleType: VehicleType.SUV }),
-        createMockCar({ id: "suv-3", vehicleType: VehicleType.LUXURY_SUV }),
+        createMockCar({ id: "suv-3", vehicleType: VehicleType.SUV }),
       ];
       databaseServiceMock.car.findMany.mockResolvedValueOnce(suvCars);
 
@@ -80,7 +80,7 @@ describe("CarCategoriesService", () => {
       const sedanCars = [
         createMockCar({ id: "sedan-1", vehicleType: VehicleType.SEDAN }),
         createMockCar({ id: "sedan-2", vehicleType: VehicleType.SEDAN }),
-        createMockCar({ id: "sedan-3", vehicleType: VehicleType.LUXURY_SEDAN }),
+        createMockCar({ id: "sedan-3", vehicleType: VehicleType.SEDAN }),
       ];
       databaseServiceMock.car.findMany.mockResolvedValueOnce(sedanCars);
 
@@ -191,7 +191,7 @@ describe("CarCategoriesService", () => {
         createMockCar({
           id: "lexus-suv-1",
           make: "Lexus",
-          vehicleType: VehicleType.LUXURY_SUV,
+          vehicleType: VehicleType.SUV,
           serviceTier: ServiceTier.LUXURY,
         }),
         createMockCar({
