@@ -16,6 +16,9 @@ END $$;
 CREATE TYPE "VehicleType_new" AS ENUM ('SEDAN', 'SUV', 'VAN', 'CROSSOVER');
 
 ALTER TABLE "Car"
+ALTER COLUMN "vehicleType" DROP DEFAULT;
+
+ALTER TABLE "Car"
 ALTER COLUMN "vehicleType" TYPE "VehicleType_new"
 USING ("vehicleType"::text::"VehicleType_new");
 
@@ -24,3 +27,6 @@ ALTER COLUMN "vehicleType" SET DEFAULT 'SEDAN';
 
 DROP TYPE "VehicleType";
 ALTER TYPE "VehicleType_new" RENAME TO "VehicleType";
+
+ALTER TABLE "Car"
+ALTER COLUMN "vehicleType" SET DEFAULT 'SEDAN';
