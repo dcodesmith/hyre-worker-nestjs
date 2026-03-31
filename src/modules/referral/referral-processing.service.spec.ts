@@ -713,7 +713,7 @@ describe("ReferralProcessingService", () => {
         where: { userId: "referrer-123" },
         create: {
           userId: "referrer-123",
-          totalReferrals: 0,
+          totalReferrals: 1,
           totalRewardsGranted: 1000,
           totalRewardsPending: 0,
           lastReferralAt: expect.any(Date),

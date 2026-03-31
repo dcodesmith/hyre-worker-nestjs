@@ -556,6 +556,62 @@ describe("BookingValidationService", () => {
     });
   });
 
+  describe("validateGuestRequirements", () => {
+    it("should throw for unauthenticated booking without guest fields", () => {
+      const input: CreateBookingDto = {
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 60 * 60 * 1000),
+        pickupAddress: "123 Main St",
+        bookingType: "DAY",
+        sameLocation: true,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        useCredits: 0,
+      };
+
+      expect(() => service.validateGuestRequirements(input, null)).toThrow(
+        BookingValidationException,
+      );
+    });
+
+    it("should not throw for guest booking without session", () => {
+      const input: CreateGuestBookingDto = {
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 60 * 60 * 1000),
+        pickupAddress: "123 Main St",
+        bookingType: "DAY",
+        sameLocation: true,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        useCredits: 0,
+        guestEmail: "guest@example.com",
+        guestName: "Guest User",
+        guestPhone: "08012345678",
+      };
+
+      expect(() => service.validateGuestRequirements(input, null)).not.toThrow();
+    });
+
+    it("should not throw for authenticated user without guest fields", () => {
+      const input: CreateBookingDto = {
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 60 * 60 * 1000),
+        pickupAddress: "123 Main St",
+        bookingType: "DAY",
+        sameLocation: true,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        useCredits: 0,
+      };
+
+      const sessionUser = { id: "user-123" };
+      expect(() => service.validateGuestRequirements(input, sessionUser)).not.toThrow();
+    });
+  });
+
   describe("validateAll", () => {
     it("should throw BookingValidationException when date validation fails", async () => {
       const yesterday = new Date();

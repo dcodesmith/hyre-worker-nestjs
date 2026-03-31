@@ -187,7 +187,7 @@ export class ReferralProcessingService {
           where: { userId: pendingReward.referrerUserId },
           create: {
             userId: pendingReward.referrerUserId,
-            totalReferrals: 0,
+            totalReferrals: 1,
             totalRewardsGranted: pendingReward.amount,
             totalRewardsPending: 0,
             lastReferralAt: new Date(),

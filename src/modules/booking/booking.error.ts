@@ -20,6 +20,7 @@ export const BookingErrorCode = {
   BOOKING_UPDATE_NOT_ALLOWED: "BOOKING_UPDATE_NOT_ALLOWED",
   BOOKING_NOT_CANCELLABLE: "BOOKING_NOT_CANCELLABLE",
   BOOKING_CANCELLATION_FAILED: "BOOKING_CANCELLATION_FAILED",
+  BOOKING_PAYMENT_SYNC_FAILED: "BOOKING_PAYMENT_SYNC_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
 } as const;
 
@@ -94,6 +95,20 @@ export class BookingCreationFailedException extends BookingException {
       detail ?? "An unexpected error occurred while creating the booking",
       HttpStatus.INTERNAL_SERVER_ERROR,
       { title: "Booking Creation Failed" },
+    );
+  }
+}
+
+/**
+ * Exception when payment intent sync to booking record fails.
+ */
+export class BookingPaymentSyncFailedException extends BookingException {
+  constructor(detail?: string) {
+    super(
+      BookingErrorCode.BOOKING_PAYMENT_SYNC_FAILED,
+      detail ?? "Booking created but payment intent sync failed. Please contact support.",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Booking Payment Sync Failed" },
     );
   }
 }
