@@ -161,7 +161,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [
@@ -211,7 +211,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     orchestratorService.decide.mockRejectedValue(new Error("orchestrator failed"));
 
@@ -245,7 +245,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: "https://api.twilio.com/media/123",
       mediaContentType: "audio/ogg",
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     audioTranscriptionService.transcribeInboundAudio.mockResolvedValue("book a camry tomorrow");
     orchestratorService.decide.mockResolvedValue({
@@ -280,7 +280,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: "https://api.twilio.com/media/123",
       mediaContentType: "audio/ogg",
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     audioTranscriptionService.transcribeInboundAudio.mockRejectedValue(new Error("timeout"));
     orchestratorService.decide.mockResolvedValue({
@@ -314,7 +314,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [],
@@ -352,7 +352,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
+      conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [],
@@ -396,7 +396,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: null },
+      conversation: { windowExpiresAt: null },
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [],
@@ -435,7 +435,7 @@ describe("WhatsAppProcessor", () => {
       mediaUrl: null,
       mediaContentType: null,
       rawPayload: {},
-      WhatsAppConversation: { windowExpiresAt: null },
+      conversation: { windowExpiresAt: null },
     });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [],

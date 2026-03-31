@@ -16,7 +16,7 @@ export const INBOUND_MESSAGE_CONTEXT_SELECT = Prisma.validator<Prisma.WhatsAppMe
   mediaContentType: true,
   status: true,
   rawPayload: true,
-  WhatsAppConversation: {
+  conversation: {
     select: {
       id: true,
       phoneE164: true,
@@ -90,7 +90,7 @@ export class WhatsAppPersistenceService {
         rawPayload: payload as unknown as Prisma.InputJsonValue,
         receivedAt: now,
         updatedAt: now,
-        WhatsAppConversation: {
+        conversation: {
           connect: { id: conversationId },
         },
       },
@@ -120,7 +120,7 @@ export class WhatsAppPersistenceService {
           ? (input.templateVariables as unknown as Prisma.InputJsonValue)
           : undefined,
         updatedAt: now,
-        WhatsAppConversation: {
+        conversation: {
           connect: { id: input.conversationId },
         },
       },
@@ -169,7 +169,7 @@ export class WhatsAppPersistenceService {
         templateName: true,
         templateVariables: true,
         nextAttemptAt: true,
-        WhatsAppConversation: { select: { phoneE164: true } },
+        conversation: { select: { phoneE164: true } },
       },
     });
   }
@@ -244,7 +244,7 @@ export class WhatsAppPersistenceService {
           receivedAt: sentAt,
           sentAt,
           updatedAt: sentAt,
-          WhatsAppConversation: {
+          conversation: {
             connect: { id: conversationId },
           },
         },

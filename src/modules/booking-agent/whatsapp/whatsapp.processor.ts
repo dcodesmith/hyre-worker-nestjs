@@ -145,7 +145,7 @@ export class WhatsAppProcessor extends WorkerHost {
       conversationId: context.conversationId,
       body: resolvedInbound.body,
       kind: resolvedInbound.kind,
-      windowExpiresAt: context.WhatsAppConversation.windowExpiresAt,
+      windowExpiresAt: context.conversation.windowExpiresAt,
       interactive: interactive ?? undefined,
     };
   }
