@@ -661,7 +661,7 @@ model WhatsAppMessage {
   processedAt          DateTime?
   sentAt               DateTime?
   createdAt            DateTime                 @default(now())
-  updatedAt            DateTime
+  updatedAt            DateTime                 @updatedAt
   WhatsAppConversation WhatsAppConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, receivedAt(sort: Desc)])
@@ -687,7 +687,7 @@ model WhatsAppOutbox {
   lastAttemptAt        DateTime?
   sentAt               DateTime?
   createdAt            DateTime             @default(now())
-  updatedAt            DateTime
+  updatedAt            DateTime             @updatedAt
   WhatsAppConversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt(sort: Desc)])

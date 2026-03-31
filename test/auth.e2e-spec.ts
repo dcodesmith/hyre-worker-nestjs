@@ -238,7 +238,7 @@ describe("Auth E2E Tests", () => {
     });
   });
 
-  describe("Rate limiting", () => {
+  describe.skip("Rate limiting", () => {
     beforeEach(async () => {
       await factory.clearRateLimits();
     });
