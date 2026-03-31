@@ -26,7 +26,10 @@ import {
 } from "./booking.error";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCreationService } from "./booking-creation.service";
+import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
+import { BookingPaymentService } from "./booking-payment.service";
+import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
 
@@ -110,6 +113,7 @@ describe("BookingCreationService", () => {
           provide: BookingValidationService,
           useValue: {
             validateDates: vi.fn(),
+            validateGuestRequirements: vi.fn(),
             checkCarAvailability: vi.fn(),
             validateGuestEmail: vi.fn(),
             validatePriceMatch: vi.fn(),
@@ -127,6 +131,9 @@ describe("BookingCreationService", () => {
             calculateBookingCost: vi.fn(),
           },
         },
+        BookingEligibilityService,
+        BookingPaymentService,
+        BookingPersistenceService,
         {
           provide: FlutterwaveService,
           useValue: {
@@ -169,6 +176,7 @@ describe("BookingCreationService", () => {
     // Validation methods now return void and throw on failure, so we just mock them to do nothing
     const setupSuccessfulMocks = () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.validateGuestRequirements).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
       vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
@@ -341,21 +349,11 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingValidationException when user is null but booking lacks guest fields", async () => {
-      // Setup all mocks to get to the getCustomerDetails call
-      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
-      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
-      vi.mocked(legService.generateLegs).mockReturnValue([
-        {
-          legDate: new Date("2025-02-01T00:00:00Z"),
-          legStartTime: new Date("2025-02-01T09:00:00Z"),
-          legEndTime: new Date("2025-02-01T21:00:00Z"),
-        },
-      ]);
-      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
-        createBookingFinancials(),
-      );
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(validationService.validateGuestRequirements).mockImplementation(() => {
+        throw new BookingValidationException([
+          { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
+        ]);
+      });
 
       // Use a non-guest booking (no guestEmail, guestName, guestPhone)
       const booking = createBookingInput();
@@ -364,6 +362,7 @@ describe("BookingCreationService", () => {
       await expect(service.createBooking(booking, null)).rejects.toThrow(
         BookingValidationException,
       );
+      expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
     });
 
     it("should throw CarNotFoundException when car does not exist", async () => {
@@ -408,7 +407,7 @@ describe("BookingCreationService", () => {
       );
     });
 
-    it("should throw PaymentIntentFailedException and mark booking as FAILED when payment creation fails", async () => {
+    it("should throw PaymentIntentFailedException and keep booking UNPAID when payment creation fails", async () => {
       setupSuccessfulMocks();
 
       // Override createPaymentIntent to throw after transaction commits
@@ -423,7 +422,7 @@ describe("BookingCreationService", () => {
         PaymentIntentFailedException,
       );
 
-      // Verify booking was marked as FAILED (compensation logic)
+      // Verify booking remained in UNPAID state (compensation logic)
       expect(databaseService.booking.update).toHaveBeenCalledWith({
         where: { id: "booking-123" },
         data: { paymentStatus: PaymentStatus.UNPAID },

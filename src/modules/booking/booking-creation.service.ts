@@ -1,14 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
-import {
-  Booking,
-  BookingReferralStatus,
-  BookingStatus,
-  FlightStatus,
-  PaymentStatus,
-  ReferralReleaseCondition,
-  ReferralRewardStatus,
-} from "@prisma/client";
+import { Booking } from "@prisma/client";
 import { Queue } from "bullmq";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
@@ -20,16 +12,11 @@ import { DatabaseService } from "../database/database.service";
 import { FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
-import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
   BookingException,
-  BookingValidationException,
-  CarNotFoundException,
   PaymentIntentFailedException,
-  ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
 import type {
   CarWithPricing,
@@ -42,7 +29,10 @@ import type {
 } from "./booking.interface";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
+import { BookingPaymentService } from "./booking-payment.service";
+import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
@@ -68,9 +58,11 @@ export class BookingCreationService {
     private readonly validationService: BookingValidationService,
     private readonly legService: BookingLegService,
     private readonly calculationService: BookingCalculationService,
-    private readonly flutterwaveService: FlutterwaveService,
     private readonly flightAwareService: FlightAwareService,
     private readonly mapsService: MapsService,
+    private readonly eligibilityService: BookingEligibilityService,
+    private readonly paymentService: BookingPaymentService,
+    private readonly persistenceService: BookingPersistenceService,
     @InjectQueue(FLIGHT_ALERTS_QUEUE)
     private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {}
@@ -92,29 +84,8 @@ export class BookingCreationService {
     booking: CreateBookingInput,
     sessionUser: AuthSession["user"] | null,
   ): Promise<CreateBookingResponse> {
-    const normalizedWindow = normalizeBookingTimeWindow({
-      bookingType: booking.bookingType,
-      startDate: booking.startDate,
-      endDate: booking.endDate,
-      pickupTime: booking.pickupTime,
-    });
-    const normalizedBooking = {
-      ...booking,
-      startDate: normalizedWindow.startDate,
-      endDate: normalizedWindow.endDate,
-    };
-
-    // Validate guest booking requirements early
-    if (!sessionUser && !isGuestBooking(normalizedBooking)) {
-      throw new BookingValidationException(
-        [
-          { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
-          { field: "guestName", message: "Guest name is required for unauthenticated bookings" },
-          { field: "guestPhone", message: "Guest phone is required for unauthenticated bookings" },
-        ],
-        "Guest information is required when booking without authentication",
-      );
-    }
+    const normalizedBooking = this.normalizeInput(booking);
+    this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
 
     this.logger.log("Starting booking creation", {
       carId: normalizedBooking.carId,
@@ -156,7 +127,7 @@ export class BookingCreationService {
       }
     }
 
-    const car = await this.fetchCarWithPricing(normalizedBooking.carId);
+    const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
 
     const legs = this.generateBookingLegs(normalizedBooking, flightData);
 
@@ -164,7 +135,7 @@ export class BookingCreationService {
     // For authenticated users: check session data for preliminary eligibility
     // Actual eligibility is verified inside the transaction with fresh DB query to prevent race conditions
     const preliminaryReferralEligibility =
-      await this.checkPreliminaryReferralEligibility(sessionUser);
+      await this.eligibilityService.checkPreliminaryReferralEligibility(sessionUser);
 
     const financials = await this.calculationService.calculateBookingCost({
       bookingType: normalizedBooking.bookingType,
@@ -203,6 +174,21 @@ export class BookingCreationService {
     });
 
     return result;
+  }
+
+  private normalizeInput(booking: CreateBookingInput): CreateBookingInput {
+    const normalizedWindow = normalizeBookingTimeWindow({
+      bookingType: booking.bookingType,
+      startDate: booking.startDate,
+      endDate: booking.endDate,
+      pickupTime: booking.pickupTime,
+    });
+
+    return {
+      ...booking,
+      startDate: normalizedWindow.startDate,
+      endDate: normalizedWindow.endDate,
+    };
   }
 
   /**
@@ -244,30 +230,6 @@ export class BookingCreationService {
       destinationCity: flight.destinationCity,
       driveTimeMinutes,
     };
-  }
-
-  /**
-   * Fetch car with pricing information.
-   */
-  private async fetchCarWithPricing(carId: string): Promise<CarWithPricing> {
-    const car = await this.databaseService.car.findUnique({
-      where: { id: carId },
-      select: {
-        id: true,
-        dayRate: true,
-        nightRate: true,
-        fullDayRate: true,
-        airportPickupRate: true,
-        fuelUpgradeRate: true,
-        pricingIncludesFuel: true,
-      },
-    });
-
-    if (!car) {
-      throw new CarNotFoundException(carId);
-    }
-
-    return car;
   }
 
   /**
@@ -328,167 +290,6 @@ export class BookingCreationService {
   }
 
   /**
-   * Preliminary check for referral discount eligibility.
-   *
-   * IMPORTANT: This is a preliminary check for pre-transaction price calculation.
-   * We query the database to get fresh referral status (not in session).
-   * The actual eligibility is verified AGAIN inside the transaction with pessimistic
-   * locking to prevent race conditions where the discount could be used concurrently.
-   *
-   * This preliminary check ensures users see the correct price upfront, avoiding
-   * surprise errors at checkout if their discount was already used.
-   *
-   * @see verifyAndClaimReferralDiscountInTransaction for the transaction-safe verification
-   */
-  private async checkPreliminaryReferralEligibility(
-    sessionUser: AuthSession["user"] | null,
-  ): Promise<ReferralEligibility> {
-    // Guest users are not eligible for referral discounts
-    if (!sessionUser) {
-      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
-    }
-
-    // Fetch referral fields from database (not in session)
-    // This is a lightweight query to check current referral status
-    const user = await this.databaseService.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        referredByUserId: true,
-        referralDiscountUsed: true,
-      },
-    });
-
-    // Not eligible if: no referrer OR discount already used
-    if (!user?.referredByUserId || user.referralDiscountUsed) {
-      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
-    }
-
-    // Get referral program config (safe to read outside transaction)
-    // Note: Transaction will verify eligibility again with FOR UPDATE lock
-    return this.getReferralConfig(user.referredByUserId);
-  }
-
-  /**
-   * Get referral program configuration.
-   * Returns eligibility based on config settings only.
-   */
-  private async getReferralConfig(referrerUserId: string): Promise<ReferralEligibility> {
-    const configs = await this.databaseService.referralProgramConfig.findMany({
-      where: { key: { in: ["REFERRAL_ENABLED", "REFERRAL_DISCOUNT_AMOUNT"] } },
-    });
-
-    const configMap = configs.reduce<Record<string, unknown>>((acc, c) => {
-      acc[c.key] = c.value;
-      return acc;
-    }, {});
-
-    // Validate and normalize REFERRAL_ENABLED to boolean
-    const rawEnabled = configMap.REFERRAL_ENABLED;
-    let isEnabled: boolean;
-    if (typeof rawEnabled === "boolean") {
-      isEnabled = rawEnabled;
-    } else if (typeof rawEnabled === "string") {
-      isEnabled = rawEnabled.toLowerCase() === "true";
-    } else {
-      // Default to true if not set or invalid type
-      isEnabled = rawEnabled === undefined || rawEnabled === null;
-    }
-
-    // Validate and normalize REFERRAL_DISCOUNT_AMOUNT to Decimal
-    const rawDiscountAmount = configMap.REFERRAL_DISCOUNT_AMOUNT;
-    let discountAmount: Decimal;
-    if (rawDiscountAmount === undefined || rawDiscountAmount === null) {
-      discountAmount = new Decimal(0);
-    } else if (typeof rawDiscountAmount === "number") {
-      discountAmount = new Decimal(rawDiscountAmount);
-    } else if (typeof rawDiscountAmount === "string") {
-      const parsed = Number(rawDiscountAmount);
-      discountAmount = Number.isNaN(parsed) ? new Decimal(0) : new Decimal(parsed);
-    } else {
-      // Invalid type (object, array, etc.) - fallback to 0
-      this.logger.warn("Invalid REFERRAL_DISCOUNT_AMOUNT config value type", {
-        type: typeof rawDiscountAmount,
-        value: rawDiscountAmount,
-      });
-      discountAmount = new Decimal(0);
-    }
-
-    if (!isEnabled || discountAmount.lte(0)) {
-      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
-    }
-
-    return {
-      eligible: true,
-      referrerUserId,
-      discountAmount,
-    };
-  }
-
-  /**
-   * Verify and claim the referral discount inside a transaction.
-   *
-   * This method queries fresh user data from the database to check if the discount
-   * is still available, then immediately marks it as used to prevent race conditions.
-   *
-   * @param tx - Prisma transaction client
-   * @param userId - User ID to verify eligibility for
-   * @param preliminaryEligibility - The preliminary eligibility from pre-transaction check
-   * @returns The verified referral eligibility
-   * @throws ReferralDiscountNoLongerAvailableException if preliminary check was eligible but discount was already used
-   */
-  private async verifyAndClaimReferralDiscountInTransaction(
-    tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
-    userId: string,
-    preliminaryEligibility: ReferralEligibility,
-  ): Promise<ReferralEligibility> {
-    // If preliminary check said not eligible, no need to verify
-    if (!preliminaryEligibility.eligible) {
-      return preliminaryEligibility;
-    }
-
-    // Query fresh user data with pessimistic lock to prevent concurrent modifications
-    // Using a raw query with FOR UPDATE to ensure we have an exclusive lock on the row
-    const users = await tx.$queryRaw<
-      Array<{ id: string; referredByUserId: string | null; referralDiscountUsed: boolean }>
-    >`SELECT id, "referredByUserId", "referralDiscountUsed" FROM "User" WHERE id = ${userId} FOR UPDATE`;
-
-    const freshUser = users[0];
-
-    if (!freshUser) {
-      this.logger.warn("User not found during referral verification", { userId });
-      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
-    }
-
-    // Check if discount was already used (by a concurrent request)
-    if (freshUser.referralDiscountUsed) {
-      this.logger.warn("Referral discount already used (race condition detected)", {
-        userId,
-        preliminaryEligible: preliminaryEligibility.eligible,
-      });
-
-      // The preliminary check thought we were eligible, but the discount was already used
-      // This is a race condition - throw an error so the client can retry without the discount
-      throw new ReferralDiscountNoLongerAvailableException();
-    }
-
-    // Check if user still has a referrer (edge case: referrer could be removed)
-    if (!freshUser.referredByUserId) {
-      this.logger.warn("User no longer has a referrer", { userId });
-      return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
-    }
-
-    // Mark discount as used IMMEDIATELY (before booking creation) to prevent race conditions
-    await tx.user.update({
-      where: { id: userId },
-      data: { referralDiscountUsed: true },
-    });
-
-    this.logger.log("Referral discount claimed and marked as used", { userId });
-
-    return preliminaryEligibility;
-  }
-
-  /**
    * Get customer details for payment intent.
    * Uses session user data for authenticated users, or guest booking fields for guests.
    */
@@ -525,7 +326,7 @@ export class BookingCreationService {
    * This method separates DB operations from external HTTP calls:
    * 1. Transaction: Verify referral eligibility, create booking record, flight record, and referral reward
    * 2. After commit: Create payment intent (external HTTP call)
-   * 3. Compensation: If payment fails, update booking status to FAILED
+   * 3. Compensation: If payment fails, keep booking in UNPAID state and surface payment failure
    *
    * IMPORTANT: Referral eligibility is verified INSIDE the transaction with a fresh DB query
    * and pessimistic locking to prevent race conditions where concurrent requests could
@@ -593,18 +394,22 @@ export class BookingCreationService {
         // CRITICAL: Verify and claim referral discount FIRST with pessimistic locking
         // This prevents race conditions where concurrent requests could all receive the one-time discount
         const verifiedReferralEligibility = sessionUser
-          ? await this.verifyAndClaimReferralDiscountInTransaction(
+          ? await this.eligibilityService.verifyAndClaimReferralDiscountInTransaction(
               tx,
               sessionUser.id,
               preliminaryReferralEligibility,
             )
           : preliminaryReferralEligibility;
 
-        const flightRecordId = await this.createFlightRecordIfNeeded(tx, booking, flightData);
+        const flightRecordId = await this.persistenceService.createFlightRecordIfNeeded(
+          tx,
+          booking,
+          flightData,
+        );
 
         flightRecordIdForAlert = flightRecordId;
 
-        const bookingData = this.buildBookingData({
+        const bookingRecord = await this.persistenceService.createBookingRecord(tx, {
           bookingReference,
           car,
           userId: sessionUser?.id ?? null,
@@ -620,12 +425,8 @@ export class BookingCreationService {
           platformFleetOwnerCommissionRatePercent,
         });
 
-        const bookingRecord = await tx.booking.create({
-          data: bookingData,
-        });
-
         // Create referral reward record (the discount was already claimed above)
-        await this.createReferralRewardIfEligible(
+        await this.eligibilityService.createReferralRewardIfEligible(
           tx,
           bookingRecord.id,
           verifiedReferralEligibility,
@@ -652,19 +453,25 @@ export class BookingCreationService {
     let checkoutUrl: string;
 
     try {
-      checkoutUrl = await this.createPaymentIntent(createdBooking, financials, customerDetails);
+      const paymentResult = await this.paymentService.createPaymentIntent(
+        createdBooking,
+        financials,
+        customerDetails,
+      );
+      checkoutUrl = paymentResult.checkoutUrl;
+
+      await this.databaseService.booking.update({
+        where: { id: createdBooking.id },
+        data: { paymentIntent: paymentResult.paymentIntentId },
+      });
     } catch (error) {
-      // Step 3: Compensation - mark booking as failed if payment creation fails
-      this.logger.warn("Payment intent failed, marking booking as failed", {
+      // Step 3: Compensation - keep booking in unpaid state if payment creation fails
+      this.logger.warn("Payment intent failed, keeping booking in UNPAID state", {
         bookingId: createdBooking.id,
         bookingReference: createdBooking.bookingReference,
       });
 
-      await this.databaseService.booking.update({
-        where: { id: createdBooking.id },
-        // change to fail in fast follow PR
-        data: { paymentStatus: PaymentStatus.UNPAID },
-      });
+      await this.persistenceService.markBookingUnpaid(createdBooking.id);
 
       // Re-throw payment exception
       if (error instanceof PaymentIntentFailedException) {
@@ -679,204 +486,6 @@ export class BookingCreationService {
       bookingId: createdBooking.id,
       checkoutUrl,
     };
-  }
-
-  /**
-   * Create flight record if this is an airport pickup booking.
-   */
-  private async createFlightRecordIfNeeded(
-    tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
-    booking: CreateBookingInput,
-    flightData: FlightDataForBooking | null,
-  ): Promise<string | null> {
-    if (!flightData || booking.bookingType !== "AIRPORT_PICKUP") {
-      return null;
-    }
-
-    const flightRecord = await tx.flight.upsert({
-      where: { id: flightData.flightId },
-      create: {
-        id: flightData.flightId,
-        flightNumber: flightData.flightNumber.toUpperCase(),
-        flightDate: flightData.arrivalTime,
-        faFlightId: flightData.flightId,
-        originCode: flightData.originCode ?? "UNKNOWN",
-        originCodeIATA: flightData.originCodeIATA,
-        originName: flightData.originName,
-        destinationCode: flightData.destinationCode ?? "DNMM",
-        destinationCodeIATA: flightData.destinationIATA,
-        destinationName: flightData.destinationName,
-        destinationCity: flightData.destinationCity,
-        scheduledArrival: flightData.arrivalTime,
-        status: FlightStatus.SCHEDULED,
-        alertEnabled: false,
-      },
-      update: {},
-      select: { id: true },
-    });
-
-    return flightRecord.id;
-  }
-
-  /**
-   * Build booking data object for Prisma create.
-   */
-  private buildBookingData(params: {
-    bookingReference: string;
-    car: CarWithPricing;
-    userId: string | null;
-    guestUser: { email: string; name: string; phoneNumber: string | null } | null;
-    booking: CreateBookingInput;
-    financials: BookingFinancials;
-    referralEligibility: ReferralEligibility;
-    flightRecordId: string | null;
-    legs: GeneratedLeg[];
-    netPerLeg: Decimal;
-    commissionPerLeg: Decimal;
-    earningsPerLeg: Decimal;
-    platformFleetOwnerCommissionRatePercent: Decimal;
-  }) {
-    const {
-      bookingReference,
-      car,
-      userId,
-      guestUser,
-      booking,
-      financials,
-      referralEligibility,
-      flightRecordId,
-      legs,
-      netPerLeg,
-      commissionPerLeg,
-      earningsPerLeg,
-      platformFleetOwnerCommissionRatePercent,
-    } = params;
-
-    return {
-      bookingReference,
-      carId: car.id,
-      userId,
-      guestUser,
-      type: booking.bookingType,
-      status: BookingStatus.PENDING,
-      paymentStatus: PaymentStatus.UNPAID,
-      startDate: booking.startDate,
-      endDate: booking.endDate,
-      pickupLocation: booking.pickupAddress,
-      returnLocation: "dropOffAddress" in booking ? booking.dropOffAddress : booking.pickupAddress,
-      specialRequests: booking.specialRequests ?? null,
-      flightNumber: booking.flightNumber ?? null,
-      flightId: flightRecordId,
-      // Financial data
-      totalAmount: financials.totalAmount,
-      netTotal: financials.netTotal,
-      securityDetailCost: financials.securityDetailCost.gt(0)
-        ? financials.securityDetailCost
-        : null,
-      fuelUpgradeCost: financials.fuelUpgradeCost.gt(0) ? financials.fuelUpgradeCost : null,
-      platformCustomerServiceFeeRatePercent: financials.platformCustomerServiceFeeRatePercent,
-      platformCustomerServiceFeeAmount: financials.platformCustomerServiceFeeAmount,
-      subtotalBeforeVat: financials.subtotalAfterDiscounts,
-      vatRatePercent: financials.vatRatePercent,
-      vatAmount: financials.vatAmount,
-      platformFleetOwnerCommissionRatePercent: financials.platformFleetOwnerCommissionRatePercent,
-      platformFleetOwnerCommissionAmount: financials.platformFleetOwnerCommissionAmount,
-      fleetOwnerPayoutAmountNet: financials.fleetOwnerPayoutAmountNet,
-      // Referral data
-      referralReferrerUserId: referralEligibility.eligible
-        ? referralEligibility.referrerUserId
-        : null,
-      referralDiscountAmount: referralEligibility.discountAmount,
-      referralStatus: referralEligibility.eligible
-        ? BookingReferralStatus.APPLIED
-        : BookingReferralStatus.NONE,
-      referralCreditsUsed: financials.creditsUsed,
-      referralCreditsReserved: financials.creditsUsed,
-      // Booking legs
-      legs: {
-        create: legs.map((leg, index) => ({
-          legDate: leg.legDate,
-          legStartTime: leg.legStartTime,
-          legEndTime: leg.legEndTime,
-          totalDailyPrice: financials.legPrices[index].price,
-          itemsNetValueForLeg: netPerLeg,
-          platformCommissionRateOnLeg: platformFleetOwnerCommissionRatePercent,
-          platformCommissionAmountOnLeg: commissionPerLeg,
-          fleetOwnerEarningForLeg: earningsPerLeg,
-        })),
-      },
-    };
-  }
-
-  /**
-   * Create referral reward record if user is eligible.
-   *
-   * Note: The referralDiscountUsed flag is set earlier in verifyAndClaimReferralDiscountInTransaction
-   * to prevent race conditions. This method only creates the referral reward record.
-   */
-  private async createReferralRewardIfEligible(
-    tx: Parameters<Parameters<typeof this.databaseService.$transaction>[0]>[0],
-    bookingId: string,
-    referralEligibility: ReferralEligibility,
-    userId: string | null,
-  ): Promise<void> {
-    if (!referralEligibility.eligible || !referralEligibility.referrerUserId || !userId) {
-      return;
-    }
-
-    // Note: referralDiscountUsed was already set to true in verifyAndClaimReferralDiscountInTransaction
-    // to prevent race conditions. We don't set it again here.
-
-    // Get referral reward amount and release condition from config
-    const rewardConfigs = await tx.referralProgramConfig.findMany({
-      where: { key: { in: ["REFERRAL_REWARD_AMOUNT", "REFERRAL_RELEASE_CONDITION"] } },
-    });
-
-    const rewardConfigMap = rewardConfigs.reduce<Record<string, unknown>>((acc, c) => {
-      acc[c.key] = c.value;
-      return acc;
-    }, {});
-
-    const rewardAmount = new Decimal(String(rewardConfigMap.REFERRAL_REWARD_AMOUNT ?? 0));
-    if (!rewardAmount.gt(0)) {
-      return;
-    }
-
-    const releaseCondition =
-      (rewardConfigMap.REFERRAL_RELEASE_CONDITION as string) === "PAID"
-        ? ReferralReleaseCondition.PAID
-        : ReferralReleaseCondition.COMPLETED;
-
-    await tx.referralReward.create({
-      data: {
-        referrer: { connect: { id: referralEligibility.referrerUserId } },
-        referee: { connect: { id: userId } },
-        booking: { connect: { id: bookingId } },
-        amount: rewardAmount,
-        status: ReferralRewardStatus.PENDING,
-        releaseCondition,
-      },
-    });
-
-    // Update referrer's pending rewards stats
-    await tx.userReferralStats.upsert({
-      where: { userId: referralEligibility.referrerUserId },
-      create: {
-        userId: referralEligibility.referrerUserId,
-        totalReferrals: 0,
-        totalRewardsGranted: 0,
-        totalRewardsPending: rewardAmount,
-      },
-      update: {
-        totalRewardsPending: { increment: rewardAmount },
-      },
-    });
-
-    this.logger.log("Created pending referral reward", {
-      bookingId,
-      referrerUserId: referralEligibility.referrerUserId,
-      rewardAmount: rewardAmount.toString(),
-    });
   }
 
   /**
@@ -913,56 +522,6 @@ export class BookingCreationService {
         flightNumber: flightData.flightNumber,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
-  }
-
-  /**
-   * Create payment intent and update booking with payment intent ID.
-   * Called after the booking transaction commits.
-   */
-  private async createPaymentIntent(
-    createdBooking: { id: string; bookingReference: string },
-    financials: BookingFinancials,
-    customerDetails: CustomerDetails,
-  ): Promise<string> {
-    const callbackUrl = this.flutterwaveService.getWebhookUrl("/api/payments/callback");
-
-    try {
-      const paymentResult = await this.flutterwaveService.createPaymentIntent({
-        amount: financials.totalAmount.toNumber(),
-        customer: {
-          email: customerDetails.email,
-          name: customerDetails.name,
-          phoneNumber: customerDetails.phoneNumber,
-        },
-        metadata: {
-          bookingId: createdBooking.id,
-          bookingReference: createdBooking.bookingReference,
-          type: "booking_creation",
-        },
-        callbackUrl,
-        transactionType: "booking_creation",
-        idempotencyKey: createdBooking.id,
-      });
-
-      // Update booking with payment intent ID (outside transaction)
-      await this.databaseService.booking.update({
-        where: { id: createdBooking.id },
-        data: { paymentIntent: paymentResult.paymentIntentId },
-      });
-
-      return paymentResult.checkoutUrl;
-    } catch (error) {
-      this.logger.error("Payment intent creation failed", {
-        bookingId: createdBooking.id,
-        bookingReference: createdBooking.bookingReference,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      if (error instanceof FlutterwaveError) {
-        throw new PaymentIntentFailedException(error.message);
-      }
-      throw new PaymentIntentFailedException();
     }
   }
 }

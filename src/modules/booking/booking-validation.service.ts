@@ -279,6 +279,22 @@ export class BookingValidationService {
   }
 
   /**
+   * Validate that unauthenticated users provide required guest fields.
+   */
+  validateGuestRequirements(input: CreateBookingInput, sessionUser: { id: string } | null): void {
+    if (!sessionUser && !isGuestBooking(input)) {
+      throw new BookingValidationException(
+        [
+          { field: "guestEmail", message: "Guest email is required for unauthenticated bookings" },
+          { field: "guestName", message: "Guest name is required for unauthenticated bookings" },
+          { field: "guestPhone", message: "Guest phone is required for unauthenticated bookings" },
+        ],
+        "Guest information is required when booking without authentication",
+      );
+    }
+  }
+
+  /**
    * Run all validations. Each method throws its own exception on failure.
    *
    * @param input - Booking input
