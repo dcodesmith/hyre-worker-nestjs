@@ -50,8 +50,8 @@ export class BookingPersistenceService {
   }
 
   async markBookingUnpaid(bookingId: string): Promise<void> {
-    await this.databaseService.booking.update({
-      where: { id: bookingId },
+    await this.databaseService.booking.updateMany({
+      where: { id: bookingId, paymentStatus: { not: PaymentStatus.PAID } },
       data: { paymentStatus: PaymentStatus.UNPAID },
     });
   }
@@ -135,7 +135,7 @@ export class BookingPersistenceService {
       legs,
     } = params;
 
-    if (!financials.numberOfLegs || financials.numberOfLegs === 0) {
+    if (!financials.numberOfLegs) {
       throw new BookingCreationFailedException(
         "Cannot create booking: number of legs must be greater than zero",
       );
@@ -152,7 +152,8 @@ export class BookingPersistenceService {
       startDate: booking.startDate,
       endDate: booking.endDate,
       pickupLocation: booking.pickupAddress,
-      returnLocation: "dropOffAddress" in booking ? booking.dropOffAddress : booking.pickupAddress,
+      returnLocation:
+        booking.sameLocation === false ? booking.dropOffAddress : booking.pickupAddress,
       specialRequests: booking.specialRequests ?? null,
       flightNumber: booking.flightNumber ?? null,
       flightId: flightRecordId,

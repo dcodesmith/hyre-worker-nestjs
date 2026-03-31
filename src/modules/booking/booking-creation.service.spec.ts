@@ -19,6 +19,7 @@ import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
+  BookingPaymentSyncFailedException,
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -102,7 +103,7 @@ describe("BookingCreationService", () => {
           useValue: {
             car: { findUnique: vi.fn() },
             user: { findUnique: vi.fn(), update: vi.fn() },
-            booking: { create: vi.fn(), update: vi.fn() },
+            booking: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
             flight: { upsert: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn() },
@@ -430,8 +431,8 @@ describe("BookingCreationService", () => {
       );
 
       // Verify booking remained in UNPAID state (compensation logic)
-      expect(databaseService.booking.update).toHaveBeenCalledWith({
-        where: { id: "booking-123" },
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "booking-123", paymentStatus: { not: PaymentStatus.PAID } },
         data: { paymentStatus: PaymentStatus.UNPAID },
       });
     });
@@ -442,7 +443,7 @@ describe("BookingCreationService", () => {
       vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValue(
         new FlutterwaveError("Payment failed", "PAYMENT_FAILED"),
       );
-      vi.mocked(databaseService.booking.update).mockRejectedValueOnce(
+      vi.mocked(databaseService.booking.updateMany).mockRejectedValueOnce(
         new Error("db unavailable while marking unpaid"),
       );
 
@@ -452,6 +453,21 @@ describe("BookingCreationService", () => {
       await expect(service.createBooking(booking, user)).rejects.toThrow(
         PaymentIntentFailedException,
       );
+    });
+
+    it("throws BookingPaymentSyncFailedException when payment sync update fails", async () => {
+      setupSuccessfulMocks();
+      vi.mocked(databaseService.booking.update).mockRejectedValueOnce(
+        new Error("failed to save payment intent"),
+      );
+
+      const booking = createBookingInput();
+      const user = createSessionUser();
+
+      await expect(service.createBooking(booking, user)).rejects.toThrow(
+        BookingPaymentSyncFailedException,
+      );
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
     });
 
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {

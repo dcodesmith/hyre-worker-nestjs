@@ -16,6 +16,7 @@ import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
   BookingException,
+  BookingPaymentSyncFailedException,
   PaymentIntentFailedException,
 } from "./booking.error";
 import type {
@@ -473,26 +474,12 @@ export class BookingCreationService {
         customerDetails,
       );
       checkoutUrl = paymentResult.checkoutUrl;
-
-      try {
-        await this.databaseService.booking.update({
-          where: { id: createdBooking.id },
-          data: { paymentIntent: paymentResult.paymentIntentId },
-        });
-      } catch (updateError) {
-        this.logger.error(
-          "Payment created but booking update failed; manual reconciliation required",
-          {
-            bookingId: createdBooking.id,
-            paymentIntentId: paymentResult.paymentIntentId,
-            error: updateError instanceof Error ? updateError.message : String(updateError),
-          },
-        );
-        throw new BookingCreationFailedException(
-          "Booking created but payment intent sync failed. Please contact support.",
-        );
-      }
+      await this.syncPaymentIntentWithBooking(createdBooking.id, paymentResult.paymentIntentId);
     } catch (error) {
+      if (error instanceof BookingPaymentSyncFailedException) {
+        throw error;
+      }
+
       if (error instanceof BookingCreationFailedException) {
         throw error;
       }
@@ -527,6 +514,28 @@ export class BookingCreationService {
       bookingId: createdBooking.id,
       checkoutUrl,
     };
+  }
+
+  private async syncPaymentIntentWithBooking(
+    bookingId: string,
+    paymentIntentId: string,
+  ): Promise<void> {
+    try {
+      await this.databaseService.booking.update({
+        where: { id: bookingId },
+        data: { paymentIntent: paymentIntentId },
+      });
+    } catch (updateError) {
+      this.logger.error(
+        "Payment created but booking update failed; manual reconciliation required",
+        {
+          bookingId,
+          paymentIntentId,
+          error: updateError instanceof Error ? updateError.message : String(updateError),
+        },
+      );
+      throw new BookingPaymentSyncFailedException();
+    }
   }
 
   /**

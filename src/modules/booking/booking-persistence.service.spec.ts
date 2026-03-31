@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import type { Prisma } from "@prisma/client";
+import { PaymentStatus, type Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -10,6 +10,30 @@ import { BookingPersistenceService } from "./booking-persistence.service";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 
 describe("BookingPersistenceService", () => {
+  it("marks booking unpaid only when status is not PAID", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const databaseService = {
+      car: { findUnique: vi.fn() },
+      booking: { updateMany },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    await service.markBookingUnpaid("booking-1");
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "booking-1", paymentStatus: { not: PaymentStatus.PAID } },
+      data: { paymentStatus: PaymentStatus.UNPAID },
+    });
+  });
+
   it("returns car with pricing fields when car exists", async () => {
     const car = createCar();
     const databaseService = {
