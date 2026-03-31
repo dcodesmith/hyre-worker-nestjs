@@ -182,7 +182,7 @@ export class BookingEligibilityService {
     if (typeof rawEnabled === "string") {
       return rawEnabled.toLowerCase() === "true";
     }
-    return rawEnabled === undefined || rawEnabled === null;
+    return false;
   }
 
   private parseDecimalConfig(rawValue: unknown, key: string): Decimal {

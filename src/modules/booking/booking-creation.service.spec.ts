@@ -452,8 +452,8 @@ describe("BookingCreationService", () => {
         BookingCreationFailedException,
       );
 
-      // Ensure transaction was never started (validation happens before)
-      expect(mockTransaction).not.toHaveBeenCalled();
+      // Validation now occurs in persistence layer inside transaction.
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -61,4 +61,28 @@ describe("BookingPaymentService", () => {
       ),
     ).rejects.toThrow(PaymentIntentFailedException);
   });
+
+  it("maps non-Flutterwave errors to fallback PaymentIntentFailedException", async () => {
+    const flutterwaveService = {
+      getWebhookUrl: vi.fn().mockReturnValue("https://api.example.com/api/payments/callback"),
+      createPaymentIntent: vi.fn().mockRejectedValue(new Error("network timeout")),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPaymentService,
+        { provide: FlutterwaveService, useValue: flutterwaveService },
+      ],
+    }).compile();
+
+    const service = module.get<BookingPaymentService>(BookingPaymentService);
+
+    await expect(
+      service.createPaymentIntent(
+        { id: "booking-1", bookingReference: "BK-123" },
+        { totalAmount: new Decimal(1000) } as never,
+        { email: "user@example.com", name: "User", phoneNumber: "08012345678" },
+      ),
+    ).rejects.toThrow(PaymentIntentFailedException);
+  });
 });

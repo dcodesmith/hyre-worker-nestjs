@@ -362,26 +362,6 @@ export class BookingCreationService {
           phoneNumber: customerDetails.phoneNumber ?? null,
         };
 
-    // Calculate leg-level financial data
-    const {
-      platformFleetOwnerCommissionRatePercent,
-      platformFleetOwnerCommissionAmount,
-      netTotal,
-    } = financials;
-    const numberOfLegs = financials.numberOfLegs;
-
-    // Guard against division by zero
-    if (!numberOfLegs || numberOfLegs === 0) {
-      throw new BookingCreationFailedException(
-        "Cannot create booking: number of legs must be greater than zero",
-      );
-    }
-
-    // Each leg gets proportional commission and earnings
-    const commissionPerLeg = platformFleetOwnerCommissionAmount.div(numberOfLegs);
-    const netPerLeg = netTotal.div(numberOfLegs);
-    const earningsPerLeg = netPerLeg.sub(commissionPerLeg);
-
     // Track flight record ID for post-transaction alert creation
     let flightRecordIdForAlert: string | null = null;
 
@@ -419,10 +399,6 @@ export class BookingCreationService {
           referralEligibility: verifiedReferralEligibility,
           flightRecordId,
           legs,
-          netPerLeg,
-          commissionPerLeg,
-          earningsPerLeg,
-          platformFleetOwnerCommissionRatePercent,
         });
 
         // Create referral reward record (the discount was already claimed above)
@@ -460,11 +436,29 @@ export class BookingCreationService {
       );
       checkoutUrl = paymentResult.checkoutUrl;
 
-      await this.databaseService.booking.update({
-        where: { id: createdBooking.id },
-        data: { paymentIntent: paymentResult.paymentIntentId },
-      });
+      try {
+        await this.databaseService.booking.update({
+          where: { id: createdBooking.id },
+          data: { paymentIntent: paymentResult.paymentIntentId },
+        });
+      } catch (updateError) {
+        this.logger.error(
+          "Payment created but booking update failed; manual reconciliation required",
+          {
+            bookingId: createdBooking.id,
+            paymentIntentId: paymentResult.paymentIntentId,
+            error: updateError instanceof Error ? updateError.message : String(updateError),
+          },
+        );
+        throw new BookingCreationFailedException(
+          "Booking created but payment intent sync failed. Please contact support.",
+        );
+      }
     } catch (error) {
+      if (error instanceof BookingCreationFailedException) {
+        throw error;
+      }
+
       // Step 3: Compensation - keep booking in unpaid state if payment creation fails
       this.logger.warn("Payment intent failed, keeping booking in UNPAID state", {
         bookingId: createdBooking.id,

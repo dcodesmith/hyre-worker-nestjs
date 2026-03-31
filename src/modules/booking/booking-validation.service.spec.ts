@@ -593,6 +593,23 @@ describe("BookingValidationService", () => {
 
       expect(() => service.validateGuestRequirements(input, null)).not.toThrow();
     });
+
+    it("should not throw for authenticated user without guest fields", () => {
+      const input: CreateBookingDto = {
+        carId: "car-123",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 60 * 60 * 1000),
+        pickupAddress: "123 Main St",
+        bookingType: "DAY",
+        sameLocation: true,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        useCredits: 0,
+      };
+
+      const sessionUser = { id: "user-123" };
+      expect(() => service.validateGuestRequirements(input, sessionUser)).not.toThrow();
+    });
   });
 
   describe("validateAll", () => {

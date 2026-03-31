@@ -60,6 +60,8 @@ export class BookingPersistenceService {
       return null;
     }
 
+    // Intentionally keep update empty: flight rows are treated as immutable snapshots.
+    // Subsequent bookings should reuse the existing row rather than mutate it.
     const flightRecord = await tx.flight.upsert({
       where: { id: flightData.flightId },
       create: {
@@ -97,10 +99,6 @@ export class BookingPersistenceService {
       referralEligibility: ReferralEligibility;
       flightRecordId: string | null;
       legs: GeneratedLeg[];
-      netPerLeg: Decimal;
-      commissionPerLeg: Decimal;
-      earningsPerLeg: Decimal;
-      platformFleetOwnerCommissionRatePercent: Decimal;
     },
   ): Promise<Booking> {
     const data = this.buildBookingData(params);
@@ -117,10 +115,6 @@ export class BookingPersistenceService {
     referralEligibility: ReferralEligibility;
     flightRecordId: string | null;
     legs: GeneratedLeg[];
-    netPerLeg: Decimal;
-    commissionPerLeg: Decimal;
-    earningsPerLeg: Decimal;
-    platformFleetOwnerCommissionRatePercent: Decimal;
   }) {
     const {
       bookingReference,
@@ -132,10 +126,6 @@ export class BookingPersistenceService {
       referralEligibility,
       flightRecordId,
       legs,
-      netPerLeg,
-      commissionPerLeg,
-      earningsPerLeg,
-      platformFleetOwnerCommissionRatePercent,
     } = params;
 
     if (!financials.numberOfLegs || financials.numberOfLegs === 0) {
@@ -182,42 +172,31 @@ export class BookingPersistenceService {
         : BookingReferralStatus.NONE,
       referralCreditsUsed: financials.creditsUsed,
       referralCreditsReserved: financials.creditsUsed,
-      legs: this.buildBookingLegsData({
-        legs,
-        financials,
-        netPerLeg,
-        commissionPerLeg,
-        earningsPerLeg,
-        platformFleetOwnerCommissionRatePercent,
-      }),
+      legs: this.buildBookingLegsData({ legs, financials }),
     };
   }
 
-  private buildBookingLegsData(params: {
-    legs: GeneratedLeg[];
-    financials: BookingFinancials;
-    netPerLeg: Decimal;
-    commissionPerLeg: Decimal;
-    earningsPerLeg: Decimal;
-    platformFleetOwnerCommissionRatePercent: Decimal;
-  }) {
-    const {
-      legs,
-      financials,
-      netPerLeg,
-      commissionPerLeg,
-      earningsPerLeg,
-      platformFleetOwnerCommissionRatePercent,
-    } = params;
+  private buildBookingLegsData(params: { legs: GeneratedLeg[]; financials: BookingFinancials }) {
+    const { legs, financials } = params;
+    if (legs.length !== financials.legPrices.length) {
+      throw new BookingCreationFailedException(
+        `Cannot create booking: legs/legPrices mismatch (${legs.length} vs ${financials.legPrices.length})`,
+      );
+    }
+
+    const numberOfLegs = financials.numberOfLegs;
+    const commissionPerLeg = financials.platformFleetOwnerCommissionAmount.div(numberOfLegs);
+    const netPerLeg = financials.netTotal.div(numberOfLegs);
+    const earningsPerLeg = netPerLeg.sub(commissionPerLeg);
 
     return {
       create: legs.map((leg, index) => ({
         legDate: leg.legDate,
         legStartTime: leg.legStartTime,
         legEndTime: leg.legEndTime,
-        totalDailyPrice: financials.legPrices[index].price,
+        totalDailyPrice: financials.legPrices[index]?.price ?? new Decimal(0),
         itemsNetValueForLeg: netPerLeg,
-        platformCommissionRateOnLeg: platformFleetOwnerCommissionRatePercent,
+        platformCommissionRateOnLeg: financials.platformFleetOwnerCommissionRatePercent,
         platformCommissionAmountOnLeg: commissionPerLeg,
         fleetOwnerEarningForLeg: earningsPerLeg,
       })),
