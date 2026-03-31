@@ -94,6 +94,7 @@ describe("BookingCreationService", () => {
   beforeEach(async () => {
     // Reset all mocks
     vi.clearAllMocks();
+    mockTransaction.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -451,7 +452,7 @@ describe("BookingCreationService", () => {
       const user = createSessionUser();
 
       await expect(service.createBooking(booking, user)).rejects.toThrow(
-        PaymentIntentFailedException,
+        BookingCreationFailedException,
       );
     });
 
@@ -485,6 +486,27 @@ describe("BookingCreationService", () => {
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials({ numberOfLegs: 0, legPrices: [] }),
       );
+
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          booking: {
+            create: vi.fn().mockResolvedValue({
+              id: "booking-123",
+              bookingReference: "BK-123456-ABC",
+              totalAmount: new Decimal(56437.5),
+              status: BookingStatus.PENDING,
+            }),
+            update: vi.fn(),
+          },
+          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { update: vi.fn() },
+        };
+
+        return callback(mockTx);
+      });
 
       const booking = createBookingInput();
       const user = createSessionUser();

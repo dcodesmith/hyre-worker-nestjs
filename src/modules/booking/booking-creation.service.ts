@@ -498,7 +498,12 @@ export class BookingCreationService {
           bookingReference: createdBooking.bookingReference,
           error:
             markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
+          originalPaymentError: error instanceof Error ? error.message : String(error),
         });
+
+        throw new BookingCreationFailedException(
+          "Payment failed and compensation failed to mark booking as UNPAID.",
+        );
       }
 
       // Re-throw payment exception
