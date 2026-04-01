@@ -7,7 +7,14 @@ export const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-    REDIS_URL: z.url("REDIS_URL must be a valid URL"),
+    REDIS_URL: z.url("REDIS_URL must be a valid URL").refine(
+      (value) => {
+        const protocol = new URL(value).protocol;
+        return protocol === "redis:" || protocol === "rediss:";
+      },
+      { error: "REDIS_URL must use redis:// or rediss://" },
+    ),
+
     RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
     RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
 

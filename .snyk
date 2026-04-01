@@ -1,0 +1,9 @@
+version: v1.25.0
+
+ignore:
+  SNYK-JS-LODASH-15869625:
+    - "*":
+        reason: "Transitive via @nestjs/config with no upstream fix currently available; direct lodash usage is blocked by security:check-lodash guard."
+        expires: 2026-07-01T00:00:00.000Z
+
+patch: {}
