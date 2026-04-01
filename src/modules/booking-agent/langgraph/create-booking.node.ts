@@ -14,6 +14,7 @@ import { buildBookingInputFromDraft, buildGuestIdentity } from "./langgraph-book
 import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
 
+const MAX_FALLBACK_OPTIONS = 5;
 @Injectable()
 export class CreateBookingNode {
   private readonly logger = new Logger(CreateBookingNode.name);
@@ -28,7 +29,9 @@ export class CreateBookingNode {
     const { draft, selectedOption } = state;
 
     if (!selectedOption) {
-      this.logger.error("Create booking node called without selected option");
+      this.logger.error("Create booking node called without selected option", {
+        conversationId: state.conversationId,
+      });
       return {
         error: "No vehicle selected for booking",
         stage: "confirming",
@@ -137,15 +140,18 @@ export class CreateBookingNode {
   private validateDraftBeforeBookingCreation(draft: BookingDraft): LangGraphNodeResult | null {
     if (!draft.pickupDate || !draft.dropoffDate || !draft.pickupTime) {
       const missingRequiredDraftFields: string[] = [];
-      if (draft.pickupDate === undefined) {
+      if (!draft.pickupDate) {
         missingRequiredDraftFields.push("pickupDate");
       }
-      if (draft.dropoffDate === undefined) {
+
+      if (!draft.dropoffDate) {
         missingRequiredDraftFields.push("dropoffDate");
       }
-      if (draft.pickupTime === undefined) {
+
+      if (!draft.pickupTime) {
         missingRequiredDraftFields.push("pickupTime");
       }
+
       this.logger.error(
         { missingRequiredDraftFields },
         "Missing required date/time fields in draft - cannot create booking",
@@ -177,7 +183,7 @@ export class CreateBookingNode {
 
       const options = [...searchResult.exactMatches, ...searchResult.alternatives]
         .filter((option) => option.id !== excludedOptionId)
-        .slice(0, 5);
+        .slice(0, MAX_FALLBACK_OPTIONS);
 
       this.logger.log("Fetched fresh options after booking unavailability", {
         excludedOptionId,

@@ -99,6 +99,12 @@ describe("RespondNode", () => {
 
     expect(result.response?.text).toBe("Hello there");
     expect(result.outboxItems).toHaveLength(1);
+
+    expect(responderServiceMock.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.outboxItems?.[0]).toMatchObject({
+      conversationId: "conv_1",
+      textBody: "Hello there",
+    });
   });
 
   it("returns fallback response when responder fails", async () => {
@@ -132,5 +138,6 @@ describe("RespondNode", () => {
 
     expect(result.error).toBeTruthy();
     expect(result.response?.text).toContain("I'm having trouble right now");
+    expect(result.outboxItems).toBeUndefined();
   });
 });
