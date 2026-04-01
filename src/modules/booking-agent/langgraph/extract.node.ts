@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { LangGraphExtractorService } from "./langgraph-extractor.service";
+import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
 
 @Injectable()
@@ -15,12 +16,19 @@ export class ExtractNode {
       const extraction = await this.extractorService.extract(state);
       this.logger.log("Extract node completed", {
         intent: extraction.intent,
-        draftPatch: extraction.draftPatch,
         confidence: extraction.confidence,
+        draftPatchFieldCount: Object.keys(extraction.draftPatch ?? {}).length,
+        hasDraftPatch: Object.keys(extraction.draftPatch ?? {}).length > 0,
+        redactedDraftPatch: true,
       });
       return { extraction, error: null };
     } catch (error) {
-      this.logger.error("Extract node failed", { error });
+      const normalizedError = normalizeNodeError(error);
+      this.logger.error("Extract node failed", {
+        errorMessage: normalizedError.errorMessage,
+        errorCode: normalizedError.errorCode,
+        stackSnippet: normalizedError.stackSnippet,
+      });
       return {
         extraction: {
           intent: "unknown",

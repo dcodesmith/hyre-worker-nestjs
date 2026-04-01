@@ -35,9 +35,12 @@ export class MergeNode {
     const shouldClearOptions = draftChanged && state.availableOptions.length > 0;
 
     this.logger.debug("Merge node completed", {
-      newDraft,
       autoFilledDropoffLocation: !draft.dropoffLocation && !!newDraft.dropoffLocation,
       autoFilledDropoffDate: !draft.dropoffDate && !!newDraft.dropoffDate,
+      hasPickupLocation: !!newDraft.pickupLocation,
+      hasDropoffLocation: !!newDraft.dropoffLocation,
+      hasFlightNumber: !!newDraft.flightNumber,
+      draftChanged,
     });
 
     const nextLocationValidation = this.nextLocationValidationOnDraftMerge(
@@ -50,7 +53,7 @@ export class MergeNode {
       draft: newDraft,
       preferences: newPreferences,
       availableOptions: shouldClearOptions ? [] : state.availableOptions,
-      lastShownOptions: shouldClearOptions ? [] : state.lastShownOptions,
+      lastShownOptions: draftChanged ? [] : state.lastShownOptions,
       locationValidation: nextLocationValidation,
     };
   }

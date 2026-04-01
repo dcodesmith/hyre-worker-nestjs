@@ -174,4 +174,53 @@ describe("CreateBookingNode", () => {
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_1");
     expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
   });
+
+  it("returns service unavailable fallback when booking fails with generic error", async () => {
+    const selected = buildVehicleOption({ id: "vehicle_selected" });
+    databaseServiceMock.whatsAppConversation.findUnique.mockResolvedValue({
+      phoneE164: "+2348012345678",
+      profileName: "Test User",
+    });
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new Error("Generic booking failure"),
+    );
+
+    const result = await createBookingNode.run({
+      conversationId: "conv_1",
+      inboundMessage: "yes",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "confirming",
+      turnCount: 1,
+      messages: [],
+      draft: {
+        bookingType: "FULL_DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-02",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      },
+      availableOptions: [selected],
+      lastShownOptions: [selected],
+      selectedOption: selected,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      extraction: null,
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    expect(result.stage).toBe("confirming");
+    expect(result.availableOptions).toBeUndefined();
+    expect(result.lastShownOptions).toBeUndefined();
+    expect(result.error).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+  });
 });

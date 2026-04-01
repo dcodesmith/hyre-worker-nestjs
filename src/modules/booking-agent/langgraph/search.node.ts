@@ -89,7 +89,7 @@ export class SearchNode {
       const extractedParams = convertToExtractedParams(validatedDraft);
       this.logger.log(
         {
-          draft: state.draft,
+          draft: validatedDraft,
           extractedParams,
         },
         "Search node executing",

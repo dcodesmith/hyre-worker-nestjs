@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { maskEmail } from "../../../shared/helper";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
@@ -10,6 +11,7 @@ import {
   type VehicleSearchOption,
 } from "./langgraph.interface";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./langgraph-booking-orchestrator";
+import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
 
 @Injectable()
@@ -49,9 +51,12 @@ export class CreateBookingNode {
 
       this.logger.log("Creating booking", {
         conversationId: state.conversationId,
-        phone: conversation.phoneE164,
         vehicleId: selectedOption.id,
-        draft,
+        draftFieldCount: Object.keys(draft).length,
+        hasPickupLocation: !!draft.pickupLocation,
+        hasDropoffLocation: !!draft.dropoffLocation,
+        hasPickupDate: !!draft.pickupDate,
+        hasDropoffDate: !!draft.dropoffDate,
       });
 
       const guestIdentity = buildGuestIdentity(conversation.phoneE164, conversation.profileName);
@@ -131,8 +136,18 @@ export class CreateBookingNode {
 
   private validateDraftBeforeBookingCreation(draft: BookingDraft): LangGraphNodeResult | null {
     if (!draft.pickupDate || !draft.dropoffDate || !draft.pickupTime) {
+      const missingRequiredDraftFields: string[] = [];
+      if (draft.pickupDate === undefined) {
+        missingRequiredDraftFields.push("pickupDate");
+      }
+      if (draft.dropoffDate === undefined) {
+        missingRequiredDraftFields.push("dropoffDate");
+      }
+      if (draft.pickupTime === undefined) {
+        missingRequiredDraftFields.push("pickupTime");
+      }
       this.logger.error(
-        { draft },
+        { missingRequiredDraftFields },
         "Missing required date/time fields in draft - cannot create booking",
       );
       return {
@@ -201,7 +216,7 @@ export class CreateBookingNode {
         pickupTime: bookingInput.pickupTime,
         clientTotalAmount: bookingInput.clientTotalAmount,
         sameLocation: bookingInput.sameLocation,
-        guestEmail: bookingInput.guestEmail,
+        guestEmail: bookingInput.guestEmail ? maskEmail(bookingInput.guestEmail) : undefined,
       },
       "Calling BookingCreationService.createBooking",
     );
@@ -212,18 +227,20 @@ export class CreateBookingNode {
     selectedOption: LangGraphNodeState["selectedOption"],
     error: unknown,
   ): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const normalizedError = normalizeNodeError(error);
 
     this.logger.error(
       {
-        errorName,
-        errorMessage,
+        errorName: normalizedError.errorName,
+        errorMessage: normalizedError.errorMessage,
+        errorCode: normalizedError.errorCode,
         conversationId: state.conversationId,
-        draft: state.draft,
+        draftFieldCount: Object.keys(state.draft).length,
+        hasPickupLocation: !!state.draft.pickupLocation,
+        hasDropoffLocation: !!state.draft.dropoffLocation,
         selectedOptionId: selectedOption?.id,
         selectedOptionPrice: selectedOption?.estimatedTotalInclVat,
-        stack: error instanceof Error ? error.stack : undefined,
+        stackSnippet: normalizedError.stackSnippet,
       },
       "Booking creation failed",
     );

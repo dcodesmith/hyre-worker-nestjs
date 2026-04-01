@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
 import { buildOutboxItems } from "./langgraph-outbox.builder";
 import { LangGraphResponderService } from "./langgraph-responder.service";
@@ -24,18 +25,36 @@ export class RespondNode {
         },
         "Respond node executing",
       );
-      this.logger.debug("Respond node draft details", { draft: state.draft });
+      this.logger.debug("Respond node draft details", {
+        draftFieldCount: Object.keys(state.draft).length,
+        hasPickupLocation: !!state.draft.pickupLocation,
+        hasDropoffLocation: !!state.draft.dropoffLocation,
+        hasPickupDate: !!state.draft.pickupDate,
+        hasDropoffDate: !!state.draft.dropoffDate,
+        hasVehiclePreferences: !!(
+          state.draft.vehicleType ||
+          state.draft.serviceTier ||
+          state.draft.make ||
+          state.draft.model ||
+          state.draft.color
+        ),
+      });
 
       const response = await this.responderService.generateResponse(state);
       const outboxItems = buildOutboxItems(state, response);
       return { response, outboxItems };
     } catch (error) {
-      this.logger.error("Respond node failed", { error });
+      const normalizedError = normalizeNodeError(error);
+      this.logger.error("Respond node failed", {
+        errorMessage: normalizedError.errorMessage,
+        errorCode: normalizedError.errorCode,
+        stackSnippet: normalizedError.stackSnippet,
+      });
       return {
         response: {
           text: "I'm having trouble right now. Please try again or type AGENT to speak with someone.",
         },
-        error: error instanceof Error ? error.message : String(error),
+        error: normalizedError.errorMessage,
       };
     }
   }

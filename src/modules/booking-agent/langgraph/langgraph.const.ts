@@ -41,7 +41,6 @@ export const REQUIRED_SEARCH_FIELDS: (keyof BookingDraft)[] = [
 ];
 
 export const LANGGRAPH_NODE_NAMES = {
-  INGEST: "ingest",
   EXTRACT: "extract",
   MERGE: "merge",
   ROUTE: "route",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HandoffNode } from "./handoff.node";
+import { LANGGRAPH_OUTBOUND_MODE } from "./langgraph.const";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 
 describe("HandoffNode", () => {
@@ -35,5 +36,7 @@ describe("HandoffNode", () => {
     expect(result.stage).toBe("cancelled");
     expect(result.response?.text).toContain("Tripdly agent");
     expect(result.outboxItems).toHaveLength(1);
+    expect(result.outboxItems?.[0]?.dedupeKey).toMatch(/^langgraph:handoff:/);
+    expect(result.outboxItems?.[0]?.mode).toBe(LANGGRAPH_OUTBOUND_MODE.FREE_FORM);
   });
 });

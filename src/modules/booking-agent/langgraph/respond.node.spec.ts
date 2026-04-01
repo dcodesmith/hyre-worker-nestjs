@@ -100,4 +100,37 @@ describe("RespondNode", () => {
     expect(result.response?.text).toBe("Hello there");
     expect(result.outboxItems).toHaveLength(1);
   });
+
+  it("returns fallback response when responder fails", async () => {
+    responderServiceMock.generateResponse.mockRejectedValue(new Error("Responder unavailable"));
+
+    const result = await respondNode.run({
+      conversationId: "conv_1",
+      inboundMessage: "hello",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "collecting",
+      turnCount: 1,
+      messages: [],
+      draft: {},
+      availableOptions: [],
+      lastShownOptions: [],
+      selectedOption: null,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      extraction: null,
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    expect(result.error).toBeTruthy();
+    expect(result.response?.text).toContain("I'm having trouble right now");
+  });
 });

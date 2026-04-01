@@ -35,8 +35,8 @@ export class RouteNode {
         pickupDate: draft.pickupDate,
         pickupTime: draft.pickupTime,
         dropoffDate: draft.dropoffDate,
-        pickupLocation: draft.pickupLocation,
-        dropoffLocation: draft.dropoffLocation,
+        hasPickupLocation: !!draft.pickupLocation,
+        hasDropoffLocation: !!draft.dropoffLocation,
       },
     });
 
