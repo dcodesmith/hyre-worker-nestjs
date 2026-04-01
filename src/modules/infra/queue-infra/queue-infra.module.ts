@@ -17,8 +17,9 @@ import { type EnvConfig } from "../../../config/env.config";
         return {
           connection: {
             host: url.hostname,
-            port: Number.parseInt(url.port) || 6379,
+            port: Number.parseInt(url.port, 10) || 6379,
             password: url.password || undefined,
+            username: url.username || undefined,
             ...(isTls && {
               tls: {
                 rejectUnauthorized: false,
