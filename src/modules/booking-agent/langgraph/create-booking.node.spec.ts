@@ -8,6 +8,36 @@ import { CreateBookingNode } from "./create-booking.node";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildVehicleOption } from "./langgraph.factory";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
+import { LangGraphNodeState } from "./langgraph-node-state.interface";
+
+function buildTestState(overrides: Partial<LangGraphNodeState> = {}): LangGraphNodeState {
+  return {
+    conversationId: "conv_1",
+    inboundMessage: "yes",
+    inboundMessageId: "msg_1",
+    customerId: null,
+    stage: "confirming",
+    turnCount: 1,
+    messages: [],
+    draft: {},
+    availableOptions: [],
+    lastShownOptions: [],
+    selectedOption: null,
+    holdId: null,
+    holdExpiresAt: null,
+    bookingId: null,
+    paymentLink: null,
+    preferences: {},
+    response: null,
+    outboxItems: [],
+    extraction: null,
+    nextNode: null,
+    error: null,
+    statusMessage: null,
+    locationValidation: createDefaultLocationValidationState(),
+    ...overrides,
+  };
+}
 
 describe("CreateBookingNode", () => {
   let moduleRef: TestingModule;
@@ -44,31 +74,7 @@ describe("CreateBookingNode", () => {
   });
 
   it("returns confirming error when selected option is missing", async () => {
-    const result = await createBookingNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "yes",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "confirming",
-      turnCount: 1,
-      messages: [],
-      draft: {},
-      availableOptions: [],
-      lastShownOptions: [],
-      selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
+    const result = await createBookingNode.run(buildTestState());
 
     expect(result.error).toBe("No vehicle selected for booking");
     expect(result.stage).toBe("confirming");
@@ -84,41 +90,23 @@ describe("CreateBookingNode", () => {
       checkoutUrl: "https://pay.example.com/booking_123",
     });
 
-    const result = await createBookingNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "yes",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "confirming",
-      turnCount: 1,
-      messages: [],
-      draft: {
-        bookingType: "DAY",
-        pickupDate: "2026-03-01",
-        pickupTime: "09:00",
-        dropoffDate: "2026-03-01",
-        pickupLocation: "Victoria Island",
-        dropoffLocation: "Lekki",
-      },
-      availableOptions: [],
-      lastShownOptions: [],
-      selectedOption: buildVehicleOption(),
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
 
     expect(result.stage).toBe("awaiting_payment");
     expect(result.bookingId).toBe("booking_123");
+    expect(result.paymentLink).toBe("https://pay.example.com/booking_123");
   });
 
   it("returns alternatives when selected car is unavailable", async () => {
@@ -137,38 +125,21 @@ describe("CreateBookingNode", () => {
       precondition: null,
     });
 
-    const result = await createBookingNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "yes",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "confirming",
-      turnCount: 1,
-      messages: [],
-      draft: {
-        bookingType: "FULL_DAY",
-        pickupDate: "2026-03-01",
-        pickupTime: "09:00",
-        dropoffDate: "2026-03-02",
-        pickupLocation: "Victoria Island",
-        dropoffLocation: "Lekki",
-      },
-      availableOptions: [selected],
-      lastShownOptions: [selected],
-      selectedOption: selected,
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "FULL_DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-02",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        availableOptions: [selected],
+        lastShownOptions: [selected],
+        selectedOption: selected,
+      }),
+    );
 
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_1");
@@ -196,38 +167,21 @@ describe("CreateBookingNode", () => {
       precondition: null,
     });
 
-    const result = await createBookingNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "yes",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "confirming",
-      turnCount: 1,
-      messages: [],
-      draft: {
-        bookingType: "FULL_DAY",
-        pickupDate: "2026-03-01",
-        pickupTime: "09:00",
-        dropoffDate: "2026-03-02",
-        pickupLocation: "Victoria Island",
-        dropoffLocation: "Lekki",
-      },
-      availableOptions: [selected],
-      lastShownOptions: [selected],
-      selectedOption: selected,
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "FULL_DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-02",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        availableOptions: [selected],
+        lastShownOptions: [selected],
+        selectedOption: selected,
+      }),
+    );
 
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_2");
@@ -249,38 +203,22 @@ describe("CreateBookingNode", () => {
       new Error("Generic booking failure"),
     );
 
-    const result = await createBookingNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "yes",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "confirming",
-      turnCount: 1,
-      messages: [],
-      draft: {
-        bookingType: "FULL_DAY",
-        pickupDate: "2026-03-01",
-        pickupTime: "09:00",
-        dropoffDate: "2026-03-02",
-        pickupLocation: "Victoria Island",
-        dropoffLocation: "Lekki",
-      },
-      availableOptions: [selected],
-      lastShownOptions: [selected],
-      selectedOption: selected,
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
+    const result = await createBookingNode.run(
+      buildTestState({
+        stage: "confirming",
+        draft: {
+          bookingType: "FULL_DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-02",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        availableOptions: [selected],
+        lastShownOptions: [selected],
+        selectedOption: selected,
+      }),
+    );
 
     expect(result.stage).toBe("confirming");
     expect(result.availableOptions).toBeUndefined();

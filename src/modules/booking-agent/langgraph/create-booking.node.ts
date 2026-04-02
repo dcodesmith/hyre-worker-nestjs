@@ -151,10 +151,9 @@ export class CreateBookingNode {
         missingRequiredDraftFields.push("pickupTime");
       }
 
-      this.logger.error(
-        { missingRequiredDraftFields },
-        "Missing required date/time fields in draft - cannot create booking",
-      );
+      this.logger.error("Missing required date/time fields in draft - cannot create booking", {
+        missingRequiredDraftFields,
+      });
       return {
         error:
           "Missing required booking details. Please provide pickup date, drop-off date, and pickup time.",
