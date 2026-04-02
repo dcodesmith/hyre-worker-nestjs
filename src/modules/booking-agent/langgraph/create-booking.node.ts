@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { maskEmail } from "../../../shared/helper";
-import { CarNotAvailableException } from "../../booking/booking.error";
+import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
@@ -75,7 +75,6 @@ export class CreateBookingNode {
 
       this.logger.log("Booking created successfully", {
         bookingId: result.bookingId,
-        checkoutUrl: result.checkoutUrl,
       });
 
       return {
@@ -86,7 +85,7 @@ export class CreateBookingNode {
     } catch (error) {
       this.logBookingCreationFailure(state, selectedOption, error);
 
-      if (error instanceof CarNotAvailableException) {
+      if (error instanceof CarNotAvailableException || error instanceof CarNotFoundException) {
         const fallbackOptions = await this.fetchFreshOptionsForDraft(
           state.draft,
           selectedOption.id,
@@ -175,15 +174,17 @@ export class CreateBookingNode {
       const searchResult = await this.bookingAgentSearchService.searchVehiclesFromExtracted(
         extractedParams,
         "",
+        excludedOptionId,
       );
 
       if (searchResult.precondition) {
         return [];
       }
 
-      const options = [...searchResult.exactMatches, ...searchResult.alternatives]
-        .filter((option) => option.id !== excludedOptionId)
-        .slice(0, MAX_FALLBACK_OPTIONS);
+      const options = [...searchResult.exactMatches, ...searchResult.alternatives].slice(
+        0,
+        MAX_FALLBACK_OPTIONS,
+      );
 
       this.logger.log("Fetched fresh options after booking unavailability", {
         excludedOptionId,
@@ -217,7 +218,6 @@ export class CreateBookingNode {
         carId: bookingInput.carId,
         startDate: normalizedStartDate.toISOString(),
         endDate: normalizedEndDate.toISOString(),
-        pickupAddress: bookingInput.pickupAddress,
         bookingType: bookingInput.bookingType,
         pickupTime: bookingInput.pickupTime,
         clientTotalAmount: bookingInput.clientTotalAmount,

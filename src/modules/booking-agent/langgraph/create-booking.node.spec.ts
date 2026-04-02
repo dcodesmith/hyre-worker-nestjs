@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CarNotAvailableException } from "../../booking/booking.error";
+import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
@@ -173,6 +173,70 @@ describe("CreateBookingNode", () => {
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_1");
     expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
+      expect.any(Object),
+      "",
+      selected.id,
+    );
+  });
+
+  it("returns alternatives when selected car is not found", async () => {
+    const selected = buildVehicleOption({ id: "vehicle_deleted" });
+    const alternative = buildVehicleOption({ id: "vehicle_alt_2" });
+    databaseServiceMock.whatsAppConversation.findUnique.mockResolvedValue({
+      phoneE164: "+2348012345678",
+      profileName: "Test User",
+    });
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new CarNotFoundException(selected.id),
+    );
+    bookingAgentSearchServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+      exactMatches: [alternative],
+      alternatives: [],
+      precondition: null,
+    });
+
+    const result = await createBookingNode.run({
+      conversationId: "conv_1",
+      inboundMessage: "yes",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "confirming",
+      turnCount: 1,
+      messages: [],
+      draft: {
+        bookingType: "FULL_DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-02",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      },
+      availableOptions: [selected],
+      lastShownOptions: [selected],
+      selectedOption: selected,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      extraction: null,
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    expect(result.stage).toBe("presenting_options");
+    expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_2");
+    expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
+      expect.any(Object),
+      "",
+      selected.id,
+    );
   });
 
   it("returns service unavailable fallback when booking fails with generic error", async () => {

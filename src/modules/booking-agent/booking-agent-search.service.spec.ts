@@ -173,6 +173,37 @@ describe("BookingAgentSearchService", () => {
     expect(result.shouldClarifyBookingType).toBe(false);
   });
 
+  it("computes alternatives when excluded option removes the only exact match", async () => {
+    const fromDate = makeIsoDate(2);
+
+    const excludedExact = buildCar("car_exact_prado_black");
+    const fallback = buildCar("car_prado_white", { color: "White" });
+
+    carSearchService.searchCars.mockImplementation(async (query) => {
+      if (query.make === "Toyota" && query.model === "Prado" && query.color === "Black") {
+        return buildSearchResponse([excludedExact]);
+      }
+      if (query.model === "Prado" && !query.color) {
+        return buildSearchResponse([fallback]);
+      }
+      return buildSearchResponse([]);
+    });
+
+    const result = await service.searchVehiclesFromExtracted(
+      {
+        make: "Toyota",
+        model: "Prado",
+        color: "Black",
+        from: fromDate,
+      },
+      "Looking for: black toyota prado",
+      excludedExact.id,
+    );
+
+    expect(result.exactMatches).toHaveLength(0);
+    expect(result.alternatives.map((option) => option.id)).toContain("car_prado_white");
+  });
+
   it("returns ranked alternatives when no exact match exists", async () => {
     const fromDate = makeIsoDate(2);
 

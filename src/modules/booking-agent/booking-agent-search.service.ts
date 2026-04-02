@@ -36,6 +36,7 @@ export class BookingAgentSearchService {
   async searchVehiclesFromExtracted(
     extracted: ExtractedAiSearchParams,
     interpretation: string,
+    excludedOptionId?: string,
   ): Promise<VehicleSearchToolResult> {
     const precondition = this.preconditionPolicy.resolve(extracted);
     if (precondition) {
@@ -58,8 +59,9 @@ export class BookingAgentSearchService {
       "car-search:exact",
       WHATSAPP_CAR_SEARCH_TIMEOUT_MS,
     );
-    const exactCandidates = exactResults.cars.map((car) =>
-      this.alternativeRanker.mapCarToOption(car),
+    const exactCandidates = this.excludeOptionId(
+      exactResults.cars.map((car) => this.alternativeRanker.mapCarToOption(car)),
+      excludedOptionId,
     );
     const exactMatches = this.alternativeRanker.selectExactMatches(exactCandidates, extracted);
 
@@ -86,8 +88,11 @@ export class BookingAgentSearchService {
         });
         return [];
       });
-      const alternativeCandidates = alternativeResults.flatMap((result) =>
-        result.cars.map((car) => this.alternativeRanker.mapCarToOption(car)),
+      const alternativeCandidates = this.excludeOptionId(
+        alternativeResults.flatMap((result) =>
+          result.cars.map((car) => this.alternativeRanker.mapCarToOption(car)),
+        ),
+        excludedOptionId,
       );
       alternatives = this.alternativeRanker.rankAlternatives(
         [...exactCandidates, ...alternativeCandidates],
@@ -111,6 +116,13 @@ export class BookingAgentSearchService {
       precondition: null,
       shouldClarifyBookingType: false,
     };
+  }
+
+  private excludeOptionId<T extends { id: string }>(options: T[], excludedOptionId?: string): T[] {
+    if (!excludedOptionId) {
+      return options;
+    }
+    return options.filter((option) => option.id !== excludedOptionId);
   }
 
   private async withTimeout<T>(
