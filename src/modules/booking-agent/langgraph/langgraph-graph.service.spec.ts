@@ -6,6 +6,9 @@ import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
+import { CreateBookingNode } from "./create-booking.node";
+import { ExtractNode } from "./extract.node";
+import { HandoffNode } from "./handoff.node";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildVehicleOption } from "./langgraph.factory";
 import type { BookingAgentState } from "./langgraph.interface";
@@ -14,6 +17,10 @@ import { LangGraphExtractorService } from "./langgraph-extractor.service";
 import { LangGraphGraphService } from "./langgraph-graph.service";
 import { LangGraphResponderService } from "./langgraph-responder.service";
 import { LangGraphStateService } from "./langgraph-state.service";
+import { MergeNode } from "./merge.node";
+import { RespondNode } from "./respond.node";
+import { RouteNode } from "./route.node";
+import { SearchNode } from "./search.node";
 
 describe("LangGraphGraphService", () => {
   let moduleRef: TestingModule;
@@ -146,6 +153,13 @@ describe("LangGraphGraphService", () => {
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
+        ExtractNode,
+        MergeNode,
+        RouteNode,
+        SearchNode,
+        CreateBookingNode,
+        RespondNode,
+        HandoffNode,
       ],
     }).compile();
 

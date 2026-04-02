@@ -19,6 +19,9 @@ import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./booking-agent.const";
 import { BookingAgentOrchestratorService } from "./booking-agent-orchestrator.service";
 import { BookingAgentSearchService } from "./booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
+import { CreateBookingNode } from "./langgraph/create-booking.node";
+import { ExtractNode } from "./langgraph/extract.node";
+import { HandoffNode } from "./langgraph/handoff.node";
 import { LANGGRAPH_EXTRACTION_MODEL, LANGGRAPH_RESPONSE_MODEL } from "./langgraph/langgraph.const";
 import {
   LANGGRAPH_ANTHROPIC_CLIENT,
@@ -29,6 +32,10 @@ import { LangGraphExtractorService } from "./langgraph/langgraph-extractor.servi
 import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
 import { LangGraphResponderService } from "./langgraph/langgraph-responder.service";
 import { LangGraphStateService } from "./langgraph/langgraph-state.service";
+import { MergeNode } from "./langgraph/merge.node";
+import { RespondNode } from "./langgraph/respond.node";
+import { RouteNode } from "./langgraph/route.node";
+import { SearchNode } from "./langgraph/search.node";
 import { WhatsAppProcessor } from "./whatsapp/whatsapp.processor";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp/whatsapp-audio-transcription.service";
 import { WhatsAppInboundController } from "./whatsapp/whatsapp-inbound.controller";
@@ -96,6 +103,13 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     LangGraphStateService,
     LangGraphExtractorService,
     LangGraphResponderService,
+    ExtractNode,
+    MergeNode,
+    RouteNode,
+    SearchNode,
+    CreateBookingNode,
+    RespondNode,
+    HandoffNode,
     LangGraphGraphService,
     WhatsAppIngressService,
     WhatsAppAudioTranscriptionService,
