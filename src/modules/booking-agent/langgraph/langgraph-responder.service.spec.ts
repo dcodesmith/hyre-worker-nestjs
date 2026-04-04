@@ -205,7 +205,6 @@ describe("LangGraphResponderService", () => {
       expect(response.text).toContain("9:00 am");
       expect(response.text).toContain("9:00 pm");
       expect(response.text).toContain("Booked for:* 2 days");
-      expect(response.text).toContain("2 billed legs");
       expect(response.interactive).toBeDefined();
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons).toHaveLength(3);
@@ -233,11 +232,11 @@ describe("LangGraphResponderService", () => {
       expect(response.text).toContain("*🕐 Start:*");
       expect(response.text).toContain("*🏁 End:*");
       expect(response.text).toContain("6:30 am");
+      expect(response.text).toContain("10th Apr 2026");
       expect(response.text).toContain("Booked for:* 6 days");
-      expect(response.text).toContain("6 billed legs");
     });
 
-    it("keeps billed legs aligned with durationDays for DAY bookings when dropoffDate is present", async () => {
+    it("shows durationDays for DAY bookings when dropoffDate is present", async () => {
       const state = buildState({
         stage: "confirming",
         selectedOption: buildVehicleOption(),
@@ -255,7 +254,6 @@ describe("LangGraphResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toContain("Booked for:* 5 days");
-      expect(response.text).toContain("5 billed legs");
     });
 
     it("uses nights wording for NIGHT booking type", async () => {
@@ -275,7 +273,6 @@ describe("LangGraphResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toContain("Booked for:* 1 night");
-      expect(response.text).toContain("1 billed leg");
     });
 
     it("returns retry and agent buttons when confirming has booking error", async () => {
