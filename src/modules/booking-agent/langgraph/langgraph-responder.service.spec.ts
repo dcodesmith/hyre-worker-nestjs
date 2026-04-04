@@ -237,6 +237,27 @@ describe("LangGraphResponderService", () => {
       expect(response.text).toContain("6 billed legs");
     });
 
+    it("keeps billed legs aligned with durationDays for DAY bookings when dropoffDate is present", async () => {
+      const state = buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-05",
+          dropoffDate: "2026-03-09",
+          durationDays: 5,
+          pickupTime: "09:00",
+          pickupLocation: "Lekki",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booked for:* 5 days");
+      expect(response.text).toContain("5 billed legs");
+    });
+
     it("uses nights wording for NIGHT booking type", async () => {
       const state = buildState({
         stage: "confirming",

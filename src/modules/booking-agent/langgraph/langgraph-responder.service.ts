@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
-import { addHours, format } from "date-fns";
-import { calculateLegCount } from "../../booking/booking.helper";
+import { addHours, format, isMatch, isValid, parse } from "date-fns";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
@@ -374,19 +373,67 @@ export class LangGraphResponderService {
   }
 
   private resolveBilledLegs(draft: BookingDraft): number | null {
-    if (draft.bookingType && draft.pickupDate && draft.dropoffDate) {
-      const pickupDate = parseSearchDate(draft.pickupDate);
-      const dropoffDate = parseSearchDate(draft.dropoffDate);
-      if (pickupDate && dropoffDate) {
-        return calculateLegCount(draft.bookingType, pickupDate, dropoffDate);
-      }
-    }
-
     if (typeof draft.durationDays === "number" && draft.durationDays > 0) {
       return draft.durationDays;
     }
 
+    if (draft.bookingType && draft.pickupDate && draft.dropoffDate) {
+      const daySpan = this.calculateDateOnlyDaySpan(draft.pickupDate, draft.dropoffDate);
+      if (daySpan !== null) {
+        switch (draft.bookingType) {
+          case "DAY":
+            return Math.max(1, daySpan + 1);
+          case "NIGHT":
+          case "FULL_DAY":
+            return Math.max(1, daySpan);
+          case "AIRPORT_PICKUP":
+            return 1;
+          default:
+            return null;
+        }
+      }
+    }
+
     return null;
+  }
+
+  private calculateDateOnlyDaySpan(startIsoDate: string, endIsoDate: string): number | null {
+    const startUtc = this.parseIsoDateOnlyToUtc(startIsoDate);
+    const endUtc = this.parseIsoDateOnlyToUtc(endIsoDate);
+    if (startUtc === null || endUtc === null) {
+      return null;
+    }
+
+    const daySpan = Math.round((endUtc - startUtc) / (24 * 60 * 60 * 1000));
+    return Number.isNaN(daySpan) ? null : daySpan;
+  }
+
+  private parseIsoDateOnlyToUtc(value: string): number | null {
+    const normalized = value.trim();
+    if (!isMatch(normalized, "yyyy-MM-dd")) {
+      return null;
+    }
+
+    const parsedDate = parse(normalized, "yyyy-MM-dd", new Date());
+    if (!isValid(parsedDate)) {
+      return null;
+    }
+
+    const year = parsedDate.getFullYear();
+    const month = parsedDate.getMonth() + 1;
+    const day = parsedDate.getDate();
+    const utcTimestamp = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+    const strictDate = new Date(utcTimestamp);
+    if (
+      Number.isNaN(strictDate.getTime()) ||
+      strictDate.getUTCFullYear() !== year ||
+      strictDate.getUTCMonth() !== month - 1 ||
+      strictDate.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return utcTimestamp;
   }
 
   private resolveBookedForUnit(bookingType: BookingType | undefined): {
