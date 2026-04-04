@@ -46,6 +46,7 @@ describe("WhatsAppProcessor", () => {
   let persistenceService: {
     acquireProcessingLock: ReturnType<typeof vi.fn>;
     getConversationActivity: ReturnType<typeof vi.fn>;
+    getConversationLinkState: ReturnType<typeof vi.fn>;
     getInboundMessageContext: ReturnType<typeof vi.fn>;
     markConversationHandoff: ReturnType<typeof vi.fn>;
     markInboundMessageProcessed: ReturnType<typeof vi.fn>;
@@ -75,6 +76,9 @@ describe("WhatsAppProcessor", () => {
     persistenceService = {
       acquireProcessingLock: vi.fn(),
       getConversationActivity: vi.fn(),
+      getConversationLinkState: vi
+        .fn()
+        .mockResolvedValue({ linkedUserId: null, linkStatus: "UNLINKED" }),
       getInboundMessageContext: vi.fn(),
       markConversationHandoff: vi.fn(),
       markInboundMessageProcessed: vi.fn(),
@@ -163,6 +167,10 @@ describe("WhatsAppProcessor", () => {
       rawPayload: {},
       conversation: { windowExpiresAt: new Date("2026-03-01T00:00:00.000Z") },
     });
+    persistenceService.getConversationLinkState.mockResolvedValue({
+      linkedUserId: "user_linked_123",
+      linkStatus: "LINKED",
+    });
     orchestratorService.decide.mockResolvedValue({
       enqueueOutbox: [
         {
@@ -198,6 +206,46 @@ describe("WhatsAppProcessor", () => {
     expect(persistenceService.releaseProcessingLock).toHaveBeenCalledWith(
       "conv-1",
       expect.any(String),
+    );
+  });
+
+  it("forwards linked customerId from conversation context to orchestrator", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.getInboundMessageContext.mockResolvedValue({
+      id: "msg-1",
+      conversationId: "conv-1",
+      body: "book me an suv",
+      kind: WhatsAppMessageKind.TEXT,
+      mediaUrl: null,
+      mediaContentType: null,
+      rawPayload: {},
+      conversation: {
+        windowExpiresAt: new Date("2026-03-01T00:00:00.000Z"),
+        linkStatus: "LINKED",
+        linkedUserId: "user_linked_123",
+      },
+    });
+    persistenceService.getConversationLinkState.mockResolvedValue({
+      linkedUserId: "user_linked_123",
+      linkStatus: "LINKED",
+    });
+    orchestratorService.decide.mockResolvedValue({
+      enqueueOutbox: [],
+      resultingStage: "collecting",
+    });
+
+    await processor.process(
+      buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        dedupeKey: "dedupe-1",
+      }),
+    );
+
+    expect(orchestratorService.decide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: "user_linked_123",
+      }),
     );
   });
 

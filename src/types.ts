@@ -4,6 +4,8 @@ export interface GuestUserDetails {
   name?: string | null;
   email?: string | null;
   phoneNumber?: string | null;
+  guestContactSource?: "WEB_GUEST_FORM" | "WHATSAPP_AGENT" | null;
+  preferredNotificationChannel?: "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" | "WHATSAPP_ONLY" | null;
 }
 
 export type NormalisedBookingDetails = {

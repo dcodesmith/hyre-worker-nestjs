@@ -84,6 +84,106 @@ describe("NotificationService", () => {
         { priority: 1 },
       );
     });
+
+    it("should queue WhatsApp-only status notification for WhatsApp-agent guest", async () => {
+      const booking = createBooking({
+        status: BookingStatus.ACTIVE,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: null,
+        guestUser: {
+          name: "WhatsApp Guest",
+          email: "whatsapp.2348012345678@tripdly.com",
+          phoneNumber: "+2348012345678",
+          guestContactSource: "WHATSAPP_AGENT",
+          preferredNotificationChannel: "WHATSAPP_ONLY",
+        },
+      });
+
+      await service.queueBookingStatusNotifications(
+        booking,
+        BookingStatus.CONFIRMED,
+        BookingStatus.ACTIVE,
+      );
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          type: NotificationType.BOOKING_STATUS_CHANGE,
+          channels: [NotificationChannel.WHATSAPP],
+          bookingId: booking.id,
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              email: undefined,
+              phoneNumber: "+2348012345678",
+            }),
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should queue email-only status notification when guest prefers email", async () => {
+      const booking = createBooking({
+        status: BookingStatus.ACTIVE,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: null,
+        guestUser: {
+          name: "Email Guest",
+          email: "guest@example.com",
+          phoneNumber: "+2348012345678",
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_ONLY",
+        },
+      });
+
+      await service.queueBookingStatusNotifications(
+        booking,
+        BookingStatus.CONFIRMED,
+        BookingStatus.ACTIVE,
+      );
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          type: NotificationType.BOOKING_STATUS_CHANGE,
+          channels: [NotificationChannel.EMAIL],
+          bookingId: booking.id,
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              email: "guest@example.com",
+              phoneNumber: undefined,
+            }),
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should skip status notification when customer has no deliverable channels", async () => {
+      const booking = createBooking({
+        status: BookingStatus.ACTIVE,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: null,
+        guestUser: {
+          name: "No Contact Guest",
+          email: null,
+          phoneNumber: null,
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+      });
+
+      await service.queueBookingStatusNotifications(
+        booking,
+        BookingStatus.CONFIRMED,
+        BookingStatus.ACTIVE,
+      );
+
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
   });
 
   describe("queueBookingReminderNotifications", () => {

@@ -71,6 +71,7 @@ export interface InteractiveReply {
 export interface InboundMessageContext {
   messageId: string;
   conversationId: string;
+  customerId?: string | null;
   body?: string;
   kind: WhatsAppMessageKind;
   interactive?: InteractiveReply;

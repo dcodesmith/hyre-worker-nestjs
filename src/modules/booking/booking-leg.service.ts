@@ -1,6 +1,6 @@
 import { UTCDate } from "@date-fns/utc";
 import { Injectable } from "@nestjs/common";
-import { addDays, addHours, eachDayOfInterval, setHours, setMinutes, setSeconds } from "date-fns";
+import { addDays, addHours, setHours, setMinutes, setSeconds } from "date-fns";
 import {
   AIRPORT_PICKUP_BUFFER_MINUTES,
   AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER,
@@ -9,7 +9,7 @@ import {
   NIGHT_END_HOUR,
   NIGHT_START_HOUR,
 } from "./booking.const";
-import { getEffectiveEndDate } from "./booking.helper";
+import { calculateFullDayLegCount, calculateNightLegCount, getDayLegDates } from "./booking.helper";
 import { GeneratedLeg, LegGenerationInput } from "./booking.interface";
 
 /**
@@ -66,13 +66,7 @@ export class BookingLegService {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
-
-    // Convert to UTCDate for timezone-safe operations
-    const utcStart = new UTCDate(startDate);
-    const utcEnd = new UTCDate(effectiveEndDate);
-
-    const days = eachDayOfInterval({ start: utcStart, end: utcEnd });
+    const days = getDayLegDates(startDate, endDate);
 
     return days.map((day) => {
       const legStartTime = setSeconds(setMinutes(setHours(day, hours), minutes), 0);
@@ -101,11 +95,9 @@ export class BookingLegService {
     input: Extract<LegGenerationInput, { bookingType: "NIGHT" }>,
   ): GeneratedLeg[] {
     const { startDate, endDate } = input;
-    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
 
     const legs: GeneratedLeg[] = [];
-    const totalHours = (effectiveEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
-    const numberOfNights = Math.max(1, Math.ceil(totalHours / 24));
+    const numberOfNights = calculateNightLegCount(startDate, endDate);
 
     // Convert to UTCDate for timezone-safe operations
     const utcStart = new UTCDate(startDate);
@@ -147,7 +139,6 @@ export class BookingLegService {
     const { startDate, endDate, pickupTime } = input;
 
     const { hours, minutes } = this.parsePickupTime(pickupTime);
-    const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
 
     // Convert to UTCDate for timezone-safe operations
     const utcStart = new UTCDate(startDate);
@@ -156,9 +147,7 @@ export class BookingLegService {
     const baseStartTime = setSeconds(setMinutes(setHours(utcStart, hours), minutes), 0);
 
     // Calculate total hours and number of legs
-    const totalMs = effectiveEndDate.getTime() - baseStartTime.getTime();
-    const totalHours = totalMs / (1000 * 60 * 60);
-    const numberOfLegs = Math.max(1, Math.ceil(totalHours / FULL_DAY_DURATION_HOURS));
+    const numberOfLegs = calculateFullDayLegCount(startDate, endDate, baseStartTime);
 
     const legs: GeneratedLeg[] = [];
 

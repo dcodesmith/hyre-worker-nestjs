@@ -11,7 +11,6 @@ import {
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
-  DEFAULT_CHANNELS,
   FLEET_OWNER_RECIPIENT_TYPE,
   HIGH_PRIORITY_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB_NAME,
@@ -57,6 +56,14 @@ export class NotificationService {
       newStatus,
       showReviewRequest,
     });
+    if (jobData.channels.length === 0) {
+      this.logger.warn("No customer delivery channel available for booking status notification", {
+        bookingId: booking.id,
+        oldStatus,
+        newStatus,
+      });
+      return;
+    }
 
     await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
 
@@ -78,7 +85,7 @@ export class NotificationService {
     const customerJobData: NotificationJobData = {
       id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_CANCELLED,
-      channels: DEFAULT_CHANNELS,
+      channels: this.determineChannels(bookingDetails.customerEmail, bookingDetails.customerPhone),
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
@@ -89,12 +96,17 @@ export class NotificationService {
       templateData,
     };
 
+    const jobs: Promise<unknown>[] = [];
+    if (customerJobData.channels.length > 0) {
+      jobs.push(this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS));
+    } else {
+      this.logger.warn("No customer delivery channel available for booking cancellation", {
+        bookingId: bookingDetails.id,
+      });
+    }
+
     const ownerEmail = booking.car?.owner?.email;
     const ownerPhone = booking.car?.owner?.phoneNumber;
-
-    const jobs: Promise<unknown>[] = [
-      this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS),
-    ];
 
     if (ownerEmail || ownerPhone) {
       const ownerJobData: NotificationJobData = {
@@ -114,6 +126,13 @@ export class NotificationService {
         },
       };
       jobs.push(this.addJobToQueue(ownerJobData, HIGH_PRIORITY_JOB_OPTIONS));
+    }
+
+    if (jobs.length === 0) {
+      this.logger.warn("No delivery channels available for booking cancellation notifications", {
+        bookingId: bookingDetails.id,
+      });
+      return;
     }
 
     await Promise.all(jobs);
@@ -204,7 +223,7 @@ export class NotificationService {
     return {
       id: `status-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_STATUS_CHANGE,
-      channels: DEFAULT_CHANNELS,
+      channels: this.determineChannels(bookingDetails.customerEmail, bookingDetails.customerPhone),
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {

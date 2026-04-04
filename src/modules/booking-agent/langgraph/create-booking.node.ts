@@ -1,9 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { maskEmail } from "../../../shared/helper";
+import type { AuthSession } from "../../auth/guards/session.guard";
 import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
+import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
+import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import {
   type BookingDraft,
@@ -23,6 +26,7 @@ export class CreateBookingNode {
     private readonly bookingCreationService: BookingCreationService,
     private readonly databaseService: DatabaseService,
     private readonly bookingAgentSearchService: BookingAgentSearchService,
+    private readonly whatsAppPersistenceService: WhatsAppPersistenceService,
   ) {}
 
   async run(state: LangGraphNodeState): Promise<LangGraphNodeResult> {
@@ -71,7 +75,25 @@ export class CreateBookingNode {
 
       this.logBookingCreationInput(bookingInput, normalizedStartDate, normalizedEndDate);
 
-      const result = await this.bookingCreationService.createBooking(bookingInput, null);
+      const conversationLinkState = await this.whatsAppPersistenceService.getConversationLinkState(
+        state.conversationId,
+      );
+      const linkedCustomerId = this.resolveLinkedCustomerId(
+        state.customerId,
+        conversationLinkState,
+      );
+      const result = linkedCustomerId
+        ? await this.bookingCreationService.createBooking({
+            input: this.buildAuthenticatedBookingInput(bookingInput),
+            sessionUser: { id: linkedCustomerId } as AuthSession["user"],
+          })
+        : await this.bookingCreationService.createBooking({
+            input: bookingInput,
+            sessionUser: null,
+            context: {
+              guestContactSource: "WHATSAPP_AGENT",
+            },
+          });
 
       this.logger.log("Booking created successfully", {
         bookingId: result.bookingId,
@@ -134,6 +156,42 @@ export class CreateBookingNode {
     }
 
     return conversation;
+  }
+
+  private resolveLinkedCustomerId(
+    stateCustomerId: string | null,
+    conversation: {
+      linkedUserId: string | null;
+      linkStatus: string | null;
+    },
+  ): string | null {
+    if (conversation.linkStatus !== "LINKED" || !conversation.linkedUserId) {
+      return null;
+    }
+
+    if (stateCustomerId && stateCustomerId !== conversation.linkedUserId) {
+      this.logger.warn("State customerId does not match linked conversation userId", {
+        stateCustomerId,
+        linkedUserId: conversation.linkedUserId,
+      });
+    }
+
+    return conversation.linkedUserId;
+  }
+
+  private buildAuthenticatedBookingInput(input: CreateBookingInput): CreateBookingInput {
+    const {
+      guestEmail: _guestEmail,
+      guestName: _guestName,
+      guestPhone: _guestPhone,
+      ...rest
+    } = input as CreateBookingInput & {
+      guestEmail?: string;
+      guestName?: string;
+      guestPhone?: string;
+    };
+
+    return rest as CreateBookingInput;
   }
 
   private validateDraftBeforeBookingCreation(draft: BookingDraft): LangGraphNodeResult | null {

@@ -8,11 +8,14 @@ import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import {
   CLIENT_RECIPIENT_TYPE,
-  DEFAULT_CHANNELS,
   FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import {
+  NotificationChannel,
+  type NotificationJobData,
+  NotificationType,
+} from "../notification/notification.interface";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -170,10 +173,21 @@ export class BookingConfirmationService {
     bookingDetails: ReturnType<typeof normaliseBookingDetails>,
   ): Promise<void> {
     try {
+      const channels = this.determineChannels(
+        bookingDetails.customerEmail,
+        bookingDetails.customerPhone,
+      );
+      if (channels.length === 0) {
+        this.logger.warn("No customer delivery channel available for booking confirmation", {
+          bookingId,
+        });
+        return;
+      }
+
       const jobData: NotificationJobData = {
         id: `booking-confirmed-${bookingId}-${Date.now()}`,
         type: NotificationType.BOOKING_CONFIRMED,
-        channels: DEFAULT_CHANNELS,
+        channels,
         bookingId,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {
@@ -227,7 +241,7 @@ export class BookingConfirmationService {
       const jobData: NotificationJobData = {
         id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
         type: NotificationType.FLEET_OWNER_NEW_BOOKING,
-        channels: DEFAULT_CHANNELS,
+        channels: this.determineChannels(ownerEmail ?? undefined, ownerPhone ?? undefined),
         bookingId: booking.id,
         recipients: {
           [FLEET_OWNER_RECIPIENT_TYPE]: {
@@ -257,5 +271,16 @@ export class BookingConfirmationService {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private determineChannels(email?: string, phoneNumber?: string): NotificationChannel[] {
+    const channels: NotificationChannel[] = [];
+    if (email) {
+      channels.push(NotificationChannel.EMAIL);
+    }
+    if (phoneNumber) {
+      channels.push(NotificationChannel.WHATSAPP);
+    }
+    return channels;
   }
 }

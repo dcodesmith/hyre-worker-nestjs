@@ -38,6 +38,17 @@ import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
+export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
+type GuestPreferredNotificationChannel = "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" | "WHATSAPP_ONLY";
+export type BookingCreationContext = {
+  guestContactSource?: GuestContactSource;
+};
+export type CreateBookingRequest = {
+  input: CreateBookingInput;
+  sessionUser: AuthSession["user"] | null;
+  context?: BookingCreationContext;
+};
+
 /**
  * Service for orchestrating the complete booking creation flow.
  *
@@ -71,8 +82,7 @@ export class BookingCreationService {
   /**
    * Create a new booking.
    *
-   * @param booking - Validated booking DTO from request body
-   * @param sessionUser - Authenticated user from session (null for guest bookings)
+   * @param request - Booking input + session metadata + invocation context
    * @returns Booking ID and checkout URL
    * @throws BookingValidationException for validation errors
    * @throws CarNotFoundException if car not found
@@ -81,11 +91,9 @@ export class BookingCreationService {
    * @throws PaymentIntentFailedException if payment creation fails
    * @throws BookingCreationFailedException for other errors
    */
-  async createBooking(
-    booking: CreateBookingInput,
-    sessionUser: AuthSession["user"] | null,
-  ): Promise<CreateBookingResponse> {
-    const normalizedBooking = this.normalizeInput(booking);
+  async createBooking(request: CreateBookingRequest): Promise<CreateBookingResponse> {
+    const { input, sessionUser, context } = request;
+    const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
 
     this.logger.log("Starting booking creation", {
@@ -162,6 +170,7 @@ export class BookingCreationService {
     const result = await this.createBookingWithPayment({
       booking: normalizedBooking,
       sessionUser,
+      context,
       car,
       legs,
       financials,
@@ -336,6 +345,7 @@ export class BookingCreationService {
   private async createBookingWithPayment(params: {
     booking: CreateBookingInput;
     sessionUser: AuthSession["user"] | null;
+    context?: BookingCreationContext;
     car: CarWithPricing;
     legs: GeneratedLeg[];
     financials: BookingFinancials;
@@ -346,6 +356,7 @@ export class BookingCreationService {
     const {
       booking,
       sessionUser,
+      context,
       car,
       legs,
       financials,
@@ -361,6 +372,11 @@ export class BookingCreationService {
           email: customerDetails.email,
           name: customerDetails.name,
           phoneNumber: customerDetails.phoneNumber ?? null,
+          guestContactSource: context?.guestContactSource ?? "WEB_GUEST_FORM",
+          preferredNotificationChannel:
+            context?.guestContactSource === "WHATSAPP_AGENT"
+              ? ("WHATSAPP_ONLY" as GuestPreferredNotificationChannel)
+              : ("EMAIL_AND_WHATSAPP" as GuestPreferredNotificationChannel),
         };
 
     // Track flight record ID for post-transaction alert creation

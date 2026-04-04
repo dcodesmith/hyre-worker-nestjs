@@ -91,17 +91,7 @@ export class LangGraphExtractorService {
       ]);
       this.logger.debug("Extraction response received", { conversationId });
 
-      let content = "";
-      if (typeof response.content === "string") {
-        content = response.content;
-      } else if (
-        Array.isArray(response.content) &&
-        response.content.length > 0 &&
-        response.content[0]?.type === "text"
-      ) {
-        content = String(response.content[0].text ?? "");
-      }
-
+      const content = this.getTextContent(response.content);
       const parsed = JSON.parse(content);
       const validated = extractionSchema.parse(parsed);
 
@@ -280,5 +270,15 @@ export class LangGraphExtractorService {
     }
 
     return null;
+  }
+
+  private getTextContent(content: unknown): string {
+    if (typeof content === "string") {
+      return content;
+    }
+    if (Array.isArray(content) && content.length > 0 && content[0]?.type === "text") {
+      return String(content[0].text ?? "");
+    }
+    return "";
   }
 }

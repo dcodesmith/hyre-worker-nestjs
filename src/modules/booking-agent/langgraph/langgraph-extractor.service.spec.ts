@@ -427,6 +427,79 @@ describe("LangGraphExtractorService", () => {
       expect(result.draftPatch.pickupLocation).toBe("Victoria Island");
     });
 
+    it("uses make when extractor returns explicit brand from message", async () => {
+      openaiMock.invoke.mockResolvedValue({
+        content: JSON.stringify({
+          intent: "provide_info",
+          draftPatch: {
+            vehicleType: "SUV",
+            make: "Toyota",
+          },
+          confidence: 0.9,
+        }),
+      });
+
+      const state = buildState({
+        inboundMessage: "I need a Toyota SUV for today",
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.vehicleType).toBe("SUV");
+      expect(result.draftPatch.make).toBe("Toyota");
+      expect(result.draftPatch.model).toBeUndefined();
+      expect(openaiMock.invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not force make or model when none is explicitly mentioned", async () => {
+      openaiMock.invoke.mockResolvedValue({
+        content: JSON.stringify({
+          intent: "provide_info",
+          draftPatch: {
+            vehicleType: "SUV",
+          },
+          confidence: 0.9,
+        }),
+      });
+
+      const state = buildState({
+        inboundMessage: "I need an SUV for today",
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.vehicleType).toBe("SUV");
+      expect(result.draftPatch.make).toBeUndefined();
+      expect(result.draftPatch.model).toBeUndefined();
+    });
+
+    it("uses make and model when extractor returns both explicitly", async () => {
+      openaiMock.invoke.mockResolvedValue({
+        content: JSON.stringify({
+          intent: "provide_info",
+          draftPatch: {
+            vehicleType: "SUV",
+            make: "Toyota",
+            model: "Highlander",
+          },
+          confidence: 0.9,
+        }),
+      });
+
+      const state = buildState({
+        inboundMessage: "Please find a Toyota Highlander SUV",
+      });
+
+      const result = await service.extract(state);
+
+      expect(result.draftPatch.make).toBe("Toyota");
+      expect(result.draftPatch.model).toBe("Highlander");
+      expect(result.draftPatch.vehicleType).toBe("SUV");
+      expect(openaiMock.invoke).toHaveBeenCalledTimes(1);
+    });
+
     it("extracts selection hint when selecting option", async () => {
       openaiMock.invoke.mockResolvedValue({
         content: JSON.stringify({

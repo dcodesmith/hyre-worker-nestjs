@@ -245,7 +245,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      const result = await service.createBooking(booking, user);
+      const result = await service.createBooking({ input: booking, sessionUser: user });
 
       expect(result).toEqual({
         bookingId: "booking-123",
@@ -273,7 +273,7 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      const result = await service.createBooking(booking, null);
+      const result = await service.createBooking({ input: booking, sessionUser: null });
 
       expect(result).toEqual({
         bookingId: "booking-123",
@@ -294,7 +294,7 @@ describe("BookingCreationService", () => {
       });
       const user = createSessionUser();
 
-      await service.createBooking(booking, user);
+      await service.createBooking({ input: booking, sessionUser: user });
 
       expect(validationService.validateDates).toHaveBeenCalledWith({
         startDate: new Date("2026-03-03T10:00:00.000Z"),
@@ -319,7 +319,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         BookingValidationException,
       );
 
@@ -336,7 +336,9 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(CarNotAvailableException);
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
+        CarNotAvailableException,
+      );
 
       expect(databaseService.car.findUnique).not.toHaveBeenCalled();
     });
@@ -352,7 +354,7 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      await expect(service.createBooking(booking, null)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: null })).rejects.toThrow(
         BookingValidationException,
       );
     });
@@ -368,7 +370,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
 
       // Pass user: null with a non-guest booking
-      await expect(service.createBooking(booking, null)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: null })).rejects.toThrow(
         BookingValidationException,
       );
       expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
@@ -383,7 +385,9 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(CarNotFoundException);
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
+        CarNotFoundException,
+      );
     });
 
     it("should throw BookingValidationException when price does not match", async () => {
@@ -411,7 +415,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput({ clientTotalAmount: "10000" });
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         BookingValidationException,
       );
     });
@@ -427,7 +431,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         PaymentIntentFailedException,
       );
 
@@ -451,7 +455,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         BookingCreationFailedException,
       );
     });
@@ -465,7 +469,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         BookingPaymentSyncFailedException,
       );
       expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
@@ -511,7 +515,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         BookingCreationFailedException,
       );
 
@@ -600,7 +604,7 @@ describe("BookingCreationService", () => {
       });
       const user = createSessionUser();
 
-      const result = await service.createBooking(booking, user);
+      const result = await service.createBooking({ input: booking, sessionUser: user });
 
       expect(result.bookingId).toBe("booking-123");
       expect(flightAwareService.validateFlight).toHaveBeenCalledWith("BA74", "2025-02-01");
@@ -627,7 +631,9 @@ describe("BookingCreationService", () => {
       });
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(FlightNotFoundException);
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
+        FlightNotFoundException,
+      );
     });
 
     it("should throw FlightAlreadyLandedException when flight has already landed", async () => {
@@ -648,7 +654,7 @@ describe("BookingCreationService", () => {
       });
       const user = createSessionUser();
 
-      await expect(service.createBooking(booking, user)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
         FlightAlreadyLandedException,
       );
     });
@@ -732,7 +738,7 @@ describe("BookingCreationService", () => {
       // Session user only has Better Auth fields, not referral info
       const sessionUser = createSessionUser();
 
-      const result = await service.createBooking(booking, sessionUser);
+      const result = await service.createBooking({ input: booking, sessionUser });
 
       expect(result.bookingId).toBe("booking-123");
 
@@ -823,7 +829,7 @@ describe("BookingCreationService", () => {
       // Session user only has Better Auth fields
       const sessionUser = createSessionUser();
 
-      await service.createBooking(booking, sessionUser);
+      await service.createBooking({ input: booking, sessionUser });
 
       // Verify that user.referralDiscountUsed was set to true WITHIN the transaction
       // This prevents the race condition where concurrent bookings could all receive the discount
@@ -894,7 +900,7 @@ describe("BookingCreationService", () => {
       const sessionUser = createSessionUser();
 
       // Should throw because fresh DB query shows discount was already used
-      await expect(service.createBooking(booking, sessionUser)).rejects.toThrow(
+      await expect(service.createBooking({ input: booking, sessionUser })).rejects.toThrow(
         ReferralDiscountNoLongerAvailableException,
       );
     });
@@ -952,7 +958,7 @@ describe("BookingCreationService", () => {
 
       const booking = createGuestBookingInput();
 
-      await service.createBooking(booking, null);
+      await service.createBooking({ input: booking, sessionUser: null });
 
       // Verify no referral discount was passed
       expect(calculationService.calculateBookingCost).toHaveBeenCalledWith(
@@ -1024,7 +1030,7 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput();
       const user = createSessionUser();
 
-      await service.createBooking(booking, user);
+      await service.createBooking({ input: booking, sessionUser: user });
 
       // CRITICAL: Verify NO discount was applied (user already used it)
       expect(calculationService.calculateBookingCost).toHaveBeenCalledWith(

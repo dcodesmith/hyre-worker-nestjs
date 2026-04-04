@@ -93,6 +93,7 @@ model User {
   approvedVehicleImages     VehicleImage[]             @relation("ApprovedVehicleImages")
   sessions                  Session[]
   roles                     Role[]                     @relation("RoleToUser")
+  whatsAppConversations     WhatsAppConversation[]     @relation("WhatsAppConversationLinkedUser")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -621,6 +622,10 @@ model WhatsAppConversation {
   waId                    String?                    @unique
   profileName             String?
   status                  WhatsAppConversationStatus @default(ACTIVE)
+  linkedUserId            String?
+  linkStatus              WhatsAppLinkStatus         @default(UNLINKED)
+  linkRequestedAt         DateTime?
+  linkVerifiedAt          DateTime?
   lastInboundAt           DateTime?
   lastOutboundAt          DateTime?
   windowExpiresAt         DateTime?
@@ -628,6 +633,7 @@ model WhatsAppConversation {
   handoffAt               DateTime?
   activeBookingDraftId    String?
   activeBookingDraft      BookingDraft?              @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
+  linkedUser              User?                      @relation("WhatsAppConversationLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
   processingLockToken     String?
   processingLockExpiresAt DateTime?
   messages                WhatsAppMessage[]
@@ -637,6 +643,8 @@ model WhatsAppConversation {
   updatedAt               DateTime                   @updatedAt
 
   @@index([status])
+  @@index([linkedUserId])
+  @@index([linkStatus])
   @@index([windowExpiresAt])
   @@index([processingLockExpiresAt])
 }
@@ -867,6 +875,13 @@ enum WhatsAppConversationStatus {
   ACTIVE
   HANDOFF
   CLOSED
+}
+
+enum WhatsAppLinkStatus {
+  UNLINKED
+  PENDING_VERIFICATION
+  LINKED
+  REVOKED
 }
 
 enum WhatsAppDeliveryMode {

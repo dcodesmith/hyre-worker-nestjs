@@ -6,6 +6,7 @@ import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
+import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { CreateBookingNode } from "./create-booking.node";
 import { ExtractNode } from "./extract.node";
 import { HandoffNode } from "./handoff.node";
@@ -54,6 +55,9 @@ describe("LangGraphGraphService", () => {
   };
   let googlePlacesServiceMock: {
     validateAddress: ReturnType<typeof vi.fn>;
+  };
+  let whatsAppPersistenceServiceMock: {
+    getConversationLinkState: ReturnType<typeof vi.fn>;
   };
 
   const conversationId = "conv_test";
@@ -128,11 +132,19 @@ describe("LangGraphGraphService", () => {
 
     databaseServiceMock = {
       whatsAppConversation: {
-        findUnique: vi.fn().mockResolvedValue({
-          phoneE164: "+2348012345678",
-          profileName: "Test Customer",
+        findUnique: vi.fn().mockImplementation(() => {
+          return Promise.resolve({
+            phoneE164: "+2348012345678",
+            profileName: "Test Customer",
+          });
         }),
       },
+    };
+
+    whatsAppPersistenceServiceMock = {
+      getConversationLinkState: vi
+        .fn()
+        .mockResolvedValue({ linkedUserId: null, linkStatus: "UNLINKED" }),
     };
 
     googlePlacesServiceMock = {
@@ -152,6 +164,7 @@ describe("LangGraphGraphService", () => {
         { provide: BookingAgentWindowPolicyService, useValue: windowPolicyServiceMock },
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
         ExtractNode,
         MergeNode,
@@ -2377,7 +2390,7 @@ describe("LangGraphGraphService", () => {
       });
 
       expect(result.stage).toBe("presenting_options");
-      expect(result.draft.dropoffDate).toBe("2026-03-07");
+      expect(result.draft.dropoffDate).toBe("2026-03-06");
     });
   });
 });

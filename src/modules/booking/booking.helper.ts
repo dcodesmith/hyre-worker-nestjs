@@ -46,20 +46,23 @@ export function calculateLegCount(
  * Calculate leg count for DAY bookings.
  * Uses eachDayOfInterval with UTC dates for consistent results.
  */
-function calculateDayLegCount(startDate: Date, endDate: Date): number {
+export function getDayLegDates(startDate: Date, endDate: Date): Date[] {
   const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
-  const utcStart = new UTCDate(startDate);
-  const utcEnd = new UTCDate(effectiveEndDate);
+  return eachDayOfInterval({
+    start: new UTCDate(startDate),
+    end: new UTCDate(effectiveEndDate),
+  });
+}
 
-  const days = eachDayOfInterval({ start: utcStart, end: utcEnd });
-  return days.length;
+export function calculateDayLegCount(startDate: Date, endDate: Date): number {
+  return getDayLegDates(startDate, endDate).length;
 }
 
 /**
  * Calculate leg count for NIGHT bookings.
  * Number of nights = ceil(totalHours / 24), minimum 1.
  */
-function calculateNightLegCount(startDate: Date, endDate: Date): number {
+export function calculateNightLegCount(startDate: Date, endDate: Date): number {
   const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
   const totalHours = (effectiveEndDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
   return Math.max(1, Math.ceil(totalHours / 24));
@@ -69,9 +72,13 @@ function calculateNightLegCount(startDate: Date, endDate: Date): number {
  * Calculate leg count for FULL_DAY bookings.
  * Number of legs = ceil(totalHours / 24), minimum 1.
  */
-function calculateFullDayLegCount(startDate: Date, endDate: Date): number {
+export function calculateFullDayLegCount(
+  startDate: Date,
+  endDate: Date,
+  baseStartTime: Date = startDate,
+): number {
   const effectiveEndDate = getEffectiveEndDate(endDate, startDate);
-  const totalMs = effectiveEndDate.getTime() - startDate.getTime();
+  const totalMs = effectiveEndDate.getTime() - baseStartTime.getTime();
   const totalHours = totalMs / (1000 * 60 * 60);
   return Math.max(1, Math.ceil(totalHours / 24));
 }

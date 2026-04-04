@@ -65,7 +65,10 @@ export class BookingController {
     @ValidatedBookingBody() booking: CreateBookingInput,
     @CurrentUser() sessionUser: AuthSession["user"] | null,
   ): Promise<CreateBookingResponse> {
-    return this.bookingCreationService.createBooking(booking, sessionUser);
+    return this.bookingCreationService.createBooking({
+      input: booking,
+      sessionUser,
+    });
   }
 
   @Post(":bookingId/extensions")

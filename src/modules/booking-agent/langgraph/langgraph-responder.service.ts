@@ -1,5 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
+import { addHours, format } from "date-fns";
+import { calculateLegCount } from "../../booking/booking.helper";
+import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
 import type {
@@ -313,10 +316,17 @@ export class LangGraphResponderService {
   private buildBookingSummary(draft: BookingDraft, selectedOption: VehicleSearchOption): string {
     const priceFormatted = this.formatRequiredPrice(selectedOption.estimatedTotalInclVat);
     const durationDays = this.resolveDurationDays(draft);
+    const billedLegs = this.resolveBilledLegs(draft);
+    const billedLegUnit = billedLegs === 1 ? "leg" : "legs";
+    const bookingWindowLines = this.buildBookingWindowLines(draft);
+    const billedLegsSuffix = billedLegs === null ? "" : ` (${billedLegs} billed ${billedLegUnit})`;
+    const bookedForUnit = this.resolveBookedForUnit(draft.bookingType);
     const durationLine =
       durationDays === null
         ? []
-        : [`*🗓️ Duration:* ${durationDays} ${durationDays === 1 ? "day" : "days"}`];
+        : [
+            `*🗓️ Booked for:* ${durationDays} ${durationDays === 1 ? bookedForUnit.singular : bookedForUnit.plural}${billedLegsSuffix}`,
+          ];
 
     return [
       "*📋 Booking Summary*",
@@ -327,9 +337,8 @@ export class LangGraphResponderService {
       ...(draft.bookingType
         ? [`*📅 Service:* ${this.getBookingTypeLabel(draft.bookingType)}`]
         : []),
-      ...(draft.pickupDate ? [`*📆 Date:* ${draft.pickupDate}`] : []),
+      ...bookingWindowLines,
       ...durationLine,
-      ...(draft.pickupTime ? [`*⏰ Pickup Time:* ${draft.pickupTime}`] : []),
       ...(draft.pickupLocation ? [`*📍 Pickup:* ${draft.pickupLocation}`] : []),
       ...(draft.dropoffLocation ? [`*📍 Drop-off:* ${draft.dropoffLocation}`] : []),
       "",
@@ -362,6 +371,141 @@ export class LangGraphResponderService {
     }
 
     return dayDifference;
+  }
+
+  private resolveBilledLegs(draft: BookingDraft): number | null {
+    if (draft.bookingType && draft.pickupDate && draft.dropoffDate) {
+      const pickupDate = parseSearchDate(draft.pickupDate);
+      const dropoffDate = parseSearchDate(draft.dropoffDate);
+      if (pickupDate && dropoffDate) {
+        return calculateLegCount(draft.bookingType, pickupDate, dropoffDate);
+      }
+    }
+
+    if (typeof draft.durationDays === "number" && draft.durationDays > 0) {
+      return draft.durationDays;
+    }
+
+    return null;
+  }
+
+  private resolveBookedForUnit(bookingType: BookingType | undefined): {
+    singular: string;
+    plural: string;
+  } {
+    if (bookingType === "NIGHT") {
+      return { singular: "night", plural: "nights" };
+    }
+    return { singular: "day", plural: "days" };
+  }
+
+  private buildBookingWindowLines(draft: BookingDraft): string[] {
+    if (!draft.pickupDate || !draft.pickupTime) {
+      return draft.pickupDate ? [`*📆 Date:* ${draft.pickupDate}`] : [];
+    }
+
+    const startDate = parseSearchDate(draft.pickupDate);
+    if (!startDate) {
+      return [`*📆 Date:* ${draft.pickupDate}`, `*⏰ Pickup Time:* ${draft.pickupTime}`];
+    }
+
+    const startDateTime = this.withTime(startDate, draft.pickupTime);
+    const startLabel = this.formatDateWithAmPm(startDateTime);
+
+    if (!draft.bookingType) {
+      return [`*🕐 Start:* ${startLabel}`];
+    }
+
+    const dropoffDate = this.resolveDisplayDropoffDate(draft, startDate);
+    if (!dropoffDate) {
+      return [`*🕐 Start:* ${startLabel}`];
+    }
+
+    const endDateTime = this.resolveEndDateTime(dropoffDate, draft.bookingType, draft.pickupTime);
+    return [`*🕐 Start:* ${startLabel}`, `*🏁 End:* ${this.formatDateWithAmPm(endDateTime)}`];
+  }
+
+  private resolveEndDateTime(date: Date, bookingType: BookingType, pickupTime: string): Date {
+    switch (bookingType) {
+      case "DAY":
+        return addHours(this.withTime(date, pickupTime), 12);
+      case "NIGHT":
+        return this.withTime(date, "05:00");
+      case "FULL_DAY":
+        return this.withTime(date, pickupTime);
+      case "AIRPORT_PICKUP":
+      default:
+        return this.withTime(date, pickupTime);
+    }
+  }
+
+  private resolveDisplayDropoffDate(draft: BookingDraft, pickupDate: Date): Date | null {
+    if (draft.dropoffDate) {
+      return parseSearchDate(draft.dropoffDate);
+    }
+
+    if (typeof draft.durationDays !== "number" || draft.durationDays <= 0 || !draft.bookingType) {
+      return null;
+    }
+
+    const daysToAdd =
+      draft.bookingType === "DAY" ? Math.max(draft.durationDays - 1, 0) : draft.durationDays;
+    return addHours(pickupDate, daysToAdd * 24);
+  }
+
+  private withTime(date: Date, time: string): Date {
+    const parsed = this.parseTimeTo24Hour(time);
+    if (!parsed) {
+      return date;
+    }
+    return new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      parsed.hours24,
+      parsed.minutes,
+      0,
+      0,
+    );
+  }
+
+  private parseTimeTo24Hour(time: string): { hours24: number; minutes: number } | null {
+    const normalized = time.trim();
+    const twelveHourMatch = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(normalized);
+    if (twelveHourMatch) {
+      const hour = Number.parseInt(twelveHourMatch[1], 10);
+      const minutes = twelveHourMatch[2] ? Number.parseInt(twelveHourMatch[2], 10) : 0;
+      if (hour < 1 || hour > 12 || minutes < 0 || minutes > 59) {
+        return null;
+      }
+      let hours24 = hour % 12;
+      if (twelveHourMatch[3].toUpperCase() === "PM") {
+        hours24 += 12;
+      }
+      return { hours24, minutes };
+    }
+
+    const twentyFourHourMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(normalized);
+    if (twentyFourHourMatch) {
+      return {
+        hours24: Number.parseInt(twentyFourHourMatch[1], 10),
+        minutes: Number.parseInt(twentyFourHourMatch[2], 10),
+      };
+    }
+
+    return null;
+  }
+
+  private formatDateWithAmPm(date: Date): string {
+    const datePart = format(date, "do MMM yyyy");
+    const timePart = date
+      .toLocaleTimeString("en-GB", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .toLowerCase();
+    return `${datePart}, ${timePart}`;
   }
 
   private formatRequiredPrice(estimatedTotalInclVat: number): string {
