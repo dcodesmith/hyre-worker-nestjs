@@ -494,9 +494,7 @@ export class LangGraphResponderService {
   }
 
   private formatDateWithAmPm(date: Date): string {
-    return format(date, "do MMM yyyy, h:mm a").replace(/\s(AM|PM)$/u, (match) =>
-      match.toLowerCase(),
-    );
+    return format(date, "do MMM yyyy, h:mm aaa");
   }
 
   private formatRequiredPrice(estimatedTotalInclVat: number): string {
