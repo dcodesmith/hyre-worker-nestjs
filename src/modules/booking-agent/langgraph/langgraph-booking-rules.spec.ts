@@ -91,6 +91,20 @@ describe("langgraph-booking-rules", () => {
     expect(result.dropoffDate).toBe("2026-04-10");
   });
 
+  it("preserves explicit NIGHT dropoffDate when durationDays is missing", () => {
+    const draft = {
+      bookingType: "NIGHT" as const,
+      pickupDate: "2026-04-05",
+      dropoffDate: "2026-04-08",
+      pickupLocation: "Lekki Phase 1",
+      dropoffLocation: "Lekki Phase 1",
+    };
+
+    const result = applyDerivedDraftFields(draft, "");
+    expect(result.pickupTime).toBe("23:00");
+    expect(result.dropoffDate).toBe("2026-04-08");
+  });
+
   it("detects draft changes across key fields", () => {
     const oldDraft = { pickupDate: "2026-03-01", bookingType: "DAY" as const };
     const newDraft = { pickupDate: "2026-03-02", bookingType: "DAY" as const };

@@ -39,7 +39,6 @@ import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-boo
 import { isGuestBooking } from "./dto/create-booking.dto";
 
 export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
-type GuestPreferredNotificationChannel = "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" | "WHATSAPP_ONLY";
 export type BookingCreationContext = {
   guestContactSource?: GuestContactSource;
 };
@@ -365,6 +364,13 @@ export class BookingCreationService {
       preliminaryReferralEligibility,
     } = params;
 
+    const preferredNotificationChannel: "WHATSAPP_ONLY" | "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" =
+      context?.guestContactSource === "WHATSAPP_AGENT"
+        ? "WHATSAPP_ONLY"
+        : customerDetails.phoneNumber
+          ? "EMAIL_AND_WHATSAPP"
+          : "EMAIL_ONLY";
+
     // Build guest user JSON from customerDetails (if guest booking)
     const guestUser = sessionUser
       ? null
@@ -373,10 +379,7 @@ export class BookingCreationService {
           name: customerDetails.name,
           phoneNumber: customerDetails.phoneNumber ?? null,
           guestContactSource: context?.guestContactSource ?? "WEB_GUEST_FORM",
-          preferredNotificationChannel:
-            context?.guestContactSource === "WHATSAPP_AGENT"
-              ? ("WHATSAPP_ONLY" as GuestPreferredNotificationChannel)
-              : ("EMAIL_AND_WHATSAPP" as GuestPreferredNotificationChannel),
+          preferredNotificationChannel,
         };
 
     // Track flight record ID for post-transaction alert creation
@@ -500,27 +503,7 @@ export class BookingCreationService {
         throw error;
       }
 
-      // Step 3: Compensation - keep booking in unpaid state if payment creation fails
-      this.logger.warn("Payment intent failed, keeping booking in UNPAID state", {
-        bookingId: createdBooking.id,
-        bookingReference: createdBooking.bookingReference,
-      });
-
-      try {
-        await this.persistenceService.markBookingUnpaid(createdBooking.id);
-      } catch (markUnpaidError) {
-        this.logger.error("Failed to mark booking as UNPAID after payment failure", {
-          bookingId: createdBooking.id,
-          bookingReference: createdBooking.bookingReference,
-          error:
-            markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
-          originalPaymentError: error instanceof Error ? error.message : String(error),
-        });
-
-        throw new BookingCreationFailedException(
-          "Payment failed and compensation failed to mark booking as UNPAID.",
-        );
-      }
+      await this.handlePaymentFailureCompensation(createdBooking, error);
 
       // Re-throw payment exception
       if (error instanceof PaymentIntentFailedException) {
@@ -535,6 +518,30 @@ export class BookingCreationService {
       bookingId: createdBooking.id,
       checkoutUrl,
     };
+  }
+
+  private async handlePaymentFailureCompensation(booking: Booking, originalError: unknown) {
+    // Step 3: Compensation - keep booking in unpaid state if payment creation fails
+    this.logger.warn("Payment intent failed, keeping booking in UNPAID state", {
+      bookingId: booking.id,
+      bookingReference: booking.bookingReference,
+    });
+
+    try {
+      await this.persistenceService.markBookingUnpaid(booking.id);
+    } catch (markUnpaidError) {
+      this.logger.error("Failed to mark booking as UNPAID after payment failure", {
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        error: markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
+        originalPaymentError:
+          originalError instanceof Error ? originalError.message : String(originalError),
+      });
+
+      throw new BookingCreationFailedException(
+        "Payment failed and compensation failed to mark booking as UNPAID.",
+      );
+    }
   }
 
   private async syncPaymentIntentWithBooking(

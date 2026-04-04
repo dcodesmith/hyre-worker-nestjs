@@ -221,8 +221,6 @@ describe("WhatsAppProcessor", () => {
       rawPayload: {},
       conversation: {
         windowExpiresAt: new Date("2026-03-01T00:00:00.000Z"),
-        linkStatus: "LINKED",
-        linkedUserId: "user_linked_123",
       },
     });
     persistenceService.getConversationLinkState.mockResolvedValue({
@@ -242,6 +240,7 @@ describe("WhatsAppProcessor", () => {
       }),
     );
 
+    expect(persistenceService.getConversationLinkState).toHaveBeenCalledWith("conv-1");
     expect(orchestratorService.decide).toHaveBeenCalledWith(
       expect.objectContaining({
         customerId: "user_linked_123",

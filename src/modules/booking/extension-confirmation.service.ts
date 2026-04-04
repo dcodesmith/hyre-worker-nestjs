@@ -9,11 +9,8 @@ import {
   CLIENT_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import {
-  NotificationChannel,
-  type NotificationJobData,
-  NotificationType,
-} from "../notification/notification.interface";
+import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import { deriveNotificationChannels } from "../notification/notification-channel.helper";
 import { BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND } from "../notification/template-data.interface";
 
 @Injectable()
@@ -94,13 +91,7 @@ export class ExtensionConfirmationService {
 
     const bookingDetails = normaliseBookingDetails(updatedExtension.bookingLeg.booking);
     const extensionDetails = normaliseExtensionDetails(updatedExtension);
-    const channels: NotificationChannel[] = [];
-    if (bookingDetails.customerEmail) {
-      channels.push(NotificationChannel.EMAIL);
-    }
-    if (bookingDetails.customerPhone) {
-      channels.push(NotificationChannel.WHATSAPP);
-    }
+    const channels = deriveNotificationChannels(bookingDetails);
 
     if (channels.length === 0) {
       this.logger.warn("No customer delivery channel available for extension confirmation", {

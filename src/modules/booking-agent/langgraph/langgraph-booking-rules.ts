@@ -38,10 +38,12 @@ export function applyDerivedDraftFields(draft: BookingDraft, inboundMessage: str
     updatedDraft.pickupTime = "23:00";
   }
 
-  if (
-    updatedDraft.pickupDate &&
-    (updatedDraft.durationDays || updatedDraft.bookingType === "NIGHT")
-  ) {
+  const hasDurationDays =
+    typeof updatedDraft.durationDays === "number" && updatedDraft.durationDays > 0;
+  const shouldDefaultNightToOne =
+    updatedDraft.bookingType === "NIGHT" && !hasDurationDays && !updatedDraft.dropoffDate;
+
+  if (updatedDraft.pickupDate && (hasDurationDays || shouldDefaultNightToOne)) {
     const normalizedDurationDays = Math.max(updatedDraft.durationDays ?? 1, 1);
     const daysToAdd =
       updatedDraft.bookingType === "DAY"

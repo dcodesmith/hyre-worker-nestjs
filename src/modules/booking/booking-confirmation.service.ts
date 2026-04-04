@@ -11,11 +11,8 @@ import {
   FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import {
-  NotificationChannel,
-  type NotificationJobData,
-  NotificationType,
-} from "../notification/notification.interface";
+import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import { deriveNotificationChannels } from "../notification/notification-channel.helper";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -173,10 +170,7 @@ export class BookingConfirmationService {
     bookingDetails: ReturnType<typeof normaliseBookingDetails>,
   ): Promise<void> {
     try {
-      const channels = this.determineChannels(
-        bookingDetails.customerEmail,
-        bookingDetails.customerPhone,
-      );
+      const channels = deriveNotificationChannels(bookingDetails);
       if (channels.length === 0) {
         this.logger.warn("No customer delivery channel available for booking confirmation", {
           bookingId,
@@ -241,7 +235,10 @@ export class BookingConfirmationService {
       const jobData: NotificationJobData = {
         id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
         type: NotificationType.FLEET_OWNER_NEW_BOOKING,
-        channels: this.determineChannels(ownerEmail ?? undefined, ownerPhone ?? undefined),
+        channels: deriveNotificationChannels({
+          email: ownerEmail ?? undefined,
+          phoneNumber: ownerPhone ?? undefined,
+        }),
         bookingId: booking.id,
         recipients: {
           [FLEET_OWNER_RECIPIENT_TYPE]: {
@@ -271,16 +268,5 @@ export class BookingConfirmationService {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  private determineChannels(email?: string, phoneNumber?: string): NotificationChannel[] {
-    const channels: NotificationChannel[] = [];
-    if (email) {
-      channels.push(NotificationChannel.EMAIL);
-    }
-    if (phoneNumber) {
-      channels.push(NotificationChannel.WHATSAPP);
-    }
-    return channels;
   }
 }

@@ -431,9 +431,6 @@ export class LangGraphResponderService {
         return addHours(this.withTime(date, pickupTime), 12);
       case "NIGHT":
         return this.withTime(date, "05:00");
-      case "FULL_DAY":
-        return this.withTime(date, pickupTime);
-      case "AIRPORT_PICKUP":
       default:
         return this.withTime(date, pickupTime);
     }
@@ -497,15 +494,9 @@ export class LangGraphResponderService {
   }
 
   private formatDateWithAmPm(date: Date): string {
-    const datePart = format(date, "do MMM yyyy");
-    const timePart = date
-      .toLocaleTimeString("en-GB", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-      .toLowerCase();
-    return `${datePart}, ${timePart}`;
+    return format(date, "do MMM yyyy, h:mm a").replace(/\s(AM|PM)$/u, (match) =>
+      match.toLowerCase(),
+    );
   }
 
   private formatRequiredPrice(estimatedTotalInclVat: number): string {

@@ -111,6 +111,7 @@ export class BookingAgentOrchestratorService {
           this.buildSingleOutboxReply(context, {
             dedupeKey: `langgraph-error-fallback:${context.messageId}`,
             textBody: LANGGRAPH_ERROR_FALLBACK_TEXT,
+            templateName: "booking-reopen",
           }),
         );
       }
