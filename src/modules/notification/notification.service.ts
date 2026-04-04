@@ -147,7 +147,7 @@ export class NotificationService {
       });
       this.recordNotificationSkippedNoChannel({
         bookingId: bookingDetails.id,
-        oldStatus: "CANCELLED",
+        oldStatus: booking.status,
         newStatus: "CANCELLED",
       });
       return;
@@ -406,8 +406,14 @@ export class NotificationService {
     oldStatus: string;
     newStatus: string;
   }): void {
-    this.notificationSkippedNoChannelCounter.add(1, {
+    this.logger.debug("Incrementing notification_skipped_no_channel counter", {
       bookingId: input.bookingId,
+      oldStatus: input.oldStatus,
+      newStatus: input.newStatus,
+      reason: "no_channel",
+    });
+
+    this.notificationSkippedNoChannelCounter.add(1, {
       oldStatus: input.oldStatus,
       newStatus: input.newStatus,
       reason: "no_channel",
