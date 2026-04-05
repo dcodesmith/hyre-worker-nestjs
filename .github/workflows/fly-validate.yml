@@ -29,7 +29,7 @@ jobs:
 
       # Pin to v4 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       # Pin to v4 - check for updates with: gh api repos/actions/setup-node/tags --jq '.[0].name'
       - name: Setup Node.js
