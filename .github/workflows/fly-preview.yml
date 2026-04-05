@@ -56,8 +56,9 @@ jobs:
         id: meta
         run: |
           echo "neon_branch=preview/pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "preview_app=hyre-worker-nestjs-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "preview_url=https://${{ github.event.repository.name }}-pr-${{ github.event.number }}.fly.dev" >> "$GITHUB_OUTPUT"
+          PREVIEW_APP="hyre-worker-nestjs-pr-${{ github.event.number }}"
+          echo "preview_app=${PREVIEW_APP}" >> "$GITHUB_OUTPUT"
+          echo "preview_url=https://${PREVIEW_APP}.fly.dev" >> "$GITHUB_OUTPUT"
 
   create_neon_branch:
     name: Create Neon Branch
@@ -390,34 +391,44 @@ jobs:
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-
-            const existing = comments.find(
-              (comment) =>
-                comment.user?.type === "Bot" &&
-                typeof comment.body === "string" &&
-                comment.body.includes(marker),
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
                 owner,
                 repo,
                 issue_number,
-                body,
+                per_page: 100,
               });
+
+              const existing = comments.find(
+                (comment) =>
+                  comment.user?.type === "Bot" &&
+                  typeof comment.body === "string" &&
+                  comment.body.includes(marker),
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body,
+                });
+              }
+            } catch (error) {
+              const details =
+                error instanceof Error
+                  ? `${error.message}\n${error.stack ?? ""}`
+                  : JSON.stringify(error);
+              console.warn(
+                `[fly-preview] Non-fatal PR comment upsert failure (marker=${marker}): ${details}`,
+              );
             }
 
   cleanup:
