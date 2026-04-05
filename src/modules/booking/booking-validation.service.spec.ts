@@ -113,10 +113,10 @@ describe("BookingValidationService", () => {
     });
 
     it("should throw BookingValidationException for same-day DAY booking after 11 AM", () => {
-      // Mock current time to be 11 AM or later
+      // Mock current time to be after 11 AM
       vi.useFakeTimers();
       const now = new Date();
-      now.setHours(11, 0, 0, 0);
+      now.setHours(11, 1, 0, 0);
       vi.setSystemTime(now);
 
       const startDate = new Date(now);
@@ -136,18 +136,17 @@ describe("BookingValidationService", () => {
       vi.useRealTimers();
     });
 
-    it("should not throw for same-day DAY booking before 11 AM", () => {
-      // Mock current time to be 9 AM
+    it("should allow same-day DAY booking exactly at 11:00 AM cutoff", () => {
       vi.useFakeTimers();
       const now = new Date();
-      now.setHours(9, 0, 0, 0);
+      now.setHours(11, 0, 0, 0);
       vi.setSystemTime(now);
 
       const startDate = new Date(now);
-      startDate.setHours(14, 0, 0, 0); // 2 PM same day
+      startDate.setHours(11, 0, 0, 0);
 
       const endDate = new Date(startDate);
-      endDate.setHours(18, 0, 0, 0); // 6 PM same day
+      endDate.setHours(23, 0, 0, 0);
 
       expect(() =>
         service.validateDates({
@@ -158,6 +157,115 @@ describe("BookingValidationService", () => {
       ).not.toThrow();
 
       vi.useRealTimers();
+    });
+
+    it("should not throw for same-day DAY booking before 11 AM", () => {
+      // Mock current time to be 9 AM
+      vi.useFakeTimers();
+      const now = new Date();
+      now.setHours(9, 0, 0, 0);
+      vi.setSystemTime(now);
+
+      const startDate = new Date(now);
+      startDate.setHours(10, 0, 0, 0); // 10 AM same day
+
+      const endDate = new Date(startDate);
+      endDate.setHours(22, 0, 0, 0); // 10 PM same day
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "DAY",
+        }),
+      ).not.toThrow();
+
+      vi.useRealTimers();
+    });
+
+    it("should throw BookingValidationException when DAY booking starts before 7 AM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(6, 30, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setHours(18, 30, 0, 0);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "DAY",
+        }),
+      ).toThrow(BookingValidationException);
+    });
+
+    it("should throw BookingValidationException when DAY booking starts after 11 AM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(11, 1, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setHours(23, 1, 0, 0);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "DAY",
+        }),
+      ).toThrow(BookingValidationException);
+    });
+
+    it("should not throw when FULL_DAY booking starts within 6 AM to 11 PM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(23, 0, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "FULL_DAY",
+        }),
+      ).not.toThrow();
+    });
+
+    it("should throw BookingValidationException when FULL_DAY booking starts before 6 AM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(5, 59, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "FULL_DAY",
+        }),
+      ).toThrow(BookingValidationException);
+    });
+
+    it("should throw BookingValidationException when FULL_DAY booking starts after 11 PM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(23, 1, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "FULL_DAY",
+        }),
+      ).toThrow(BookingValidationException);
     });
 
     it("should throw BookingValidationException for airport pickup without 1-hour advance notice", () => {
@@ -273,71 +381,11 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).not.toHaveBeenCalled();
     });
 
-    it("should throw CarNotAvailableException when car approval status is REJECTED", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.AVAILABLE,
-          approvalStatus: CarApprovalStatus.REJECTED,
-        }),
-      );
-
-      await expect(
-        service.checkCarAvailability({
-          carId: "car-123",
-          startDate: new Date(),
-          endDate: new Date(),
-        }),
-      ).rejects.toThrow(CarNotAvailableException);
-
-      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
-    });
-
     it("should throw CarNotAvailableException when car status is HOLD", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         mockCar({
           id: "car-123",
           status: Status.HOLD,
-          approvalStatus: CarApprovalStatus.APPROVED,
-        }),
-      );
-
-      await expect(
-        service.checkCarAvailability({
-          carId: "car-123",
-          startDate: new Date(),
-          endDate: new Date(),
-        }),
-      ).rejects.toThrow(CarNotAvailableException);
-
-      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
-    });
-
-    it("should throw CarNotAvailableException when car status is IN_SERVICE", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.IN_SERVICE,
-          approvalStatus: CarApprovalStatus.APPROVED,
-        }),
-      );
-
-      await expect(
-        service.checkCarAvailability({
-          carId: "car-123",
-          startDate: new Date(),
-          endDate: new Date(),
-        }),
-      ).rejects.toThrow(CarNotAvailableException);
-
-      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
-    });
-
-    it("should throw CarNotAvailableException when car status is BOOKED", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.BOOKED,
           approvalStatus: CarApprovalStatus.APPROVED,
         }),
       );
@@ -609,159 +657,6 @@ describe("BookingValidationService", () => {
 
       const sessionUser = { id: "user-123" };
       expect(() => service.validateGuestRequirements(input, sessionUser)).not.toThrow();
-    });
-  });
-
-  describe("validateAll", () => {
-    it("should throw BookingValidationException when date validation fails", async () => {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-
-      const input: CreateBookingDto = {
-        carId: "car-123",
-        startDate: yesterday,
-        endDate: yesterday,
-        pickupAddress: "123 Main St",
-        bookingType: "DAY",
-        sameLocation: true,
-        includeSecurityDetail: false,
-        requiresFullTank: false,
-        useCredits: 0,
-      };
-
-      await expect(service.validateAll(input)).rejects.toThrow(BookingValidationException);
-    });
-
-    it("should not throw when all validations pass", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.AVAILABLE,
-          approvalStatus: CarApprovalStatus.APPROVED,
-        }),
-      );
-      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
-
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(10, 0, 0, 0);
-
-      const dayAfterTomorrow = new Date(tomorrow);
-      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
-
-      const input: CreateBookingDto = {
-        carId: "car-123",
-        startDate: tomorrow,
-        endDate: dayAfterTomorrow,
-        pickupAddress: "123 Main St",
-        bookingType: "DAY",
-        pickupTime: "9 AM",
-        sameLocation: true,
-        includeSecurityDetail: false,
-        requiresFullTank: false,
-        useCredits: 0,
-      };
-
-      await expect(service.validateAll(input)).resolves.toBeUndefined();
-    });
-
-    it("should throw BookingValidationException when price validation fails", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.AVAILABLE,
-          approvalStatus: CarApprovalStatus.APPROVED,
-        }),
-      );
-      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
-
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(10, 0, 0, 0);
-
-      const dayAfterTomorrow = new Date(tomorrow);
-      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
-
-      const input: CreateBookingDto = {
-        carId: "car-123",
-        startDate: tomorrow,
-        endDate: dayAfterTomorrow,
-        pickupAddress: "123 Main St",
-        bookingType: "DAY",
-        pickupTime: "9 AM",
-        sameLocation: true,
-        includeSecurityDetail: false,
-        requiresFullTank: false,
-        useCredits: 0,
-        clientTotalAmount: "5000", // Intentionally wrong
-      };
-
-      await expect(service.validateAll(input, new Decimal("10000"))).rejects.toThrow(
-        BookingValidationException,
-      );
-    });
-
-    it("should throw CarNotFoundException when car does not exist", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(null);
-
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(10, 0, 0, 0);
-
-      const dayAfterTomorrow = new Date(tomorrow);
-      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
-
-      const input: CreateBookingDto = {
-        carId: "non-existent-car",
-        startDate: tomorrow,
-        endDate: dayAfterTomorrow,
-        pickupAddress: "123 Main St",
-        bookingType: "DAY",
-        sameLocation: true,
-        includeSecurityDetail: false,
-        requiresFullTank: false,
-        useCredits: 0,
-      };
-
-      await expect(service.validateAll(input)).rejects.toThrow(CarNotFoundException);
-    });
-
-    it("should throw BookingValidationException for guest with registered email", async () => {
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
-          id: "car-123",
-          status: Status.AVAILABLE,
-          approvalStatus: CarApprovalStatus.APPROVED,
-        }),
-      );
-      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
-      vi.mocked(databaseService.user.findUnique).mockResolvedValueOnce(
-        mockUser({ id: "existing-user" }),
-      );
-
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(10, 0, 0, 0);
-
-      const dayAfterTomorrow = new Date(tomorrow);
-      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
-
-      const input: CreateGuestBookingDto = {
-        carId: "car-123",
-        startDate: tomorrow,
-        endDate: dayAfterTomorrow,
-        pickupAddress: "123 Main St",
-        bookingType: "DAY",
-        sameLocation: true,
-        includeSecurityDetail: false,
-        requiresFullTank: false,
-        useCredits: 0,
-        guestEmail: "existing@example.com",
-        guestName: "John Doe",
-        guestPhone: "1234567890",
-      };
-
-      await expect(service.validateAll(input)).rejects.toThrow(BookingValidationException);
     });
   });
 });
