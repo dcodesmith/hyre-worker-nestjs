@@ -24,8 +24,10 @@ import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
+import { RootController } from "./root.controller";
 
 @Module({
+  controllers: [RootController],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
