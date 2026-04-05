@@ -284,6 +284,9 @@ jobs:
     needs: [setup, create_neon_branch, provision_redis, preflight]
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
+    environment:
+      name: preview-pr-${{ github.event.number }}
+      url: ${{ steps.deploy.outputs.url }}
     permissions:
       contents: read
       pull-requests: write
