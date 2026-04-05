@@ -369,7 +369,7 @@ jobs:
             echo ""
             echo "- App: \`${{ needs.setup.outputs.preview_app }}\`"
             echo "- URL: ${{ needs.setup.outputs.preview_url }}"
-            echo "- Redis: \`hyre-worker-redis-pr-${{ github.event.number }}\`"
+            echo "- Redis: \`${{ needs.provision_redis.outputs.redis_app }}\`"
             echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -384,7 +384,7 @@ jobs:
               "",
               "- **App:** `${{ needs.setup.outputs.preview_app }}`",
               "- **Preview URL:** ${{ needs.setup.outputs.preview_url }}",
-              "- **Redis app:** `hyre-worker-redis-pr-${{ github.event.number }}`",
+              "- **Redis app:** `${{ needs.provision_redis.outputs.redis_app }}`",
               "- **Neon branch:** `${{ needs.setup.outputs.neon_branch }}`",
             ].join("\n");
 
