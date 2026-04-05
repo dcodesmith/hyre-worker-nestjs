@@ -39,7 +39,7 @@ jobs:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
         run: pnpm run test:coverage:ci
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
