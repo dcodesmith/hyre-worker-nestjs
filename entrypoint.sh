@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Run database migrations using prisma CLI installed during Docker build
-# Version matches @prisma/client (6.19.0) and avoids runtime npm registry access
+# Run database migrations using Prisma CLI installed during Docker build.
+# The Dockerfile pins Prisma CLI to the same version as @prisma/client.
 node_modules/.bin/prisma migrate deploy
 
 # Start the app

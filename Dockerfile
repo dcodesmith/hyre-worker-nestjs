@@ -52,8 +52,10 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 
-# Install prisma CLI (version range matches package.json)
-RUN pnpm add -D prisma@7.5.0
+# Install Prisma CLI with the exact same version as @prisma/client.
+# A mismatch here can break runtime imports like ".prisma/client/default".
+RUN PRISMA_CLIENT_VERSION="$(node -p "require('./node_modules/@prisma/client/package.json').version")" \
+  && pnpm add -D "prisma@${PRISMA_CLIENT_VERSION}"
 
 # Copy entrypoint script
 COPY --from=builder /app/entrypoint.sh ./

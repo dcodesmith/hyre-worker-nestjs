@@ -56,8 +56,9 @@ jobs:
         id: meta
         run: |
           echo "neon_branch=preview/pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "preview_app=hyre-worker-nestjs-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "preview_url=https://pr-${{ github.event.number }}-${{ github.repository_owner }}-${{ github.event.repository.name }}.fly.dev" >> "$GITHUB_OUTPUT"
+          PREVIEW_APP="hyre-worker-nestjs-pr-${{ github.event.number }}"
+          echo "preview_app=${PREVIEW_APP}" >> "$GITHUB_OUTPUT"
+          echo "preview_url=https://${PREVIEW_APP}.fly.dev" >> "$GITHUB_OUTPUT"
 
   create_neon_branch:
     name: Create Neon Branch
@@ -284,6 +285,9 @@ jobs:
     needs: [setup, create_neon_branch, provision_redis, preflight]
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
+    environment:
+      name: preview-pr-${{ github.event.number }}
+      url: ${{ needs.setup.outputs.preview_url }}
     permissions:
       contents: read
       pull-requests: write
@@ -358,11 +362,83 @@ jobs:
       - name: Enforce single-machine preview scale
         run: flyctl scale count app=1 -a "${{ needs.setup.outputs.preview_app }}" --yes
 
+      - name: Add preview details to job summary
+        run: |
+          {
+            echo "## Fly Preview Deployment"
+            echo ""
+            echo "- App: \`${{ needs.setup.outputs.preview_app }}\`"
+            echo "- URL: ${{ needs.setup.outputs.preview_url }}"
+            echo "- Redis: \`${{ needs.provision_redis.outputs.redis_app }}\`"
+            echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post preview URL comment to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = "<!-- fly-preview-url-comment -->";
+            const body = [
+              marker,
+              "🚀 **Fly preview is ready**",
+              "",
+              "- **App:** `${{ needs.setup.outputs.preview_app }}`",
+              "- **Preview URL:** ${{ needs.setup.outputs.preview_url }}",
+              "- **Redis app:** `${{ needs.provision_redis.outputs.redis_app }}`",
+              "- **Neon branch:** `${{ needs.setup.outputs.neon_branch }}`",
+            ].join("\n");
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+
+              const existing = comments.find(
+                (comment) =>
+                  comment.user?.type === "Bot" &&
+                  typeof comment.body === "string" &&
+                  comment.body.includes(marker),
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body,
+                });
+              }
+            } catch (error) {
+              const details =
+                error instanceof Error
+                  ? `${error.message}\n${error.stack ?? ""}`
+                  : JSON.stringify(error);
+              console.warn(
+                `[fly-preview] Non-fatal PR comment upsert failure (marker=${marker}): ${details}`,
+              );
+            }
+
   cleanup:
     name: Delete preview resources
     needs: setup
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
@@ -393,3 +469,48 @@ jobs:
             status=$?
             echo "Failed to destroy redis app 'hyre-worker-redis-pr-${{ github.event.number }}' (exit=${status})."
           fi
+
+      - name: Remove preview URL comment from PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = "<!-- fly-preview-url-comment -->";
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+
+              const existing = comments.find(
+                (comment) =>
+                  comment.user?.type === "Bot" &&
+                  typeof comment.body === "string" &&
+                  comment.body.includes(marker),
+              );
+
+              if (!existing) {
+                console.log(`[fly-preview] No preview comment found for marker=${marker}`);
+                return;
+              }
+
+              await github.rest.issues.deleteComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+              });
+              console.log(`[fly-preview] Deleted preview comment id=${existing.id}`);
+            } catch (error) {
+              const details =
+                error instanceof Error
+                  ? `${error.message}\n${error.stack ?? ""}`
+                  : JSON.stringify(error);
+              console.warn(
+                `[fly-preview] Non-fatal PR comment cleanup failure (marker=${marker}): ${details}`,
+              );
+            }
