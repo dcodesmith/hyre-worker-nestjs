@@ -152,19 +152,21 @@ describe("BookingController", () => {
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
           expect.objectContaining({
-            carId: "car-123",
-            bookingType: "DAY",
+            input: expect.objectContaining({
+              carId: "car-123",
+              bookingType: "DAY",
+            }),
+            sessionUser: {
+              id: "user-123",
+              email: "user@example.com",
+              name: "Test User",
+              emailVerified: true,
+              image: null,
+              roles: ["user"],
+              createdAt: expect.any(Date),
+              updatedAt: expect.any(Date),
+            },
           }),
-          {
-            id: "user-123",
-            email: "user@example.com",
-            name: "Test User",
-            emailVerified: true,
-            image: null,
-            roles: ["user"],
-            createdAt: expect.any(Date),
-            updatedAt: expect.any(Date),
-          },
         );
       });
 
@@ -194,12 +196,14 @@ describe("BookingController", () => {
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
           expect.objectContaining({
-            carId: "car-123",
-            guestEmail: "guest@example.com",
-            guestName: "Guest User",
-            guestPhone: "08098765432",
+            input: expect.objectContaining({
+              carId: "car-123",
+              guestEmail: "guest@example.com",
+              guestName: "Guest User",
+              guestPhone: "08098765432",
+            }),
+            sessionUser: null,
           }),
-          null,
         );
       });
 
@@ -266,10 +270,12 @@ describe("BookingController", () => {
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
           expect.objectContaining({
-            sameLocation: false,
-            dropOffAddress: "456 Other St, Lagos",
+            input: expect.objectContaining({
+              sameLocation: false,
+              dropOffAddress: "456 Other St, Lagos",
+            }),
+            sessionUser: expect.any(Object),
           }),
-          expect.any(Object),
         );
       });
     });

@@ -1,5 +1,6 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
+import { metrics } from "@opentelemetry/api";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { normaliseBookingDetails, normaliseBookingLegDetails } from "../../shared/helper";
@@ -11,7 +12,6 @@ import {
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
-  DEFAULT_CHANNELS,
   FLEET_OWNER_RECIPIENT_TYPE,
   HIGH_PRIORITY_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB_NAME,
@@ -23,6 +23,7 @@ import {
   NotificationType,
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
+import { deriveNotificationChannels } from "./notification-channel.helper";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
@@ -34,6 +35,9 @@ import {
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
+  private readonly notificationSkippedNoChannelCounter = metrics
+    .getMeter("notification-service")
+    .createCounter("notification_skipped_no_channel");
 
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
@@ -57,6 +61,19 @@ export class NotificationService {
       newStatus,
       showReviewRequest,
     });
+    if (jobData.channels.length === 0) {
+      this.logger.warn("No customer delivery channel available for booking status notification", {
+        bookingId: booking.id,
+        oldStatus,
+        newStatus,
+      });
+      this.recordNotificationSkippedNoChannel({
+        bookingId: booking.id,
+        oldStatus,
+        newStatus,
+      });
+      return;
+    }
 
     await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
 
@@ -78,7 +95,7 @@ export class NotificationService {
     const customerJobData: NotificationJobData = {
       id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_CANCELLED,
-      channels: DEFAULT_CHANNELS,
+      channels: deriveNotificationChannels(bookingDetails),
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
@@ -89,18 +106,26 @@ export class NotificationService {
       templateData,
     };
 
+    const jobs: Promise<unknown>[] = [];
+    if (customerJobData.channels.length > 0) {
+      jobs.push(this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS));
+    } else {
+      this.logger.warn("No customer delivery channel available for booking cancellation", {
+        bookingId: bookingDetails.id,
+      });
+    }
+
     const ownerEmail = booking.car?.owner?.email;
     const ownerPhone = booking.car?.owner?.phoneNumber;
-
-    const jobs: Promise<unknown>[] = [
-      this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS),
-    ];
 
     if (ownerEmail || ownerPhone) {
       const ownerJobData: NotificationJobData = {
         id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
         type: NotificationType.BOOKING_CANCELLED,
-        channels: this.determineChannels(ownerEmail ?? undefined, ownerPhone ?? undefined),
+        channels: deriveNotificationChannels({
+          email: ownerEmail ?? undefined,
+          phoneNumber: ownerPhone ?? undefined,
+        }),
         bookingId: bookingDetails.id,
         recipients: {
           [FLEET_OWNER_RECIPIENT_TYPE]: {
@@ -114,6 +139,18 @@ export class NotificationService {
         },
       };
       jobs.push(this.addJobToQueue(ownerJobData, HIGH_PRIORITY_JOB_OPTIONS));
+    }
+
+    if (jobs.length === 0) {
+      this.logger.warn("No delivery channels available for booking cancellation notifications", {
+        bookingId: bookingDetails.id,
+      });
+      this.recordNotificationSkippedNoChannel({
+        bookingId: bookingDetails.id,
+        oldStatus: booking.status,
+        newStatus: "CANCELLED",
+      });
+      return;
     }
 
     await Promise.all(jobs);
@@ -204,7 +241,7 @@ export class NotificationService {
     return {
       id: `status-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_STATUS_CHANGE,
-      channels: DEFAULT_CHANNELS,
+      channels: deriveNotificationChannels(bookingDetails),
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
@@ -240,20 +277,6 @@ export class NotificationService {
     await this.addJobToQueue(customerJobData);
   }
 
-  private determineChannels(email?: string, phoneNumber?: string): NotificationChannel[] {
-    const channels: NotificationChannel[] = [];
-
-    if (email) {
-      channels.push(NotificationChannel.EMAIL);
-    }
-
-    if (phoneNumber) {
-      channels.push(NotificationChannel.WHATSAPP);
-    }
-
-    return channels;
-  }
-
   private createReminderJobData({
     bookingLegDetails,
     recipientType,
@@ -275,7 +298,7 @@ export class NotificationService {
     return {
       id: `reminder-${recipientType}-${bookingLegDetails.bookingLegId}-${type}-${Date.now()}`,
       type,
-      channels: this.determineChannels(email, phoneNumber),
+      channels: deriveNotificationChannels({ email, phoneNumber }),
       bookingId: bookingLegDetails.bookingId,
       recipients: {
         [recipientType]: { email, phoneNumber },
@@ -338,8 +361,14 @@ export class NotificationService {
     this.logger.log("Queued booking reminder notifications", {
       bookingLegId: bookingLegDetails.bookingLegId,
       type,
-      customerChannels: this.determineChannels(customerEmail, customerPhone),
-      chauffeurChannels: this.determineChannels(chauffeurEmail, chauffeurPhone),
+      customerChannels: deriveNotificationChannels({
+        email: customerEmail,
+        phoneNumber: customerPhone,
+      }),
+      chauffeurChannels: deriveNotificationChannels({
+        email: chauffeurEmail,
+        phoneNumber: chauffeurPhone,
+      }),
     });
   }
 
@@ -370,5 +399,24 @@ export class NotificationService {
     return type === NotificationType.BOOKING_REMINDER_START
       ? "Booking Reminder - You have a service starting in approximately 1 hour"
       : "Booking Reminder - Your assigned booking for today ends in approximately 1 hour";
+  }
+
+  private recordNotificationSkippedNoChannel(input: {
+    bookingId: string;
+    oldStatus: string;
+    newStatus: string;
+  }): void {
+    this.logger.debug("Incrementing notification_skipped_no_channel counter", {
+      bookingId: input.bookingId,
+      oldStatus: input.oldStatus,
+      newStatus: input.newStatus,
+      reason: "no_channel",
+    });
+
+    this.notificationSkippedNoChannelCounter.add(1, {
+      oldStatus: input.oldStatus,
+      newStatus: input.newStatus,
+      reason: "no_channel",
+    });
   }
 }

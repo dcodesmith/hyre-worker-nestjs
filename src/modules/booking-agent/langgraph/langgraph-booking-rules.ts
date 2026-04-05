@@ -34,19 +34,22 @@ export function applyDerivedDraftFields(draft: BookingDraft, inboundMessage: str
     updatedDraft.dropoffLocation = updatedDraft.pickupLocation;
   }
 
-  if (!updatedDraft.dropoffDate && updatedDraft.pickupDate && updatedDraft.durationDays) {
-    updatedDraft.dropoffDate = calculateDropoffDate(
-      updatedDraft.pickupDate,
-      updatedDraft.durationDays,
-    );
-  }
-
   if (updatedDraft.bookingType === "NIGHT") {
     updatedDraft.pickupTime = "23:00";
-    if (!updatedDraft.dropoffDate && updatedDraft.pickupDate) {
-      const daysToAdd = updatedDraft.durationDays ?? 1;
-      updatedDraft.dropoffDate = calculateDropoffDate(updatedDraft.pickupDate, daysToAdd);
-    }
+  }
+
+  const hasDurationDays =
+    typeof updatedDraft.durationDays === "number" && updatedDraft.durationDays > 0;
+  const shouldDefaultNightToOne =
+    updatedDraft.bookingType === "NIGHT" && !hasDurationDays && !updatedDraft.dropoffDate;
+
+  if (updatedDraft.pickupDate && (hasDurationDays || shouldDefaultNightToOne)) {
+    const normalizedDurationDays = Math.max(updatedDraft.durationDays ?? 1, 1);
+    const daysToAdd =
+      updatedDraft.bookingType === "DAY"
+        ? Math.max(normalizedDurationDays - 1, 0)
+        : normalizedDurationDays;
+    updatedDraft.dropoffDate = calculateDropoffDate(updatedDraft.pickupDate, daysToAdd);
   }
 
   return updatedDraft;

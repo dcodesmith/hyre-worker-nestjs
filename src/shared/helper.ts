@@ -111,10 +111,13 @@ export function getCustomerDetails(
     booking.guestUser !== null
   ) {
     const guestDetails = booking.guestUser as GuestUserDetails;
+    const preferredNotificationChannel =
+      guestDetails.preferredNotificationChannel ?? "EMAIL_AND_WHATSAPP";
 
-    email = guestDetails.email ?? "";
+    email = preferredNotificationChannel === "WHATSAPP_ONLY" ? "" : (guestDetails.email ?? "");
+    phone_number =
+      preferredNotificationChannel === "EMAIL_ONLY" ? "" : (guestDetails.phoneNumber ?? "");
     name = guestDetails.name ?? "";
-    phone_number = guestDetails.phoneNumber ?? "";
   }
 
   return { email, name, phone_number };

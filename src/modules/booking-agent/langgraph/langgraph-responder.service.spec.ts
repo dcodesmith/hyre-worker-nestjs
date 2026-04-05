@@ -198,7 +198,13 @@ describe("LangGraphResponderService", () => {
       // confirming stage now returns fixed booking summary with interactive buttons
       expect(response.text).toContain("Booking Summary");
       expect(response.text).toContain("Toyota Prado");
-      expect(response.text).toContain("Duration:* 2 days");
+      expect(response.text).toContain("*🕐 Start:*");
+      expect(response.text).toContain("*🏁 End:*");
+      expect(response.text).toContain("1st Mar 2026");
+      expect(response.text).toContain("2nd Mar 2026");
+      expect(response.text).toContain("9:00 am");
+      expect(response.text).toContain("9:00 pm");
+      expect(response.text).toContain("Booked for:* 2 days");
       expect(response.interactive).toBeDefined();
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons).toHaveLength(3);
@@ -223,7 +229,69 @@ describe("LangGraphResponderService", () => {
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toContain("Duration:* 6 days");
+      expect(response.text).toContain("*🕐 Start:*");
+      expect(response.text).toContain("*🏁 End:*");
+      expect(response.text).toContain("6:30 am");
+      expect(response.text).toContain("10th Apr 2026");
+      expect(response.text).toContain("Booked for:* 6 days");
+    });
+
+    it("derives DAY duration from canonical leg count when durationDays is not present", async () => {
+      const state = buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-04-04",
+          dropoffDate: "2026-04-10",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booked for:* 7 days");
+    });
+
+    it("shows durationDays for DAY bookings when dropoffDate is present", async () => {
+      const state = buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-05",
+          dropoffDate: "2026-03-09",
+          durationDays: 5,
+          pickupTime: "09:00",
+          pickupLocation: "Lekki",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booked for:* 5 days");
+    });
+
+    it("uses nights wording for NIGHT booking type", async () => {
+      const state = buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        draft: {
+          bookingType: "NIGHT",
+          pickupDate: "2026-04-05",
+          durationDays: 1,
+          pickupTime: "23:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booked for:* 1 night");
     });
 
     it("returns retry and agent buttons when confirming has booking error", async () => {

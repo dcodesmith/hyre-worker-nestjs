@@ -4,6 +4,7 @@ import { CarNotAvailableException, CarNotFoundException } from "../../booking/bo
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
+import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { CreateBookingNode } from "./create-booking.node";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildVehicleOption } from "./langgraph.factory";
@@ -54,14 +55,31 @@ describe("CreateBookingNode", () => {
   const bookingAgentSearchServiceMock = {
     searchVehiclesFromExtracted: vi.fn(),
   };
+  const whatsAppPersistenceServiceMock = {
+    getConversationLinkState: vi
+      .fn()
+      .mockResolvedValue({ linkedUserId: null, linkStatus: "UNLINKED" }),
+  };
 
   beforeEach(async () => {
+    databaseServiceMock.whatsAppConversation.findUnique.mockImplementation(() => {
+      return Promise.resolve({
+        phoneE164: "+2348012345678",
+        profileName: "Test User",
+      });
+    });
+    whatsAppPersistenceServiceMock.getConversationLinkState.mockResolvedValue({
+      linkedUserId: null,
+      linkStatus: "UNLINKED",
+    });
+
     moduleRef = await Test.createTestingModule({
       providers: [
         CreateBookingNode,
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingAgentSearchService, useValue: bookingAgentSearchServiceMock },
+        { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
       ],
     }).compile();
 
@@ -107,6 +125,57 @@ describe("CreateBookingNode", () => {
     expect(result.stage).toBe("awaiting_payment");
     expect(result.bookingId).toBe("booking_123");
     expect(result.paymentLink).toBe("https://pay.example.com/booking_123");
+    expect(bookingCreationServiceMock.createBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          guestEmail: "whatsapp.2348012345678@tripdly.com",
+        }),
+        sessionUser: null,
+        context: { guestContactSource: "WHATSAPP_AGENT" },
+      }),
+    );
+  });
+
+  it("creates booking as linked user when conversation is verified-linked", async () => {
+    databaseServiceMock.whatsAppConversation.findUnique.mockResolvedValueOnce({
+      phoneE164: "+2348012345678",
+      profileName: "Test User",
+    });
+    whatsAppPersistenceServiceMock.getConversationLinkState.mockResolvedValueOnce({
+      linkedUserId: "user_linked_123",
+      linkStatus: "LINKED",
+    });
+    bookingCreationServiceMock.createBooking.mockResolvedValue({
+      bookingId: "booking_456",
+      checkoutUrl: "https://pay.example.com/booking_456",
+    });
+
+    const result = await createBookingNode.run(
+      buildTestState({
+        customerId: "user_linked_123",
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(result.stage).toBe("awaiting_payment");
+    expect(result.bookingId).toBe("booking_456");
+    expect(bookingCreationServiceMock.createBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.any(Object),
+        sessionUser: expect.objectContaining({ id: "user_linked_123" }),
+      }),
+    );
+    expect(bookingCreationServiceMock.createBooking.mock.calls[0]?.[0]?.input).not.toHaveProperty(
+      "guestEmail",
+    );
   });
 
   it("returns alternatives when selected car is unavailable", async () => {

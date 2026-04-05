@@ -100,7 +100,13 @@ export class BookingPersistenceService {
       bookingReference: string;
       car: CarWithPricing;
       userId: string | null;
-      guestUser: { email: string; name: string; phoneNumber: string | null } | null;
+      guestUser: {
+        email: string;
+        name: string;
+        phoneNumber: string | null;
+        guestContactSource: "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
+        preferredNotificationChannel: "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" | "WHATSAPP_ONLY";
+      } | null;
       booking: CreateBookingInput;
       financials: BookingFinancials;
       referralEligibility: ReferralEligibility;
@@ -116,7 +122,13 @@ export class BookingPersistenceService {
     bookingReference: string;
     car: CarWithPricing;
     userId: string | null;
-    guestUser: { email: string; name: string; phoneNumber: string | null } | null;
+    guestUser: {
+      email: string;
+      name: string;
+      phoneNumber: string | null;
+      guestContactSource: "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
+      preferredNotificationChannel: "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" | "WHATSAPP_ONLY";
+    } | null;
     booking: CreateBookingInput;
     financials: BookingFinancials;
     referralEligibility: ReferralEligibility;

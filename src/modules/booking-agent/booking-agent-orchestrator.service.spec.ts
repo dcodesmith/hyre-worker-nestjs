@@ -107,6 +107,29 @@ describe("BookingAgentOrchestratorService", () => {
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:outbox:1");
   });
 
+  it("passes linked customerId through to LangGraph invocation", async () => {
+    langGraphService.invoke.mockResolvedValue({
+      outboxItems: [],
+      response: { text: "ok" },
+      stage: "collecting",
+      draft: {},
+      error: null,
+    });
+
+    await service.decide(
+      buildContext({
+        body: "Need an SUV tomorrow",
+        customerId: "user_linked_123",
+      }),
+    );
+
+    expect(langGraphService.invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: "user_linked_123",
+      }),
+    );
+  });
+
   it("marks conversation as handoff when LangGraph returns handoff outbox", async () => {
     langGraphService.invoke.mockResolvedValue({
       outboxItems: [

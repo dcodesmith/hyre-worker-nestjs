@@ -116,6 +116,8 @@ describe("SearchNode", () => {
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
+        vehicleType: "SUV",
+        make: "Toyota",
         pickupLocation: "Victoria Island",
         dropoffLocation: "Victoria Island",
       },
@@ -141,6 +143,13 @@ describe("SearchNode", () => {
     });
 
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
+    expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vehicleType: "SUV",
+        make: "Toyota",
+      }),
+      "",
+    );
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions).toHaveLength(1);
   });

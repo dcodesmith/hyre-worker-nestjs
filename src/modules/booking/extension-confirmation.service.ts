@@ -9,11 +9,8 @@ import {
   CLIENT_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import {
-  NotificationChannel,
-  type NotificationJobData,
-  NotificationType,
-} from "../notification/notification.interface";
+import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import { deriveNotificationChannels } from "../notification/notification-channel.helper";
 import { BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND } from "../notification/template-data.interface";
 
 @Injectable()
@@ -94,6 +91,15 @@ export class ExtensionConfirmationService {
 
     const bookingDetails = normaliseBookingDetails(updatedExtension.bookingLeg.booking);
     const extensionDetails = normaliseExtensionDetails(updatedExtension);
+    const channels = deriveNotificationChannels(bookingDetails);
+
+    if (channels.length === 0) {
+      this.logger.warn("No customer delivery channel available for extension confirmation", {
+        extensionId: updatedExtension.id,
+        bookingId: updatedExtension.bookingLeg.booking.id,
+      });
+      return true;
+    }
 
     const notificationJobId = `booking-extension-confirmed-${updatedExtension.id}`;
     await this.notificationQueue.add(
@@ -101,7 +107,7 @@ export class ExtensionConfirmationService {
       {
         id: notificationJobId,
         type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        channels: [NotificationChannel.EMAIL],
+        channels,
         bookingId: updatedExtension.bookingLeg.booking.id,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {

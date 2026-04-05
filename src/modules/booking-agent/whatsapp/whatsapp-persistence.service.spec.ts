@@ -12,6 +12,7 @@ describe("WhatsAppPersistenceService", () => {
       updateMany: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       upsert: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
     };
     whatsAppMessage: {
       update: ReturnType<typeof vi.fn>;
@@ -35,6 +36,7 @@ describe("WhatsAppPersistenceService", () => {
         updateMany: vi.fn(),
         update: vi.fn(),
         upsert: vi.fn(),
+        findUnique: vi.fn(),
       },
       whatsAppMessage: {
         update: vi.fn(),
@@ -79,6 +81,15 @@ describe("WhatsAppPersistenceService", () => {
     });
 
     await expect(service.getInboundMessageContext("msg-1")).resolves.toBeNull();
+  });
+
+  it("returns null link state when conversation is missing", async () => {
+    databaseService.whatsAppConversation.findUnique.mockResolvedValue(null);
+
+    await expect(service.getConversationLinkState("conv-missing")).resolves.toEqual({
+      linkedUserId: null,
+      linkStatus: null,
+    });
   });
 
   it("claims outbox atomically via updateMany", async () => {

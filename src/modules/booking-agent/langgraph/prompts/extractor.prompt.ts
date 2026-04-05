@@ -137,10 +137,19 @@ RULES:
 1. Only include fields in draftPatch that are EXPLICITLY mentioned - do NOT assume or infer missing fields
 2. Parse relative dates to absolute YYYY-MM-DD format
 3. Parse times to 24-hour HH:mm format
-4. If user says "for X days", set durationDays AND calculate dropoffDate from pickupDate
+4. If user says "for X days", set durationDays AND calculate dropoffDate based on bookingType:
+   - DAY: dropoffDate = pickupDate + (X - 1) days
+   - FULL_DAY: dropoffDate = pickupDate + X days (each leg is 24 hours)
+   - NIGHT: dropoffDate = pickupDate + X days (X nights)
 5. ONLY set dropoffLocation if user EXPLICITLY says "same location", "same as pickup", or specifies a different location
-6. If user says "from tomorrow for 3 days", calculate: pickupDate=tomorrow, dropoffDate=pickupDate+3days
+6. If user says "from tomorrow for 3 days":
+   - with DAY bookingType -> pickupDate=tomorrow, dropoffDate=pickupDate+2days
+   - with FULL_DAY bookingType -> pickupDate=tomorrow, dropoffDate=pickupDate+3days
 7. NEVER assume dropoffLocation equals pickupLocation unless user explicitly says so
 8. Be conservative with confidence - if unsure, use lower value
-9. If message is ambiguous, prefer ask_question intent`;
+9. If message is ambiguous, prefer ask_question intent
+10. If user explicitly says a brand/model with vehicle type, extract it:
+   - "Toyota SUV" -> make: "Toyota"
+   - "Toyota Highlander SUV" -> make: "Toyota", model: "Highlander"
+11. If user does NOT explicitly mention make/model, do NOT invent them`;
 }

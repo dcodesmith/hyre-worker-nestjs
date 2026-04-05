@@ -1,0 +1,55 @@
+Preview Environment Requirements
+===============================
+
+This repository's PR preview workflow is defined in `.github/workflows/neon-preview.yml`.
+
+What it does
+------------
+
+- Creates a Neon branch per PR (`preview/pr-<number>`)
+- Runs Prisma migrations on that branch
+- Validates runtime env using `src/config/env.config.ts` (canonical schema)
+- Deploys a Fly preview app (`hyre-worker-nestjs-pr-<number>`)
+- Deletes Neon branch and Fly app when the PR is closed
+
+Required GitHub repository variables
+------------------------------------
+
+- `NEON_PROJECT_ID`
+
+Required GitHub repository secrets
+----------------------------------
+
+- `NEON_API_KEY`
+- `FLY_API_TOKEN`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_SECRET`
+- `TWILIO_WHATSAPP_NUMBER`
+- `FLUTTERWAVE_SECRET_KEY`
+- `FLUTTERWAVE_PUBLIC_KEY`
+- `FLUTTERWAVE_WEBHOOK_SECRET`
+- `HMAC_KEY`
+- `FLIGHTAWARE_API_KEY`
+- `FLIGHTAWARE_WEBHOOK_SECRET`
+- `GOOGLE_DISTANCE_MATRIX_API_KEY`
+- `OPENAI_API_KEY`
+- `SESSION_SECRET`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `ANTHROPIC_API_KEY`
+
+Optional GitHub repository secrets
+----------------------------------
+
+- `API_KEY`
+- `BULL_BOARD_USERNAME`
+- `BULL_BOARD_PASSWORD`
+
+Redis note
+----------
+
+Redis is provisioned per PR as a dedicated Fly app (`hyre-worker-redis-pr-<number>`), and the workflow computes a per-PR `REDIS_URL` automatically.
+No `PREVIEW_REDIS_URL` secret is required.

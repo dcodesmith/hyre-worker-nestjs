@@ -387,6 +387,41 @@ describe("BookingConfirmationService", () => {
       );
     });
 
+    it("should skip all notifications when customer and owner have no contact channels", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        user: null,
+        guestUser: {
+          name: "No Contact Guest",
+          email: null,
+          phoneNumber: null,
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+        car: createCar({
+          owner: createOwner({
+            email: null,
+            phoneNumber: null,
+          }),
+        }),
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      const result = await service.confirmFromPayment(mockPayment);
+
+      expect(result).toBe(true);
+      expect(notificationQueue.add).not.toHaveBeenCalled();
+    });
+
     it("should not fail confirmation if fleet owner notification queueing fails", async () => {
       const mockPayment = createMockPayment({
         id: "payment-123",

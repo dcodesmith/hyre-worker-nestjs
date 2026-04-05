@@ -5,6 +5,9 @@ import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.s
 import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
 import { LangGraphStateService } from "./langgraph/langgraph-state.service";
 
+const LANGGRAPH_ERROR_FALLBACK_TEXT =
+  "I'm having trouble processing your request. Please try again or type AGENT to speak with someone.";
+
 @Injectable()
 export class BookingAgentOrchestratorService {
   private readonly logger = new Logger(BookingAgentOrchestratorService.name);
@@ -30,14 +33,12 @@ export class BookingAgentOrchestratorService {
     if (body === "AGENT") {
       return {
         enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
+          this.buildSingleOutboxReply(context, {
             dedupeKey: `handoff-ack:${context.messageId}`,
-            mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
             textBody:
               "A Tripdly agent will join this chat shortly. Please share your booking reference if available.",
             templateName: "handoff-reopen",
-          },
+          }),
         ],
         markAsHandoff: { reason: "USER_REQUESTED_AGENT" },
       };
@@ -47,14 +48,12 @@ export class BookingAgentOrchestratorService {
       await this.langGraphStateService.clearState(context.conversationId);
       return {
         enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
+          this.buildSingleOutboxReply(context, {
             dedupeKey: `reset-ack:${context.messageId}`,
-            mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
             textBody:
               "Done - I have reset your current booking details. Please share your new request.",
             templateName: "booking-reopen",
-          },
+          }),
         ],
       };
     }
@@ -67,14 +66,12 @@ export class BookingAgentOrchestratorService {
     ) {
       return {
         enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
+          this.buildSingleOutboxReply(context, {
             dedupeKey: `media-fallback:${context.messageId}`,
-            mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
             textBody:
               "Thanks. For now, please send your pickup location, date/time, and booking type (DAY, NIGHT, or FULL_DAY) as text.",
             templateName: "booking-reopen",
-          },
+          }),
         ],
       };
     }
@@ -88,13 +85,14 @@ export class BookingAgentOrchestratorService {
   private async decideLangGraph(
     context: InboundMessageContext & { windowExpiresAt?: Date | null },
   ): Promise<OrchestratorResult> {
+    const { conversationId, messageId, body = "", customerId = null, interactive } = context;
     try {
       const result = await this.langGraphService.invoke({
-        conversationId: context.conversationId,
-        messageId: context.messageId,
-        message: context.body ?? "",
-        customerId: null,
-        interactive: context.interactive,
+        conversationId,
+        messageId,
+        message: body ?? "",
+        customerId,
+        interactive,
       });
 
       if (result.error) {
@@ -104,26 +102,18 @@ export class BookingAgentOrchestratorService {
         });
       }
 
-      const outboxItems: OrchestratorResult["enqueueOutbox"] = result.outboxItems.map((item) => ({
-        conversationId: item.conversationId,
-        dedupeKey: item.dedupeKey,
-        mode: item.mode,
-        textBody: item.textBody,
-        mediaUrl: item.mediaUrl,
-        templateName: item.templateName,
-        templateVariables: item.templateVariables,
-      }));
+      const outboxItems: OrchestratorResult["enqueueOutbox"] = result.outboxItems.map(
+        ({ interactive, ...outboxItem }) => outboxItem,
+      );
 
       if (result.error && outboxItems.length === 0) {
-        outboxItems.push({
-          conversationId: context.conversationId,
-          dedupeKey: `langgraph-error-fallback:${context.messageId}`,
-          mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
-          textBody:
-            "I'm having trouble processing your request. Please try again or type AGENT to speak with someone.",
-          templateName: undefined,
-          templateVariables: undefined,
-        });
+        outboxItems.push(
+          this.buildSingleOutboxReply(context, {
+            dedupeKey: `langgraph-error-fallback:${context.messageId}`,
+            textBody: LANGGRAPH_ERROR_FALLBACK_TEXT,
+            templateName: "booking-reopen",
+          }),
+        );
       }
 
       const hasHandoffOutbox = outboxItems.some((item) =>
@@ -141,19 +131,33 @@ export class BookingAgentOrchestratorService {
         error: error instanceof Error ? error.message : String(error),
       });
 
-      const mode = this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt);
       return {
         enqueueOutbox: [
-          {
-            conversationId: context.conversationId,
+          this.buildSingleOutboxReply(context, {
             dedupeKey: `langgraph-error:${context.messageId}`,
-            mode,
-            textBody:
-              "I'm having trouble processing your request. Please try again or type AGENT to speak with someone.",
+            textBody: LANGGRAPH_ERROR_FALLBACK_TEXT,
             templateName: "booking-reopen",
-          },
+          }),
         ],
       };
     }
+  }
+
+  private buildSingleOutboxReply(
+    context: InboundMessageContext & { windowExpiresAt?: Date | null },
+    input: {
+      dedupeKey: string;
+      textBody: string;
+      templateName?: string;
+    },
+  ): OrchestratorResult["enqueueOutbox"][number] {
+    return {
+      conversationId: context.conversationId,
+      dedupeKey: input.dedupeKey,
+      mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
+      textBody: input.textBody,
+      templateName: input.templateName,
+      templateVariables: undefined,
+    };
   }
 }

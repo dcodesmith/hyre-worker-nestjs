@@ -43,6 +43,7 @@ import {
 import {
   BookingCancelledMapper,
   BookingConfirmedMapper,
+  BookingExtensionConfirmedMapper,
   BookingReminderEndMapper,
   BookingReminderStartMapper,
   BookingStatusMapper,
@@ -67,6 +68,7 @@ export class NotificationProcessor extends WorkerHost {
     // Initialize template mappers in order of specificity
     this.templateMappers = [
       new BookingConfirmedMapper(),
+      new BookingExtensionConfirmedMapper(),
       new BookingCancelledMapper(),
       new FleetOwnerNewBookingMapper(),
       new BookingStatusMapper(),

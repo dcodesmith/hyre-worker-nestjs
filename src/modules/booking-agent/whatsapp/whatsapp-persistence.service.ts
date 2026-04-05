@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import { Prisma, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
+import {
+  Prisma,
+  WhatsAppLinkStatus,
+  WhatsAppMessageKind,
+  WhatsAppOutboxStatus,
+} from "@prisma/client";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { DatabaseService } from "../../database/database.service";
 import { WHATSAPP_PROCESSING_LOCK_TTL_MS } from "../booking-agent.const";
@@ -354,6 +359,23 @@ export class WhatsAppPersistenceService {
       where: { id: conversationId },
       select: { lastInboundAt: true },
     });
+  }
+
+  async getConversationLinkState(
+    conversationId: string,
+  ): Promise<{ linkedUserId: string | null; linkStatus: WhatsAppLinkStatus | null }> {
+    const conversation = await this.databaseService.whatsAppConversation.findUnique({
+      where: { id: conversationId },
+      select: {
+        linkedUserId: true,
+        linkStatus: true,
+      },
+    });
+
+    return {
+      linkedUserId: conversation?.linkedUserId ?? null,
+      linkStatus: conversation?.linkStatus ?? null,
+    };
   }
 
   isUniqueViolation(error: unknown): boolean {

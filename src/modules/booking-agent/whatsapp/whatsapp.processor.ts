@@ -139,10 +139,15 @@ export class WhatsAppProcessor extends WorkerHost {
   ): Promise<InboundMessageContext & { windowExpiresAt?: Date | null }> {
     const interactive = parseInteractiveReply(context.rawPayload);
     const resolvedInbound = await this.resolveInboundMessageContent(context, traceId);
+    const conversationLinkState = await this.persistenceService.getConversationLinkState(
+      context.conversationId,
+    );
 
     return {
       messageId: context.id,
       conversationId: context.conversationId,
+      customerId:
+        conversationLinkState.linkStatus === "LINKED" ? conversationLinkState.linkedUserId : null,
       body: resolvedInbound.body,
       kind: resolvedInbound.kind,
       windowExpiresAt: context.conversation.windowExpiresAt,

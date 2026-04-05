@@ -141,6 +141,46 @@ describe("Helper Functions", () => {
       });
     });
 
+    it("should suppress guest email for WhatsApp-only notification preference", () => {
+      const booking = createBooking({
+        user: null,
+        guestUser: {
+          name: "WhatsApp Guest",
+          email: "whatsapp.2348012345678@tripdly.com",
+          phoneNumber: "+2348012345678",
+          guestContactSource: "WHATSAPP_AGENT",
+          preferredNotificationChannel: "WHATSAPP_ONLY",
+        },
+      });
+      const result = getCustomerDetails(booking);
+
+      expect(result).toEqual({
+        email: "",
+        name: "WhatsApp Guest",
+        phone_number: "+2348012345678",
+      });
+    });
+
+    it("should suppress guest phone for email-only notification preference", () => {
+      const booking = createBooking({
+        user: null,
+        guestUser: {
+          name: "Email Guest",
+          email: "email.guest@example.com",
+          phoneNumber: "+2348011111111",
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_ONLY",
+        },
+      });
+      const result = getCustomerDetails(booking);
+
+      expect(result).toEqual({
+        email: "email.guest@example.com",
+        name: "Email Guest",
+        phone_number: "",
+      });
+    });
+
     it("should return empty strings when no user data available", () => {
       const booking = createBooking({ user: null, guestUser: null });
       const result = getCustomerDetails(booking);

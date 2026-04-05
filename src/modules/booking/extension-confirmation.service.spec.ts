@@ -109,10 +109,73 @@ describe("ExtensionConfirmationService", () => {
       expect.any(String),
       expect.objectContaining({
         type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        channels: [NotificationChannel.EMAIL],
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
       }),
       expect.objectContaining({
         jobId: "booking-extension-confirmed-extension-1",
+      }),
+    );
+  });
+
+  it("queues WhatsApp-only extension confirmation for WhatsApp-agent guest", async () => {
+    txMock.extension.updateMany.mockResolvedValueOnce({ count: 1 });
+    txMock.extension.findUnique.mockResolvedValueOnce({
+      id: "extension-2",
+      bookingLegId: "leg-2",
+      extendedDurationHours: 1,
+      extensionStartTime: new Date("2026-02-20T10:00:00.000Z"),
+      extensionEndTime: new Date("2026-02-20T11:00:00.000Z"),
+      bookingLeg: {
+        id: "leg-2",
+        legDate: new Date("2026-02-20T00:00:00.000Z"),
+        legEndTime: new Date("2026-02-20T10:00:00.000Z"),
+        booking: {
+          id: "booking-2",
+          bookingReference: "BOOK-2",
+          status: "ACTIVE",
+          pickupLocation: "A",
+          returnLocation: "B",
+          startDate: new Date("2026-02-20T08:00:00.000Z"),
+          endDate: new Date("2026-02-20T10:00:00.000Z"),
+          totalAmount: { toFixed: () => "10000.00" },
+          cancellationReason: null,
+          user: null,
+          guestUser: {
+            name: "WhatsApp Guest",
+            email: "whatsapp.2348012345678@tripdly.com",
+            phoneNumber: "+2348012345678",
+            guestContactSource: "WHATSAPP_AGENT",
+            preferredNotificationChannel: "WHATSAPP_ONLY",
+          },
+          chauffeur: null,
+          car: {
+            make: "Toyota",
+            model: "Camry",
+            year: 2022,
+            owner: { name: "Owner", username: null, email: "owner@example.com" },
+          },
+          legs: [{ extensions: [] }],
+        },
+      },
+    });
+    txMock.bookingLeg.updateMany.mockResolvedValueOnce({ count: 1 });
+    queueMock.add.mockResolvedValueOnce(undefined);
+
+    const result = await service.confirmFromPayment({
+      id: "payment-2",
+      txRef: "tx-2",
+      extensionId: "extension-2",
+    } as never);
+
+    expect(result).toBe(true);
+    expect(queueMock.add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+        channels: [NotificationChannel.WHATSAPP],
+      }),
+      expect.objectContaining({
+        jobId: "booking-extension-confirmed-extension-2",
       }),
     );
   });
