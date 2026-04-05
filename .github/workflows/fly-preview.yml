@@ -314,7 +314,7 @@ jobs:
 
       - name: Deploy PR app to Fly.io
         id: deploy
-        uses: superfly/fly-pr-review-apps@6f79ec3a7d017082ed11e7c464dae298ca75b21b
+        uses: superfly/fly-pr-review-apps@5d9f067254bebd0aaa77d908d6337b63f4d4f019
         with:
           name: ${{ needs.setup.outputs.preview_app }}
           config: fly.preview.toml
