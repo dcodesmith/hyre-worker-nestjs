@@ -57,7 +57,7 @@ jobs:
         run: |
           echo "neon_branch=preview/pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
           echo "preview_app=hyre-worker-nestjs-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "preview_url=https://pr-${{ github.event.number }}-${{ github.repository_owner }}-${{ github.event.repository.name }}.fly.dev" >> "$GITHUB_OUTPUT"
+          echo "preview_url=https://${{ github.event.repository.name }}-pr-${{ github.event.number }}.fly.dev" >> "$GITHUB_OUTPUT"
 
   create_neon_branch:
     name: Create Neon Branch
