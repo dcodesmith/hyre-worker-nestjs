@@ -377,13 +377,15 @@ jobs:
         with:
           script: |
             const marker = "<!-- fly-preview-url-comment -->";
-            const body = `${marker}
-            🚀 **Fly preview is ready**
-
-            - **App:** \`${{ needs.setup.outputs.preview_app }}\`
-            - **Preview URL:** ${{ needs.setup.outputs.preview_url }}
-            - **Redis app:** \`hyre-worker-redis-pr-${{ github.event.number }}\`
-            - **Neon branch:** \`${{ needs.setup.outputs.neon_branch }}\``;
+            const body = [
+              marker,
+              "🚀 **Fly preview is ready**",
+              "",
+              "- **App:** `${{ needs.setup.outputs.preview_app }}`",
+              "- **Preview URL:** ${{ needs.setup.outputs.preview_url }}",
+              "- **Redis app:** `hyre-worker-redis-pr-${{ github.event.number }}`",
+              "- **Neon branch:** `${{ needs.setup.outputs.neon_branch }}`",
+            ].join("\n");
 
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
