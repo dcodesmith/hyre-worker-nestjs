@@ -1,6 +1,11 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
 import { addHours, format } from "date-fns";
+import {
+  getDefaultPickupTime,
+  normalizeBookingTimeWindow,
+} from "../../../shared/booking-time-window.helper";
+import { calculateLegCount } from "../../booking/booking.helper";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
@@ -349,6 +354,11 @@ export class LangGraphResponderService {
       return draft.durationDays;
     }
 
+    const derivedDuration = this.resolveDurationFromCanonicalLegCount(draft);
+    if (derivedDuration !== null) {
+      return derivedDuration;
+    }
+
     if (!draft.pickupDate || !draft.dropoffDate) {
       return null;
     }
@@ -367,6 +377,28 @@ export class LangGraphResponderService {
     }
 
     return dayDifference;
+  }
+
+  private resolveDurationFromCanonicalLegCount(draft: BookingDraft): number | null {
+    if (!draft.bookingType || !draft.pickupDate || !draft.dropoffDate) {
+      return null;
+    }
+
+    const pickupDate = parseSearchDate(draft.pickupDate);
+    const dropoffDate = parseSearchDate(draft.dropoffDate);
+    if (!pickupDate || !dropoffDate) {
+      return null;
+    }
+
+    const pickupTime = draft.pickupTime ?? getDefaultPickupTime(draft.bookingType);
+    const { startDate, endDate } = normalizeBookingTimeWindow({
+      bookingType: draft.bookingType,
+      startDate: pickupDate,
+      endDate: dropoffDate,
+      pickupTime,
+    });
+
+    return calculateLegCount(draft.bookingType, startDate, endDate);
   }
 
   private resolveBookedForUnit(bookingType: BookingType | undefined): {

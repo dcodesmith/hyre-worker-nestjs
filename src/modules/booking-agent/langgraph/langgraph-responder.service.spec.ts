@@ -236,6 +236,25 @@ describe("LangGraphResponderService", () => {
       expect(response.text).toContain("Booked for:* 6 days");
     });
 
+    it("derives DAY duration from canonical leg count when durationDays is not present", async () => {
+      const state = buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-04-04",
+          dropoffDate: "2026-04-10",
+          pickupTime: "09:00",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("Booked for:* 7 days");
+    });
+
     it("shows durationDays for DAY bookings when dropoffDate is present", async () => {
       const state = buildState({
         stage: "confirming",
