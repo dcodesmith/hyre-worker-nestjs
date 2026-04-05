@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
+import { isSameDay } from "date-fns";
 import Decimal from "decimal.js";
 import type { FieldError } from "src/common/errors/problem-details.interface";
 import { maskEmail } from "src/shared/helper";
@@ -7,6 +8,10 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  FULL_DAY_END_HOUR,
+  FULL_DAY_START_HOUR,
   PRICE_TOLERANCE,
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
@@ -47,56 +52,129 @@ export class BookingValidationService {
    * @throws BookingValidationException if any date rules are violated
    */
   validateDates(input: DateValidationInput): void {
-    const errors: FieldError[] = [];
     const now = new Date();
-
-    const { startDate, endDate, bookingType } = input;
-
-    // Rule: End date must be > start date (zero-duration bookings not allowed)
-    if (endDate <= startDate) {
-      errors.push({
-        field: "endDate",
-        message: "End date must be after start date",
-      });
-    }
-
-    // Rule: Airport pickup requires minimum 1-hour advance notice
-    if (bookingType === "AIRPORT_PICKUP") {
-      const oneHourFromNow = new Date(now.getTime() + AIRPORT_PICKUP_MIN_ADVANCE_MS);
-      if (startDate < oneHourFromNow) {
-        errors.push({
-          field: "startDate",
-          message: "Airport pickup bookings require at least 1 hour advance notice",
-        });
-      }
-    } else {
-      // Rule: Cannot book in the past (for non-airport bookings)
-      if (startDate < now) {
-        errors.push({
-          field: "startDate",
-          message: "Booking start time cannot be in the past",
-        });
-      }
-
-      // Rule: Same-day DAY bookings not allowed after 11 AM
-      if (bookingType === "DAY") {
-        const isSameDay =
-          startDate.getFullYear() === now.getFullYear() &&
-          startDate.getMonth() === now.getMonth() &&
-          startDate.getDate() === now.getDate();
-
-        if (isSameDay && now.getHours() >= SAME_DAY_BOOKING_CUTOFF_HOUR) {
-          errors.push({
-            field: "startDate",
-            message: "Same-day DAY bookings cannot be made at or after 11 AM",
-          });
-        }
-      }
-    }
+    const errors: FieldError[] = [
+      ...this.validateDateOrder(input.startDate, input.endDate),
+      ...(input.bookingType === "AIRPORT_PICKUP"
+        ? this.validateAirportPickupAdvanceNotice(input.startDate, now)
+        : this.validateNonAirportDates(input.startDate, input.bookingType, now)),
+    ];
 
     if (errors.length > 0) {
       throw new BookingValidationException(errors);
     }
+  }
+
+  private validateDateOrder(startDate: Date, endDate: Date): FieldError[] {
+    if (endDate > startDate) {
+      return [];
+    }
+
+    return [
+      {
+        field: "endDate",
+        message: "End date must be after start date",
+      },
+    ];
+  }
+
+  private validateAirportPickupAdvanceNotice(startDate: Date, now: Date): FieldError[] {
+    const oneHourFromNow = new Date(now.getTime() + AIRPORT_PICKUP_MIN_ADVANCE_MS);
+    if (startDate >= oneHourFromNow) {
+      return [];
+    }
+
+    return [
+      {
+        field: "startDate",
+        message: "Airport pickup bookings require at least 1 hour advance notice",
+      },
+    ];
+  }
+
+  private validateNonAirportDates(
+    startDate: Date,
+    bookingType: DateValidationInput["bookingType"],
+    now: Date,
+  ): FieldError[] {
+    const errors: FieldError[] = [];
+    if (startDate < now) {
+      errors.push({
+        field: "startDate",
+        message: "Booking start time cannot be in the past",
+      });
+    }
+
+    this.validateBookingTypeStartWindow(startDate, bookingType, errors);
+
+    if (bookingType === "DAY" && isSameDay(startDate, now) && this.isAfterSameDayCutoff(now)) {
+      errors.push({
+        field: "startDate",
+        message: "Same-day DAY bookings cannot be made after 11 AM",
+      });
+    }
+
+    return errors;
+  }
+
+  private validateBookingTypeStartWindow(
+    startDate: Date,
+    bookingType: DateValidationInput["bookingType"],
+    errors: FieldError[],
+  ): void {
+    if (
+      bookingType === "DAY" &&
+      !this.isTimeWithinWindow(startDate, {
+        startHour: DAY_START_HOUR,
+        startMinute: 0,
+        endHour: DAY_END_HOUR,
+        endMinute: 0,
+      })
+    ) {
+      errors.push({
+        field: "startDate",
+        message: "DAY bookings must start between 7:00 AM and 11:00 AM",
+      });
+    }
+
+    if (
+      bookingType === "FULL_DAY" &&
+      !this.isTimeWithinWindow(startDate, {
+        startHour: FULL_DAY_START_HOUR,
+        startMinute: 0,
+        endHour: FULL_DAY_END_HOUR,
+        endMinute: 0,
+      })
+    ) {
+      errors.push({
+        field: "startDate",
+        message: "FULL_DAY bookings must start between 6:00 AM and 11:00 PM",
+      });
+    }
+  }
+
+  private isTimeWithinWindow(
+    date: Date,
+    window: {
+      startHour: number;
+      startMinute: number;
+      endHour: number;
+      endMinute: number;
+    },
+  ): boolean {
+    const minutesSinceMidnight = date.getHours() * 60 + date.getMinutes();
+    const windowStart = window.startHour * 60 + window.startMinute;
+    const windowEnd = window.endHour * 60 + window.endMinute;
+
+    return minutesSinceMidnight >= windowStart && minutesSinceMidnight <= windowEnd;
+  }
+
+  private isAfterSameDayCutoff(now: Date): boolean {
+    return (
+      now.getHours() > SAME_DAY_BOOKING_CUTOFF_HOUR ||
+      (now.getHours() === SAME_DAY_BOOKING_CUTOFF_HOUR &&
+        (now.getMinutes() > 0 || now.getSeconds() > 0 || now.getMilliseconds() > 0))
+    );
   }
 
   /**
@@ -291,39 +369,6 @@ export class BookingValidationService {
         ],
         "Guest information is required when booking without authentication",
       );
-    }
-  }
-
-  /**
-   * Run all validations. Each method throws its own exception on failure.
-   *
-   * @param input - Booking input
-   * @param serverTotal - Server-calculated total (optional)
-   * @throws BookingValidationException for validation errors
-   * @throws CarNotFoundException if car doesn't exist
-   * @throws CarNotAvailableException if car is not available
-   */
-  async validateAll(input: CreateBookingInput, serverTotal?: Decimal): Promise<void> {
-    // Date validation (throws BookingValidationException)
-    this.validateDates({
-      startDate: input.startDate,
-      endDate: input.endDate,
-      bookingType: input.bookingType,
-    });
-
-    // Car availability (throws CarNotFoundException or CarNotAvailableException)
-    await this.checkCarAvailability({
-      carId: input.carId,
-      startDate: input.startDate,
-      endDate: input.endDate,
-    });
-
-    // Guest email validation (throws BookingValidationException)
-    await this.validateGuestEmail(input);
-
-    // Price validation (throws BookingValidationException)
-    if (serverTotal) {
-      this.validatePriceMatch(input.clientTotalAmount, serverTotal);
     }
   }
 }

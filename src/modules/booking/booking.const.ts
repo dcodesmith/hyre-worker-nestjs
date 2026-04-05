@@ -30,3 +30,8 @@ export const AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER = 1.2;
 
 /** Maximum number of legs eligible for fuel upgrade */
 export const MAX_LEGS_FOR_FUEL_UPGRADE = 2;
+
+export const DAY_START_HOUR = 7;
+export const DAY_END_HOUR = 11;
+export const FULL_DAY_START_HOUR = 6;
+export const FULL_DAY_END_HOUR = 23;
