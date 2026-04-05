@@ -60,7 +60,7 @@ jobs:
           DATABASE_URL: postgresql://postgres@localhost:5432/prisma_ci?schema=public
       
       - name: Build Docker image (dry run)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
