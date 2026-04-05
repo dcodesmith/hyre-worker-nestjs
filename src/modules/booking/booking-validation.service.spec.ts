@@ -1,8 +1,8 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import type { Booking, Car, User } from "@prisma/client";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
   BookingValidationException,
@@ -11,11 +11,6 @@ import {
 } from "./booking.error";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
-
-// Helper to create partial mock data with type safety
-const mockCar = (data: Partial<Car>) => data as Car;
-const mockBooking = (data: Partial<Booking>) => data as Booking;
-const mockUser = (data: Partial<User>) => data as User;
 
 describe("BookingValidationService", () => {
   let service: BookingValidationService;
@@ -157,6 +152,40 @@ describe("BookingValidationService", () => {
       ).not.toThrow();
 
       vi.useRealTimers();
+    });
+
+    it("should not throw when DAY booking starts exactly at 7:00 AM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(7, 0, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setHours(11, 0, 0, 0);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "DAY",
+        }),
+      ).not.toThrow();
+    });
+
+    it("should not throw when FULL_DAY booking starts exactly at 6:00 AM", () => {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 1);
+      startDate.setHours(6, 0, 0, 0);
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+
+      expect(() =>
+        service.validateDates({
+          startDate,
+          endDate,
+          bookingType: "FULL_DAY",
+        }),
+      ).not.toThrow();
     });
 
     it("should not throw for same-day DAY booking before 11 AM", () => {
@@ -325,7 +354,7 @@ describe("BookingValidationService", () => {
   describe("checkCarAvailability", () => {
     it("should not throw when car exists, is approved, available, and no conflicting bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.APPROVED,
@@ -362,7 +391,7 @@ describe("BookingValidationService", () => {
 
     it("should throw CarNotAvailableException when car approval status is PENDING", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.PENDING,
@@ -383,7 +412,7 @@ describe("BookingValidationService", () => {
 
     it("should throw CarNotAvailableException when car status is HOLD", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.HOLD,
           approvalStatus: CarApprovalStatus.APPROVED,
@@ -403,14 +432,14 @@ describe("BookingValidationService", () => {
 
     it("should throw CarNotAvailableException when there are conflicting bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.APPROVED,
         }),
       );
       vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
-        mockBooking({
+        createBooking({
           id: "existing-booking",
           startDate: new Date("2025-02-01T09:00:00Z"),
           endDate: new Date("2025-02-01T21:00:00Z"),
@@ -429,7 +458,7 @@ describe("BookingValidationService", () => {
 
     it("should exclude specified booking when checking availability", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.APPROVED,
@@ -455,7 +484,7 @@ describe("BookingValidationService", () => {
 
     it("should only check bookings with CONFIRMED/ACTIVE status and PAID payment", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.APPROVED,
@@ -481,7 +510,7 @@ describe("BookingValidationService", () => {
 
     it("should use strict inequality (lt/gt) to allow exactly 2-hour buffer gaps", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
-        mockCar({
+        createCar({
           id: "car-123",
           status: Status.AVAILABLE,
           approvalStatus: CarApprovalStatus.APPROVED,
@@ -556,7 +585,7 @@ describe("BookingValidationService", () => {
 
     it("should throw BookingValidationException for guest booking with already registered email", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValueOnce(
-        mockUser({ id: "existing-user" }),
+        createUser({ id: "existing-user" }),
       );
 
       const input: CreateGuestBookingDto = {

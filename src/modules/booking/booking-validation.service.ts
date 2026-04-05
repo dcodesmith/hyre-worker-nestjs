@@ -106,7 +106,7 @@ export class BookingValidationService {
     if (bookingType === "DAY" && isSameDay(startDate, now) && this.isAfterSameDayCutoff(now)) {
       errors.push({
         field: "startDate",
-        message: "Same-day DAY bookings cannot be made at or after 11 AM",
+        message: "Same-day DAY bookings cannot be made after 11 AM",
       });
     }
 
