@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  FULL_DAY_END_HOUR,
+  FULL_DAY_START_HOUR,
+  SAME_DAY_BOOKING_CUTOFF_HOUR,
+} from "./booking.const";
+import {
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -111,7 +118,7 @@ describe("BookingValidationService", () => {
       // Mock current time to be after 11 AM
       vi.useFakeTimers();
       const now = new Date();
-      now.setHours(11, 1, 0, 0);
+      now.setHours(SAME_DAY_BOOKING_CUTOFF_HOUR, 1, 0, 0);
       vi.setSystemTime(now);
 
       const startDate = new Date(now);
@@ -134,14 +141,14 @@ describe("BookingValidationService", () => {
     it("should allow same-day DAY booking exactly at 11:00 AM cutoff", () => {
       vi.useFakeTimers();
       const now = new Date();
-      now.setHours(11, 0, 0, 0);
+      now.setHours(SAME_DAY_BOOKING_CUTOFF_HOUR, 0, 0, 0);
       vi.setSystemTime(now);
 
       const startDate = new Date(now);
-      startDate.setHours(11, 0, 0, 0);
+      startDate.setHours(SAME_DAY_BOOKING_CUTOFF_HOUR, 0, 0, 0);
 
       const endDate = new Date(startDate);
-      endDate.setHours(23, 0, 0, 0);
+      endDate.setHours(FULL_DAY_END_HOUR, 0, 0, 0);
 
       expect(() =>
         service.validateDates({
@@ -157,10 +164,10 @@ describe("BookingValidationService", () => {
     it("should not throw when DAY booking starts exactly at 7:00 AM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(7, 0, 0, 0);
+      startDate.setHours(DAY_START_HOUR, 0, 0, 0);
 
       const endDate = new Date(startDate);
-      endDate.setHours(11, 0, 0, 0);
+      endDate.setHours(DAY_END_HOUR, 0, 0, 0);
 
       expect(() =>
         service.validateDates({
@@ -174,7 +181,7 @@ describe("BookingValidationService", () => {
     it("should not throw when FULL_DAY booking starts exactly at 6:00 AM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(6, 0, 0, 0);
+      startDate.setHours(FULL_DAY_START_HOUR, 0, 0, 0);
 
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + 1);
@@ -215,7 +222,7 @@ describe("BookingValidationService", () => {
     it("should throw BookingValidationException when DAY booking starts before 7 AM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(6, 30, 0, 0);
+      startDate.setHours(DAY_START_HOUR - 1, 30, 0, 0);
 
       const endDate = new Date(startDate);
       endDate.setHours(18, 30, 0, 0);
@@ -232,10 +239,10 @@ describe("BookingValidationService", () => {
     it("should throw BookingValidationException when DAY booking starts after 11 AM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(11, 1, 0, 0);
+      startDate.setHours(DAY_END_HOUR, 1, 0, 0);
 
       const endDate = new Date(startDate);
-      endDate.setHours(23, 1, 0, 0);
+      endDate.setHours(FULL_DAY_END_HOUR, 1, 0, 0);
 
       expect(() =>
         service.validateDates({
@@ -249,7 +256,7 @@ describe("BookingValidationService", () => {
     it("should not throw when FULL_DAY booking starts within 6 AM to 11 PM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(23, 0, 0, 0);
+      startDate.setHours(FULL_DAY_END_HOUR, 0, 0, 0);
 
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + 1);
@@ -283,7 +290,7 @@ describe("BookingValidationService", () => {
     it("should throw BookingValidationException when FULL_DAY booking starts after 11 PM", () => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() + 1);
-      startDate.setHours(23, 1, 0, 0);
+      startDate.setHours(FULL_DAY_END_HOUR, 1, 0, 0);
 
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + 1);
@@ -333,7 +340,7 @@ describe("BookingValidationService", () => {
       vi.setSystemTime(now);
 
       const startDate = new Date(now);
-      startDate.setHours(23, 0, 0, 0); // 11 PM same day
+      startDate.setHours(FULL_DAY_END_HOUR, 0, 0, 0); // 11 PM same day
 
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + 1);
@@ -375,6 +382,46 @@ describe("BookingValidationService", () => {
           endDate: dayAfterTomorrow,
         }),
       ).resolves.toBeUndefined();
+    });
+
+    it("should throw CarNotAvailableException when car status is BOOKED", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        createCar({
+          id: "car-123",
+          status: Status.BOOKED,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+
+      await expect(
+        service.checkCarAvailability({
+          carId: "car-123",
+          startDate: new Date(),
+          endDate: new Date(),
+        }),
+      ).rejects.toThrow(CarNotAvailableException);
+
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+    });
+
+    it("should throw CarNotAvailableException when car status is IN_SERVICE", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        createCar({
+          id: "car-123",
+          status: Status.IN_SERVICE,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+
+      await expect(
+        service.checkCarAvailability({
+          carId: "car-123",
+          startDate: new Date(),
+          endDate: new Date(),
+        }),
+      ).rejects.toThrow(CarNotAvailableException);
+
+      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
     });
 
     it("should throw CarNotFoundException when car does not exist", async () => {

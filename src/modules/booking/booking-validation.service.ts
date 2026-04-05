@@ -8,6 +8,10 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  FULL_DAY_END_HOUR,
+  FULL_DAY_START_HOUR,
   PRICE_TOLERANCE,
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
@@ -121,9 +125,9 @@ export class BookingValidationService {
     if (
       bookingType === "DAY" &&
       !this.isTimeWithinWindow(startDate, {
-        startHour: 7,
+        startHour: DAY_START_HOUR,
         startMinute: 0,
-        endHour: 11,
+        endHour: DAY_END_HOUR,
         endMinute: 0,
       })
     ) {
@@ -136,9 +140,9 @@ export class BookingValidationService {
     if (
       bookingType === "FULL_DAY" &&
       !this.isTimeWithinWindow(startDate, {
-        startHour: 6,
+        startHour: FULL_DAY_START_HOUR,
         startMinute: 0,
-        endHour: 23,
+        endHour: FULL_DAY_END_HOUR,
         endMinute: 0,
       })
     ) {
