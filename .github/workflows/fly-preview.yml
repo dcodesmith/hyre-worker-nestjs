@@ -436,6 +436,9 @@ jobs:
     needs: setup
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
@@ -466,3 +469,48 @@ jobs:
             status=$?
             echo "Failed to destroy redis app 'hyre-worker-redis-pr-${{ github.event.number }}' (exit=${status})."
           fi
+
+      - name: Remove preview URL comment from PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = "<!-- fly-preview-url-comment -->";
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+
+              const existing = comments.find(
+                (comment) =>
+                  comment.user?.type === "Bot" &&
+                  typeof comment.body === "string" &&
+                  comment.body.includes(marker),
+              );
+
+              if (!existing) {
+                console.log(`[fly-preview] No preview comment found for marker=${marker}`);
+                return;
+              }
+
+              await github.rest.issues.deleteComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+              });
+              console.log(`[fly-preview] Deleted preview comment id=${existing.id}`);
+            } catch (error) {
+              const details =
+                error instanceof Error
+                  ? `${error.message}\n${error.stack ?? ""}`
+                  : JSON.stringify(error);
+              console.warn(
+                `[fly-preview] Non-fatal PR comment cleanup failure (marker=${marker}): ${details}`,
+              );
+            }
