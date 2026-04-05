@@ -287,7 +287,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-${{ github.event.number }}
-      url: ${{ needs.setup.outputs.preview_url }}
+      url: ${{ steps.deploy.outputs.url }}
     permissions:
       contents: read
       pull-requests: write
@@ -368,7 +368,7 @@ jobs:
             echo "## Fly Preview Deployment"
             echo ""
             echo "- App: \`${{ needs.setup.outputs.preview_app }}\`"
-            echo "- URL: ${{ needs.setup.outputs.preview_url }}"
+            echo "- URL: ${{ steps.deploy.outputs.url }}"
             echo "- Redis: \`${{ needs.provision_redis.outputs.redis_app }}\`"
             echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
