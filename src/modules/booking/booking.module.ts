@@ -4,6 +4,7 @@ import { FlightAwareModule } from "../flightaware/flightaware.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
 import { MapsModule } from "../maps/maps.module";
 import { NotificationModule } from "../notification/notification.module";
+import { PromotionModule } from "../promotion/promotion.module";
 import { RatesModule } from "../rates/rates.module";
 import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
@@ -28,6 +29,7 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
     FlutterwaveModule,
     FlightAwareModule,
     MapsModule,
+    PromotionModule,
   ],
   controllers: [BookingController],
   providers: [

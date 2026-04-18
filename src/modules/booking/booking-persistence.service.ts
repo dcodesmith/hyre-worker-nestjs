@@ -33,6 +33,7 @@ export class BookingPersistenceService {
       where: { id: carId },
       select: {
         id: true,
+        ownerId: true,
         dayRate: true,
         nightRate: true,
         fullDayRate: true,

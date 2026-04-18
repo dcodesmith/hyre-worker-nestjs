@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
 import type { GeneratedLeg } from "./booking.interface";
 import type { BookingCalculationInput, CarPricing } from "./booking-calculation.interface";
@@ -9,6 +10,7 @@ import { BookingCalculationService } from "./booking-calculation.service";
 describe("BookingCalculationService", () => {
   let service: BookingCalculationService;
   let ratesService: { getRates: ReturnType<typeof vi.fn> };
+  let promotionService: { getOverlappingPromotionsForCar: ReturnType<typeof vi.fn> };
 
   // Standard mock rates
   const mockRates = {
@@ -54,9 +56,16 @@ describe("BookingCalculationService", () => {
     ratesService = {
       getRates: vi.fn().mockResolvedValue(mockRates),
     };
+    promotionService = {
+      getOverlappingPromotionsForCar: vi.fn().mockResolvedValue([]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BookingCalculationService, { provide: RatesService, useValue: ratesService }],
+      providers: [
+        BookingCalculationService,
+        { provide: RatesService, useValue: ratesService },
+        { provide: PromotionService, useValue: promotionService },
+      ],
     }).compile();
 
     service = module.get<BookingCalculationService>(BookingCalculationService);
@@ -690,6 +699,204 @@ describe("BookingCalculationService", () => {
       expect(result.vatAmount.equals(new Decimal(0))).toBe(true);
       // Total should be 0
       expect(result.totalAmount.equals(new Decimal(0))).toBe(true);
+    });
+  });
+
+  describe("promotion integration", () => {
+    const mockCarWithIdentity = {
+      ...mockCar,
+      id: "car-1",
+      ownerId: "owner-1",
+    };
+
+    function buildActivePromotion(input: {
+      id: string;
+      discountValue: number;
+      startDate: string;
+      endDate: string;
+      carId?: string | null;
+      createdAt?: string;
+      name?: string | null;
+    }) {
+      return {
+        id: input.id,
+        name: input.name ?? null,
+        discountValue: new Decimal(input.discountValue),
+        startDate: new Date(input.startDate),
+        endDate: new Date(input.endDate),
+        carId: input.carId ?? null,
+        createdAt: new Date(input.createdAt ?? "2026-01-01T00:00:00.000Z"),
+      };
+    }
+
+    it("does not query promotions when car identity is missing", async () => {
+      await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(promotionService.getOverlappingPromotionsForCar).not.toHaveBeenCalled();
+    });
+
+    it("does not query promotions for empty leg lists", async () => {
+      await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: [],
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(promotionService.getOverlappingPromotionsForCar).not.toHaveBeenCalled();
+    });
+
+    it("continues without discounts when promotion lookup fails", async () => {
+      promotionService.getOverlappingPromotionsForCar.mockRejectedValueOnce(
+        new Error("promotion-db-down"),
+      );
+
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(result.appliedPromotion).toBeNull();
+      expect(result.netTotal.equals(new Decimal(100000))).toBe(true);
+      expect(result.compareAtNetTotal.equals(new Decimal(100000))).toBe(true);
+      expect(result.legPrices.every((leg) => leg.promotion === null)).toBe(true);
+    });
+
+    it("discounts every leg when the promotion covers the full booking window", async () => {
+      promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
+        buildActivePromotion({
+          id: "p1",
+          discountValue: 20,
+          startDate: "2025-02-28T00:00:00Z",
+          endDate: "2025-03-10T00:00:00Z",
+          carId: "car-1",
+          name: "Launch",
+        }),
+      ]);
+
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(result.legPrices).toHaveLength(2);
+      expect(result.legPrices.every((leg) => leg.promotion?.id === "p1")).toBe(true);
+      expect(result.legPrices.every((leg) => leg.price.equals(new Decimal(40000)))).toBe(true);
+      expect(result.legPrices.every((leg) => leg.basePrice.equals(new Decimal(50000)))).toBe(true);
+      expect(result.netTotal.equals(new Decimal(80000))).toBe(true);
+      expect(result.compareAtNetTotal.equals(new Decimal(100000))).toBe(true);
+      expect(result.appliedPromotion?.id).toBe("p1");
+    });
+
+    it("applies the promotion only to legs overlapping the promotion window", async () => {
+      promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
+        buildActivePromotion({
+          id: "p1",
+          discountValue: 20,
+          // Covers only the first leg (2025-03-01)
+          startDate: "2025-02-28T00:00:00Z",
+          endDate: "2025-03-02T00:00:00Z",
+          carId: "car-1",
+        }),
+      ]);
+
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(3), // 2025-03-01, 2025-03-02, 2025-03-03
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(result.legPrices[0].promotion?.id).toBe("p1");
+      expect(result.legPrices[0].price.equals(new Decimal(40000))).toBe(true);
+      expect(result.legPrices[1].promotion).toBeNull();
+      expect(result.legPrices[1].price.equals(new Decimal(50000))).toBe(true);
+      expect(result.legPrices[2].promotion).toBeNull();
+      expect(result.netTotal.equals(new Decimal(140000))).toBe(true); // 40k + 50k + 50k
+      expect(result.compareAtNetTotal.equals(new Decimal(150000))).toBe(true);
+    });
+
+    it("prefers car-specific promotions over fleet-wide promotions even when both overlap", async () => {
+      promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
+        buildActivePromotion({
+          id: "fleet-large",
+          discountValue: 40,
+          startDate: "2025-02-28T00:00:00Z",
+          endDate: "2025-03-10T00:00:00Z",
+          carId: null,
+        }),
+        buildActivePromotion({
+          id: "car-small",
+          discountValue: 10,
+          startDate: "2025-02-28T00:00:00Z",
+          endDate: "2025-03-10T00:00:00Z",
+          carId: "car-1",
+        }),
+      ]);
+
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(result.legPrices[0].promotion?.id).toBe("car-small");
+      expect(result.legPrices[0].price.equals(new Decimal(45000))).toBe(true); // 10% off
+    });
+
+    it("excludes the promoted discount from fleet-owner commission (commission is on discounted netTotal)", async () => {
+      promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
+        buildActivePromotion({
+          id: "p",
+          discountValue: 20,
+          startDate: "2025-02-28T00:00:00Z",
+          endDate: "2025-03-10T00:00:00Z",
+          carId: "car-1",
+        }),
+      ]);
+
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      // netTotal = 80,000 (discounted); commission = 5% of 80,000 = 4,000
+      // Payout = 80,000 - 4,000 = 76,000
+      expect(result.netTotal.equals(new Decimal(80000))).toBe(true);
+      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(4000))).toBe(true);
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(76000))).toBe(true);
+    });
+
+    it("leaves compareAtNetTotal equal to netTotal when no promotions apply", async () => {
+      const result = await service.calculateBookingCost({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCarWithIdentity,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+
+      expect(result.netTotal.equals(result.compareAtNetTotal)).toBe(true);
+      expect(result.appliedPromotion).toBeNull();
     });
   });
 });

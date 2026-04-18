@@ -382,9 +382,18 @@ export function createBookingFinancials(
   overrides: Partial<BookingFinancials> = {},
 ): BookingFinancials {
   return {
-    legPrices: [{ legDate: new Date("2025-02-01"), price: new Decimal(50000) }],
+    legPrices: [
+      {
+        legDate: new Date("2025-02-01"),
+        price: new Decimal(50000),
+        basePrice: new Decimal(50000),
+        promotion: null,
+      },
+    ],
     numberOfLegs: 1,
     netTotal: new Decimal(50000),
+    compareAtNetTotal: new Decimal(50000),
+    appliedPromotion: null,
     securityDetailCost: new Decimal(0),
     fuelUpgradeCost: new Decimal(0),
     netTotalWithAddons: new Decimal(50000),
