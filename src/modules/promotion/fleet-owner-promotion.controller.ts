@@ -1,6 +1,5 @@
 import { Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
 import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
-import { LAGOS_TIMEZONE } from "../../shared/timezone";
 import { FLEET_OWNER } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -30,19 +29,13 @@ export class FleetOwnerPromotionController {
     @ZodBody(createPromotionBodySchema) body: CreatePromotionBodyDto,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {
-    const { startDate, endDate } = PromotionService.toPromotionWindowExclusive({
-      startDate: body.startDate,
-      endDateInclusive: body.endDate,
-      timeZone: LAGOS_TIMEZONE,
-    });
-
     return this.promotionService.createPromotion({
       ownerId: sessionUser.id,
       carId: body.scope === "FLEET" ? null : (body.carId ?? null),
       name: body.name,
       discountValue: body.discountValue,
-      startDate,
-      endDate,
+      startDate: body.startDate,
+      endDate: body.endDate,
     });
   }
 

@@ -1,9 +1,10 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
-import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LAGOS_TIMEZONE } from "../../shared/timezone";
+import { TIMEZONE } from "../../config/constants";
+import { createActivePromotion } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
   PromotionCarNotFoundException,
@@ -14,28 +15,7 @@ import {
   PromotionUpdateFailedException,
   PromotionValidationException,
 } from "./promotion.error";
-import type { ActivePromotion } from "./promotion.interface";
 import { PromotionService } from "./promotion.service";
-
-function buildPromotion(input: {
-  id: string;
-  discountValue: number | string;
-  startDate: string;
-  endDate: string;
-  carId?: string | null;
-  createdAt?: string;
-  name?: string | null;
-}): ActivePromotion {
-  return {
-    id: input.id,
-    name: input.name ?? input.id,
-    discountValue: new Decimal(input.discountValue.toString()),
-    startDate: new Date(input.startDate),
-    endDate: new Date(input.endDate),
-    carId: input.carId ?? null,
-    createdAt: new Date(input.createdAt ?? "2026-01-01T00:00:00.000Z"),
-  };
-}
 
 describe("PromotionService — pure helpers", () => {
   describe("toPromotionWindowExclusive", () => {
@@ -43,22 +23,22 @@ describe("PromotionService — pure helpers", () => {
       const window = PromotionService.toPromotionWindowExclusive({
         startDate: "2026-04-11",
         endDateInclusive: "2026-04-14",
-        timeZone: LAGOS_TIMEZONE,
+        timeZone: TIMEZONE,
       });
 
       expect(window.startDate.toISOString()).toBe(
-        fromZonedTime("2026-04-11T00:00:00", LAGOS_TIMEZONE).toISOString(),
+        fromZonedTime("2026-04-11T00:00:00", TIMEZONE).toISOString(),
       );
       expect(window.endDate.toISOString()).toBe(
-        fromZonedTime("2026-04-15T00:00:00", LAGOS_TIMEZONE).toISOString(),
+        fromZonedTime("2026-04-15T00:00:00", TIMEZONE).toISOString(),
       );
     });
 
-    it("defaults to LAGOS_TIMEZONE when timeZone is not provided", () => {
+    it("defaults to TIMEZONE when timeZone is not provided", () => {
       const explicit = PromotionService.toPromotionWindowExclusive({
         startDate: "2026-04-11",
         endDateInclusive: "2026-04-11",
-        timeZone: LAGOS_TIMEZONE,
+        timeZone: TIMEZONE,
       });
       const defaulted = PromotionService.toPromotionWindowExclusive({
         startDate: "2026-04-11",
@@ -73,7 +53,7 @@ describe("PromotionService — pure helpers", () => {
       const window = PromotionService.toPromotionWindowExclusive({
         startDate: "2026-04-11",
         endDateInclusive: "2026-04-11",
-        timeZone: LAGOS_TIMEZONE,
+        timeZone: TIMEZONE,
       });
 
       expect(window.endDate.getTime() - window.startDate.getTime()).toBe(24 * 60 * 60 * 1000);
@@ -83,11 +63,11 @@ describe("PromotionService — pure helpers", () => {
       const window = PromotionService.toPromotionWindowExclusive({
         startDate: "2026-01-30",
         endDateInclusive: "2026-01-31",
-        timeZone: LAGOS_TIMEZONE,
+        timeZone: TIMEZONE,
       });
 
       expect(window.endDate.toISOString()).toBe(
-        fromZonedTime("2026-02-01T00:00:00", LAGOS_TIMEZONE).toISOString(),
+        fromZonedTime("2026-02-01T00:00:00", TIMEZONE).toISOString(),
       );
     });
 
@@ -105,6 +85,16 @@ describe("PromotionService — pure helpers", () => {
         }),
       ).toThrow(PromotionValidationException);
     });
+
+    it("throws when endDateInclusive is before startDate", () => {
+      expect(() =>
+        PromotionService.toPromotionWindowExclusive({
+          startDate: "2026-04-15",
+          endDateInclusive: "2026-04-14",
+          timeZone: TIMEZONE,
+        }),
+      ).toThrow(PromotionValidationException);
+    });
   });
 
   describe("resolveBestPromotionForInterval", () => {
@@ -114,7 +104,7 @@ describe("PromotionService — pure helpers", () => {
     it("returns null when no promotions overlap", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "p1",
             discountValue: 20,
             startDate: "2026-04-01T00:00:00Z",
@@ -134,14 +124,14 @@ describe("PromotionService — pure helpers", () => {
     it("prefers car-specific promotions over fleet-wide even with larger fleet discounts", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "fleet",
             carId: null,
             discountValue: 45,
             startDate: "2026-04-11T00:00:00.000Z",
             endDate: "2026-04-15T00:00:00.000Z",
           }),
-          buildPromotion({
+          createActivePromotion({
             id: "car-specific",
             carId,
             discountValue: 10,
@@ -161,7 +151,7 @@ describe("PromotionService — pure helpers", () => {
     it("falls back to fleet-wide when no car-specific promotion overlaps", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "fleet",
             carId: null,
             discountValue: 25,
@@ -181,14 +171,14 @@ describe("PromotionService — pure helpers", () => {
     it("chooses the highest-discount promotion among same-scope candidates", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "small",
             carId,
             discountValue: 10,
             startDate: "2026-04-11T00:00:00.000Z",
             endDate: "2026-04-15T00:00:00.000Z",
           }),
-          buildPromotion({
+          createActivePromotion({
             id: "big",
             carId,
             discountValue: 25,
@@ -208,7 +198,7 @@ describe("PromotionService — pure helpers", () => {
     it("breaks discount ties on createdAt (newest wins)", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "older",
             carId,
             discountValue: 15,
@@ -216,7 +206,7 @@ describe("PromotionService — pure helpers", () => {
             endDate: "2026-04-15T00:00:00.000Z",
             createdAt: "2026-04-01T00:00:00.000Z",
           }),
-          buildPromotion({
+          createActivePromotion({
             id: "newer",
             carId,
             discountValue: 15,
@@ -237,7 +227,7 @@ describe("PromotionService — pure helpers", () => {
     it("treats touching boundaries as non-overlapping (end-exclusive semantics)", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "promo",
             carId,
             discountValue: 20,
@@ -257,14 +247,14 @@ describe("PromotionService — pure helpers", () => {
     it("returns the first candidate when multiple tie and baseAmount is not provided", () => {
       const chosen = PromotionService.resolveBestPromotionForInterval({
         promotions: [
-          buildPromotion({
+          createActivePromotion({
             id: "first",
             carId,
             discountValue: 10,
             startDate: "2026-04-11T00:00:00.000Z",
             endDate: "2026-04-15T00:00:00.000Z",
           }),
-          buildPromotion({
+          createActivePromotion({
             id: "second",
             carId,
             discountValue: 15,
@@ -282,7 +272,7 @@ describe("PromotionService — pure helpers", () => {
   });
 
   describe("applyPromotionDiscount", () => {
-    const promotion = buildPromotion({
+    const promotion = createActivePromotion({
       id: "p",
       discountValue: 20,
       startDate: "2026-04-01",
@@ -294,7 +284,7 @@ describe("PromotionService — pure helpers", () => {
     });
 
     it("floors the result at 1 so platform fee math never sees a zero rate", () => {
-      const hundredPercent = buildPromotion({
+      const hundredPercent = createActivePromotion({
         id: "full",
         discountValue: 50,
         startDate: "2026-04-01",
@@ -304,7 +294,7 @@ describe("PromotionService — pure helpers", () => {
     });
 
     it("handles fractional percentages via decimal.js", () => {
-      const fractional = buildPromotion({
+      const fractional = createActivePromotion({
         id: "frac",
         discountValue: "12.5",
         startDate: "2026-04-01",
@@ -316,7 +306,7 @@ describe("PromotionService — pure helpers", () => {
 
   describe("getDiscountedCarRates", () => {
     it("applies the discount to every rate field", () => {
-      const promotion = buildPromotion({
+      const promotion = createActivePromotion({
         id: "p",
         discountValue: 10,
         startDate: "2026-04-01",
@@ -348,7 +338,7 @@ describe("PromotionService — pure helpers", () => {
     it("returns NN% OFF for integer discounts", () => {
       expect(
         PromotionService.getPromotionBadgeLabel(
-          buildPromotion({
+          createActivePromotion({
             id: "p",
             discountValue: 25,
             startDate: "2026-04-01",
@@ -394,7 +384,21 @@ describe("PromotionService — DB-backed", () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [PromotionService, { provide: DatabaseService, useValue: databaseService }],
+      providers: [
+        PromotionService,
+        { provide: DatabaseService, useValue: databaseService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn().mockImplementation((_key: string, fallbackOrOptions?: unknown) => {
+              if (typeof fallbackOrOptions === "string") {
+                return fallbackOrOptions;
+              }
+              return TIMEZONE;
+            }),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<PromotionService>(PromotionService);
@@ -411,14 +415,14 @@ describe("PromotionService — DB-backed", () => {
 
     it("prefers car-specific promotions over fleet-wide ones", async () => {
       databaseService.promotion.findMany.mockResolvedValue([
-        buildPromotion({
+        createActivePromotion({
           id: "fleet",
           carId: null,
           discountValue: 30,
           startDate: "2026-04-01T00:00:00Z",
           endDate: "2026-04-30T00:00:00Z",
         }),
-        buildPromotion({
+        createActivePromotion({
           id: "car",
           carId: "car-1",
           discountValue: 10,
@@ -457,7 +461,7 @@ describe("PromotionService — DB-backed", () => {
     it("maps car-specific promotions to their car and falls back to fleet for uncovered cars", async () => {
       databaseService.promotion.findMany.mockResolvedValue([
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "car-1-promo",
             carId: "car-1",
             discountValue: 15,
@@ -467,7 +471,7 @@ describe("PromotionService — DB-backed", () => {
           ownerId: "owner-1",
         },
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "fleet-promo",
             carId: null,
             discountValue: 20,
@@ -493,7 +497,7 @@ describe("PromotionService — DB-backed", () => {
     it("per same-scope key keeps the highest discount, not merely the newest row", async () => {
       databaseService.promotion.findMany.mockResolvedValue([
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "newer-low",
             carId: null,
             discountValue: 10,
@@ -504,7 +508,7 @@ describe("PromotionService — DB-backed", () => {
           ownerId: "owner-1",
         },
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "older-high",
             carId: null,
             discountValue: 25,
@@ -527,7 +531,7 @@ describe("PromotionService — DB-backed", () => {
     it("per same-scope key breaks discount ties with the more recently created promotion", async () => {
       databaseService.promotion.findMany.mockResolvedValue([
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "older-tie",
             carId: "car-1",
             discountValue: 20,
@@ -538,7 +542,7 @@ describe("PromotionService — DB-backed", () => {
           ownerId: "owner-1",
         },
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "newer-tie",
             carId: "car-1",
             discountValue: 20,
@@ -561,7 +565,7 @@ describe("PromotionService — DB-backed", () => {
     it("ignores promotions from other owners even if carId matches", async () => {
       databaseService.promotion.findMany.mockResolvedValue([
         {
-          ...buildPromotion({
+          ...createActivePromotion({
             id: "other-owner-promo",
             carId: "car-1",
             discountValue: 50,
@@ -624,8 +628,8 @@ describe("PromotionService — DB-backed", () => {
       carId: "car-1",
       name: "Easter",
       discountValue: 20,
-      startDate: new Date("2026-04-10T00:00:00Z"),
-      endDate: new Date("2026-04-15T00:00:00Z"),
+      startDate: "2026-04-10",
+      endDate: "2026-04-15",
     };
 
     beforeEach(() => {
@@ -665,12 +669,12 @@ describe("PromotionService — DB-backed", () => {
       );
     });
 
-    it("rejects end date that equals or precedes start date", async () => {
+    it("rejects end date that precedes start date", async () => {
       await expect(
         service.createPromotion({
           ...validInput,
-          startDate: new Date("2026-04-15T00:00:00Z"),
-          endDate: new Date("2026-04-15T00:00:00Z"),
+          startDate: "2026-04-15",
+          endDate: "2026-04-14",
         }),
       ).rejects.toThrow(PromotionValidationException);
     });

@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createActivePromotion } from "../../shared/helper.fixtures";
 import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
 import type { GeneratedLeg } from "./booking.interface";
@@ -709,26 +710,6 @@ describe("BookingCalculationService", () => {
       ownerId: "owner-1",
     };
 
-    function buildActivePromotion(input: {
-      id: string;
-      discountValue: number;
-      startDate: string;
-      endDate: string;
-      carId?: string | null;
-      createdAt?: string;
-      name?: string | null;
-    }) {
-      return {
-        id: input.id,
-        name: input.name ?? null,
-        discountValue: new Decimal(input.discountValue),
-        startDate: new Date(input.startDate),
-        endDate: new Date(input.endDate),
-        carId: input.carId ?? null,
-        createdAt: new Date(input.createdAt ?? "2026-01-01T00:00:00.000Z"),
-      };
-    }
-
     it("does not query promotions when car identity is missing", async () => {
       await service.calculateBookingCost({
         bookingType: "DAY",
@@ -774,7 +755,7 @@ describe("BookingCalculationService", () => {
 
     it("discounts every leg when the promotion covers the full booking window", async () => {
       promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
-        buildActivePromotion({
+        createActivePromotion({
           id: "p1",
           discountValue: 20,
           startDate: "2025-02-28T00:00:00Z",
@@ -803,7 +784,7 @@ describe("BookingCalculationService", () => {
 
     it("applies the promotion only to legs overlapping the promotion window", async () => {
       promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
-        buildActivePromotion({
+        createActivePromotion({
           id: "p1",
           discountValue: 20,
           // Covers only the first leg (2025-03-01)
@@ -832,14 +813,14 @@ describe("BookingCalculationService", () => {
 
     it("prefers car-specific promotions over fleet-wide promotions even when both overlap", async () => {
       promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
-        buildActivePromotion({
+        createActivePromotion({
           id: "fleet-large",
           discountValue: 40,
           startDate: "2025-02-28T00:00:00Z",
           endDate: "2025-03-10T00:00:00Z",
           carId: null,
         }),
-        buildActivePromotion({
+        createActivePromotion({
           id: "car-small",
           discountValue: 10,
           startDate: "2025-02-28T00:00:00Z",
@@ -862,7 +843,7 @@ describe("BookingCalculationService", () => {
 
     it("excludes the promoted discount from fleet-owner commission (commission is on discounted netTotal)", async () => {
       promotionService.getOverlappingPromotionsForCar.mockResolvedValueOnce([
-        buildActivePromotion({
+        createActivePromotion({
           id: "p",
           discountValue: 20,
           startDate: "2025-02-28T00:00:00Z",

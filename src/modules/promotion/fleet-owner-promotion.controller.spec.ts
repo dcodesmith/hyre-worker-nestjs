@@ -1,7 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LAGOS_TIMEZONE } from "../../shared/timezone";
+import { createOwnerPromotionListItem, createPromotionRecord } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
 import { FleetOwnerPromotionController } from "./fleet-owner-promotion.controller";
 import { PromotionService } from "./promotion.service";
@@ -50,21 +50,21 @@ describe("FleetOwnerPromotionController", () => {
   describe("listOwnerPromotions", () => {
     it("delegates to PromotionService.getOwnerPromotions with the caller's id", async () => {
       vi.mocked(promotionService.getOwnerPromotions).mockResolvedValueOnce([
-        { id: "promo-1" },
-      ] as never);
+        createOwnerPromotionListItem({ id: "promo-1" }),
+      ]);
 
       const result = await controller.listOwnerPromotions(mockUser);
 
-      expect(result).toEqual([{ id: "promo-1" }]);
+      expect(result).toEqual([createOwnerPromotionListItem({ id: "promo-1" })]);
       expect(promotionService.getOwnerPromotions).toHaveBeenCalledWith("owner-1");
     });
   });
 
   describe("createPromotion", () => {
     it("converts calendar dates to exclusive window and passes carId for CAR scope", async () => {
-      vi.mocked(promotionService.createPromotion).mockResolvedValueOnce({
-        id: "promo-1",
-      } as never);
+      vi.mocked(promotionService.createPromotion).mockResolvedValueOnce(
+        createPromotionRecord({ id: "promo-1" }),
+      );
 
       const body = {
         name: "Easter Special",
@@ -77,7 +77,7 @@ describe("FleetOwnerPromotionController", () => {
 
       const result = await controller.createPromotion(body, mockUser);
 
-      expect(result).toEqual({ id: "promo-1" });
+      expect(result).toEqual(createPromotionRecord({ id: "promo-1" }));
       expect(promotionService.createPromotion).toHaveBeenCalledTimes(1);
       const call = vi.mocked(promotionService.createPromotion).mock.calls[0][0];
       expect(call.ownerId).toBe("owner-1");
@@ -85,19 +85,14 @@ describe("FleetOwnerPromotionController", () => {
       expect(call.name).toBe(body.name);
       expect(call.discountValue).toBe(20);
 
-      const expected = PromotionService.toPromotionWindowExclusive({
-        startDate: body.startDate,
-        endDateInclusive: body.endDate,
-        timeZone: LAGOS_TIMEZONE,
-      });
-      expect(call.startDate.toISOString()).toBe(expected.startDate.toISOString());
-      expect(call.endDate.toISOString()).toBe(expected.endDate.toISOString());
+      expect(call.startDate).toBe(body.startDate);
+      expect(call.endDate).toBe(body.endDate);
     });
 
     it("maps FLEET scope to a fleet-wide promotion (carId=null)", async () => {
-      vi.mocked(promotionService.createPromotion).mockResolvedValueOnce({
-        id: "promo-2",
-      } as never);
+      vi.mocked(promotionService.createPromotion).mockResolvedValueOnce(
+        createPromotionRecord({ id: "promo-2" }),
+      );
 
       await controller.createPromotion(
         {
@@ -116,14 +111,13 @@ describe("FleetOwnerPromotionController", () => {
 
   describe("deactivatePromotion", () => {
     it("delegates to PromotionService.deactivatePromotion with promotion id and caller id", async () => {
-      vi.mocked(promotionService.deactivatePromotion).mockResolvedValueOnce({
-        id: "promo-1",
-        isActive: false,
-      } as never);
+      vi.mocked(promotionService.deactivatePromotion).mockResolvedValueOnce(
+        createPromotionRecord({ id: "promo-1", isActive: false }),
+      );
 
       const result = await controller.deactivatePromotion("promo-1", mockUser);
 
-      expect(result).toEqual({ id: "promo-1", isActive: false });
+      expect(result).toEqual(createPromotionRecord({ id: "promo-1", isActive: false }));
       expect(promotionService.deactivatePromotion).toHaveBeenCalledWith("promo-1", "owner-1");
     });
   });

@@ -46,3 +46,42 @@ export type PromotionLegSummaryInput = {
     name?: string | null;
   } | null;
 };
+
+export type PromotionWindowInput = {
+  startDate: string;
+  endDateInclusive: string;
+  timeZone?: string;
+};
+
+export type ResolveBestPromotionForIntervalInput = {
+  promotions: ActivePromotion[];
+  carId: string;
+  intervalStart: Date;
+  intervalEndExclusive: Date;
+  baseAmount?: number;
+};
+
+export type DiscountableCarRates = {
+  dayRate: number;
+  nightRate: number;
+  hourlyRate: number;
+  fullDayRate: number;
+  airportPickupRate: number;
+};
+
+export type CarOwnerRef = {
+  id: string;
+  ownerId: string;
+};
+
+export type CreatePromotionInput = {
+  ownerId: string;
+  carId: string | null;
+  name?: string;
+  discountValue: number;
+  startDate: string;
+  endDate: string;
+  timeZone?: string;
+};
+
+export type OwnerScopedActivePromotion = ActivePromotion & { ownerId: string };

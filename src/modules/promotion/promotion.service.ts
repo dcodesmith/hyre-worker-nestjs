@@ -1,8 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Prisma, type Promotion } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
 import Decimal from "decimal.js";
-import { LAGOS_TIMEZONE } from "../../shared/timezone";
+import { TIMEZONE } from "../../config/constants";
+import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { MAX_PROMOTION_PERCENTAGE, MIN_PROMOTION_PERCENTAGE } from "./dto/promotion.dto";
 import {
@@ -15,7 +17,16 @@ import {
   PromotionUpdateFailedException,
   PromotionValidationException,
 } from "./promotion.error";
-import type { ActivePromotion, PromotionWindow } from "./promotion.interface";
+import type {
+  ActivePromotion,
+  CarOwnerRef,
+  CreatePromotionInput,
+  DiscountableCarRates,
+  OwnerScopedActivePromotion,
+  PromotionWindow,
+  PromotionWindowInput,
+  ResolveBestPromotionForIntervalInput,
+} from "./promotion.interface";
 
 const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -23,7 +34,17 @@ const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export class PromotionService {
   private readonly logger = new Logger(PromotionService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly configService: ConfigService<EnvConfig, true>,
+  ) {}
+
+  toPromotionWindowExclusive(input: PromotionWindowInput): PromotionWindow {
+    return PromotionService.toPromotionWindowExclusive({
+      ...input,
+      timeZone: input.timeZone ?? this.configService.get("TZ", { infer: true }),
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Pure helpers (no DB dependency)
@@ -33,21 +54,20 @@ export class PromotionService {
    * Convert user-facing inclusive calendar dates into persisted promotion bounds.
    * Storage is always `[startDate, endDate)` in the business timezone.
    */
-  static toPromotionWindowExclusive(input: {
-    startDate: string;
-    endDateInclusive: string;
-    timeZone?: string;
-  }): PromotionWindow {
-    const timeZone = input.timeZone ?? LAGOS_TIMEZONE;
+  static toPromotionWindowExclusive(input: PromotionWindowInput): PromotionWindow {
+    const timeZone = input.timeZone ?? TIMEZONE;
     PromotionService.assertCalendarDate(input.startDate, "Start date");
     PromotionService.assertCalendarDate(input.endDateInclusive, "End date");
 
     const endExclusive = PromotionService.addOneCalendarDay(input.endDateInclusive);
 
-    return {
-      startDate: fromZonedTime(`${input.startDate}T00:00:00`, timeZone),
-      endDate: fromZonedTime(`${endExclusive}T00:00:00`, timeZone),
-    };
+    const startDate = fromZonedTime(`${input.startDate}T00:00:00`, timeZone);
+    const endDate = fromZonedTime(`${endExclusive}T00:00:00`, timeZone);
+    if (endDate <= startDate) {
+      throw new PromotionValidationException("End date must be after start date");
+    }
+
+    return { startDate, endDate };
   }
 
   /**
@@ -56,13 +76,9 @@ export class PromotionService {
    * the highest effective discount wins; ties break to the most recently
    * created promotion.
    */
-  static resolveBestPromotionForInterval(input: {
-    promotions: ActivePromotion[];
-    carId: string;
-    intervalStart: Date;
-    intervalEndExclusive: Date;
-    baseAmount?: number;
-  }): ActivePromotion | null {
+  static resolveBestPromotionForInterval(
+    input: ResolveBestPromotionForIntervalInput,
+  ): ActivePromotion | null {
     const eligible = input.promotions.filter((promotion) =>
       PromotionService.intervalsOverlap(
         promotion.startDate,
@@ -91,16 +107,7 @@ export class PromotionService {
   /**
    * Apply a promotion to all five car rate fields.
    */
-  static getDiscountedCarRates(
-    car: {
-      dayRate: number;
-      nightRate: number;
-      hourlyRate: number;
-      fullDayRate: number;
-      airportPickupRate: number;
-    },
-    promotion: ActivePromotion,
-  ) {
+  static getDiscountedCarRates(car: DiscountableCarRates, promotion: ActivePromotion) {
     return {
       dayRate: PromotionService.applyPromotionDiscount(car.dayRate, promotion),
       nightRate: PromotionService.applyPromotionDiscount(car.nightRate, promotion),
@@ -178,7 +185,7 @@ export class PromotionService {
    * break to the most recently created promotion.
    */
   async getActivePromotionsForCars(
-    cars: { id: string; ownerId: string }[],
+    cars: CarOwnerRef[],
     referenceDate: Date = new Date(),
   ): Promise<Map<string, ActivePromotion>> {
     if (cars.length === 0) return new Map();
@@ -302,15 +309,14 @@ export class PromotionService {
    * `(ownerId, carId scope)` so overlap checks and insert cannot race with
    * another concurrent create for the same scope.
    */
-  async createPromotion(data: {
-    ownerId: string;
-    carId: string | null;
-    name?: string;
-    discountValue: number;
-    startDate: Date;
-    endDate: Date;
-  }): Promise<Promotion> {
+  async createPromotion(data: CreatePromotionInput): Promise<Promotion> {
     try {
+      const { startDate, endDate } = this.toPromotionWindowExclusive({
+        startDate: data.startDate,
+        endDateInclusive: data.endDate,
+        timeZone: data.timeZone,
+      });
+
       if (data.discountValue < MIN_PROMOTION_PERCENTAGE) {
         throw new PromotionValidationException(
           `Discount must be at least ${MIN_PROMOTION_PERCENTAGE}%`,
@@ -321,10 +327,6 @@ export class PromotionService {
           `Discount cannot exceed ${MAX_PROMOTION_PERCENTAGE}%`,
         );
       }
-      if (data.endDate <= data.startDate) {
-        throw new PromotionValidationException("End date must be after start date");
-      }
-
       const promotion = await this.databaseService.$transaction(async (tx) => {
         await PromotionService.acquirePromotionScopeTransactionLock(tx, data.ownerId, data.carId);
 
@@ -341,7 +343,7 @@ export class PromotionService {
         const conflict = await tx.promotion.findFirst({
           where: {
             ownerId: data.ownerId,
-            ...PromotionService.overlapWhere(data.startDate, data.endDate),
+            ...PromotionService.overlapWhere(startDate, endDate),
             carId: data.carId,
           },
           select: { id: true },
@@ -357,8 +359,8 @@ export class PromotionService {
             carId: data.carId,
             name: data.name,
             discountValue: data.discountValue,
-            startDate: data.startDate,
-            endDate: data.endDate,
+            startDate,
+            endDate,
           },
         });
       });
@@ -506,7 +508,7 @@ export class PromotionService {
   }
 
   private static buildOwnerScopePromotionLookup(
-    promotions: (ActivePromotion & { ownerId: string })[],
+    promotions: OwnerScopedActivePromotion[],
   ): Map<string, Map<string, ActivePromotion>> {
     const lookup = new Map<string, Map<string, ActivePromotion>>();
     for (const promotion of promotions) {
