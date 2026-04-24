@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PromotionsService } from "../promotions/promotions.service";
 import { RatesService } from "../rates/rates.service";
 import type { GeneratedLeg } from "./booking.interface";
 import type { BookingCalculationInput, CarPricing } from "./booking-calculation.interface";
@@ -9,6 +10,11 @@ import { BookingCalculationService } from "./booking-calculation.service";
 describe("BookingCalculationService", () => {
   let service: BookingCalculationService;
   let ratesService: { getRates: ReturnType<typeof vi.fn> };
+  let promotionsService: {
+    getOverlappingPromotionsForCar: ReturnType<typeof vi.fn>;
+    resolveBestPromotionForInterval: ReturnType<typeof vi.fn>;
+    applyPromotionDiscount: ReturnType<typeof vi.fn>;
+  };
 
   // Standard mock rates
   const mockRates = {
@@ -20,6 +26,8 @@ describe("BookingCalculationService", () => {
 
   // Standard mock car pricing
   const mockCar: CarPricing = {
+    id: "car-123",
+    ownerId: "owner-123",
     dayRate: 50000, // ₦50,000
     nightRate: 30000, // ₦30,000
     fullDayRate: 80000, // ₦80,000
@@ -54,9 +62,18 @@ describe("BookingCalculationService", () => {
     ratesService = {
       getRates: vi.fn().mockResolvedValue(mockRates),
     };
+    promotionsService = {
+      getOverlappingPromotionsForCar: vi.fn().mockResolvedValue([]),
+      resolveBestPromotionForInterval: vi.fn().mockReturnValue(null),
+      applyPromotionDiscount: vi.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BookingCalculationService, { provide: RatesService, useValue: ratesService }],
+      providers: [
+        BookingCalculationService,
+        { provide: RatesService, useValue: ratesService },
+        { provide: PromotionsService, useValue: promotionsService },
+      ],
     }).compile();
 
     service = module.get<BookingCalculationService>(BookingCalculationService);
@@ -119,6 +136,67 @@ describe("BookingCalculationService", () => {
       const result = await service.calculateBookingCost(input);
 
       expect(result.netTotal.equals(new Decimal(25000))).toBe(true); // 25,000 × 1
+    });
+  });
+
+  describe("promotion pricing", () => {
+    it("applies overlapping promotion discounts per leg", async () => {
+      const promotion = {
+        id: "promo-123",
+        name: "Weekend Promo",
+        discountValue: new Decimal(20),
+        startDate: new Date("2025-03-01T00:00:00.000Z"),
+        endDate: new Date("2025-03-05T00:00:00.000Z"),
+        carId: "car-123",
+        createdAt: new Date("2025-02-28T00:00:00.000Z"),
+      };
+
+      promotionsService.getOverlappingPromotionsForCar.mockResolvedValue([promotion]);
+      promotionsService.resolveBestPromotionForInterval.mockReturnValue(promotion);
+      promotionsService.applyPromotionDiscount.mockImplementation(
+        ({ originalRate, discountPercent }: { originalRate: Decimal; discountPercent: Decimal }) =>
+          originalRate.minus(originalRate.mul(discountPercent).div(100)),
+      );
+
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      expect(promotionsService.getOverlappingPromotionsForCar).toHaveBeenCalledWith(
+        "car-123",
+        "owner-123",
+        expect.any(Date),
+        expect.any(Date),
+      );
+      expect(result.legPrices[0].price.equals(new Decimal(40000))).toBe(true);
+      expect(result.legPrices[1].price.equals(new Decimal(40000))).toBe(true);
+      expect(result.netTotal.equals(new Decimal(80000))).toBe(true);
+    });
+
+    it("continues with base rates when promotions lookup fails", async () => {
+      promotionsService.getOverlappingPromotionsForCar.mockRejectedValue(
+        new Error("promotion query failed"),
+      );
+
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      expect(promotionsService.resolveBestPromotionForInterval).toHaveBeenCalledTimes(2);
+      expect(promotionsService.applyPromotionDiscount).not.toHaveBeenCalled();
+      expect(result.netTotal.equals(new Decimal(100000))).toBe(true);
     });
   });
 

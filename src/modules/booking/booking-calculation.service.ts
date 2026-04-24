@@ -1,6 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
 import Decimal from "decimal.js";
+import type { ActivePromotion } from "../promotions/promotion.interface";
+import { PromotionsService } from "../promotions/promotions.service";
 import { RatesService } from "../rates/rates.service";
 import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
 import type { GeneratedLeg } from "./booking.interface";
@@ -24,7 +26,12 @@ import type {
  */
 @Injectable()
 export class BookingCalculationService {
-  constructor(private readonly ratesService: RatesService) {}
+  private readonly logger = new Logger(BookingCalculationService.name);
+
+  constructor(
+    private readonly ratesService: RatesService,
+    private readonly promotionsService: PromotionsService,
+  ) {}
 
   /**
    * Calculate complete booking cost breakdown.
@@ -48,7 +55,7 @@ export class BookingCalculationService {
     const rates = await this.ratesService.getRates();
 
     // 1. Calculate leg prices
-    const legPrices = this.calculateLegPrices(legs, bookingType, car);
+    const legPrices = await this.calculateLegPrices(legs, bookingType, car);
     const numberOfLegs = legs.length;
     const netTotal = legPrices.reduce((sum, leg) => sum.add(leg.price), new Decimal(0));
 
@@ -154,17 +161,77 @@ export class BookingCalculationService {
    * @param car - Car pricing information
    * @returns Array of leg prices
    */
-  private calculateLegPrices(
+  private async calculateLegPrices(
     legs: GeneratedLeg[],
     bookingType: BookingType,
     car: CarPricing,
-  ): LegPrice[] {
+  ): Promise<LegPrice[]> {
     const ratePerLeg = this.getRateForBookingType(bookingType, car);
+    const baseRate = new Decimal(ratePerLeg);
+
+    const promotions = await this.getOverlappingPromotionsForLegs(car, legs);
 
     return legs.map((leg) => ({
       legDate: leg.legDate,
-      price: new Decimal(ratePerLeg),
+      price: this.resolveLegPriceWithPromotion({
+        promotions,
+        carId: car.id,
+        leg,
+        baseRate,
+      }),
     }));
+  }
+
+  private async getOverlappingPromotionsForLegs(
+    car: CarPricing,
+    legs: GeneratedLeg[],
+  ): Promise<ActivePromotion[]> {
+    if (legs.length === 0) {
+      return [];
+    }
+
+    const intervalStart = new Date(Math.min(...legs.map((leg) => leg.legStartTime.getTime())));
+    const intervalEndExclusive = new Date(Math.max(...legs.map((leg) => leg.legEndTime.getTime())));
+
+    try {
+      return await this.promotionsService.getOverlappingPromotionsForCar(
+        car.id,
+        car.ownerId,
+        intervalStart,
+        intervalEndExclusive,
+      );
+    } catch (error) {
+      this.logger.error("Failed to fetch overlapping promotions; continuing without discount", {
+        carId: car.id,
+        ownerId: car.ownerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  private resolveLegPriceWithPromotion(input: {
+    promotions: ActivePromotion[];
+    carId: string;
+    leg: GeneratedLeg;
+    baseRate: Decimal;
+  }): Decimal {
+    const selectedPromotion = this.promotionsService.resolveBestPromotionForInterval({
+      promotions: input.promotions,
+      carId: input.carId,
+      intervalStart: input.leg.legStartTime,
+      intervalEndExclusive: input.leg.legEndTime,
+      baseAmount: input.baseRate,
+    });
+
+    if (!selectedPromotion) {
+      return input.baseRate;
+    }
+
+    return this.promotionsService.applyPromotionDiscount({
+      originalRate: input.baseRate,
+      discountPercent: new Decimal(selectedPromotion.discountValue.toString()),
+    });
   }
 
   /**

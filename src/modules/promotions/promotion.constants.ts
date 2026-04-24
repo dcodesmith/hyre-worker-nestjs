@@ -1,0 +1,1 @@
+export const MAX_PROMOTION_PERCENTAGE = 50;

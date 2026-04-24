@@ -54,6 +54,7 @@ describe("BookingPersistenceService", () => {
       where: { id: "car-1" },
       select: {
         id: true,
+        ownerId: true,
         dayRate: true,
         nightRate: true,
         fullDayRate: true,

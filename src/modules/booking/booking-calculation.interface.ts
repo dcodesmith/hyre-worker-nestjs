@@ -16,6 +16,8 @@ export interface LegPrice {
  */
 export type CarPricing = Pick<
   Car,
+  | "id"
+  | "ownerId"
   | "dayRate"
   | "nightRate"
   | "fullDayRate"
