@@ -264,6 +264,14 @@ jobs:
             exit 1
           fi
 
+      # TEMPORARY (remove after the failed migration is recovered once):
+      # Delete this entire step after a successful run that includes:
+      #   pnpm exec prisma migrate resolve --applied 20260418210000_add_promotion_model
+      - name: Resolve failed duplicate promotion migration (remove after one successful run)
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+        run: pnpm exec prisma migrate resolve --applied 20260418210000_add_promotion_model
+
       - name: Run Prisma migrations on preview branch
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
