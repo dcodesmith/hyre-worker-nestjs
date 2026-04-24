@@ -1,4 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
+import { Prisma } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -362,6 +363,8 @@ describe("PromotionService — pure helpers", () => {
 describe("PromotionService — DB-backed", () => {
   let service: PromotionService;
   let databaseService: {
+    $transaction: ReturnType<typeof vi.fn>;
+    $executeRaw: ReturnType<typeof vi.fn>;
     promotion: {
       findMany: ReturnType<typeof vi.fn>;
       findFirst: ReturnType<typeof vi.fn>;
@@ -375,6 +378,10 @@ describe("PromotionService — DB-backed", () => {
 
   beforeEach(async () => {
     databaseService = {
+      $transaction: vi.fn(async (fn: (tx: typeof databaseService) => Promise<unknown>) =>
+        fn(databaseService),
+      ),
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       promotion: {
         findMany: vi.fn(),
         findFirst: vi.fn(),
@@ -481,6 +488,74 @@ describe("PromotionService — DB-backed", () => {
 
       expect(result.get("car-1")?.id).toBe("car-1-promo");
       expect(result.get("car-2")?.id).toBe("fleet-promo");
+    });
+
+    it("per same-scope key keeps the highest discount, not merely the newest row", async () => {
+      databaseService.promotion.findMany.mockResolvedValue([
+        {
+          ...buildPromotion({
+            id: "newer-low",
+            carId: null,
+            discountValue: 10,
+            startDate: "2026-04-01T00:00:00Z",
+            endDate: "2026-04-30T00:00:00Z",
+            createdAt: "2026-04-05T12:00:00.000Z",
+          }),
+          ownerId: "owner-1",
+        },
+        {
+          ...buildPromotion({
+            id: "older-high",
+            carId: null,
+            discountValue: 25,
+            startDate: "2026-04-01T00:00:00Z",
+            endDate: "2026-04-30T00:00:00Z",
+            createdAt: "2026-04-01T00:00:00.000Z",
+          }),
+          ownerId: "owner-1",
+        },
+      ]);
+
+      const result = await service.getActivePromotionsForCars(
+        [{ id: "car-1", ownerId: "owner-1" }],
+        new Date("2026-04-10T00:00:00Z"),
+      );
+
+      expect(result.get("car-1")?.id).toBe("older-high");
+    });
+
+    it("per same-scope key breaks discount ties with the more recently created promotion", async () => {
+      databaseService.promotion.findMany.mockResolvedValue([
+        {
+          ...buildPromotion({
+            id: "older-tie",
+            carId: "car-1",
+            discountValue: 20,
+            startDate: "2026-04-01T00:00:00Z",
+            endDate: "2026-04-30T00:00:00Z",
+            createdAt: "2026-04-01T00:00:00.000Z",
+          }),
+          ownerId: "owner-1",
+        },
+        {
+          ...buildPromotion({
+            id: "newer-tie",
+            carId: "car-1",
+            discountValue: 20,
+            startDate: "2026-04-01T00:00:00Z",
+            endDate: "2026-04-30T00:00:00Z",
+            createdAt: "2026-04-10T00:00:00.000Z",
+          }),
+          ownerId: "owner-1",
+        },
+      ]);
+
+      const result = await service.getActivePromotionsForCars(
+        [{ id: "car-1", ownerId: "owner-1" }],
+        new Date("2026-04-10T00:00:00Z"),
+      );
+
+      expect(result.get("car-1")?.id).toBe("newer-tie");
     });
 
     it("ignores promotions from other owners even if carId matches", async () => {
@@ -620,6 +695,17 @@ describe("PromotionService — DB-backed", () => {
       await expect(service.createPromotion(validInput)).rejects.toThrow(
         PromotionCreateFailedException,
       );
+    });
+
+    it("maps unique constraint failures to PromotionOverlapException", async () => {
+      databaseService.promotion.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+
+      await expect(service.createPromotion(validInput)).rejects.toThrow(PromotionOverlapException);
     });
   });
 

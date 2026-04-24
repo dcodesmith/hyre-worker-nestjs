@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { Promotion } from "@prisma/client";
+import { Prisma, type Promotion } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { LAGOS_TIMEZONE } from "../../shared/timezone";
@@ -173,7 +173,9 @@ export class PromotionService {
    * Batch-fetch active promotions for multiple cars across multiple owners.
    *
    * Returns a `Map<carId, ActivePromotion>` covering only the cars with an
-   * applicable (car-specific or fleet-wide) promotion.
+   * applicable (car-specific or fleet-wide) promotion. Per owner and scope
+   * (car id or fleet), the row with the highest `discountValue` wins; ties
+   * break to the most recently created promotion.
    */
   async getActivePromotionsForCars(
     cars: { id: string; ownerId: string }[],
@@ -195,18 +197,7 @@ export class PromotionService {
         orderBy: { createdAt: "desc" },
       });
 
-      const lookup = new Map<string, Map<string, ActivePromotion>>();
-      for (const promotion of promotions) {
-        let ownerMap = lookup.get(promotion.ownerId);
-        if (!ownerMap) {
-          ownerMap = new Map();
-          lookup.set(promotion.ownerId, ownerMap);
-        }
-        const key = promotion.carId ?? "fleet";
-        if (!ownerMap.has(key)) {
-          ownerMap.set(key, promotion);
-        }
-      }
+      const lookup = PromotionService.buildOwnerScopePromotionLookup(promotions);
 
       const result = new Map<string, ActivePromotion>();
       for (const car of cars) {
@@ -306,6 +297,10 @@ export class PromotionService {
    * owner's entire fleet. Rejects same-scope overlaps (car-specific vs
    * fleet-wide are intentionally allowed to coexist — resolution order at
    * read time handles precedence).
+   *
+   * Uses a single DB transaction with a transaction-scoped advisory lock on
+   * `(ownerId, carId scope)` so overlap checks and insert cannot race with
+   * another concurrent create for the same scope.
    */
   async createPromotion(data: {
     ownerId: string;
@@ -330,38 +325,42 @@ export class PromotionService {
         throw new PromotionValidationException("End date must be after start date");
       }
 
-      if (data.carId !== null) {
-        const car = await this.databaseService.car.findFirst({
-          where: { id: data.carId, ownerId: data.ownerId },
+      const promotion = await this.databaseService.$transaction(async (tx) => {
+        await PromotionService.acquirePromotionScopeTransactionLock(tx, data.ownerId, data.carId);
+
+        if (data.carId !== null) {
+          const car = await tx.car.findFirst({
+            where: { id: data.carId, ownerId: data.ownerId },
+            select: { id: true },
+          });
+          if (!car) {
+            throw new PromotionCarNotFoundException();
+          }
+        }
+
+        const conflict = await tx.promotion.findFirst({
+          where: {
+            ownerId: data.ownerId,
+            ...PromotionService.overlapWhere(data.startDate, data.endDate),
+            carId: data.carId,
+          },
           select: { id: true },
         });
-        if (!car) {
-          throw new PromotionCarNotFoundException();
+
+        if (conflict) {
+          throw new PromotionOverlapException();
         }
-      }
 
-      const conflict = await this.databaseService.promotion.findFirst({
-        where: {
-          ownerId: data.ownerId,
-          ...PromotionService.overlapWhere(data.startDate, data.endDate),
-          carId: data.carId,
-        },
-        select: { id: true },
-      });
-
-      if (conflict) {
-        throw new PromotionOverlapException();
-      }
-
-      const promotion = await this.databaseService.promotion.create({
-        data: {
-          ownerId: data.ownerId,
-          carId: data.carId,
-          name: data.name,
-          discountValue: data.discountValue,
-          startDate: data.startDate,
-          endDate: data.endDate,
-        },
+        return tx.promotion.create({
+          data: {
+            ownerId: data.ownerId,
+            carId: data.carId,
+            name: data.name,
+            discountValue: data.discountValue,
+            startDate: data.startDate,
+            endDate: data.endDate,
+          },
+        });
       });
 
       this.logger.log("Promotion created", {
@@ -374,6 +373,9 @@ export class PromotionService {
       return promotion;
     } catch (error) {
       if (error instanceof PromotionException) throw error;
+      if (PromotionService.isPromotionOverlapConstraintViolation(error)) {
+        throw new PromotionOverlapException();
+      }
       this.logger.error("Failed to create promotion", {
         ownerId: data.ownerId,
         error: error instanceof Error ? error.message : String(error),
@@ -415,6 +417,35 @@ export class PromotionService {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Serialize creates for the same (ownerId, carId scope) so overlap detection
+   * and insert cannot interleave with another transaction (TOCTOU).
+   */
+  private static async acquirePromotionScopeTransactionLock(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    carId: string | null,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${ownerId}::text),
+        hashtext(${carId ?? "__hyre_promo_fleet_scope__"}::text)
+      )
+    `;
+  }
+
+  /** Maps a future DB exclusion/unique overlap constraint to the API error. */
+  private static isPromotionOverlapConstraintViolation(error: unknown): boolean {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return true;
+    }
+    if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+      const msg = error.message;
+      return msg.includes("23P01") || msg.includes("exclusion_violation");
+    }
+    return false;
+  }
 
   private static readonly ACTIVE_PROMOTION_SELECT = {
     id: true,
@@ -472,6 +503,40 @@ export class PromotionService {
     endBExclusive: Date,
   ): boolean {
     return startA < endBExclusive && endAExclusive > startB;
+  }
+
+  private static buildOwnerScopePromotionLookup(
+    promotions: (ActivePromotion & { ownerId: string })[],
+  ): Map<string, Map<string, ActivePromotion>> {
+    const lookup = new Map<string, Map<string, ActivePromotion>>();
+    for (const promotion of promotions) {
+      let ownerMap = lookup.get(promotion.ownerId);
+      if (!ownerMap) {
+        ownerMap = new Map();
+        lookup.set(promotion.ownerId, ownerMap);
+      }
+      const key = promotion.carId ?? "fleet";
+      const existing = ownerMap.get(key);
+      if (
+        existing === undefined ||
+        PromotionService.incomingBeatsExistingForSameScope(existing, promotion)
+      ) {
+        ownerMap.set(key, promotion);
+      }
+    }
+    return lookup;
+  }
+
+  /** True if `incoming` should replace `existing` for the same (owner, scope) bucket. */
+  private static incomingBeatsExistingForSameScope(
+    existing: ActivePromotion,
+    incoming: ActivePromotion,
+  ): boolean {
+    const existingVal = new Decimal(existing.discountValue.toString());
+    const incomingVal = new Decimal(incoming.discountValue.toString());
+    if (incomingVal.gt(existingVal)) return true;
+    if (incomingVal.lt(existingVal)) return false;
+    return incoming.createdAt > existing.createdAt;
   }
 
   private static getSelectionCandidates(

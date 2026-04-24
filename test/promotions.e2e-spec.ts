@@ -260,16 +260,80 @@ describe("Fleet Owner Promotions E2E Tests", () => {
 
   describe("GET /api/fleet-owner/promotions", () => {
     it("returns only caller's promotions with car relation populated", async () => {
-      const response = await request(app.getHttpServer())
+      const http = app.getHttpServer();
+
+      // Deterministic seed (2028 windows avoid overlap with earlier 2027 scenarios in this file).
+      const seedFleet = await request(http)
+        .post("/api/fleet-owner/promotions")
+        .set("Cookie", ownerCookie)
+        .send({
+          name: "seed-list-fleet",
+          scope: "FLEET",
+          discountValue: 10,
+          startDate: "2028-10-01",
+          endDate: "2028-10-05",
+        });
+      expect(seedFleet.status).toBe(HttpStatus.CREATED);
+      const fleetPromotionId = seedFleet.body.id as string;
+
+      const seedCarA = await request(http)
+        .post("/api/fleet-owner/promotions")
+        .set("Cookie", ownerCookie)
+        .send({
+          name: "seed-list-car-a",
+          scope: "CAR",
+          carId: ownerCarId,
+          discountValue: 11,
+          startDate: "2028-10-10",
+          endDate: "2028-10-12",
+        });
+      expect(seedCarA.status).toBe(HttpStatus.CREATED);
+      const carPromotionIdA = seedCarA.body.id as string;
+
+      const seedCarB = await request(http)
+        .post("/api/fleet-owner/promotions")
+        .set("Cookie", ownerCookie)
+        .send({
+          name: "seed-list-car-b",
+          scope: "CAR",
+          carId: ownerCarId,
+          discountValue: 12,
+          startDate: "2028-10-20",
+          endDate: "2028-10-22",
+        });
+      expect(seedCarB.status).toBe(HttpStatus.CREATED);
+      const carPromotionIdB = seedCarB.body.id as string;
+
+      const response = await request(http)
         .get("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie);
 
       expect(response.status).toBe(HttpStatus.OK);
       expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBeGreaterThanOrEqual(3);
       expect(response.body.every((p: { ownerId: string }) => p.ownerId === ownerId)).toBe(true);
-      const carScoped = response.body.find((p: { carId: string | null }) => p.carId === ownerCarId);
-      expect(carScoped?.car?.registrationNumber).toBeDefined();
+
+      expect(response.body).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: fleetPromotionId,
+            ownerId,
+            carId: null,
+            car: null,
+          }),
+          expect.objectContaining({
+            id: carPromotionIdA,
+            ownerId,
+            carId: ownerCarId,
+            car: expect.objectContaining({ registrationNumber: "PRM-001AA" }),
+          }),
+          expect.objectContaining({
+            id: carPromotionIdB,
+            ownerId,
+            carId: ownerCarId,
+            car: expect.objectContaining({ registrationNumber: "PRM-001AA" }),
+          }),
+        ]),
+      );
     });
 
     it("isolates promotions between owners", async () => {
@@ -303,6 +367,13 @@ describe("Fleet Owner Promotions E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.isActive).toBe(false);
+
+      const secondDeactivate = await request(app.getHttpServer())
+        .post(`/api/fleet-owner/promotions/${created.body.id}/deactivate`)
+        .set("Cookie", ownerCookie);
+
+      expect(secondDeactivate.status).toBe(HttpStatus.OK);
+      expect(secondDeactivate.body.isActive).toBe(false);
     });
 
     it("returns 404 when deactivating a promotion owned by another fleet owner", async () => {
