@@ -12,7 +12,7 @@ import { TestDataFactory, uniqueEmail } from "./helpers";
 /**
  * E2E coverage for the fleet-owner promotions surface:
  *   - Auth / role enforcement
- *   - Validation (date ordering, discount bounds, carId sentinel)
+ *   - Validation (date ordering, discount bounds, scope contract)
  *   - Create success (car-scoped + fleet-wide)
  *   - Overlap rejection
  *   - Deactivate (soft-disable)
@@ -101,9 +101,12 @@ describe("Fleet Owner Promotions E2E Tests", () => {
     });
 
     it("rejects unauthenticated requests to create endpoint", async () => {
-      const response = await request(app.getHttpServer())
-        .post("/api/fleet-owner/promotions")
-        .send({ carId: "all", discountValue: 10, startDate: "2027-01-01", endDate: "2027-01-05" });
+      const response = await request(app.getHttpServer()).post("/api/fleet-owner/promotions").send({
+        scope: "FLEET",
+        discountValue: 10,
+        startDate: "2027-01-01",
+        endDate: "2027-01-05",
+      });
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
     });
 
@@ -122,6 +125,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .set("Cookie", ownerCookie)
         .send({
           name: "Car Boost",
+          scope: "CAR",
           carId: ownerCarId,
           discountValue: 20,
           startDate: "2027-01-10",
@@ -136,12 +140,12 @@ describe("Fleet Owner Promotions E2E Tests", () => {
       expect(response.body.isActive).toBe(true);
     });
 
-    it("creates a fleet-wide promotion when carId is 'all'", async () => {
+    it("creates a fleet-wide promotion when scope is FLEET", async () => {
       const response = await request(app.getHttpServer())
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 15,
           startDate: "2027-02-01",
           endDate: "2027-02-05",
@@ -156,7 +160,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 10,
           startDate: "2027-03-10",
           endDate: "2027-03-05",
@@ -170,7 +174,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 0,
           startDate: "2027-04-01",
           endDate: "2027-04-05",
@@ -184,7 +188,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 60,
           startDate: "2027-04-01",
           endDate: "2027-04-05",
@@ -198,7 +202,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 10,
           startDate: "04/10/2027",
           endDate: "04/12/2027",
@@ -212,6 +216,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
+          scope: "CAR",
           carId: otherOwnerCarId,
           discountValue: 10,
           startDate: "2027-05-01",
@@ -227,6 +232,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .set("Cookie", ownerCookie)
         .send({
           name: "Overlap",
+          scope: "CAR",
           carId: ownerCarId,
           discountValue: 10,
           startDate: "2027-01-11",
@@ -241,6 +247,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
+          scope: "CAR",
           carId: ownerCarId,
           discountValue: 10,
           startDate: "2027-02-02",
@@ -283,7 +290,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 25,
           startDate: "2027-06-01",
           endDate: "2027-06-05",
@@ -303,7 +310,7 @@ describe("Fleet Owner Promotions E2E Tests", () => {
         .post("/api/fleet-owner/promotions")
         .set("Cookie", ownerCookie)
         .send({
-          carId: "all",
+          scope: "FLEET",
           discountValue: 10,
           startDate: "2027-07-01",
           endDate: "2027-07-05",
