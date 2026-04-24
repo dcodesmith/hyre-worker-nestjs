@@ -1,0 +1,11 @@
+-- NOTE:
+-- This migration was generated as a duplicate "add_promotion_model" migration.
+-- The Promotion table and its related indexes/constraints were already introduced
+-- by earlier migrations:
+--   20260408174456_add_promotion_model
+--   20260408181205_add_promotion_check_constraints
+--   20260409120000_remove_fixed_amount_discount_type
+--
+-- Keep this migration as an intentional no-op so `prisma migrate deploy`
+-- can validate the full stack on a clean database without requiring
+-- `prisma migrate resolve --applied`.

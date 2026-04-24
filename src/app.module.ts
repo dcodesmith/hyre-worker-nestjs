@@ -19,6 +19,7 @@ import { JobModule } from "./modules/job/job.module";
 import { MessagingModule } from "./modules/messaging/messaging.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
+import { PromotionModule } from "./modules/promotion/promotion.module";
 import { RatesModule } from "./modules/rates/rates.module";
 import { ReferralModule } from "./modules/referral/referral.module";
 import { ReminderModule } from "./modules/reminder/reminder.module";
@@ -57,6 +58,7 @@ import { RootController } from "./root.controller";
     CarModule,
     DashboardModule,
     RatesModule,
+    PromotionModule,
   ],
 })
 export class AppModule {}

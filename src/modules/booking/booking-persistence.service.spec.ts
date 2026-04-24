@@ -54,6 +54,7 @@ describe("BookingPersistenceService", () => {
       where: { id: "car-1" },
       select: {
         id: true,
+        ownerId: true,
         dayRate: true,
         nightRate: true,
         fullDayRate: true,
@@ -166,7 +167,14 @@ describe("BookingPersistenceService", () => {
 
     const financials = createBookingFinancials({
       numberOfLegs: 1,
-      legPrices: [{ legDate: new Date("2026-03-03T00:00:00.000Z"), price: new Decimal(10000) }],
+      legPrices: [
+        {
+          legDate: new Date("2026-03-03T00:00:00.000Z"),
+          price: new Decimal(10000),
+          basePrice: new Decimal(10000),
+          promotion: null,
+        },
+      ],
     });
     const legs = [
       {
@@ -236,7 +244,12 @@ describe("BookingPersistenceService", () => {
           financials: createBookingFinancials({
             numberOfLegs: 2,
             legPrices: [
-              { legDate: new Date("2026-03-03T00:00:00.000Z"), price: new Decimal(10000) },
+              {
+                legDate: new Date("2026-03-03T00:00:00.000Z"),
+                price: new Decimal(10000),
+                basePrice: new Decimal(10000),
+                promotion: null,
+              },
             ],
           }),
           referralEligibility: {

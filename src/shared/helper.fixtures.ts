@@ -12,6 +12,8 @@ import {
   PaymentStatus,
   type PayoutTransaction,
   PayoutTransactionStatus,
+  Prisma,
+  type Promotion,
   type Review,
   ServiceTier,
   Status,
@@ -19,6 +21,7 @@ import {
 } from "@prisma/client";
 import Decimal from "decimal.js";
 import type { BookingFinancials } from "../modules/booking/booking-calculation.interface";
+import type { ActivePromotion } from "../modules/promotion/promotion.interface";
 import { BookingWithRelations, ExtensionWithBookingLeg, PaymentWithRelations } from "../types";
 
 /**
@@ -382,9 +385,18 @@ export function createBookingFinancials(
   overrides: Partial<BookingFinancials> = {},
 ): BookingFinancials {
   return {
-    legPrices: [{ legDate: new Date("2025-02-01"), price: new Decimal(50000) }],
+    legPrices: [
+      {
+        legDate: new Date("2025-02-01"),
+        price: new Decimal(50000),
+        basePrice: new Decimal(50000),
+        promotion: null,
+      },
+    ],
     numberOfLegs: 1,
     netTotal: new Decimal(50000),
+    compareAtNetTotal: new Decimal(50000),
+    appliedPromotion: null,
     securityDetailCost: new Decimal(0),
     fuelUpgradeCost: new Decimal(0),
     netTotalWithAddons: new Decimal(50000),
@@ -402,5 +414,86 @@ export function createBookingFinancials(
     platformFleetOwnerCommissionAmount: new Decimal(7500),
     fleetOwnerPayoutAmountNet: new Decimal(42500),
     ...overrides,
+  };
+}
+
+type ActivePromotionFixtureOverrides = Partial<
+  Omit<ActivePromotion, "discountValue" | "startDate" | "endDate" | "createdAt">
+> & {
+  discountValue?: Decimal | number | string;
+  startDate?: Date | string;
+  endDate?: Date | string;
+  createdAt?: Date | string;
+};
+
+export function createActivePromotion(
+  overrides: ActivePromotionFixtureOverrides = {},
+): ActivePromotion {
+  const id = overrides.id ?? "promo-1";
+  return {
+    id,
+    name: overrides.name ?? id,
+    discountValue:
+      overrides.discountValue instanceof Decimal
+        ? overrides.discountValue
+        : new Decimal((overrides.discountValue ?? 10).toString()),
+    startDate:
+      overrides.startDate instanceof Date
+        ? overrides.startDate
+        : new Date(overrides.startDate ?? "2026-01-01T00:00:00.000Z"),
+    endDate:
+      overrides.endDate instanceof Date
+        ? overrides.endDate
+        : new Date(overrides.endDate ?? "2026-01-31T00:00:00.000Z"),
+    carId: overrides.carId ?? null,
+    createdAt:
+      overrides.createdAt instanceof Date
+        ? overrides.createdAt
+        : new Date(overrides.createdAt ?? "2026-01-01T00:00:00.000Z"),
+  };
+}
+
+const ownerPromotionDashboardInclude = {
+  car: {
+    select: {
+      id: true,
+      make: true,
+      model: true,
+      year: true,
+      registrationNumber: true,
+    },
+  },
+} satisfies Prisma.PromotionInclude;
+
+/** Matches `getOwnerPromotions` list rows (`include.car` select). */
+export type PromotionWithOwnerDashboardCar = Prisma.PromotionGetPayload<{
+  include: typeof ownerPromotionDashboardInclude;
+}>;
+
+/** Full Prisma `Promotion` row for service/controller unit tests. */
+export function createPromotionRecord(
+  overrides: Partial<Promotion> & Pick<Promotion, "id">,
+): Promotion {
+  return {
+    ownerId: "owner-1",
+    carId: null,
+    name: null,
+    discountValue: new Decimal(10),
+    startDate: new Date("2026-01-01T00:00:00.000Z"),
+    endDate: new Date("2026-12-31T00:00:00.000Z"),
+    isActive: true,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+export function createOwnerPromotionListItem(
+  overrides: Partial<PromotionWithOwnerDashboardCar> & Pick<PromotionWithOwnerDashboardCar, "id">,
+): PromotionWithOwnerDashboardCar {
+  const { car, ...promotionFields } = overrides;
+  return {
+    ...createPromotionRecord({ ...promotionFields, id: overrides.id }),
+    car: car ?? null,
   };
 }

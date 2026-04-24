@@ -4,9 +4,12 @@ import type { CarPricing } from "./booking-calculation.interface";
 
 /**
  * Car data with pricing for booking creation.
+ * `ownerId` is required so the calculation service can resolve promotions
+ * for the correct fleet owner.
  */
 export interface CarWithPricing extends CarPricing {
   id: string;
+  ownerId: string;
 }
 
 /**
