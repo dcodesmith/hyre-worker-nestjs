@@ -33,6 +33,7 @@ model Car {
   owner               User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   documents           DocumentApproval[] @relation("CarDocuments")
   images              VehicleImage[]
+  promotions          Promotion[]        @relation("CarPromotions")
 
   @@index([ownerId])
   @@index([ownerId, updatedAt])
@@ -94,6 +95,7 @@ model User {
   sessions                  Session[]
   roles                     Role[]                     @relation("RoleToUser")
   whatsAppConversations     WhatsAppConversation[]     @relation("WhatsAppConversationLinkedUser")
+  promotions                Promotion[]                @relation("OwnerPromotions")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -479,6 +481,26 @@ model AddonRate {
   @@index([addonType, effectiveSince, effectiveUntil])
 }
 
+model Promotion {
+  id            String       @id @default(cuid())
+  ownerId       String
+  carId         String?
+  name          String?
+  discountValue Decimal      @db.Decimal(10, 2)
+  startDate     DateTime
+  endDate       DateTime
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  owner         User         @relation("OwnerPromotions", fields: [ownerId], references: [id], onDelete: Cascade)
+  car           Car?         @relation("CarPromotions", fields: [carId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([carId])
+  @@index([isActive, startDate, endDate])
+  @@index([ownerId, isActive])
+}
+
 model BankDetails {
   id                   String    @id @default(cuid())
   userId               String    @unique
@@ -836,6 +858,7 @@ enum PlatformFeeType {
 enum AddonType {
   SECURITY_DETAIL
 }
+
 
 enum ReferralAttributionSource {
   LINK
