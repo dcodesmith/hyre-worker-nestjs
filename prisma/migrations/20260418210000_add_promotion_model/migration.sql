@@ -1,43 +1,11 @@
--- CreateTable
-CREATE TABLE "Promotion" (
-    "id" TEXT NOT NULL,
-    "ownerId" TEXT NOT NULL,
-    "carId" TEXT,
-    "name" TEXT,
-    "discountValue" DECIMAL(10,2) NOT NULL,
-    "startDate" TIMESTAMP(3) NOT NULL,
-    "endDate" TIMESTAMP(3) NOT NULL,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "Promotion_pkey" PRIMARY KEY ("id")
-);
-
--- CreateIndex
-CREATE INDEX "Promotion_ownerId_idx" ON "Promotion"("ownerId");
-
--- CreateIndex
-CREATE INDEX "Promotion_carId_idx" ON "Promotion"("carId");
-
--- CreateIndex
-CREATE INDEX "Promotion_isActive_startDate_endDate_idx" ON "Promotion"("isActive", "startDate", "endDate");
-
--- CreateIndex
-CREATE INDEX "Promotion_ownerId_isActive_idx" ON "Promotion"("ownerId", "isActive");
-
--- AddForeignKey
-ALTER TABLE "Promotion" ADD CONSTRAINT "Promotion_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Promotion" ADD CONSTRAINT "Promotion_carId_fkey" FOREIGN KEY ("carId") REFERENCES "Car"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddCheckConstraint: end date must be after start date
-ALTER TABLE "Promotion"
-  ADD CONSTRAINT "Promotion_dates_valid"
-  CHECK ("endDate" > "startDate");
-
--- AddCheckConstraint: percentage discount must be between 1 and 50 inclusive
-ALTER TABLE "Promotion"
-  ADD CONSTRAINT "Promotion_discount_value_range"
-  CHECK ("discountValue" BETWEEN 1 AND 50);
+-- NOTE:
+-- This migration was generated as a duplicate "add_promotion_model" migration.
+-- The Promotion table and its related indexes/constraints were already introduced
+-- by earlier migrations:
+--   20260408174456_add_promotion_model
+--   20260408181205_add_promotion_check_constraints
+--   20260409120000_remove_fixed_amount_discount_type
+--
+-- Keep this migration as an intentional no-op so `prisma migrate deploy`
+-- can validate the full stack on a clean database without requiring
+-- `prisma migrate resolve --applied`.
