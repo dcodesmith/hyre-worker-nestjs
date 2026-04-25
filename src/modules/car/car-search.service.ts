@@ -284,11 +284,8 @@ export class CarSearchService {
         referenceDate,
         failureMessage: "Failed to enrich search results with promotions",
       });
-      const enrichedCars = carsWithPromotion.map((car) => {
-        const { ownerId: _ownerId, ...publicCar } = car;
 
-        return publicCar;
-      });
+      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
 
       // Calculate pagination
       const totalPages = Math.ceil(totalCount / query.limit);

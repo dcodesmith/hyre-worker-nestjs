@@ -86,12 +86,7 @@ export class CarCategoriesService {
           "Promotion enrichment failed for categorized cars; returning cars without promotions",
       });
 
-      const enrichedCars = carsWithPromotion.map((car) => {
-        const publicCar = { ...car };
-        delete publicCar.ownerId;
-
-        return publicCar;
-      });
+      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
 
       const categories = this.categorizeCars(enrichedCars);
 
