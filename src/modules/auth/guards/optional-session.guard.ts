@@ -106,7 +106,7 @@ export class OptionalSessionGuard implements CanActivate {
       // User provided credentials but session is invalid/expired
       // Don't silently downgrade to guest - inform them to re-authenticate
       throw new AuthUnauthorizedException(
-        AuthErrorCode.AUTH_SESSION_EXPIRED_OR_INVALID,
+        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
         "Your session has expired or is invalid. Please log in again.",
         "Session Expired Or Invalid",
       );

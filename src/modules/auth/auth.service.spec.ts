@@ -4,7 +4,7 @@ import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
-import { AuthUnauthorizedException } from "./auth.error";
+import { AuthNotFoundException, AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
 import { AuthEmailService } from "./auth-email.service";
 
@@ -76,7 +76,12 @@ describe("AuthService", () => {
     await setupTestModule();
   });
 
-  const expectProblemDetail = async (promise: Promise<unknown>, detail: string) => {
+  const expectProblemDetail = async (
+    promise: Promise<unknown>,
+    expectedCtor: abstract new (...args: unknown[]) => Error,
+    detail: string,
+  ) => {
+    await expect(promise).rejects.toBeInstanceOf(expectedCtor);
     await expect(promise).rejects.toMatchObject({
       response: expect.objectContaining({ detail }),
     });
@@ -739,6 +744,7 @@ describe("AuthService", () => {
 
       await expectProblemDetail(
         service.assignRoleToNewUser("user-1", ADMIN),
+        AuthUnauthorizedException,
         'Protected role "admin" cannot be assigned to new users',
       );
     });
@@ -751,6 +757,7 @@ describe("AuthService", () => {
 
       await expectProblemDetail(
         service.assignRoleToNewUser("user-1", STAFF),
+        AuthUnauthorizedException,
         'Protected role "staff" cannot be assigned to new users',
       );
     });
@@ -771,6 +778,7 @@ describe("AuthService", () => {
 
       await expectProblemDetail(
         service.ensureUserHasRole("nonexistent", USER),
+        AuthNotFoundException,
         "User not found for role assignment",
       );
 
@@ -849,6 +857,7 @@ describe("AuthService", () => {
 
       await expectProblemDetail(
         service.verifyUserHasRole("user-1", ADMIN),
+        AuthUnauthorizedException,
         "User does not have required role: admin",
       );
     });

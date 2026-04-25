@@ -1,7 +1,7 @@
 import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthUnauthorizedException } from "../auth.error";
+import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
 import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
 import { OptionalSessionGuard } from "./optional-session.guard";
@@ -71,9 +71,16 @@ describe("OptionalSessionGuard", () => {
     guard = module.get<OptionalSessionGuard>(OptionalSessionGuard);
   };
 
-  const expectProblemDetail = async (promise: Promise<unknown>, detail: string) => {
+  const expectProblemDetail = async (
+    promise: Promise<unknown>,
+    detail: string,
+    errorCode?: string,
+  ) => {
     await expect(promise).rejects.toMatchObject({
-      response: expect.objectContaining({ detail }),
+      response: expect.objectContaining({
+        detail,
+        ...(errorCode && { errorCode }),
+      }),
     });
   };
 
@@ -171,6 +178,7 @@ describe("OptionalSessionGuard", () => {
         await expectProblemDetail(
           resultPromise,
           "Your session has expired or is invalid. Please log in again.",
+          AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
         );
 
         expect(mockGetSession).toHaveBeenCalled();
