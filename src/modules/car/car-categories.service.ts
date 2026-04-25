@@ -92,10 +92,23 @@ export class CarCategoriesService {
         orderBy: [{ updatedAt: "desc" }, { dayRate: "asc" }],
         take: query.limit,
       });
-      const promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
-        cars.map((car) => ({ id: car.id, ownerId: car.ownerId })),
-        new Date(),
-      );
+      const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
+      let promotionsByCarId = new Map<string, ActivePromotion>();
+      try {
+        promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
+          promotionTargets,
+          new Date(),
+        );
+      } catch (error) {
+        this.logger.warn(
+          "Promotion enrichment failed for categorized cars; returning cars without promotions",
+          {
+            carIds: promotionTargets.map((target) => target.id),
+            ownerIds: [...new Set(promotionTargets.map((target) => target.ownerId))],
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
       const enrichedCars = cars.map((car) => {
         const publicCar = { ...car };
         delete publicCar.ownerId;

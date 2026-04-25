@@ -431,6 +431,21 @@ describe("CarSearchService", () => {
       expect(promotionServiceMock.getActivePromotionsForCars).toHaveBeenCalledWith([], from);
     });
 
+    it("returns cars when promotion enrichment fails", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      promotionServiceMock.getActivePromotionsForCars.mockRejectedValueOnce(
+        new Error("promotion down"),
+      );
+
+      const result = await service.searchCars({ page: 1, limit: 12 });
+
+      expect(result.cars).toHaveLength(1);
+      expect(result.cars[0]?.id).toBe("car-1");
+      expect(result.cars[0]?.promotion).toBeNull();
+    });
+
     it("combines multiple filters", async () => {
       const cars = [
         createMockCar({
@@ -522,6 +537,23 @@ describe("CarSearchService", () => {
         "owner-123",
         expect.any(Date),
       );
+    });
+
+    it("returns public car detail when promotion enrichment fails", async () => {
+      const mockCar = {
+        ...createMockCar({ id: "car-123", ownerId: "owner-123" }),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(mockCar);
+      promotionServiceMock.getActivePromotionForCar.mockRejectedValueOnce(
+        new Error("promotion down"),
+      );
+
+      const result = await service.getPublicCarById("car-123");
+
+      expect(result.id).toBe("car-123");
+      expect(result.promotion).toBeNull();
     });
   });
 });

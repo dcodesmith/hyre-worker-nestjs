@@ -283,5 +283,20 @@ describe("CarCategoriesService", () => {
       });
       expect(result.allCars[0]).not.toHaveProperty("ownerId");
     });
+
+    it("fails open when promotion enrichment throws and still returns cars", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      promotionServiceMock.getActivePromotionsForCars.mockRejectedValueOnce(
+        new Error("promotion service unavailable"),
+      );
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars).toHaveLength(1);
+      expect(result.allCars[0]?.id).toBe("car-1");
+      expect(result.allCars[0]?.promotion).toBeNull();
+      expect(result.allCars[0]).not.toHaveProperty("ownerId");
+    });
   });
 });
