@@ -91,4 +91,29 @@ describe("StatusChangeSchedulingService", () => {
     );
     expect(statusUpdateQueue.add).toHaveBeenCalledTimes(2);
   });
+
+  it("propagates errors when eligible flight bookings cannot be fetched", async () => {
+    const databaseError = new Error("Database unavailable");
+    databaseService.booking.findMany.mockRejectedValueOnce(databaseError);
+
+    await expect(
+      service.scheduleAirportActivationsForFlight("flight-1", new Date()),
+    ).rejects.toThrow(databaseError);
+  });
+
+  it("throws when one or more flight booking activation schedules fail", async () => {
+    databaseService.booking.findMany.mockResolvedValueOnce([
+      { id: "booking-a" },
+      { id: "booking-b" },
+    ]);
+    statusUpdateQueue.add
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Queue error"));
+
+    await expect(
+      service.scheduleAirportActivationsForFlight("flight-1", new Date()),
+    ).rejects.toThrow(
+      "Failed to schedule 1 airport activations for flight flight-1: Status Update Scheduling Failed Exception",
+    );
+  });
 });

@@ -347,6 +347,25 @@ describe("StatusChangeService", () => {
     expect(result).toBe("Activated airport booking airport-1");
   });
 
+  it("should skip airport activation when updated booking cannot be refetched", async () => {
+    const timestamp = new Date().toISOString();
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUnique).mockResolvedValueOnce(null);
+
+    const result = await service.activateAirportBooking("airport-3", timestamp);
+
+    expect(mockDatabaseService.booking.findUnique).toHaveBeenCalledWith({
+      where: { id: "airport-3" },
+      include: {
+        car: { include: { owner: true } },
+        user: true,
+        chauffeur: true,
+        legs: { include: { extensions: true } },
+      },
+    });
+    expect(result).toBe("Skipped airport activation for airport-3: booking not found");
+  });
+
   it("should skip airport activation when booking is not eligible", async () => {
     vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
 

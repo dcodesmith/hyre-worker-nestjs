@@ -81,6 +81,7 @@ describe("BookingConfirmationService", () => {
   let databaseService: DatabaseService;
   let notificationQueue: Queue;
   let eventEmitter: EventEmitter2;
+  let eventEmitterReadinessWatcher: EventEmitterReadinessWatcher;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -123,6 +124,9 @@ describe("BookingConfirmationService", () => {
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationQueue = module.get<Queue>(getQueueToken(NOTIFICATIONS_QUEUE));
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
+    eventEmitterReadinessWatcher = module.get<EventEmitterReadinessWatcher>(
+      EventEmitterReadinessWatcher,
+    );
   });
   describe("confirmFromPayment", () => {
     it("should confirm a PENDING booking and update to CONFIRMED", async () => {
@@ -519,6 +523,7 @@ describe("BookingConfirmationService", () => {
         bookingId: "booking-airport-1",
       });
       const activationAt = new Date(Date.now() + 10 * 60 * 1000);
+      const laterActivationAt = new Date(activationAt.getTime() + 30 * 60 * 1000);
       const mockBooking = createMockBookingWithRelations({
         id: "booking-airport-1",
         type: "AIRPORT_PICKUP",
@@ -527,6 +532,22 @@ describe("BookingConfirmationService", () => {
         legs: [
           {
             id: "leg-1",
+            bookingId: "booking-airport-1",
+            legDate: laterActivationAt,
+            legStartTime: laterActivationAt,
+            legEndTime: new Date(laterActivationAt.getTime() + 60 * 60 * 1000),
+            totalDailyPrice: new Decimal(1000),
+            itemsNetValueForLeg: new Decimal(1000),
+            platformCommissionRateOnLeg: new Decimal(0),
+            platformCommissionAmountOnLeg: new Decimal(0),
+            fleetOwnerEarningForLeg: new Decimal(1000),
+            notes: "",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            extensions: [],
+          },
+          {
+            id: "leg-2",
             bookingId: "booking-airport-1",
             legDate: activationAt,
             legStartTime: activationAt,
@@ -556,6 +577,98 @@ describe("BookingConfirmationService", () => {
         bookingType: "AIRPORT_PICKUP",
         activationAt: activationAt.toISOString(),
       });
+    });
+
+    it("should not fail confirmation if booking confirmed event emission fails", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-airport-event-failure",
+        bookingId: "booking-airport-event-failure",
+      });
+      const activationAt = new Date(Date.now() + 10 * 60 * 1000);
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-airport-event-failure",
+        type: "AIRPORT_PICKUP",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        legs: [
+          {
+            id: "leg-event-failure",
+            bookingId: "booking-airport-event-failure",
+            legDate: activationAt,
+            legStartTime: activationAt,
+            legEndTime: new Date(activationAt.getTime() + 60 * 60 * 1000),
+            totalDailyPrice: new Decimal(1000),
+            itemsNetValueForLeg: new Decimal(1000),
+            platformCommissionRateOnLeg: new Decimal(0),
+            platformCommissionAmountOnLeg: new Decimal(0),
+            fleetOwnerEarningForLeg: new Decimal(1000),
+            notes: "",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            extensions: [],
+          },
+        ],
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+      vi.mocked(eventEmitterReadinessWatcher.waitUntilReady).mockRejectedValueOnce(
+        new Error("Event emitter not ready"),
+      );
+
+      const result = await service.confirmFromPayment(mockPayment);
+
+      expect(result).toBe(true);
+      expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+        BOOKING_CONFIRMED_EVENT,
+        expect.any(Object),
+      );
+    });
+
+    it("should skip booking confirmed event for airport pickup bookings without leg start time", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-airport-2",
+        bookingId: "booking-airport-2",
+      });
+      const legDate = new Date(Date.now() + 10 * 60 * 1000);
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-airport-2",
+        type: "AIRPORT_PICKUP",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        legs: [
+          {
+            id: "leg-1",
+            bookingId: "booking-airport-2",
+            legDate,
+            legStartTime: null,
+            legEndTime: new Date(legDate.getTime() + 60 * 60 * 1000),
+            totalDailyPrice: new Decimal(1000),
+            itemsNetValueForLeg: new Decimal(1000),
+            platformCommissionRateOnLeg: new Decimal(0),
+            platformCommissionAmountOnLeg: new Decimal(0),
+            fleetOwnerEarningForLeg: new Decimal(1000),
+            notes: "",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            extensions: [],
+          },
+        ],
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+        BOOKING_CONFIRMED_EVENT,
+        expect.any(Object),
+      );
     });
   });
 });

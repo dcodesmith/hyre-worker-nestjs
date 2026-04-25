@@ -178,6 +178,19 @@ describe("StatusChangeProcessor", () => {
     );
   });
 
+  it("should throw invalid payload error when job data is malformed", async () => {
+    const job = {
+      id: "job-10",
+      name: ACTIVE_TO_COMPLETED,
+      data: null,
+    } as unknown as Job<StatusUpdateJobData, { success: boolean; result?: string }, string>;
+
+    await expect(processor.process(job)).rejects.toBeInstanceOf(
+      InvalidStatusUpdateJobPayloadException,
+    );
+    expect(statusChangeService.updateBookingsFromActiveToCompleted).not.toHaveBeenCalled();
+  });
+
   it("should throw error when updateBookingsFromConfirmedToActive fails", async () => {
     const job = {
       id: "job-6",

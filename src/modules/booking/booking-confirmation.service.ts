@@ -280,7 +280,17 @@ export class BookingConfirmationService {
       return;
     }
 
-    const activationAt = booking.legs[0]?.legStartTime;
+    const activationAt = booking.legs.reduce<Date | null>((earliestLegStartTime, leg) => {
+      if (!leg.legStartTime) {
+        return earliestLegStartTime;
+      }
+
+      if (!earliestLegStartTime || leg.legStartTime < earliestLegStartTime) {
+        return leg.legStartTime;
+      }
+
+      return earliestLegStartTime;
+    }, null);
     if (!activationAt) {
       this.logger.warn("Airport booking has no leg start time; skipping activation schedule", {
         bookingId: booking.id,
@@ -288,12 +298,19 @@ export class BookingConfirmationService {
       return;
     }
 
-    await this.eventEmitterReadinessWatcher.waitUntilReady();
-    // Intentionally fire-and-forget: confirmation flow should not wait for listener processing.
-    this.eventEmitter.emit(BOOKING_CONFIRMED_EVENT, {
-      bookingId: booking.id,
-      bookingType: booking.type,
-      activationAt: activationAt.toISOString(),
-    });
+    try {
+      await this.eventEmitterReadinessWatcher.waitUntilReady();
+      // Intentionally fire-and-forget: confirmation flow should not wait for listener processing.
+      this.eventEmitter.emit(BOOKING_CONFIRMED_EVENT, {
+        bookingId: booking.id,
+        bookingType: booking.type,
+        activationAt: activationAt.toISOString(),
+      });
+    } catch (error) {
+      this.logger.error("Failed to emit booking confirmed event", {
+        bookingId: booking.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

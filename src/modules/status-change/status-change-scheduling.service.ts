@@ -55,24 +55,44 @@ export class StatusChangeSchedulingService {
   }
 
   async scheduleAirportActivationsForFlight(flightId: string, activationAt: Date): Promise<void> {
-    const bookings = await this.databaseService.booking.findMany({
-      where: {
+    let bookings: Array<{ id: string }>;
+    try {
+      bookings = await this.databaseService.booking.findMany({
+        where: {
+          flightId,
+          type: BookingType.AIRPORT_PICKUP,
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      this.logger.error("Failed to fetch airport bookings for flight activation scheduling", {
         flightId,
-        type: BookingType.AIRPORT_PICKUP,
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     if (bookings.length === 0) {
       return;
     }
 
-    await Promise.allSettled(
+    const schedulingResults = await Promise.allSettled(
       bookings.map((booking) => this.scheduleAirportActivation(booking.id, activationAt)),
     );
+    const failedSchedulingResults = schedulingResults.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    if (failedSchedulingResults.length > 0) {
+      const firstFailure = failedSchedulingResults[0].reason;
+      const reason = firstFailure instanceof Error ? firstFailure.message : String(firstFailure);
+      throw new Error(
+        `Failed to schedule ${failedSchedulingResults.length} airport activations for flight ${flightId}: ${reason}`,
+      );
+    }
   }
 
   private getAirportActivationJobId(bookingId: string): string {

@@ -29,33 +29,44 @@ export class StatusChangeProcessor extends WorkerHost {
 
     try {
       let result: string | undefined;
+      const jobData = job.data;
       if (
         ![CONFIRMED_TO_ACTIVE, ACTIVE_TO_COMPLETED, ACTIVATE_AIRPORT_BOOKING].includes(job.name)
       ) {
         throw new UnknownStatusUpdateJobTypeException(job.name);
       }
 
-      if (job.name !== job.data.type) {
+      if (!this.isStatusUpdateJobData(jobData)) {
         throw new InvalidStatusUpdateJobPayloadException(job.name);
       }
 
-      if (job.name === CONFIRMED_TO_ACTIVE) {
-        const timestamp = "timestamp" in job.data ? job.data.timestamp : undefined;
-        result = await this.statusChangeService.updateBookingsFromConfirmedToActive(timestamp);
-        this.logger.log(`Confirmed to active updates processed: ${result}`);
-      } else if (job.name === ACTIVE_TO_COMPLETED) {
-        const timestamp = "timestamp" in job.data ? job.data.timestamp : undefined;
-        result = await this.statusChangeService.updateBookingsFromActiveToCompleted(timestamp);
-        this.logger.log(`Active to completed updates processed: ${result}`);
-      } else if (
-        job.name === ACTIVATE_AIRPORT_BOOKING &&
-        job.data.type === ACTIVATE_AIRPORT_BOOKING
-      ) {
-        result = await this.statusChangeService.activateAirportBooking(
-          job.data.bookingId,
-          job.data.activationAt,
-        );
-        this.logger.log(`Airport booking activation processed: ${result}`);
+      if (job.name !== jobData.type) {
+        throw new InvalidStatusUpdateJobPayloadException(job.name);
+      }
+
+      switch (jobData.type) {
+        case CONFIRMED_TO_ACTIVE: {
+          result = await this.statusChangeService.updateBookingsFromConfirmedToActive(
+            jobData.timestamp,
+          );
+          this.logger.log(`Confirmed to active updates processed: ${result}`);
+          break;
+        }
+        case ACTIVE_TO_COMPLETED: {
+          result = await this.statusChangeService.updateBookingsFromActiveToCompleted(
+            jobData.timestamp,
+          );
+          this.logger.log(`Active to completed updates processed: ${result}`);
+          break;
+        }
+        case ACTIVATE_AIRPORT_BOOKING: {
+          result = await this.statusChangeService.activateAirportBooking(
+            jobData.bookingId,
+            jobData.activationAt,
+          );
+          this.logger.log(`Airport booking activation processed: ${result}`);
+          break;
+        }
       }
 
       return { success: true, result };
@@ -68,6 +79,10 @@ export class StatusChangeProcessor extends WorkerHost {
       this.logger.error(`Failed to process ${job.name} job:`, error);
       throw wrappedError;
     }
+  }
+
+  private isStatusUpdateJobData(data: unknown): data is StatusUpdateJobData {
+    return !!data && typeof data === "object" && "type" in data && typeof data.type === "string";
   }
 
   @OnWorkerEvent("completed")

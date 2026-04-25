@@ -144,12 +144,19 @@ export class FlightAwareWebhookService {
 
     const activationAt = this.resolveActivationTime(flight);
     if (activationAt) {
-      await this.eventEmitterReadinessWatcher.waitUntilReady();
-      // Intentionally fire-and-forget: webhook processing should not wait for listener processing.
-      this.eventEmitter.emit(FLIGHT_ARRIVAL_UPDATED_EVENT, {
-        flightId: flightRecord.id,
-        activationAt: activationAt.toISOString(),
-      });
+      try {
+        await this.eventEmitterReadinessWatcher.waitUntilReady();
+        // Intentionally fire-and-forget: webhook processing should not wait for listener processing.
+        this.eventEmitter.emit(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+          flightId: flightRecord.id,
+          activationAt: activationAt.toISOString(),
+        });
+      } catch (error) {
+        this.logger.error("Failed to emit flight arrival updated event", {
+          flightId: flightRecord.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     this.logger.log("Processed FlightAware webhook event", {
