@@ -1,8 +1,8 @@
-import { getQueueToken } from "@nestjs/bullmq";
+import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { FlightStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { STATUS_UPDATES_QUEUE } from "../../config/constants";
+import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 
@@ -15,7 +15,6 @@ type MockDatabaseService = {
   };
   booking: {
     count: ReturnType<typeof vi.fn>;
-    findMany: ReturnType<typeof vi.fn>;
   };
   $transaction: ReturnType<typeof vi.fn>;
 };
@@ -23,7 +22,7 @@ type MockDatabaseService = {
 describe("FlightAwareWebhookService", () => {
   let service: FlightAwareWebhookService;
   let databaseService: MockDatabaseService;
-  let statusUpdateQueue: { add: ReturnType<typeof vi.fn> };
+  let eventEmitter: { emit: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -40,16 +39,20 @@ describe("FlightAwareWebhookService", () => {
             },
             booking: {
               count: vi.fn(),
-              findMany: vi.fn().mockResolvedValue([]),
             },
             $transaction: vi.fn(),
           },
         },
         {
-          provide: getQueueToken(STATUS_UPDATES_QUEUE),
+          provide: EventEmitter2,
           useValue: {
-            add: vi.fn(),
-            getJob: vi.fn().mockResolvedValue(null),
+            emit: vi.fn(),
+          },
+        },
+        {
+          provide: EventEmitterReadinessWatcher,
+          useValue: {
+            waitUntilReady: vi.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -57,7 +60,7 @@ describe("FlightAwareWebhookService", () => {
 
     service = module.get<FlightAwareWebhookService>(FlightAwareWebhookService);
     databaseService = module.get(DatabaseService);
-    statusUpdateQueue = module.get(getQueueToken(STATUS_UPDATES_QUEUE));
+    eventEmitter = module.get(EventEmitter2);
   });
 
   it("returns duplicate result when unique conflict hits already-processed event", async () => {
@@ -239,15 +242,12 @@ describe("FlightAwareWebhookService", () => {
     });
   });
 
-  it("schedules airport activation jobs for confirmed paid airport bookings", async () => {
+  it("emits flight arrival updated event when activation time is resolved", async () => {
     vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
       id: "flight-4",
       status: FlightStatus.SCHEDULED,
     });
     vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
-    vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
-      { id: "booking-airport-1" },
-    ]);
     vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
       callback({
         flight: {
@@ -273,21 +273,9 @@ describe("FlightAwareWebhookService", () => {
       },
     });
 
-    expect(databaseService.booking.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          flightId: "flight-4",
-        }),
-      }),
-    );
-    expect(statusUpdateQueue.add).toHaveBeenCalledWith(
-      "activate-airport-booking",
-      expect.objectContaining({
-        bookingId: "booking-airport-1",
-      }),
-      expect.objectContaining({
-        jobId: "activate-airport-booking-booking-airport-1",
-      }),
-    );
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-4",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    });
   });
 });

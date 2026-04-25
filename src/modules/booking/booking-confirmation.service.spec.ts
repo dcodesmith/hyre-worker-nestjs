@@ -1,15 +1,13 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Payment } from "@prisma/client";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Status } from "@prisma/client";
 import type { Job, Queue } from "bullmq";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ACTIVATE_AIRPORT_BOOKING,
-  NOTIFICATIONS_QUEUE,
-  STATUS_UPDATES_QUEUE,
-} from "../../config/constants";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { createBooking, createCar, createOwner, createUser } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
@@ -82,7 +80,7 @@ describe("BookingConfirmationService", () => {
   let service: BookingConfirmationService;
   let databaseService: DatabaseService;
   let notificationQueue: Queue;
-  let statusUpdateQueue: Queue;
+  let eventEmitter: EventEmitter2;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -107,10 +105,15 @@ describe("BookingConfirmationService", () => {
           },
         },
         {
-          provide: getQueueToken(STATUS_UPDATES_QUEUE),
+          provide: EventEmitter2,
           useValue: {
-            add: vi.fn(),
-            getJob: vi.fn().mockResolvedValue(null),
+            emit: vi.fn(),
+          },
+        },
+        {
+          provide: EventEmitterReadinessWatcher,
+          useValue: {
+            waitUntilReady: vi.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -119,7 +122,7 @@ describe("BookingConfirmationService", () => {
     service = module.get<BookingConfirmationService>(BookingConfirmationService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationQueue = module.get<Queue>(getQueueToken(NOTIFICATIONS_QUEUE));
-    statusUpdateQueue = module.get<Queue>(getQueueToken(STATUS_UPDATES_QUEUE));
+    eventEmitter = module.get<EventEmitter2>(EventEmitter2);
   });
   describe("confirmFromPayment", () => {
     it("should confirm a PENDING booking and update to CONFIRMED", async () => {
@@ -160,7 +163,7 @@ describe("BookingConfirmationService", () => {
           legs: { include: { extensions: true } },
         },
       });
-      expect(statusUpdateQueue.add).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it("should queue booking confirmation notification after confirmation", async () => {
@@ -510,7 +513,7 @@ describe("BookingConfirmationService", () => {
       expect(notificationQueue.add).toHaveBeenCalled();
     });
 
-    it("should schedule airport activation job for airport pickup bookings", async () => {
+    it("should emit booking confirmed event for airport pickup bookings", async () => {
       const mockPayment = createMockPayment({
         id: "payment-airport-1",
         bookingId: "booking-airport-1",
@@ -545,21 +548,14 @@ describe("BookingConfirmationService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
       vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
-      vi.mocked(statusUpdateQueue.add).mockResolvedValue(createMockJob());
 
       await service.confirmFromPayment(mockPayment);
 
-      expect(statusUpdateQueue.add).toHaveBeenCalledWith(
-        ACTIVATE_AIRPORT_BOOKING,
-        {
-          type: ACTIVATE_AIRPORT_BOOKING,
-          bookingId: "booking-airport-1",
-          activationAt: activationAt.toISOString(),
-        },
-        expect.objectContaining({
-          jobId: "activate-airport-booking-booking-airport-1",
-        }),
-      );
+      expect(eventEmitter.emit).toHaveBeenCalledWith(BOOKING_CONFIRMED_EVENT, {
+        bookingId: "booking-airport-1",
+        bookingType: "AIRPORT_PICKUP",
+        activationAt: activationAt.toISOString(),
+      });
     });
   });
 });

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { EventEmitterModule } from "@nestjs/event-emitter";
 import { validateEnvironment } from "./config/env.config";
 import { AccountModule } from "./modules/account/account.module";
 import { AiSearchModule } from "./modules/ai-search/ai-search.module";
@@ -34,6 +35,7 @@ import { RootController } from "./root.controller";
       isGlobal: true,
       validate: validateEnvironment,
     }),
+    EventEmitterModule.forRoot(),
     ObservabilityModule,
     QueueInfraModule,
     AdminOpsModule,
