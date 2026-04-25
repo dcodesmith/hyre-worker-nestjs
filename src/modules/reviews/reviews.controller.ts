@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
-import { ADMIN } from "../auth/auth.types";
+import { ADMIN } from "../auth/auth.const";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";

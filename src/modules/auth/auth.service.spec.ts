@@ -1,11 +1,11 @@
-import { UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
+import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
+import { AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
-import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.types";
 import { AuthEmailService } from "./auth-email.service";
 
 // Mock createAuth
@@ -75,6 +75,12 @@ describe("AuthService", () => {
     vi.clearAllMocks();
     await setupTestModule();
   });
+
+  const expectProblemDetail = async (promise: Promise<unknown>, detail: string) => {
+    await expect(promise).rejects.toMatchObject({
+      response: expect.objectContaining({ detail }),
+    });
+  };
 
   describe("when auth config is complete", () => {
     beforeEach(async () => {
@@ -731,7 +737,8 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expect(service.assignRoleToNewUser("user-1", ADMIN)).rejects.toThrow(
+      await expectProblemDetail(
+        service.assignRoleToNewUser("user-1", ADMIN),
         'Protected role "admin" cannot be assigned to new users',
       );
     });
@@ -742,7 +749,8 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expect(service.assignRoleToNewUser("user-1", STAFF)).rejects.toThrow(
+      await expectProblemDetail(
+        service.assignRoleToNewUser("user-1", STAFF),
         'Protected role "staff" cannot be assigned to new users',
       );
     });
@@ -761,7 +769,8 @@ describe("AuthService", () => {
     it("should throw error if user not found", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.ensureUserHasRole("nonexistent", USER)).rejects.toThrow(
+      await expectProblemDetail(
+        service.ensureUserHasRole("nonexistent", USER),
         "Cannot assign role: user nonexistent not found",
       );
 
@@ -813,22 +822,22 @@ describe("AuthService", () => {
       await expect(service.verifyUserHasRole("user-1", ADMIN)).resolves.not.toThrow();
     });
 
-    it("should throw UnauthorizedException if user does not have the role", async () => {
+    it("should throw AuthUnauthorizedException if user does not have the role", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue({
         id: "user-1",
         roles: [{ name: USER }],
       });
 
       await expect(service.verifyUserHasRole("user-1", ADMIN)).rejects.toThrow(
-        UnauthorizedException,
+        AuthUnauthorizedException,
       );
     });
 
-    it("should throw UnauthorizedException if user not found", async () => {
+    it("should throw AuthUnauthorizedException if user not found", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue(null);
 
       await expect(service.verifyUserHasRole("nonexistent", ADMIN)).rejects.toThrow(
-        UnauthorizedException,
+        AuthUnauthorizedException,
       );
     });
 
@@ -838,7 +847,8 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expect(service.verifyUserHasRole("user-1", ADMIN)).rejects.toThrow(
+      await expectProblemDetail(
+        service.verifyUserHasRole("user-1", ADMIN),
         "User does not have required role: admin",
       );
     });

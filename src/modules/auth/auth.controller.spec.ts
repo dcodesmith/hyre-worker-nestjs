@@ -1,8 +1,12 @@
-import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthController } from "./auth.controller";
+import {
+  AuthErrorCode,
+  AuthServiceUnavailableException,
+  AuthUnauthorizedException,
+} from "./auth.error";
 import { AuthService } from "./auth.service";
 
 describe("AuthController", () => {
@@ -33,12 +37,28 @@ describe("AuthController", () => {
   const createMockAuthService = (isInitialized: boolean) => {
     mockGetSession = vi.fn();
     mockGetUserRoles = vi.fn().mockResolvedValue(["user", "admin"]);
-    return {
+    const initializedAuthService = {
       isInitialized,
       auth: {
         api: {
           getSession: mockGetSession,
         },
+      },
+      getUserRoles: mockGetUserRoles,
+    };
+
+    if (isInitialized) {
+      return initializedAuthService;
+    }
+
+    return {
+      isInitialized,
+      get auth() {
+        throw new AuthServiceUnavailableException(
+          AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
+          "Authentication service is not configured. Contact support.",
+          "Authentication Service Not Configured",
+        );
       },
       getUserRoles: mockGetUserRoles,
     };
@@ -75,13 +95,11 @@ describe("AuthController", () => {
         expect(mockGetUserRoles).toHaveBeenCalledWith("user-123");
       });
 
-      it("should throw UnauthorizedException when no session exists", async () => {
+      it("should throw AuthUnauthorizedException when no session exists", async () => {
         mockGetSession.mockResolvedValueOnce(null);
         const req = createMockRequest({ cookie: "session=invalid" });
 
-        await expect(controller.getSession(req)).rejects.toThrow(
-          new UnauthorizedException("Not authenticated"),
-        );
+        await expect(controller.getSession(req)).rejects.toThrow(AuthUnauthorizedException);
       });
 
       it("should pass converted headers to getSession", async () => {
@@ -109,14 +127,10 @@ describe("AuthController", () => {
         controller = module.get<AuthController>(AuthController);
       });
 
-      it("should throw ServiceUnavailableException", async () => {
+      it("should throw AuthServiceUnavailableException", async () => {
         const req = createMockRequest();
 
-        await expect(controller.getSession(req)).rejects.toThrow(
-          new ServiceUnavailableException(
-            "Authentication service is not configured. Contact support.",
-          ),
-        );
+        await expect(controller.getSession(req)).rejects.toThrow(AuthServiceUnavailableException);
       });
     });
   });

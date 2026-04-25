@@ -1,6 +1,6 @@
 import { Controller, Get, HttpCode, HttpStatus, Patch, Post, UseGuards } from "@nestjs/common";
 import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
-import { ADMIN } from "../auth/auth.types";
+import { ADMIN } from "../auth/auth.const";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";

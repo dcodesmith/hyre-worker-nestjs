@@ -1,8 +1,9 @@
-import { ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RoleName } from "../auth.types";
+import { AuthForbiddenException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { RoleGuard } from "./role.guard";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
 
@@ -52,6 +53,17 @@ describe("RoleGuard", () => {
     guard = module.get<RoleGuard>(RoleGuard);
     reflector = module.get<Reflector>(Reflector);
   });
+
+  const expectProblemDetail = (fn: () => unknown, detail: string) => {
+    try {
+      fn();
+      throw new Error("Expected function to throw");
+    } catch (error) {
+      expect(error).toMatchObject({
+        response: expect.objectContaining({ detail }),
+      });
+    }
+  };
   describe("when no roles are required", () => {
     it("should allow access when @Roles decorator is not present", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(undefined);
@@ -95,8 +107,9 @@ describe("RoleGuard", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin", "staff"]);
       const context = createMockExecutionContext(createMockSession(["user"]));
 
-      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-      expect(() => guard.canActivate(context)).toThrow(
+      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
+      expectProblemDetail(
+        () => guard.canActivate(context),
         "Access denied. Required roles: admin, staff",
       );
     });
@@ -105,17 +118,18 @@ describe("RoleGuard", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
       const context = createMockExecutionContext(createMockSession([]));
 
-      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
     });
   });
 
   describe("when session is missing", () => {
-    it("should throw ForbiddenException when session is not attached", () => {
+    it("should throw AuthForbiddenException when session is not attached", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
       const context = createMockExecutionContext(undefined);
 
-      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-      expect(() => guard.canActivate(context)).toThrow(
+      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
+      expectProblemDetail(
+        () => guard.canActivate(context),
         "Session not found. Ensure SessionGuard is used before RoleGuard.",
       );
     });
@@ -153,14 +167,14 @@ describe("RoleGuard", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
       const context = createMockExecutionContext(createMockSession(["user"]));
 
-      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
     });
 
     it("should deny fleetOwner access to admin routes", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
       const context = createMockExecutionContext(createMockSession(["fleetOwner"]));
 
-      expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
     });
   });
 });

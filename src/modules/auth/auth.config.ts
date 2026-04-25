@@ -3,14 +3,8 @@ import { APIError, betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP } from "better-auth/plugins";
-import {
-  type ClientType,
-  isValidRole,
-  MOBILE,
-  type RoleName,
-  USER,
-  type ValidateRoleForClientParams,
-} from "./auth.types";
+import { isValidRole, MOBILE, USER } from "./auth.const";
+import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.interface";
 
 /**
  * Role validation callbacks that integrate with AuthService methods.

@@ -1,14 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
-import {
-  All,
-  Controller,
-  Get,
-  Req,
-  Res,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { All, Controller, Get, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { AuthErrorCode, AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
 
 /**
@@ -37,8 +30,6 @@ export class AuthController {
    */
   @All("api/auth/*path")
   async handleAuthRequest(@Req() req: Request, @Res() res: Response): Promise<void> {
-    this.ensureAuthInitialized();
-
     const { toNodeHandler } = await import("better-auth/node");
     const handler = toNodeHandler(this.authService.auth);
     await handler(req, res);
@@ -52,14 +43,16 @@ export class AuthController {
   async getSession(
     @Req() req: Request,
   ): Promise<{ user: Record<string, unknown> & { roles: string[] }; session: unknown }> {
-    this.ensureAuthInitialized();
-
     const session = await this.authService.auth.api.getSession({
       headers: toHeaders(req.headers),
     });
 
     if (!session) {
-      throw new UnauthorizedException("Not authenticated");
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_NOT_AUTHENTICATED,
+        "Not authenticated",
+        "Not Authenticated",
+      );
     }
 
     // Fetch user roles from database
@@ -69,16 +62,5 @@ export class AuthController {
       user: { ...session.user, roles },
       session: session.session,
     };
-  }
-
-  /**
-   * Throws ServiceUnavailableException if auth is not configured.
-   */
-  private ensureAuthInitialized(): void {
-    if (!this.authService.isInitialized) {
-      throw new ServiceUnavailableException(
-        "Authentication service is not configured. Contact support.",
-      );
-    }
   }
 }

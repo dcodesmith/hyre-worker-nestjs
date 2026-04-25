@@ -1,15 +1,10 @@
 import type { IncomingHttpHeaders } from "node:http";
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
+import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
-import type { RoleName } from "../auth.types";
 
 /**
  * Converts Express IncomingHttpHeaders to a Headers object.
@@ -50,24 +45,27 @@ export class SessionGuard implements CanActivate {
   constructor(private readonly authService: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (!this.authService.isInitialized) {
-      throw new ServiceUnavailableException(
-        "Authentication service is not configured. Contact support.",
-      );
-    }
-
     const request = context.switchToHttp().getRequest<Request>();
+    const auth = this.authService.auth;
     let session: Awaited<ReturnType<typeof this.authService.auth.api.getSession>> = null;
     try {
-      session = await this.authService.auth.api.getSession({
+      session = await auth.api.getSession({
         headers: toHeaders(request.headers),
       });
     } catch {
-      throw new UnauthorizedException("Invalid or expired session");
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+        "Invalid or expired session",
+        "Invalid Or Expired Session",
+      );
     }
 
     if (!session) {
-      throw new UnauthorizedException("Invalid or expired session");
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+        "Invalid or expired session",
+        "Invalid Or Expired Session",
+      );
     }
 
     // Fetch user roles from database

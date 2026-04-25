@@ -1,6 +1,6 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
 import { ZodQuery } from "../../common/decorators/zod-validation.decorator";
-import { FLEET_OWNER } from "../auth/auth.types";
+import { FLEET_OWNER } from "../auth/auth.const";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
