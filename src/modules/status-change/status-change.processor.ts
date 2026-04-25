@@ -82,7 +82,23 @@ export class StatusChangeProcessor extends WorkerHost {
   }
 
   private isStatusUpdateJobData(data: unknown): data is StatusUpdateJobData {
-    return !!data && typeof data === "object" && "type" in data && typeof data.type === "string";
+    if (!data || typeof data !== "object" || !("type" in data) || typeof data.type !== "string") {
+      return false;
+    }
+
+    switch (data.type) {
+      case CONFIRMED_TO_ACTIVE:
+      case ACTIVE_TO_COMPLETED:
+        return !("timestamp" in data) || typeof data.timestamp === "string";
+      case ACTIVATE_AIRPORT_BOOKING:
+        return (
+          "bookingId" in data &&
+          typeof data.bookingId === "string" &&
+          (!("activationAt" in data) || typeof data.activationAt === "string")
+        );
+      default:
+        return false;
+    }
   }
 
   @OnWorkerEvent("completed")

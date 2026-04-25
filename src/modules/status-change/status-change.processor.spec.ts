@@ -191,6 +191,45 @@ describe("StatusChangeProcessor", () => {
     expect(statusChangeService.updateBookingsFromActiveToCompleted).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      jobName: CONFIRMED_TO_ACTIVE,
+      data: { type: CONFIRMED_TO_ACTIVE, timestamp: 123 },
+    },
+    {
+      jobName: ACTIVE_TO_COMPLETED,
+      data: { type: ACTIVE_TO_COMPLETED, timestamp: 123 },
+    },
+    {
+      jobName: ACTIVATE_AIRPORT_BOOKING,
+      data: { type: ACTIVATE_AIRPORT_BOOKING },
+    },
+    {
+      jobName: ACTIVATE_AIRPORT_BOOKING,
+      data: { type: ACTIVATE_AIRPORT_BOOKING, bookingId: 123 },
+    },
+    {
+      jobName: ACTIVATE_AIRPORT_BOOKING,
+      data: { type: ACTIVATE_AIRPORT_BOOKING, bookingId: "booking-1", activationAt: 123 },
+    },
+  ])(
+    "should throw invalid payload error for malformed $jobName payload",
+    async ({ jobName, data }) => {
+      const job = {
+        id: "job-malformed-variant",
+        name: jobName,
+        data,
+      } as unknown as Job<StatusUpdateJobData, { success: boolean; result?: string }, string>;
+
+      await expect(processor.process(job)).rejects.toBeInstanceOf(
+        InvalidStatusUpdateJobPayloadException,
+      );
+      expect(statusChangeService.updateBookingsFromConfirmedToActive).not.toHaveBeenCalled();
+      expect(statusChangeService.updateBookingsFromActiveToCompleted).not.toHaveBeenCalled();
+      expect(statusChangeService.activateAirportBooking).not.toHaveBeenCalled();
+    },
+  );
+
   it("should throw error when updateBookingsFromConfirmedToActive fails", async () => {
     const job = {
       id: "job-6",
