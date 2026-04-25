@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { CarApprovalStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException } from "./car.error";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type {
   CarCategoriesQueryDto,
   CarCategoriesResponseDto,
@@ -15,7 +16,10 @@ import { CATEGORY_DEFINITIONS, MIN_CATEGORY_SIZE } from "./dto/car-categories.dt
 export class CarCategoriesService {
   private readonly logger = new Logger(CarCategoriesService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
+  ) {}
 
   /**
    * Categorizes cars into meaningful groups for display.
@@ -60,6 +64,7 @@ export class CarCategoriesService {
         },
         select: {
           id: true,
+          ownerId: true,
           make: true,
           model: true,
           year: true,
@@ -74,12 +79,21 @@ export class CarCategoriesService {
         take: query.limit,
       });
 
-      const categories = this.categorizeCars(cars);
+      const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
+        referenceDate: query.from ?? new Date(),
+        failureMessage:
+          "Promotion enrichment failed for categorized cars; returning cars without promotions",
+      });
+
+      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
+
+      const categories = this.categorizeCars(enrichedCars);
 
       return {
         categories,
-        allCars: cars,
-        total: cars.length,
+        allCars: enrichedCars,
+        total: enrichedCars.length,
       };
     } catch (error) {
       if (error instanceof CarException) {

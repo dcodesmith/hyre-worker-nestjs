@@ -46,6 +46,7 @@ describe("BookingAgentSearchService", () => {
     serviceTier: "STANDARD",
     images: [{ url: `https://cdn.tripdly.test/${id}.jpg` }],
     owner: { username: "fleet-owner", name: "Fleet Owner" },
+    promotion: null,
     ...overrides,
   });
 

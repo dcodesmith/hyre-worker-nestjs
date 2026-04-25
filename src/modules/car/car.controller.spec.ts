@@ -23,6 +23,7 @@ describe("CarController", () => {
     vehicleType: VehicleType.SEDAN,
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
+    promotion: null,
     ...overrides,
   });
 
@@ -42,6 +43,7 @@ describe("CarController", () => {
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
     owner: { username: "fleetowner1", name: "Fleet Owner" },
+    promotion: null,
     ...overrides,
   });
 
@@ -222,7 +224,21 @@ describe("CarController", () => {
       const result = await controller.getPublicCarById("car-123");
 
       expect(result).toEqual(mockCar);
-      expect(carSearchService.getPublicCarById).toHaveBeenCalledWith("car-123");
+      expect(carSearchService.getPublicCarById).toHaveBeenCalledWith("car-123", undefined);
+    });
+
+    it("passes query.from to service for promotion reference date", async () => {
+      const from = new Date("2026-03-01T00:00:00.000Z");
+      const mockCar = {
+        ...createMockSearchCar({ id: "car-123" }),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      vi.mocked(carSearchService.getPublicCarById).mockResolvedValueOnce(mockCar);
+
+      await controller.getPublicCarById("car-123", { from });
+
+      expect(carSearchService.getPublicCarById).toHaveBeenCalledWith("car-123", from);
     });
   });
 });

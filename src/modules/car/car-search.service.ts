@@ -11,6 +11,7 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type {
   CarSearchQueryDto,
   CarSearchResponseDto,
@@ -28,7 +29,10 @@ interface AvailabilityInterval {
 export class CarSearchService {
   private readonly logger = new Logger(CarSearchService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
+  ) {}
 
   /**
    * Parses search query params, applying free-text mapping if needed.
@@ -253,6 +257,7 @@ export class CarSearchService {
           where: searchWhereClause,
           select: {
             id: true,
+            ownerId: true,
             make: true,
             model: true,
             year: true,
@@ -273,6 +278,14 @@ export class CarSearchService {
           take,
         }),
       ]);
+      const referenceDate = query.from ?? new Date();
+      const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
+        referenceDate,
+        failureMessage: "Failed to enrich search results with promotions",
+      });
+
+      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
 
       // Calculate pagination
       const totalPages = Math.ceil(totalCount / query.limit);
@@ -287,7 +300,7 @@ export class CarSearchService {
       });
 
       return {
-        cars,
+        cars: enrichedCars,
         filters: {
           serviceTier: serviceTier ?? null,
           vehicleType: vehicleType ?? null,
@@ -318,7 +331,7 @@ export class CarSearchService {
    * Fetches a single car by ID for public display.
    * Only returns approved cars from approved fleet owners.
    */
-  async getPublicCarById(carId: string): Promise<PublicCarDetailDto> {
+  async getPublicCarById(carId: string, referenceDate?: Date): Promise<PublicCarDetailDto> {
     try {
       const car = await this.databaseService.car.findFirst({
         where: {
@@ -329,6 +342,7 @@ export class CarSearchService {
         },
         select: {
           id: true,
+          ownerId: true,
           make: true,
           model: true,
           year: true,
@@ -352,7 +366,14 @@ export class CarSearchService {
         throw new CarNotFoundException();
       }
 
-      return car;
+      const carWithPromotion = await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: referenceDate ?? new Date(),
+        failureMessage: "Failed to enrich public car with promotion",
+      });
+      const { ownerId: _ownerId, ...publicCar } = carWithPromotion;
+
+      return publicCar;
     } catch (error) {
       if (error instanceof CarException) {
         throw error;

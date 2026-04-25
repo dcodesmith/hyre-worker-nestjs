@@ -1,5 +1,6 @@
 import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import type { CarPromotionDto } from "./car-promotion.dto";
 
 /**
  * Mapping of free-text queries to vehicle types
@@ -59,6 +60,15 @@ export const carSearchQuerySchema = z.object({
 export type CarSearchQueryDto = z.infer<typeof carSearchQuerySchema>;
 
 /**
+ * Query parameters for public car detail endpoint
+ */
+export const publicCarDetailQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+});
+
+export type PublicCarDetailQueryDto = z.infer<typeof publicCarDetailQuerySchema>;
+
+/**
  * Car owner info for search results
  */
 export interface CarOwnerDto {
@@ -85,6 +95,7 @@ export interface SearchCarDto {
   serviceTier: ServiceTier;
   images: { url: string }[];
   owner: CarOwnerDto;
+  promotion: CarPromotionDto | null;
 }
 
 /**

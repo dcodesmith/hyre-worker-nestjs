@@ -14,6 +14,7 @@ import {
   RegistrationNumberAlreadyExistsException,
 } from "./car.error";
 import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
 
@@ -51,6 +52,7 @@ export class CarService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly storageService: StorageService,
+    private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
   ) {}
 
   private getObjectKey(ownerId: string, carId: string, fileName: string, category: string): string {
@@ -226,10 +228,16 @@ export class CarService {
 
   async listOwnerCars(ownerId: string) {
     try {
-      return await this.databaseService.car.findMany({
+      const cars = await this.databaseService.car.findMany({
         where: { ownerId },
         include: this.carDetailsInclude,
         orderBy: { updatedAt: "desc" },
+      });
+
+      return await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner cars with promotions",
       });
     } catch (error) {
       if (error instanceof CarException) {
@@ -254,7 +262,11 @@ export class CarService {
         throw new CarNotFoundException();
       }
 
-      return car;
+      return await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner car with promotion",
+      });
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -318,7 +330,7 @@ export class CarService {
         await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
       }
 
-      return await this.databaseService.car.update({
+      const car = await this.databaseService.car.update({
         where: { id: carId },
         data: {
           ...dto,
@@ -329,6 +341,11 @@ export class CarService {
             dto.pricingIncludesFuel === true ? null : (dto.fuelUpgradeRate ?? undefined),
         },
         include: this.carDetailsInclude,
+      });
+      return await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner car with promotion",
       });
     } catch (error) {
       if (error instanceof CarException) {

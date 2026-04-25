@@ -3,7 +3,12 @@ import { ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decor
 import { CarCategoriesService } from "./car-categories.service";
 import { CarSearchService } from "./car-search.service";
 import { type CarCategoriesQueryDto, carCategoriesQuerySchema } from "./dto/car-categories.dto";
-import { type CarSearchQueryDto, carSearchQuerySchema } from "./dto/car-search.dto";
+import {
+  type CarSearchQueryDto,
+  carSearchQuerySchema,
+  type PublicCarDetailQueryDto,
+  publicCarDetailQuerySchema,
+} from "./dto/car-search.dto";
 import { carIdParamSchema } from "./dto/update-car.dto";
 
 @Controller("api/cars")
@@ -27,7 +32,10 @@ export class CarController {
 
   @Get(":carId")
   @Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
-  async getPublicCarById(@ZodParam("carId", carIdParamSchema) carId: string) {
-    return this.carSearchService.getPublicCarById(carId);
+  async getPublicCarById(
+    @ZodParam("carId", carIdParamSchema) carId: string,
+    @ZodQuery(publicCarDetailQuerySchema) query: PublicCarDetailQueryDto = {},
+  ) {
+    return this.carSearchService.getPublicCarById(carId, query.from);
   }
 }

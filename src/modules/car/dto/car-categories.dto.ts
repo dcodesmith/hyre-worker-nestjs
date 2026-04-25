@@ -1,5 +1,6 @@
 import { ServiceTier, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import type { CarPromotionDto } from "./car-promotion.dto";
 
 /** Minimum number of cars needed to show a category */
 export const MIN_CATEGORY_SIZE = 3;
@@ -9,6 +10,7 @@ export const MIN_CATEGORY_SIZE = 3;
  */
 export const carCategoriesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  from: z.coerce.date().optional(),
 });
 
 export type CarCategoriesQueryDto = z.infer<typeof carCategoriesQuerySchema>;
@@ -28,6 +30,7 @@ export interface PublicCarDto {
   vehicleType: VehicleType;
   serviceTier: ServiceTier;
   images: { url: string }[];
+  promotion: CarPromotionDto | null;
 }
 
 /**
