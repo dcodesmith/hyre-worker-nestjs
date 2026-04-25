@@ -78,21 +78,19 @@ export class CarCategoriesService {
         orderBy: [{ updatedAt: "desc" }, { dayRate: "asc" }],
         take: query.limit,
       });
-      const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
-      const promotionsByCarId = await this.carPromotionEnrichmentService.resolvePromotionsForCars({
-        targets: promotionTargets,
-        referenceDate: new Date(),
+
+      const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
+        referenceDate: query.from ?? new Date(),
         failureMessage:
           "Promotion enrichment failed for categorized cars; returning cars without promotions",
       });
-      const enrichedCars = cars.map((car) => {
+
+      const enrichedCars = carsWithPromotion.map((car) => {
         const publicCar = { ...car };
         delete publicCar.ownerId;
 
-        return {
-          ...publicCar,
-          promotion: promotionsByCarId.get(car.id) ?? null,
-        };
+        return publicCar;
       });
 
       const categories = this.categorizeCars(enrichedCars);

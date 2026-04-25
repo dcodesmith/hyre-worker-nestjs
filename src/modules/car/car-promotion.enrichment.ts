@@ -21,6 +21,18 @@ interface ResolvePromotionForCarParams {
   failureMessage: string;
 }
 
+interface EnrichCarsWithPromotionParams<T extends PromotionTarget> {
+  cars: T[];
+  referenceDate: Date;
+  failureMessage: string;
+}
+
+interface EnrichCarWithPromotionParams<T extends PromotionTarget> {
+  car: T;
+  referenceDate: Date;
+  failureMessage: string;
+}
+
 @Injectable()
 export class CarPromotionEnrichmentService {
   private readonly logger = new Logger(CarPromotionEnrichmentService.name);
@@ -40,8 +52,8 @@ export class CarPromotionEnrichmentService {
       );
     } catch (promotionError) {
       this.logger.warn(failureMessage, {
-        carIds: targets.map((target) => target.id),
-        ownerIds: [...new Set(targets.map((target) => target.ownerId))],
+        carCount: targets.length,
+        ownerCount: new Set(targets.map((target) => target.ownerId)).size,
         error: promotionError instanceof Error ? promotionError.message : String(promotionError),
       });
     }
@@ -69,10 +81,45 @@ export class CarPromotionEnrichmentService {
     } catch (promotionError) {
       this.logger.warn(failureMessage, {
         carId: target.id,
-        ownerId: target.ownerId,
+        ownerIdPresent: Boolean(target.ownerId),
         error: promotionError instanceof Error ? promotionError.message : String(promotionError),
       });
       return null;
     }
+  }
+
+  async enrichCarsWithPromotion<T extends PromotionTarget>({
+    cars,
+    referenceDate,
+    failureMessage,
+  }: EnrichCarsWithPromotionParams<T>): Promise<Array<T & { promotion: CarPromotionDto | null }>> {
+    const targets = cars.map(({ id, ownerId }) => ({ id, ownerId }));
+    const promotionsByCarId = await this.resolvePromotionsForCars({
+      targets,
+      referenceDate,
+      failureMessage,
+    });
+
+    return cars.map((car) => ({
+      ...car,
+      promotion: promotionsByCarId.get(car.id) ?? null,
+    }));
+  }
+
+  async enrichCarWithPromotion<T extends PromotionTarget>({
+    car,
+    referenceDate,
+    failureMessage,
+  }: EnrichCarWithPromotionParams<T>): Promise<T & { promotion: CarPromotionDto | null }> {
+    const promotion = await this.resolvePromotionForCar({
+      target: { id: car.id, ownerId: car.ownerId },
+      referenceDate,
+      failureMessage,
+    });
+
+    return {
+      ...car,
+      promotion,
+    };
   }
 }

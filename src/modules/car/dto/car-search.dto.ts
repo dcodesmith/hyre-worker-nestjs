@@ -60,6 +60,15 @@ export const carSearchQuerySchema = z.object({
 export type CarSearchQueryDto = z.infer<typeof carSearchQuerySchema>;
 
 /**
+ * Query parameters for public car detail endpoint
+ */
+export const publicCarDetailQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+});
+
+export type PublicCarDetailQueryDto = z.infer<typeof publicCarDetailQuerySchema>;
+
+/**
  * Car owner info for search results
  */
 export interface CarOwnerDto {

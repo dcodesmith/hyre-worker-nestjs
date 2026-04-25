@@ -61,8 +61,8 @@ describe("car-promotion.enrichment", () => {
     expect(loggerWarnSpy).toHaveBeenCalledWith(
       "promotion batch failed",
       expect.objectContaining({
-        carIds: ["car-1"],
-        ownerIds: ["owner-1"],
+        carCount: 1,
+        ownerCount: 1,
       }),
     );
   });
@@ -103,8 +103,78 @@ describe("car-promotion.enrichment", () => {
       "promotion single failed",
       expect.objectContaining({
         carId: "car-1",
-        ownerId: "owner-1",
+        ownerIdPresent: true,
       }),
     );
+  });
+
+  it("enriches cars with promotions using shared helper", async () => {
+    const { service, promotionService } = createSut();
+    promotionService.getActivePromotionsForCars.mockResolvedValueOnce(
+      new Map([
+        [
+          "car-1",
+          {
+            id: "promo-1",
+            name: "Weekend Deal",
+            discountValue: 18,
+          },
+        ],
+      ]),
+    );
+
+    const result = await service.enrichCarsWithPromotion({
+      cars: [
+        { id: "car-1", ownerId: "owner-1", make: "Toyota" },
+        { id: "car-2", ownerId: "owner-1", make: "Honda" },
+      ],
+      referenceDate: new Date("2026-03-01T00:00:00.000Z"),
+      failureMessage: "promotion batch helper failed",
+    });
+
+    expect(result).toEqual([
+      {
+        id: "car-1",
+        ownerId: "owner-1",
+        make: "Toyota",
+        promotion: {
+          id: "promo-1",
+          name: "Weekend Deal",
+          discountValue: 18,
+        },
+      },
+      {
+        id: "car-2",
+        ownerId: "owner-1",
+        make: "Honda",
+        promotion: null,
+      },
+    ]);
+  });
+
+  it("enriches single car with promotion using shared helper", async () => {
+    const { service, promotionService } = createSut();
+    promotionService.getActivePromotionForCar.mockResolvedValueOnce({
+      id: "promo-1",
+      name: "Weekend Deal",
+      discountValue: 25,
+    });
+
+    const result = await service.enrichCarWithPromotion({
+      car: { id: "car-1", ownerId: "owner-1", make: "Toyota" },
+      referenceDate: new Date("2026-03-01T00:00:00.000Z"),
+      failureMessage: "promotion single helper failed",
+    });
+
+    expect(result).toEqual({
+      id: "car-1",
+      ownerId: "owner-1",
+      make: "Toyota",
+      promotion: {
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 25,
+      },
+    });
   });
 });

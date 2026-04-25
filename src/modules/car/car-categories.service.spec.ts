@@ -300,5 +300,14 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]?.promotion).toBeNull();
       expect(result.allCars[0]).not.toHaveProperty("ownerId");
     });
+
+    it("uses query.from as promotion reference date when provided", async () => {
+      const from = new Date("2026-03-10T10:00:00.000Z");
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.getCategorizedCars({ limit: 50, from });
+
+      expect(promotionServiceMock.getActivePromotionsForCars).toHaveBeenCalledWith([], from);
+    });
   });
 });

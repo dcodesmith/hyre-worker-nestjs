@@ -541,6 +541,24 @@ describe("CarSearchService", () => {
       );
     });
 
+    it("uses provided reference date for public car promotion lookup", async () => {
+      const referenceDate = new Date("2026-03-20T09:30:00.000Z");
+      const mockCar = {
+        ...createMockCar({ id: "car-123", ownerId: "owner-123" }),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(mockCar);
+
+      await service.getPublicCarById("car-123", referenceDate);
+
+      expect(promotionServiceMock.getActivePromotionForCar).toHaveBeenCalledWith(
+        "car-123",
+        "owner-123",
+        referenceDate,
+      );
+    });
+
     it("returns public car detail when promotion enrichment fails", async () => {
       const mockCar = {
         ...createMockCar({ id: "car-123", ownerId: "owner-123" }),

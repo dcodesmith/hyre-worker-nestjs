@@ -279,19 +279,15 @@ export class CarSearchService {
         }),
       ]);
       const referenceDate = query.from ?? new Date();
-      const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
-      const promotionsByCarId = await this.carPromotionEnrichmentService.resolvePromotionsForCars({
-        targets: promotionTargets,
+      const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
         referenceDate,
         failureMessage: "Failed to enrich search results with promotions",
       });
-      const enrichedCars = cars.map((car) => {
+      const enrichedCars = carsWithPromotion.map((car) => {
         const { ownerId: _ownerId, ...publicCar } = car;
 
-        return {
-          ...publicCar,
-          promotion: promotionsByCarId.get(car.id) ?? null,
-        };
+        return publicCar;
       });
 
       // Calculate pagination
@@ -338,7 +334,7 @@ export class CarSearchService {
    * Fetches a single car by ID for public display.
    * Only returns approved cars from approved fleet owners.
    */
-  async getPublicCarById(carId: string): Promise<PublicCarDetailDto> {
+  async getPublicCarById(carId: string, referenceDate?: Date): Promise<PublicCarDetailDto> {
     try {
       const car = await this.databaseService.car.findFirst({
         where: {
@@ -373,17 +369,14 @@ export class CarSearchService {
         throw new CarNotFoundException();
       }
 
-      const promotion = await this.carPromotionEnrichmentService.resolvePromotionForCar({
-        target: { id: car.id, ownerId: car.ownerId },
-        referenceDate: new Date(),
+      const carWithPromotion = await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: referenceDate ?? new Date(),
         failureMessage: "Failed to enrich public car with promotion",
       });
-      const { ownerId: _ownerId, ...publicCar } = car;
+      const { ownerId: _ownerId, ...publicCar } = carWithPromotion;
 
-      return {
-        ...publicCar,
-        promotion,
-      };
+      return publicCar;
     } catch (error) {
       if (error instanceof CarException) {
         throw error;

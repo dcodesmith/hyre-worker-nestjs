@@ -10,6 +10,7 @@ export const MIN_CATEGORY_SIZE = 3;
  */
 export const carCategoriesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  from: z.coerce.date().optional(),
 });
 
 export type CarCategoriesQueryDto = z.infer<typeof carCategoriesQuerySchema>;

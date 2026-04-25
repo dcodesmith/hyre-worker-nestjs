@@ -15,7 +15,6 @@ import {
 } from "./car.error";
 import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
-import type { CarPromotionDto } from "./dto/car-promotion.dto";
 import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
 
@@ -55,37 +54,6 @@ export class CarService {
     private readonly storageService: StorageService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
   ) {}
-
-  private async enrichCarsWithPromotion<T extends { id: string; ownerId: string }>(
-    cars: T[],
-  ): Promise<Array<T & { promotion: CarPromotionDto | null }>> {
-    const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
-    const promotionsByCarId = await this.carPromotionEnrichmentService.resolvePromotionsForCars({
-      targets: promotionTargets,
-      referenceDate: new Date(),
-      failureMessage: "Failed to enrich owner cars with promotions",
-    });
-
-    return cars.map((car) => ({
-      ...car,
-      promotion: promotionsByCarId.get(car.id) ?? null,
-    }));
-  }
-
-  private async enrichCarWithPromotion<T extends { id: string; ownerId: string }>(
-    car: T,
-  ): Promise<T & { promotion: CarPromotionDto | null }> {
-    const promotion = await this.carPromotionEnrichmentService.resolvePromotionForCar({
-      target: { id: car.id, ownerId: car.ownerId },
-      referenceDate: new Date(),
-      failureMessage: "Failed to enrich owner car with promotion",
-    });
-
-    return {
-      ...car,
-      promotion,
-    };
-  }
 
   private getObjectKey(ownerId: string, carId: string, fileName: string, category: string): string {
     const timestamp = Date.now();
@@ -266,7 +234,11 @@ export class CarService {
         orderBy: { updatedAt: "desc" },
       });
 
-      return await this.enrichCarsWithPromotion(cars);
+      return await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
+        cars,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner cars with promotions",
+      });
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -290,7 +262,11 @@ export class CarService {
         throw new CarNotFoundException();
       }
 
-      return await this.enrichCarWithPromotion(car);
+      return await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner car with promotion",
+      });
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -366,7 +342,11 @@ export class CarService {
         },
         include: this.carDetailsInclude,
       });
-      return await this.enrichCarWithPromotion(car);
+      return await this.carPromotionEnrichmentService.enrichCarWithPromotion({
+        car,
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich owner car with promotion",
+      });
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
