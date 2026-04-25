@@ -98,6 +98,27 @@ describe("SessionGuard", () => {
       await expect(guard.canActivate(context)).rejects.toThrow("Database unavailable");
     });
 
+    it("should throw AuthUnauthorizedException for auth-specific session errors", async () => {
+      mockGetSession.mockRejectedValueOnce(new Error("Session expired, please login again"));
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(AuthUnauthorizedException);
+    });
+
+    it("should not map infrastructure session errors to AuthUnauthorizedException", async () => {
+      mockGetSession.mockRejectedValueOnce(
+        new Error("Database session pool timeout while querying Session table"),
+      );
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      const resultPromise = guard.canActivate(context);
+
+      await expect(resultPromise).rejects.toThrow(
+        "Database session pool timeout while querying Session table",
+      );
+      await expect(resultPromise).rejects.not.toThrow(AuthUnauthorizedException);
+    });
+
     it("should pass headers to getSession", async () => {
       mockGetSession.mockResolvedValueOnce(mockSession);
       const context = createMockExecutionContext({

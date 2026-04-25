@@ -23,7 +23,16 @@ function isInvalidSessionError(error: unknown): boolean {
     return false;
   }
 
-  return /invalid|expired|unauthorized|session/i.test(error.message);
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes("invalid session") ||
+    message.includes("expired session") ||
+    message.includes("session expired") ||
+    message.includes("session is invalid") ||
+    message.includes("unauthorized") ||
+    message.includes("not authenticated")
+  );
 }
 
 export const AUTH_SESSION_KEY = "authSession";
