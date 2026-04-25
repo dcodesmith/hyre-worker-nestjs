@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
+import { PromotionService } from "../promotion/promotion.service";
 import { CarFetchFailedException } from "./car.error";
 import { CarCategoriesService } from "./car-categories.service";
 import type { PublicCarDto } from "./dto/car-categories.dto";
@@ -14,9 +15,15 @@ describe("CarCategoriesService", () => {
       findMany: vi.fn(),
     },
   };
+  const promotionServiceMock = {
+    getActivePromotionsForCars: vi.fn(),
+  };
 
-  const createMockCar = (overrides: Partial<PublicCarDto> = {}): PublicCarDto => ({
+  const createMockCar = (
+    overrides: Partial<PublicCarDto & { ownerId: string }> = {},
+  ): PublicCarDto & { ownerId: string } => ({
     id: `car-${Math.random().toString(36).slice(2, 9)}`,
+    ownerId: "owner-1",
     make: "Toyota",
     model: "Camry",
     year: 2022,
@@ -26,15 +33,18 @@ describe("CarCategoriesService", () => {
     vehicleType: VehicleType.SEDAN,
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
+    promotion: null,
     ...overrides,
   });
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CarCategoriesService,
         { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: PromotionService, useValue: promotionServiceMock },
       ],
     }).compile();
 
@@ -246,6 +256,32 @@ describe("CarCategoriesService", () => {
       await expect(service.getCategorizedCars({ limit: 50 })).rejects.toThrow(
         CarFetchFailedException,
       );
+    });
+
+    it("enriches cars with promotion and removes ownerId from API shape", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      promotionServiceMock.getActivePromotionsForCars.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-1",
+            {
+              id: "promo-1",
+              name: "Weekend Deal",
+              discountValue: 10,
+            },
+          ],
+        ]),
+      );
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars[0]?.promotion).toEqual({
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 10,
+      });
+      expect(result.allCars[0]).not.toHaveProperty("ownerId");
     });
   });
 });

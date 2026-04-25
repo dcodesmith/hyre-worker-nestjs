@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
+import { PromotionService } from "../promotion/promotion.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
 import { CarSearchService } from "./car-search.service";
 import type { SearchCarDto } from "./dto/car-search.dto";
@@ -30,9 +31,16 @@ describe("CarSearchService", () => {
       findMany: vi.fn(),
     },
   };
+  const promotionServiceMock = {
+    getActivePromotionsForCars: vi.fn(),
+    getActivePromotionForCar: vi.fn(),
+  };
 
-  const createMockCar = (overrides: Partial<SearchCarDto> = {}): SearchCarDto => ({
+  const createMockCar = (
+    overrides: Partial<SearchCarDto & { ownerId: string }> = {},
+  ): SearchCarDto & { ownerId: string } => ({
     id: `car-${mockCarIdCounter++}`,
+    ownerId: "owner-1",
     make: "Toyota",
     model: "Camry",
     year: 2022,
@@ -47,6 +55,7 @@ describe("CarSearchService", () => {
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
     owner: { username: "fleetowner1", name: "Fleet Owner" },
+    promotion: null,
     ...overrides,
   });
 
@@ -54,8 +63,14 @@ describe("CarSearchService", () => {
     vi.clearAllMocks();
     mockCarIdCounter = 0;
     databaseServiceMock.booking.findMany.mockResolvedValue([]);
+    promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
+    promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CarSearchService, { provide: DatabaseService, useValue: databaseServiceMock }],
+      providers: [
+        CarSearchService,
+        { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: PromotionService, useValue: promotionServiceMock },
+      ],
     }).compile();
 
     service = module.get<CarSearchService>(CarSearchService);
@@ -103,6 +118,10 @@ describe("CarSearchService", () => {
       expect(result.cars).toEqual([]);
       expect(result.pagination.total).toBe(0);
       expect(result.pagination.totalPages).toBe(0);
+      expect(promotionServiceMock.getActivePromotionsForCars).toHaveBeenCalledWith(
+        [],
+        expect.any(Date),
+      );
     });
 
     it("returns cars matching serviceTier filter", async () => {
@@ -375,6 +394,43 @@ describe("CarSearchService", () => {
       );
     });
 
+    it("enriches returned cars with promotion when available", async () => {
+      const cars = [createMockCar({ id: "car-promoted" })];
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      promotionServiceMock.getActivePromotionsForCars.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-promoted",
+            {
+              id: "promo-1",
+              name: "Weekend Deal",
+              discountValue: 20,
+            },
+          ],
+        ]),
+      );
+
+      const result = await service.searchCars({ page: 1, limit: 12 });
+
+      expect(result.cars[0]?.promotion).toEqual({
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 20,
+      });
+    });
+
+    it("uses query.from as promotion reference date when provided", async () => {
+      const from = new Date("2026-03-01T00:00:00.000Z");
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({ from, page: 1, limit: 12 });
+
+      expect(promotionServiceMock.getActivePromotionsForCars).toHaveBeenCalledWith([], from);
+    });
+
     it("combines multiple filters", async () => {
       const cars = [
         createMockCar({
@@ -412,7 +468,12 @@ describe("CarSearchService", () => {
 
       const result = await service.getPublicCarById("car-123");
 
-      expect(result).toEqual(mockCar);
+      expect(result).toMatchObject({
+        id: "car-123",
+        owner: { username: "fleetowner1", name: "Fleet Owner" },
+        promotion: null,
+      });
+      expect("ownerId" in result).toBe(false);
       expect(databaseServiceMock.car.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -434,6 +495,33 @@ describe("CarSearchService", () => {
       databaseServiceMock.car.findFirst.mockRejectedValueOnce(new Error("Database error"));
 
       await expect(service.getPublicCarById("car-123")).rejects.toThrow(CarFetchFailedException);
+    });
+
+    it("returns promotion on public car detail when one is active", async () => {
+      const mockCar = {
+        ...createMockCar({ id: "car-123", ownerId: "owner-123" }),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(mockCar);
+      promotionServiceMock.getActivePromotionForCar.mockResolvedValueOnce({
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 25,
+      });
+
+      const result = await service.getPublicCarById("car-123");
+
+      expect(result.promotion).toEqual({
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 25,
+      });
+      expect(promotionServiceMock.getActivePromotionForCar).toHaveBeenCalledWith(
+        "car-123",
+        "owner-123",
+        expect.any(Date),
+      );
     });
   });
 });

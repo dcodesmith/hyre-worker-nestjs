@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { CarApprovalStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
+import type { ActivePromotion } from "../promotion/promotion.interface";
+import { PromotionService } from "../promotion/promotion.service";
 import { CarException, CarFetchFailedException } from "./car.error";
 import type {
   CarCategoriesQueryDto,
@@ -10,12 +12,28 @@ import type {
   PublicCarDto,
 } from "./dto/car-categories.dto";
 import { CATEGORY_DEFINITIONS, MIN_CATEGORY_SIZE } from "./dto/car-categories.dto";
+import type { CarPromotionDto } from "./dto/car-promotion.dto";
 
 @Injectable()
 export class CarCategoriesService {
   private readonly logger = new Logger(CarCategoriesService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly promotionService: PromotionService,
+  ) {}
+
+  private toPromotionDto(promotion: ActivePromotion | null): CarPromotionDto | null {
+    if (!promotion) {
+      return null;
+    }
+
+    return {
+      id: promotion.id,
+      name: promotion.name,
+      discountValue: Number(promotion.discountValue.toString()),
+    };
+  }
 
   /**
    * Categorizes cars into meaningful groups for display.
@@ -60,6 +78,7 @@ export class CarCategoriesService {
         },
         select: {
           id: true,
+          ownerId: true,
           make: true,
           model: true,
           year: true,
@@ -73,13 +92,26 @@ export class CarCategoriesService {
         orderBy: [{ updatedAt: "desc" }, { dayRate: "asc" }],
         take: query.limit,
       });
+      const promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
+        cars.map((car) => ({ id: car.id, ownerId: car.ownerId })),
+        new Date(),
+      );
+      const enrichedCars = cars.map((car) => {
+        const publicCar = { ...car };
+        delete publicCar.ownerId;
 
-      const categories = this.categorizeCars(cars);
+        return {
+          ...publicCar,
+          promotion: this.toPromotionDto(promotionsByCarId.get(car.id) ?? null),
+        };
+      });
+
+      const categories = this.categorizeCars(enrichedCars);
 
       return {
         categories,
-        allCars: cars,
-        total: cars.length,
+        allCars: enrichedCars,
+        total: enrichedCars.length,
       };
     } catch (error) {
       if (error instanceof CarException) {

@@ -10,7 +10,10 @@ import {
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { DatabaseService } from "../database/database.service";
+import type { ActivePromotion } from "../promotion/promotion.interface";
+import { PromotionService } from "../promotion/promotion.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
+import type { CarPromotionDto } from "./dto/car-promotion.dto";
 import type {
   CarSearchQueryDto,
   CarSearchResponseDto,
@@ -28,7 +31,22 @@ interface AvailabilityInterval {
 export class CarSearchService {
   private readonly logger = new Logger(CarSearchService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly promotionService: PromotionService,
+  ) {}
+
+  private toPromotionDto(promotion: ActivePromotion | null): CarPromotionDto | null {
+    if (!promotion) {
+      return null;
+    }
+
+    return {
+      id: promotion.id,
+      name: promotion.name,
+      discountValue: Number(promotion.discountValue.toString()),
+    };
+  }
 
   /**
    * Parses search query params, applying free-text mapping if needed.
@@ -253,6 +271,7 @@ export class CarSearchService {
           where: searchWhereClause,
           select: {
             id: true,
+            ownerId: true,
             make: true,
             model: true,
             year: true,
@@ -273,6 +292,20 @@ export class CarSearchService {
           take,
         }),
       ]);
+      const referenceDate = query.from ?? new Date();
+      const promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
+        cars.map((car) => ({ id: car.id, ownerId: car.ownerId })),
+        referenceDate,
+      );
+      const enrichedCars = cars.map((car) => {
+        const publicCar = { ...car };
+        delete publicCar.ownerId;
+
+        return {
+          ...publicCar,
+          promotion: this.toPromotionDto(promotionsByCarId.get(car.id) ?? null),
+        };
+      });
 
       // Calculate pagination
       const totalPages = Math.ceil(totalCount / query.limit);
@@ -287,7 +320,7 @@ export class CarSearchService {
       });
 
       return {
-        cars,
+        cars: enrichedCars,
         filters: {
           serviceTier: serviceTier ?? null,
           vehicleType: vehicleType ?? null,
@@ -329,6 +362,7 @@ export class CarSearchService {
         },
         select: {
           id: true,
+          ownerId: true,
           make: true,
           model: true,
           year: true,
@@ -352,7 +386,18 @@ export class CarSearchService {
         throw new CarNotFoundException();
       }
 
-      return car;
+      const promotion = await this.promotionService.getActivePromotionForCar(
+        car.id,
+        car.ownerId,
+        new Date(),
+      );
+      const publicCar = { ...car };
+      delete publicCar.ownerId;
+
+      return {
+        ...publicCar,
+        promotion: this.toPromotionDto(promotion),
+      };
     } catch (error) {
       if (error instanceof CarException) {
         throw error;

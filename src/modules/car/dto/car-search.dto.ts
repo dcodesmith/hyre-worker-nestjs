@@ -1,5 +1,6 @@
 import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import type { CarPromotionDto } from "./car-promotion.dto";
 
 /**
  * Mapping of free-text queries to vehicle types
@@ -85,6 +86,7 @@ export interface SearchCarDto {
   serviceTier: ServiceTier;
   images: { url: string }[];
   owner: CarOwnerDto;
+  promotion: CarPromotionDto | null;
 }
 
 /**

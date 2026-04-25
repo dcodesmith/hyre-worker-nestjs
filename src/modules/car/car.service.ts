@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, DocumentType, Prisma, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
+import type { ActivePromotion } from "../promotion/promotion.interface";
+import { PromotionService } from "../promotion/promotion.service";
 import { StorageService } from "../storage/storage.service";
 import { CAR_S3_CATEGORY_DOCUMENTS, CAR_S3_CATEGORY_IMAGES } from "./car.const";
 import {
@@ -14,6 +16,7 @@ import {
   RegistrationNumberAlreadyExistsException,
 } from "./car.error";
 import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
+import type { CarPromotionDto } from "./dto/car-promotion.dto";
 import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
 
@@ -51,7 +54,53 @@ export class CarService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly storageService: StorageService,
+    private readonly promotionService: PromotionService,
   ) {}
+
+  private toPromotionDto(promotion: ActivePromotion | null): CarPromotionDto | null {
+    if (!promotion) {
+      return null;
+    }
+
+    return {
+      id: promotion.id,
+      name: promotion.name,
+      discountValue: Number(promotion.discountValue.toString()),
+    };
+  }
+
+  private async enrichCarsWithPromotion<T extends { id: string; ownerId: string }>(
+    cars: T[],
+  ): Promise<Array<T & { promotion: CarPromotionDto | null }>> {
+    if (cars.length === 0) {
+      return [];
+    }
+
+    const promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
+      cars.map((car) => ({ id: car.id, ownerId: car.ownerId })),
+      new Date(),
+    );
+
+    return cars.map((car) => ({
+      ...car,
+      promotion: this.toPromotionDto(promotionsByCarId.get(car.id) ?? null),
+    }));
+  }
+
+  private async enrichCarWithPromotion<T extends { id: string; ownerId: string }>(
+    car: T,
+  ): Promise<T & { promotion: CarPromotionDto | null }> {
+    const promotion = await this.promotionService.getActivePromotionForCar(
+      car.id,
+      car.ownerId,
+      new Date(),
+    );
+
+    return {
+      ...car,
+      promotion: this.toPromotionDto(promotion),
+    };
+  }
 
   private getObjectKey(ownerId: string, carId: string, fileName: string, category: string): string {
     const timestamp = Date.now();
@@ -226,11 +275,13 @@ export class CarService {
 
   async listOwnerCars(ownerId: string) {
     try {
-      return await this.databaseService.car.findMany({
+      const cars = await this.databaseService.car.findMany({
         where: { ownerId },
         include: this.carDetailsInclude,
         orderBy: { updatedAt: "desc" },
       });
+
+      return await this.enrichCarsWithPromotion(cars);
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -254,7 +305,7 @@ export class CarService {
         throw new CarNotFoundException();
       }
 
-      return car;
+      return await this.enrichCarWithPromotion(car);
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -318,7 +369,7 @@ export class CarService {
         await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
       }
 
-      return await this.databaseService.car.update({
+      const car = await this.databaseService.car.update({
         where: { id: carId },
         data: {
           ...dto,
@@ -330,6 +381,7 @@ export class CarService {
         },
         include: this.carDetailsInclude,
       });
+      return await this.enrichCarWithPromotion(car);
     } catch (error) {
       if (error instanceof CarException) {
         throw error;

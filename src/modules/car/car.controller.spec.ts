@@ -23,6 +23,7 @@ describe("CarController", () => {
     vehicleType: VehicleType.SEDAN,
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
+    promotion: null,
     ...overrides,
   });
 
@@ -42,6 +43,7 @@ describe("CarController", () => {
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
     owner: { username: "fleetowner1", name: "Fleet Owner" },
+    promotion: null,
     ...overrides,
   });
 

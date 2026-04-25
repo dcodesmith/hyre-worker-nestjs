@@ -1,5 +1,6 @@
 import { ServiceTier, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import type { CarPromotionDto } from "./car-promotion.dto";
 
 /** Minimum number of cars needed to show a category */
 export const MIN_CATEGORY_SIZE = 3;
@@ -28,6 +29,7 @@ export interface PublicCarDto {
   vehicleType: VehicleType;
   serviceTier: ServiceTier;
   images: { url: string }[];
+  promotion: CarPromotionDto | null;
 }
 
 /**

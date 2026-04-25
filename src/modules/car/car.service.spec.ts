@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { ServiceTier, Status, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
+import { PromotionService } from "../promotion/promotion.service";
 import { StorageService } from "../storage/storage.service";
 import {
   CarCreateFailedException,
@@ -70,14 +71,21 @@ describe("CarService", () => {
     uploadBuffer: vi.fn(),
     deleteObjectByKey: vi.fn(),
   };
+  const promotionServiceMock = {
+    getActivePromotionsForCars: vi.fn(),
+    getActivePromotionForCar: vi.fn(),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
+    promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CarService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: StorageService, useValue: storageServiceMock },
+        { provide: PromotionService, useValue: promotionServiceMock },
       ],
     }).compile();
 
@@ -85,11 +93,17 @@ describe("CarService", () => {
   });
 
   it("lists owner cars ordered by latest updates", async () => {
-    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ id: "car-1" }, { id: "car-2" }]);
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([
+      { id: "car-1", ownerId: "owner-1" },
+      { id: "car-2", ownerId: "owner-1" },
+    ]);
 
     const result = await service.listOwnerCars("owner-1");
 
-    expect(result).toEqual([{ id: "car-1" }, { id: "car-2" }]);
+    expect(result).toEqual([
+      { id: "car-1", ownerId: "owner-1", promotion: null },
+      { id: "car-2", ownerId: "owner-1", promotion: null },
+    ]);
     expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { ownerId: "owner-1" }, orderBy: { updatedAt: "desc" } }),
     );
@@ -100,7 +114,7 @@ describe("CarService", () => {
 
     const result = await service.getOwnerCarById("car-1", "owner-1");
 
-    expect(result).toEqual({ id: "car-1", ownerId: "owner-1" });
+    expect(result).toEqual({ id: "car-1", ownerId: "owner-1", promotion: null });
   });
 
   it("throws CarNotFoundException for unknown owner car", async () => {
@@ -148,6 +162,7 @@ describe("CarService", () => {
     const result = await service.createCar("owner-1", createCarDto("ABC-123XY"), createCarFiles());
 
     expect(result).toEqual({ id: "car-1", ownerId: "owner-1" });
+    expect(promotionServiceMock.getActivePromotionForCar).not.toHaveBeenCalled();
     expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -164,12 +179,18 @@ describe("CarService", () => {
     });
     databaseServiceMock.car.update.mockResolvedValueOnce({
       id: "car-1",
+      ownerId: "owner-1",
       status: Status.HOLD,
     });
 
     const result = await service.updateCar("car-1", "owner-1", { status: Status.HOLD });
 
-    expect(result).toEqual({ id: "car-1", status: Status.HOLD });
+    expect(result).toEqual({
+      id: "car-1",
+      ownerId: "owner-1",
+      status: Status.HOLD,
+      promotion: null,
+    });
   });
 
   it("rejects update when registration number conflicts after normalization", async () => {
@@ -211,5 +232,35 @@ describe("CarService", () => {
     databaseServiceMock.car.findMany.mockRejectedValueOnce(new Error("db down"));
 
     await expect(service.listOwnerCars("owner-1")).rejects.toBeInstanceOf(CarFetchFailedException);
+  });
+
+  it("enriches owner car list with active promotion when present", async () => {
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ id: "car-1", ownerId: "owner-1" }]);
+    promotionServiceMock.getActivePromotionsForCars.mockResolvedValueOnce(
+      new Map([
+        [
+          "car-1",
+          {
+            id: "promo-1",
+            name: "Weekend Deal",
+            discountValue: 15,
+          },
+        ],
+      ]),
+    );
+
+    const result = await service.listOwnerCars("owner-1");
+
+    expect(result).toEqual([
+      {
+        id: "car-1",
+        ownerId: "owner-1",
+        promotion: {
+          id: "promo-1",
+          name: "Weekend Deal",
+          discountValue: 15,
+        },
+      },
+    ]);
   });
 });
