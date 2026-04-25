@@ -1,13 +1,10 @@
 import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AuthErrorCode,
-  AuthServiceUnavailableException,
-  AuthUnauthorizedException,
-} from "../auth.error";
+import { AuthServiceUnavailableException, AuthUnauthorizedException } from "../auth.error";
 import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
+import { createMockAuthService } from "../test-utils/auth-test.utils";
 import { AUTH_SESSION_KEY, SessionGuard } from "./session.guard";
 
 describe("SessionGuard", () => {
@@ -39,36 +36,6 @@ describe("SessionGuard", () => {
 
   const mockRoles: RoleName[] = ["user"];
 
-  const createMockAuthService = (isInitialized: boolean) => {
-    mockGetSession = vi.fn();
-    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
-    const initializedAuthService = {
-      isInitialized,
-      auth: {
-        api: {
-          getSession: mockGetSession,
-        },
-      },
-      getUserRoles: mockGetUserRoles,
-    };
-
-    if (isInitialized) {
-      return initializedAuthService;
-    }
-
-    return {
-      isInitialized,
-      get auth() {
-        throw new AuthServiceUnavailableException(
-          AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
-          "Authentication service is not configured. Contact support.",
-          "Authentication Service Not Configured",
-        );
-      },
-      getUserRoles: mockGetUserRoles,
-    };
-  };
-
   const createMockExecutionContext = (headers: Record<string, string> = {}) => {
     const mockRequest = { headers, [AUTH_SESSION_KEY]: undefined };
     return {
@@ -80,10 +47,19 @@ describe("SessionGuard", () => {
   };
 
   const setupTestModule = async (isInitialized: boolean) => {
+    mockGetSession = vi.fn();
+    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SessionGuard,
-        { provide: AuthService, useValue: createMockAuthService(isInitialized) },
+        {
+          provide: AuthService,
+          useValue: createMockAuthService({
+            isInitialized,
+            getSessionMock: mockGetSession,
+            getUserRolesMock: mockGetUserRoles,
+          }),
+        },
       ],
     }).compile();
 
@@ -113,6 +89,13 @@ describe("SessionGuard", () => {
       const context = createMockExecutionContext({ cookie: "session=invalid" });
 
       await expect(guard.canActivate(context)).rejects.toThrow(AuthUnauthorizedException);
+    });
+
+    it("should rethrow unexpected infrastructure errors from getSession", async () => {
+      mockGetSession.mockRejectedValueOnce(new Error("Database unavailable"));
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      await expect(guard.canActivate(context)).rejects.toThrow("Database unavailable");
     });
 
     it("should pass headers to getSession", async () => {

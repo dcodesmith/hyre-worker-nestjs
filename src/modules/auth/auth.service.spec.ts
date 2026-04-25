@@ -771,7 +771,7 @@ describe("AuthService", () => {
 
       await expectProblemDetail(
         service.ensureUserHasRole("nonexistent", USER),
-        "Cannot assign role: user nonexistent not found",
+        "User not found for role assignment",
       );
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();

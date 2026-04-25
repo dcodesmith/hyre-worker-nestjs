@@ -266,7 +266,7 @@ export class AuthService implements OnModuleInit {
       this.logger.warn(`Cannot assign role: user ${userId} not found`);
       throw new AuthNotFoundException(
         AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
-        `Cannot assign role: user ${userId} not found`,
+        "User not found for role assignment",
         "User Not Found For Role Assignment",
       );
     }

@@ -54,11 +54,16 @@ describe("RoleGuard", () => {
     reflector = module.get<Reflector>(Reflector);
   });
 
-  const expectProblemDetail = (fn: () => unknown, detail: string) => {
+  const expectProblemDetail = (
+    fn: () => unknown,
+    exceptionCtor: new (...args: unknown[]) => Error,
+    detail: string,
+  ) => {
     try {
       fn();
       throw new Error("Expected function to throw");
     } catch (error) {
+      expect(error).toBeInstanceOf(exceptionCtor);
       expect(error).toMatchObject({
         response: expect.objectContaining({ detail }),
       });
@@ -107,9 +112,9 @@ describe("RoleGuard", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin", "staff"]);
       const context = createMockExecutionContext(createMockSession(["user"]));
 
-      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
       expectProblemDetail(
         () => guard.canActivate(context),
+        AuthForbiddenException,
         "Access denied. Required roles: admin, staff",
       );
     });
@@ -127,9 +132,9 @@ describe("RoleGuard", () => {
       vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
       const context = createMockExecutionContext(undefined);
 
-      expect(() => guard.canActivate(context)).toThrow(AuthForbiddenException);
       expectProblemDetail(
         () => guard.canActivate(context),
+        AuthForbiddenException,
         "Session not found. Ensure SessionGuard is used before RoleGuard.",
       );
     });

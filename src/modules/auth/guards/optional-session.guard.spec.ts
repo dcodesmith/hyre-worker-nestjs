@@ -166,9 +166,10 @@ describe("OptionalSessionGuard", () => {
           cookie: "session_token=expired-token",
         });
 
-        await expect(guard.canActivate(context)).rejects.toThrow(AuthUnauthorizedException);
+        const resultPromise = guard.canActivate(context);
+        await expect(resultPromise).rejects.toThrow(AuthUnauthorizedException);
         await expectProblemDetail(
-          guard.canActivate(context),
+          resultPromise,
           "Your session has expired or is invalid. Please log in again.",
         );
 

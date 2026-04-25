@@ -2,12 +2,9 @@ import { Test, TestingModule } from "@nestjs/testing";
 import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthController } from "./auth.controller";
-import {
-  AuthErrorCode,
-  AuthServiceUnavailableException,
-  AuthUnauthorizedException,
-} from "./auth.error";
+import { AuthServiceUnavailableException, AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
+import { createMockAuthService } from "./test-utils/auth-test.utils";
 
 describe("AuthController", () => {
   let controller: AuthController;
@@ -34,45 +31,26 @@ describe("AuthController", () => {
     },
   };
 
-  const createMockAuthService = (isInitialized: boolean) => {
-    mockGetSession = vi.fn();
-    mockGetUserRoles = vi.fn().mockResolvedValue(["user", "admin"]);
-    const initializedAuthService = {
-      isInitialized,
-      auth: {
-        api: {
-          getSession: mockGetSession,
-        },
-      },
-      getUserRoles: mockGetUserRoles,
-    };
-
-    if (isInitialized) {
-      return initializedAuthService;
-    }
-
-    return {
-      isInitialized,
-      get auth() {
-        throw new AuthServiceUnavailableException(
-          AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
-          "Authentication service is not configured. Contact support.",
-          "Authentication Service Not Configured",
-        );
-      },
-      getUserRoles: mockGetUserRoles,
-    };
-  };
-
   const createMockRequest = (headers: Record<string, string | string[]> = {}): Request =>
     ({ headers }) as unknown as Request;
 
   describe("getSession", () => {
     describe("when auth is initialized", () => {
       beforeEach(async () => {
+        mockGetSession = vi.fn();
+        mockGetUserRoles = vi.fn().mockResolvedValue(["user", "admin"]);
         const module: TestingModule = await Test.createTestingModule({
           controllers: [AuthController],
-          providers: [{ provide: AuthService, useValue: createMockAuthService(true) }],
+          providers: [
+            {
+              provide: AuthService,
+              useValue: createMockAuthService({
+                isInitialized: true,
+                getSessionMock: mockGetSession,
+                getUserRolesMock: mockGetUserRoles,
+              }),
+            },
+          ],
         }).compile();
 
         controller = module.get<AuthController>(AuthController);
@@ -119,9 +97,20 @@ describe("AuthController", () => {
 
     describe("when auth is not initialized", () => {
       beforeEach(async () => {
+        mockGetSession = vi.fn();
+        mockGetUserRoles = vi.fn().mockResolvedValue(["user", "admin"]);
         const module: TestingModule = await Test.createTestingModule({
           controllers: [AuthController],
-          providers: [{ provide: AuthService, useValue: createMockAuthService(false) }],
+          providers: [
+            {
+              provide: AuthService,
+              useValue: createMockAuthService({
+                isInitialized: false,
+                getSessionMock: mockGetSession,
+                getUserRolesMock: mockGetUserRoles,
+              }),
+            },
+          ],
         }).compile();
 
         controller = module.get<AuthController>(AuthController);

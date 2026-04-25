@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
 import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
@@ -16,6 +16,14 @@ function toHeaders(incomingHeaders: IncomingHttpHeaders): Headers {
     headers.set(key, Array.isArray(value) ? value.join(", ") : value);
   }
   return headers;
+}
+
+function isInvalidSessionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /invalid|expired|unauthorized|session/i.test(error.message);
 }
 
 export const AUTH_SESSION_KEY = "authSession";
@@ -42,6 +50,8 @@ export interface AuthSession {
  */
 @Injectable()
 export class SessionGuard implements CanActivate {
+  private readonly logger = new Logger(SessionGuard.name);
+
   constructor(private readonly authService: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -52,12 +62,20 @@ export class SessionGuard implements CanActivate {
       session = await auth.api.getSession({
         headers: toHeaders(request.headers),
       });
-    } catch {
-      throw new AuthUnauthorizedException(
-        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
-        "Invalid or expired session",
-        "Invalid Or Expired Session",
+    } catch (error) {
+      if (isInvalidSessionError(error)) {
+        throw new AuthUnauthorizedException(
+          AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+          "Invalid or expired session",
+          "Invalid Or Expired Session",
+        );
+      }
+
+      this.logger.error(
+        "Unexpected error while validating auth session",
+        error instanceof Error ? error.stack : undefined,
       );
+      throw error;
     }
 
     if (!session) {
