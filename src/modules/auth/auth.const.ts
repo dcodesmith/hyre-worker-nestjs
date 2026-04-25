@@ -1,5 +1,3 @@
-import type { ClientType, RoleName } from "./auth.interface";
-
 /** Regular customer (can self-register) */
 export const USER = "user" as const;
 
@@ -14,6 +12,7 @@ export const STAFF = "staff" as const;
 
 /** All valid role names */
 export const ROLE_NAMES = [USER, FLEET_OWNER, ADMIN, STAFF] as const;
+export type RoleName = (typeof ROLE_NAMES)[number];
 
 /** Browser-based client (uses Origin header) */
 export const WEB = "web" as const;
@@ -23,6 +22,7 @@ export const MOBILE = "mobile" as const;
 
 /** All valid client types */
 export const CLIENT_TYPES = [WEB, MOBILE] as const;
+export type ClientType = (typeof CLIENT_TYPES)[number];
 
 /**
  * Roles that can be auto-granted on registration.

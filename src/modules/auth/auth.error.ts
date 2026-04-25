@@ -13,7 +13,7 @@ export const AuthErrorCode = {
   AUTH_INSUFFICIENT_ROLE: "AUTH_INSUFFICIENT_ROLE",
 } as const;
 
-type AuthErrorCodeValue = (typeof AuthErrorCode)[keyof typeof AuthErrorCode];
+export type AuthErrorCodeValue = (typeof AuthErrorCode)[keyof typeof AuthErrorCode];
 
 export class AuthException extends AppException {}
 

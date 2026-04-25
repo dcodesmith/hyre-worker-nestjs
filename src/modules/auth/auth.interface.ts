@@ -1,9 +1,6 @@
-/**
- * Role and client type declarations for role-based authentication.
- */
-export type RoleName = "user" | "fleetOwner" | "admin" | "staff";
+export type { ClientType, RoleName } from "./auth.const";
 
-export type ClientType = "web" | "mobile";
+import type { ClientType, RoleName } from "./auth.const";
 
 /**
  * Parameters for validating role against client type and origin.

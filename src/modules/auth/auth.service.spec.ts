@@ -4,7 +4,12 @@ import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
-import { AuthErrorCode, AuthNotFoundException, AuthUnauthorizedException } from "./auth.error";
+import {
+  AuthErrorCode,
+  type AuthErrorCodeValue,
+  AuthNotFoundException,
+  AuthUnauthorizedException,
+} from "./auth.error";
 import { AuthService } from "./auth.service";
 import { AuthEmailService } from "./auth-email.service";
 
@@ -85,7 +90,7 @@ describe("AuthService", () => {
       detail,
     }: {
       errorClass: abstract new (...args: unknown[]) => Error;
-      errorCode: string;
+      errorCode: AuthErrorCodeValue;
       title: string;
       detail: string;
     },
