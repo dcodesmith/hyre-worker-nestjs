@@ -4,7 +4,7 @@ import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
-import { AuthNotFoundException, AuthUnauthorizedException } from "./auth.error";
+import { AuthErrorCode, AuthNotFoundException, AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
 import { AuthEmailService } from "./auth-email.service";
 
@@ -78,12 +78,25 @@ describe("AuthService", () => {
 
   const expectProblemDetail = async (
     promise: Promise<unknown>,
-    expectedCtor: abstract new (...args: unknown[]) => Error,
-    detail: string,
+    {
+      errorClass,
+      errorCode,
+      title,
+      detail,
+    }: {
+      errorClass: abstract new (...args: unknown[]) => Error;
+      errorCode: string;
+      title: string;
+      detail: string;
+    },
   ) => {
-    await expect(promise).rejects.toBeInstanceOf(expectedCtor);
+    await expect(promise).rejects.toBeInstanceOf(errorClass);
     await expect(promise).rejects.toMatchObject({
-      response: expect.objectContaining({ detail }),
+      response: expect.objectContaining({
+        errorCode,
+        title,
+        detail,
+      }),
     });
   };
 
@@ -742,11 +755,12 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expectProblemDetail(
-        service.assignRoleToNewUser("user-1", ADMIN),
-        AuthUnauthorizedException,
-        'Protected role "admin" cannot be assigned to new users',
-      );
+      await expectProblemDetail(service.assignRoleToNewUser("user-1", ADMIN), {
+        errorClass: AuthUnauthorizedException,
+        errorCode: AuthErrorCode.AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED,
+        title: "Protected Role Assignment Denied",
+        detail: 'Protected role "admin" cannot be assigned to new users',
+      });
     });
 
     it("should throw for staff role (protected roles cannot be assigned to new users)", async () => {
@@ -755,11 +769,12 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expectProblemDetail(
-        service.assignRoleToNewUser("user-1", STAFF),
-        AuthUnauthorizedException,
-        'Protected role "staff" cannot be assigned to new users',
-      );
+      await expectProblemDetail(service.assignRoleToNewUser("user-1", STAFF), {
+        errorClass: AuthUnauthorizedException,
+        errorCode: AuthErrorCode.AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED,
+        title: "Protected Role Assignment Denied",
+        detail: 'Protected role "staff" cannot be assigned to new users',
+      });
     });
   });
 
@@ -776,11 +791,12 @@ describe("AuthService", () => {
     it("should throw error if user not found", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue(null);
 
-      await expectProblemDetail(
-        service.ensureUserHasRole("nonexistent", USER),
-        AuthNotFoundException,
-        "User not found for role assignment",
-      );
+      await expectProblemDetail(service.ensureUserHasRole("nonexistent", USER), {
+        errorClass: AuthNotFoundException,
+        errorCode: AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
+        title: "User Not Found For Role Assignment",
+        detail: "User not found for role assignment",
+      });
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
@@ -836,17 +852,23 @@ describe("AuthService", () => {
         roles: [{ name: USER }],
       });
 
-      await expect(service.verifyUserHasRole("user-1", ADMIN)).rejects.toThrow(
-        AuthUnauthorizedException,
-      );
+      await expectProblemDetail(service.verifyUserHasRole("user-1", ADMIN), {
+        errorClass: AuthUnauthorizedException,
+        errorCode: AuthErrorCode.AUTH_ROLE_REQUIREMENT_FAILED,
+        title: "Role Requirement Failed",
+        detail: "User does not have required role: admin",
+      });
     });
 
     it("should throw AuthUnauthorizedException if user not found", async () => {
       mockDatabaseService.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.verifyUserHasRole("nonexistent", ADMIN)).rejects.toThrow(
-        AuthUnauthorizedException,
-      );
+      await expectProblemDetail(service.verifyUserHasRole("nonexistent", ADMIN), {
+        errorClass: AuthUnauthorizedException,
+        errorCode: AuthErrorCode.AUTH_ROLE_REQUIREMENT_FAILED,
+        title: "Role Requirement Failed",
+        detail: "User does not have required role: admin",
+      });
     });
 
     it("should throw with descriptive message", async () => {
@@ -855,11 +877,12 @@ describe("AuthService", () => {
         roles: [],
       });
 
-      await expectProblemDetail(
-        service.verifyUserHasRole("user-1", ADMIN),
-        AuthUnauthorizedException,
-        "User does not have required role: admin",
-      );
+      await expectProblemDetail(service.verifyUserHasRole("user-1", ADMIN), {
+        errorClass: AuthUnauthorizedException,
+        errorCode: AuthErrorCode.AUTH_ROLE_REQUIREMENT_FAILED,
+        title: "Role Requirement Failed",
+        detail: "User does not have required role: admin",
+      });
     });
   });
 

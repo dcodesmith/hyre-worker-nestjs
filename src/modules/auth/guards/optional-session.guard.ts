@@ -49,12 +49,12 @@ function hasAuthCredentials(request: Request): boolean {
  *
  * Unlike SessionGuard, this guard allows guest (unauthenticated) requests through,
  * but ONLY when no auth credentials are provided. If credentials are provided
- * but invalid/expired, it throws UnauthorizedException to prevent silent downgrade.
+ * but invalid/expired, it throws AuthUnauthorizedException to prevent silent downgrade.
  *
  * Behavior:
  * - No auth credentials: allows through as guest, @CurrentUser returns null
  * - Valid session: attaches session to request, @CurrentUser returns user
- * - Credentials provided but invalid/expired: throws UnauthorizedException
+ * - Credentials provided but invalid/expired: throws AuthUnauthorizedException
  * - Auth service not initialized: allows through as guest (logs warning)
  *
  * This prevents the dangerous scenario where a user thinks they're logged in

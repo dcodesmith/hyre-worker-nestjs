@@ -1,7 +1,11 @@
 import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthServiceUnavailableException, AuthUnauthorizedException } from "../auth.error";
+import {
+  AuthErrorCode,
+  AuthServiceUnavailableException,
+  AuthUnauthorizedException,
+} from "../auth.error";
 import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
 import { createMockAuthService } from "../test-utils/auth-test.utils";
@@ -88,7 +92,15 @@ describe("SessionGuard", () => {
       mockGetSession.mockResolvedValueOnce(null);
       const context = createMockExecutionContext({ cookie: "session=invalid" });
 
-      await expect(guard.canActivate(context)).rejects.toThrow(AuthUnauthorizedException);
+      const resultPromise = guard.canActivate(context);
+      await expect(resultPromise).rejects.toThrow(AuthUnauthorizedException);
+      await expect(resultPromise).rejects.toMatchObject({
+        response: expect.objectContaining({
+          errorCode: AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+          title: "Invalid Or Expired Session",
+          detail: "Invalid or expired session",
+        }),
+      });
     });
 
     it("should rethrow unexpected infrastructure errors from getSession", async () => {
@@ -142,7 +154,15 @@ describe("SessionGuard", () => {
     it("should throw AuthServiceUnavailableException", async () => {
       const context = createMockExecutionContext();
 
-      await expect(guard.canActivate(context)).rejects.toThrow(AuthServiceUnavailableException);
+      const resultPromise = guard.canActivate(context);
+      await expect(resultPromise).rejects.toThrow(AuthServiceUnavailableException);
+      await expect(resultPromise).rejects.toMatchObject({
+        response: expect.objectContaining({
+          errorCode: AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
+          title: "Authentication Service Not Configured",
+          detail: "Authentication service is not configured. Contact support.",
+        }),
+      });
     });
   });
 });
