@@ -1,9 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { CarApprovalStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
-import type { ActivePromotion } from "../promotion/promotion.interface";
-import { PromotionService } from "../promotion/promotion.service";
 import { CarException, CarFetchFailedException } from "./car.error";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type {
   CarCategoriesQueryDto,
   CarCategoriesResponseDto,
@@ -12,7 +11,6 @@ import type {
   PublicCarDto,
 } from "./dto/car-categories.dto";
 import { CATEGORY_DEFINITIONS, MIN_CATEGORY_SIZE } from "./dto/car-categories.dto";
-import type { CarPromotionDto } from "./dto/car-promotion.dto";
 
 @Injectable()
 export class CarCategoriesService {
@@ -20,20 +18,8 @@ export class CarCategoriesService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly promotionService: PromotionService,
+    private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
   ) {}
-
-  private toPromotionDto(promotion: ActivePromotion | null): CarPromotionDto | null {
-    if (!promotion) {
-      return null;
-    }
-
-    return {
-      id: promotion.id,
-      name: promotion.name,
-      discountValue: Number(promotion.discountValue.toString()),
-    };
-  }
 
   /**
    * Categorizes cars into meaningful groups for display.
@@ -93,29 +79,19 @@ export class CarCategoriesService {
         take: query.limit,
       });
       const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
-      let promotionsByCarId = new Map<string, ActivePromotion>();
-      try {
-        promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
-          promotionTargets,
-          new Date(),
-        );
-      } catch (error) {
-        this.logger.warn(
+      const promotionsByCarId = await this.carPromotionEnrichmentService.resolvePromotionsForCars({
+        targets: promotionTargets,
+        referenceDate: new Date(),
+        failureMessage:
           "Promotion enrichment failed for categorized cars; returning cars without promotions",
-          {
-            carIds: promotionTargets.map((target) => target.id),
-            ownerIds: [...new Set(promotionTargets.map((target) => target.ownerId))],
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
+      });
       const enrichedCars = cars.map((car) => {
         const publicCar = { ...car };
         delete publicCar.ownerId;
 
         return {
           ...publicCar,
-          promotion: this.toPromotionDto(promotionsByCarId.get(car.id) ?? null),
+          promotion: promotionsByCarId.get(car.id) ?? null,
         };
       });
 

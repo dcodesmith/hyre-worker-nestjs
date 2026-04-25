@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import { CarSearchService } from "./car-search.service";
 import type { SearchCarDto } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
@@ -70,6 +71,7 @@ describe("CarSearchService", () => {
         CarSearchService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
+        CarPromotionEnrichmentService,
       ],
     }).compile();
 

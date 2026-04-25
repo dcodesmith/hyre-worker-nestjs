@@ -5,13 +5,14 @@ import { StorageModule } from "../storage/storage.module";
 import { CarController } from "./car.controller";
 import { CarService } from "./car.service";
 import { CarCategoriesService } from "./car-categories.service";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import { CarSearchService } from "./car-search.service";
 import { FleetOwnerCarController } from "./fleet-owner-car.controller";
 
 @Module({
   imports: [AuthModule, StorageModule, PromotionModule],
   controllers: [CarController, FleetOwnerCarController],
-  providers: [CarService, CarCategoriesService, CarSearchService],
+  providers: [CarService, CarCategoriesService, CarSearchService, CarPromotionEnrichmentService],
   exports: [CarService, CarCategoriesService, CarSearchService],
 })
 export class CarModule {}

@@ -5,6 +5,7 @@ import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { CarFetchFailedException } from "./car.error";
 import { CarCategoriesService } from "./car-categories.service";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type { PublicCarDto } from "./dto/car-categories.dto";
 
 describe("CarCategoriesService", () => {
@@ -45,6 +46,7 @@ describe("CarCategoriesService", () => {
         CarCategoriesService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
+        CarPromotionEnrichmentService,
       ],
     }).compile();
 

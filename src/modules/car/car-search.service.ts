@@ -10,10 +10,8 @@ import {
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { DatabaseService } from "../database/database.service";
-import type { ActivePromotion } from "../promotion/promotion.interface";
-import { PromotionService } from "../promotion/promotion.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
-import type { CarPromotionDto } from "./dto/car-promotion.dto";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type {
   CarSearchQueryDto,
   CarSearchResponseDto,
@@ -33,20 +31,8 @@ export class CarSearchService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly promotionService: PromotionService,
+    private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
   ) {}
-
-  private toPromotionDto(promotion: ActivePromotion | null): CarPromotionDto | null {
-    if (!promotion) {
-      return null;
-    }
-
-    return {
-      id: promotion.id,
-      name: promotion.name,
-      discountValue: Number(promotion.discountValue.toString()),
-    };
-  }
 
   /**
    * Parses search query params, applying free-text mapping if needed.
@@ -294,26 +280,17 @@ export class CarSearchService {
       ]);
       const referenceDate = query.from ?? new Date();
       const promotionTargets = cars.map((car) => ({ id: car.id, ownerId: car.ownerId }));
-      let promotionsByCarId = new Map<string, ActivePromotion>();
-      try {
-        promotionsByCarId = await this.promotionService.getActivePromotionsForCars(
-          promotionTargets,
-          referenceDate,
-        );
-      } catch (promotionError) {
-        this.logger.warn("Failed to enrich search results with promotions", {
-          carIds: promotionTargets.map((target) => target.id),
-          ownerIds: [...new Set(promotionTargets.map((target) => target.ownerId))],
-          error: promotionError instanceof Error ? promotionError.message : String(promotionError),
-        });
-      }
+      const promotionsByCarId = await this.carPromotionEnrichmentService.resolvePromotionsForCars({
+        targets: promotionTargets,
+        referenceDate,
+        failureMessage: "Failed to enrich search results with promotions",
+      });
       const enrichedCars = cars.map((car) => {
-        const publicCar = { ...car };
-        delete publicCar.ownerId;
+        const { ownerId: _ownerId, ...publicCar } = car;
 
         return {
           ...publicCar,
-          promotion: this.toPromotionDto(promotionsByCarId.get(car.id) ?? null),
+          promotion: promotionsByCarId.get(car.id) ?? null,
         };
       });
 
@@ -396,26 +373,16 @@ export class CarSearchService {
         throw new CarNotFoundException();
       }
 
-      let promotion: ActivePromotion | null = null;
-      try {
-        promotion = await this.promotionService.getActivePromotionForCar(
-          car.id,
-          car.ownerId,
-          new Date(),
-        );
-      } catch (promotionError) {
-        this.logger.warn("Failed to enrich public car with promotion", {
-          carId,
-          ownerId: car.ownerId,
-          error: promotionError instanceof Error ? promotionError.message : String(promotionError),
-        });
-      }
-      const publicCar = { ...car };
-      delete publicCar.ownerId;
+      const promotion = await this.carPromotionEnrichmentService.resolvePromotionForCar({
+        target: { id: car.id, ownerId: car.ownerId },
+        referenceDate: new Date(),
+        failureMessage: "Failed to enrich public car with promotion",
+      });
+      const { ownerId: _ownerId, ...publicCar } = car;
 
       return {
         ...publicCar,
-        promotion: this.toPromotionDto(promotion),
+        promotion,
       };
     } catch (error) {
       if (error instanceof CarException) {

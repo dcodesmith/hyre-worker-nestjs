@@ -12,6 +12,7 @@ import {
   RegistrationNumberAlreadyExistsException,
 } from "./car.error";
 import { CarService } from "./car.service";
+import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 
 describe("CarService", () => {
   let service: CarService;
@@ -86,6 +87,7 @@ describe("CarService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: StorageService, useValue: storageServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
+        CarPromotionEnrichmentService,
       ],
     }).compile();
 
@@ -234,6 +236,17 @@ describe("CarService", () => {
     await expect(service.listOwnerCars("owner-1")).rejects.toBeInstanceOf(CarFetchFailedException);
   });
 
+  it("returns owner cars when promotion enrichment fails", async () => {
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ id: "car-1", ownerId: "owner-1" }]);
+    promotionServiceMock.getActivePromotionsForCars.mockRejectedValueOnce(
+      new Error("promotion down"),
+    );
+
+    const result = await service.listOwnerCars("owner-1");
+
+    expect(result).toEqual([{ id: "car-1", ownerId: "owner-1", promotion: null }]);
+  });
+
   it("enriches owner car list with active promotion when present", async () => {
     databaseServiceMock.car.findMany.mockResolvedValueOnce([{ id: "car-1", ownerId: "owner-1" }]);
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValueOnce(
@@ -262,5 +275,40 @@ describe("CarService", () => {
         },
       },
     ]);
+  });
+
+  it("returns owner car detail when promotion enrichment fails", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1", ownerId: "owner-1" });
+    promotionServiceMock.getActivePromotionForCar.mockRejectedValueOnce(
+      new Error("promotion down"),
+    );
+
+    const result = await service.getOwnerCarById("car-1", "owner-1");
+
+    expect(result).toEqual({ id: "car-1", ownerId: "owner-1", promotion: null });
+  });
+
+  it("returns updated car when promotion enrichment fails", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+    });
+    databaseServiceMock.car.update.mockResolvedValueOnce({
+      id: "car-1",
+      ownerId: "owner-1",
+      status: Status.HOLD,
+    });
+    promotionServiceMock.getActivePromotionForCar.mockRejectedValueOnce(
+      new Error("promotion down"),
+    );
+
+    const result = await service.updateCar("car-1", "owner-1", { status: Status.HOLD });
+
+    expect(result).toEqual({
+      id: "car-1",
+      ownerId: "owner-1",
+      status: Status.HOLD,
+      promotion: null,
+    });
   });
 });
