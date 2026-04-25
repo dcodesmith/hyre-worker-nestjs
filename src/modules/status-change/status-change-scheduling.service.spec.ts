@@ -1,16 +1,20 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { StatusChangeSchedulingService } from "./status-change-scheduling.service";
 
 describe("StatusChangeSchedulingService", () => {
   let service: StatusChangeSchedulingService;
-  let databaseService: DatabaseService;
+  let databaseService: {
+    booking: {
+      findMany: Mock<() => Promise<Array<{ id: string }>>>;
+    };
+  };
   let statusUpdateQueue: {
-    add: ReturnType<typeof vi.fn>;
-    getJob: ReturnType<typeof vi.fn>;
+    add: Mock;
+    getJob: Mock;
   };
 
   beforeEach(async () => {
@@ -36,7 +40,7 @@ describe("StatusChangeSchedulingService", () => {
     }).compile();
 
     service = module.get<StatusChangeSchedulingService>(StatusChangeSchedulingService);
-    databaseService = module.get<DatabaseService>(DatabaseService);
+    databaseService = module.get(DatabaseService);
     statusUpdateQueue = module.get(getQueueToken(STATUS_UPDATES_QUEUE));
   });
 
@@ -70,10 +74,10 @@ describe("StatusChangeSchedulingService", () => {
   });
 
   it("schedules activations for all eligible bookings on a flight", async () => {
-    vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
+    databaseService.booking.findMany.mockResolvedValueOnce([
       { id: "booking-a" },
       { id: "booking-b" },
-    ] as any);
+    ]);
     const activationAt = new Date(Date.now() + 60_000);
 
     await service.scheduleAirportActivationsForFlight("flight-1", activationAt);
