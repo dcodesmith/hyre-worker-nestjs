@@ -5,7 +5,11 @@ import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Status } from "@pri
 import type { Job, Queue } from "bullmq";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import {
+  ACTIVATE_AIRPORT_BOOKING,
+  NOTIFICATIONS_QUEUE,
+  STATUS_UPDATES_QUEUE,
+} from "../../config/constants";
 import { createBooking, createCar, createOwner, createUser } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
@@ -78,6 +82,7 @@ describe("BookingConfirmationService", () => {
   let service: BookingConfirmationService;
   let databaseService: DatabaseService;
   let notificationQueue: Queue;
+  let statusUpdateQueue: Queue;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -101,12 +106,20 @@ describe("BookingConfirmationService", () => {
             add: vi.fn(),
           },
         },
+        {
+          provide: getQueueToken(STATUS_UPDATES_QUEUE),
+          useValue: {
+            add: vi.fn(),
+            getJob: vi.fn().mockResolvedValue(null),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<BookingConfirmationService>(BookingConfirmationService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationQueue = module.get<Queue>(getQueueToken(NOTIFICATIONS_QUEUE));
+    statusUpdateQueue = module.get<Queue>(getQueueToken(STATUS_UPDATES_QUEUE));
   });
   describe("confirmFromPayment", () => {
     it("should confirm a PENDING booking and update to CONFIRMED", async () => {
@@ -147,6 +160,7 @@ describe("BookingConfirmationService", () => {
           legs: { include: { extensions: true } },
         },
       });
+      expect(statusUpdateQueue.add).not.toHaveBeenCalled();
     });
 
     it("should queue booking confirmation notification after confirmation", async () => {
@@ -494,6 +508,58 @@ describe("BookingConfirmationService", () => {
       expect(result).toBe(true);
       // Notifications should still be queued
       expect(notificationQueue.add).toHaveBeenCalled();
+    });
+
+    it("should schedule airport activation job for airport pickup bookings", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-airport-1",
+        bookingId: "booking-airport-1",
+      });
+      const activationAt = new Date(Date.now() + 10 * 60 * 1000);
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-airport-1",
+        type: "AIRPORT_PICKUP",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        legs: [
+          {
+            id: "leg-1",
+            bookingId: "booking-airport-1",
+            legDate: activationAt,
+            legStartTime: activationAt,
+            legEndTime: new Date(activationAt.getTime() + 60 * 60 * 1000),
+            totalDailyPrice: new Decimal(1000),
+            itemsNetValueForLeg: new Decimal(1000),
+            platformCommissionRateOnLeg: new Decimal(0),
+            platformCommissionAmountOnLeg: new Decimal(0),
+            fleetOwnerEarningForLeg: new Decimal(1000),
+            notes: "",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            extensions: [],
+          },
+        ],
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+      vi.mocked(statusUpdateQueue.add).mockResolvedValue(createMockJob());
+
+      await service.confirmFromPayment(mockPayment);
+
+      expect(statusUpdateQueue.add).toHaveBeenCalledWith(
+        ACTIVATE_AIRPORT_BOOKING,
+        {
+          type: ACTIVATE_AIRPORT_BOOKING,
+          bookingId: "booking-airport-1",
+          activationAt: activationAt.toISOString(),
+        },
+        expect.objectContaining({
+          jobId: "activate-airport-booking-booking-airport-1",
+        }),
+      );
     });
   });
 });

@@ -16,6 +16,7 @@ export const PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB = "process-whatsapp-inactivit
 export const EVERY_HOUR = "0 * * * *";
 export const CONFIRMED_TO_ACTIVE = "confirmed-to-active";
 export const ACTIVE_TO_COMPLETED = "active-to-completed";
+export const ACTIVATE_AIRPORT_BOOKING = "activate-airport-booking";
 export const BOOKING_LEG_START_REMINDER = "booking-leg-start-reminder";
 export const BOOKING_LEG_END_REMINDER = "booking-leg-end-reminder";
 export const TRIP_START = "trip-start";

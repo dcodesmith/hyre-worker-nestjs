@@ -1,9 +1,15 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
+import { BookingStatus, BookingType, PaymentStatus, Status } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
+import {
+  ActiveToCompletedUpdateFailedException,
+  AirportBookingActivationFailedException,
+  ConfirmedToActiveUpdateFailedException,
+  StatusChangeException,
+} from "./status-change.error";
 
 @Injectable()
 export class StatusChangeService {
@@ -52,6 +58,8 @@ export class StatusChangeService {
         where: {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
+          type: { not: BookingType.AIRPORT_PICKUP },
+
           chauffeurId: { not: null },
           startDate,
           car: {
@@ -98,10 +106,69 @@ export class StatusChangeService {
 
       return `Updated ${bookingsToUpdate.length} bookings from confirmed to active`;
     } catch (error) {
-      this.logger.error(
-        `Error updating booking statuses: ${error instanceof Error ? error.message : "Unknown error"}`,
+      const reason = error instanceof Error ? error.message : "Unknown error";
+      const wrappedError =
+        error instanceof StatusChangeException
+          ? error
+          : new ConfirmedToActiveUpdateFailedException(reason);
+      this.logger.error(wrappedError.message);
+      throw wrappedError;
+    }
+  }
+
+  async activateAirportBooking(bookingId: string, activationAt?: string) {
+    try {
+      const updatedCount = await this.databaseService.booking.updateMany({
+        where: {
+          id: bookingId,
+          type: BookingType.AIRPORT_PICKUP,
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          chauffeurId: { not: null },
+          car: { status: Status.BOOKED },
+        },
+        data: { status: BookingStatus.ACTIVE },
+      });
+
+      if (updatedCount.count === 0) {
+        return `Skipped airport activation for ${bookingId}: booking not eligible`;
+      }
+
+      const updatedBooking = await this.databaseService.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          car: { include: { owner: true } },
+          user: true,
+          chauffeur: true,
+          legs: { include: { extensions: true } },
+        },
+      });
+
+      if (!updatedBooking) {
+        return `Skipped airport activation for ${bookingId}: booking not found`;
+      }
+
+      await this.queueStatusNotification(
+        updatedBooking.id,
+        updatedBooking,
+        BookingStatus.CONFIRMED,
+        BookingStatus.ACTIVE,
       );
-      throw error;
+
+      this.logger.log(`Airport booking activated`, {
+        bookingId,
+        activationAt,
+      });
+
+      return `Activated airport booking ${bookingId}`;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const wrappedError =
+        error instanceof StatusChangeException
+          ? error
+          : new AirportBookingActivationFailedException(bookingId, reason);
+      this.logger.error(wrappedError.message);
+      throw wrappedError;
     }
   }
 
@@ -218,8 +285,13 @@ export class StatusChangeService {
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;
     } catch (error) {
-      this.logger.error(`Error updating booking statuses: ${error}`);
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      const wrappedError =
+        error instanceof StatusChangeException
+          ? error
+          : new ActiveToCompletedUpdateFailedException(reason);
+      this.logger.error(wrappedError.message);
+      throw wrappedError;
     }
   }
 

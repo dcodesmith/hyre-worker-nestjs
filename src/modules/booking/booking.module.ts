@@ -6,6 +6,7 @@ import { MapsModule } from "../maps/maps.module";
 import { NotificationModule } from "../notification/notification.module";
 import { PromotionModule } from "../promotion/promotion.module";
 import { RatesModule } from "../rates/rates.module";
+import { StatusChangeModule } from "../status-change/status-change.module";
 import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCancellationService } from "./booking-cancellation.service";
@@ -30,6 +31,7 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
     FlightAwareModule,
     MapsModule,
     PromotionModule,
+    StatusChangeModule,
   ],
   controllers: [BookingController],
   providers: [

@@ -1,14 +1,24 @@
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { FlightStatus, Prisma } from "@prisma/client";
+import { BookingStatus, BookingType, FlightStatus, PaymentStatus, Prisma } from "@prisma/client";
+import { Queue } from "bullmq";
+import { ACTIVATE_AIRPORT_BOOKING, STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
+import type { StatusUpdateJobData } from "../status-change/status-change.interface";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
 import { FlightAwareWebhookResult, MapEventTypeToStatus } from "./flightaware.interface";
+
+const AIRPORT_BOOKING_BUFFER_MINUTES = 40;
 
 @Injectable()
 export class FlightAwareWebhookService {
   private readonly logger = new Logger(FlightAwareWebhookService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @InjectQueue(STATUS_UPDATES_QUEUE)
+    private readonly statusUpdateQueue: Queue<StatusUpdateJobData>,
+  ) {}
 
   async handleWebhook(payload: FlightAwareWebhookDto): Promise<FlightAwareWebhookResult> {
     const { alert_id, event_type, event_time, flight } = payload;
@@ -134,6 +144,11 @@ export class FlightAwareWebhookService {
       },
     });
 
+    const activationAt = this.resolveActivationTime(flight);
+    if (activationAt) {
+      await this.scheduleAirportBookingActivations(flightRecord.id, activationAt);
+    }
+
     this.logger.log("Processed FlightAware webhook event", {
       flightId: flightRecord.id,
       eventType: event_type,
@@ -231,5 +246,74 @@ export class FlightAwareWebhookService {
 
   private isUniqueConstraintError(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  }
+
+  private resolveActivationTime(flight: FlightAwareWebhookDto["flight"]): Date | null {
+    const arrivalTime =
+      flight.actual_in ??
+      flight.actual_on ??
+      flight.estimated_in ??
+      flight.estimated_on ??
+      flight.scheduled_in ??
+      flight.scheduled_on;
+
+    if (!arrivalTime) {
+      return null;
+    }
+
+    const parsedArrivalTime = new Date(arrivalTime);
+    if (Number.isNaN(parsedArrivalTime.getTime())) {
+      return null;
+    }
+
+    return new Date(parsedArrivalTime.getTime() + AIRPORT_BOOKING_BUFFER_MINUTES * 60 * 1000);
+  }
+
+  private async scheduleAirportBookingActivations(
+    flightId: string,
+    activationAt: Date,
+  ): Promise<void> {
+    const bookings = await this.databaseService.booking.findMany({
+      where: {
+        flightId,
+        type: BookingType.AIRPORT_PICKUP,
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (bookings.length === 0) {
+      return;
+    }
+
+    const delay = Math.max(0, activationAt.getTime() - Date.now());
+    await Promise.allSettled(
+      bookings.map(async (booking) => {
+        const jobId = `activate-airport-booking-${booking.id}`;
+        const existingJob = await this.statusUpdateQueue.getJob(jobId);
+        if (existingJob) {
+          await existingJob.remove();
+        }
+
+        return this.statusUpdateQueue.add(
+          ACTIVATE_AIRPORT_BOOKING,
+          {
+            type: ACTIVATE_AIRPORT_BOOKING,
+            bookingId: booking.id,
+            activationAt: activationAt.toISOString(),
+          },
+          {
+            jobId,
+            delay,
+            removeOnComplete: 100,
+            removeOnFail: 50,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 1000 },
+          },
+        );
+      }),
+    );
   }
 }

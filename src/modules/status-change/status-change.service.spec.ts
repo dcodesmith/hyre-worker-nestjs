@@ -6,6 +6,7 @@ import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
+import { ConfirmedToActiveUpdateFailedException } from "./status-change.error";
 import { StatusChangeService } from "./status-change.service";
 
 describe("StatusChangeService", () => {
@@ -27,6 +28,7 @@ describe("StatusChangeService", () => {
               findUnique: vi.fn(),
               findFirst: vi.fn(),
               update: vi.fn(),
+              updateMany: vi.fn(),
             },
             car: {
               update: vi.fn(),
@@ -150,7 +152,9 @@ describe("StatusChangeService", () => {
     const error = new Error("Database error");
     vi.mocked(mockDatabaseService.booking.findMany).mockRejectedValueOnce(error);
 
-    await expect(service.updateBookingsFromConfirmedToActive()).rejects.toThrow(error);
+    await expect(service.updateBookingsFromConfirmedToActive()).rejects.toBeInstanceOf(
+      ConfirmedToActiveUpdateFailedException,
+    );
   });
 
   it("should update bookings from active to completed when no bookings found", async () => {
@@ -304,5 +308,51 @@ describe("StatusChangeService", () => {
     expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("4");
     expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("4");
     expect(result).toBe("Updated 1 bookings from active to completed");
+  });
+
+  it("should activate a single eligible airport booking", async () => {
+    const mockBooking = createBooking({
+      id: "airport-1",
+      type: "AIRPORT_PICKUP",
+      status: BookingStatus.ACTIVE,
+      paymentStatus: PaymentStatus.PAID,
+      chauffeurId: "chauffeur-1",
+      car: createCar({ status: Status.BOOKED }),
+    });
+
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+
+    const result = await service.activateAirportBooking("airport-1", new Date().toISOString());
+
+    expect(mockDatabaseService.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "airport-1",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+        }),
+        data: { status: BookingStatus.ACTIVE },
+      }),
+    );
+    expect(mockDatabaseService.booking.findUnique).toHaveBeenCalledWith({
+      where: { id: "airport-1" },
+      include: {
+        car: { include: { owner: true } },
+        user: true,
+        chauffeur: true,
+        legs: { include: { extensions: true } },
+      },
+    });
+    expect(result).toBe("Activated airport booking airport-1");
+  });
+
+  it("should skip airport activation when booking is not eligible", async () => {
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
+
+    const result = await service.activateAirportBooking("airport-2", new Date().toISOString());
+
+    expect(mockDatabaseService.booking.findUnique).not.toHaveBeenCalled();
+    expect(result).toBe("Skipped airport activation for airport-2: booking not eligible");
   });
 });

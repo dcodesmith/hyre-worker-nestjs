@@ -9,6 +9,7 @@ import {
   STATUS_UPDATES_QUEUE,
   TIMEZONE,
 } from "../../config/constants";
+import { StatusUpdateSchedulingFailedException } from "./status-change.error";
 import { StatusUpdateJobData } from "./status-change.interface";
 
 @Injectable()
@@ -29,9 +30,13 @@ export class StatusChangeScheduler {
         type: CONFIRMED_TO_ACTIVE,
       });
     } catch (error) {
+      const schedulingError = new StatusUpdateSchedulingFailedException(
+        CONFIRMED_TO_ACTIVE,
+        error instanceof Error ? error.message : String(error),
+      );
       this.logger.error(
         "Failed to schedule confirmed to active status updates",
-        error instanceof Error ? error.message : String(error),
+        schedulingError.message,
       );
     }
   }
@@ -45,9 +50,13 @@ export class StatusChangeScheduler {
         type: ACTIVE_TO_COMPLETED,
       });
     } catch (error) {
+      const schedulingError = new StatusUpdateSchedulingFailedException(
+        ACTIVE_TO_COMPLETED,
+        error instanceof Error ? error.message : String(error),
+      );
       this.logger.error(
         "Failed to schedule active to completed status updates",
-        error instanceof Error ? error.message : String(error),
+        schedulingError.message,
       );
     }
   }

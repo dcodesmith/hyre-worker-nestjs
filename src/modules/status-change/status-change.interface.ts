@@ -1,8 +1,20 @@
-import { ACTIVE_TO_COMPLETED, CONFIRMED_TO_ACTIVE } from "../../config/constants";
+import {
+  ACTIVATE_AIRPORT_BOOKING,
+  ACTIVE_TO_COMPLETED,
+  CONFIRMED_TO_ACTIVE,
+} from "../../config/constants";
 
-type StatusUpdateType = typeof CONFIRMED_TO_ACTIVE | typeof ACTIVE_TO_COMPLETED;
+type HourlyStatusUpdateType = typeof CONFIRMED_TO_ACTIVE | typeof ACTIVE_TO_COMPLETED;
 
-export interface StatusUpdateJobData {
-  type: StatusUpdateType;
+export type HourlyStatusUpdateJobData = {
+  type: HourlyStatusUpdateType;
   timestamp?: string;
-}
+};
+
+export type ActivateAirportBookingJobData = {
+  type: typeof ACTIVATE_AIRPORT_BOOKING;
+  bookingId: string;
+  activationAt?: string;
+};
+
+export type StatusUpdateJobData = HourlyStatusUpdateJobData | ActivateAirportBookingJobData;

@@ -2,7 +2,11 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
 import { BookingStatus, type Payment, PaymentStatus, Status } from "@prisma/client";
 import { Queue } from "bullmq";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import {
+  ACTIVATE_AIRPORT_BOOKING,
+  NOTIFICATIONS_QUEUE,
+  STATUS_UPDATES_QUEUE,
+} from "../../config/constants";
 import { normaliseBookingDetails } from "../../shared/helper";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
@@ -17,6 +21,7 @@ import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
 } from "../notification/template-data.interface";
+import type { StatusUpdateJobData } from "../status-change/status-change.interface";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -34,6 +39,8 @@ export class BookingConfirmationService {
     private readonly databaseService: DatabaseService,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
+    @InjectQueue(STATUS_UPDATES_QUEUE)
+    private readonly statusUpdateQueue: Queue<StatusUpdateJobData>,
   ) {}
 
   /**
@@ -109,6 +116,7 @@ export class BookingConfirmationService {
 
     // Queue notification asynchronously (don't block webhook response)
     await this.queueBookingConfirmedNotification(updatedBooking);
+    await this.scheduleAirportActivation(updatedBooking);
 
     return true;
   }
@@ -265,6 +273,52 @@ export class BookingConfirmationService {
       this.logger.error("Failed to queue fleet owner notification", {
         bookingId: booking.id,
         ownerId: booking.car?.owner?.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async scheduleAirportActivation(booking: BookingWithRelations): Promise<void> {
+    if (booking.type !== "AIRPORT_PICKUP") {
+      return;
+    }
+
+    const activationAt = booking.legs[0]?.legStartTime;
+    if (!activationAt) {
+      this.logger.warn("Airport booking has no leg start time; skipping activation schedule", {
+        bookingId: booking.id,
+      });
+      return;
+    }
+
+    const delay = Math.max(0, activationAt.getTime() - Date.now());
+    const jobId = `activate-airport-booking-${booking.id}`;
+
+    try {
+      const existingJob = await this.statusUpdateQueue.getJob(jobId);
+      if (existingJob) {
+        await existingJob.remove();
+      }
+
+      await this.statusUpdateQueue.add(
+        ACTIVATE_AIRPORT_BOOKING,
+        {
+          type: ACTIVATE_AIRPORT_BOOKING,
+          bookingId: booking.id,
+          activationAt: activationAt.toISOString(),
+        },
+        {
+          jobId,
+          delay,
+          removeOnComplete: 100,
+          removeOnFail: 50,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 1000 },
+        },
+      );
+    } catch (error) {
+      this.logger.error("Failed to schedule airport activation", {
+        bookingId: booking.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }

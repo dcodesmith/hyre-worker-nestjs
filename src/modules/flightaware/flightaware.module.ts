@@ -5,6 +5,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { DatabaseModule } from "../database/database.module";
+import { StatusChangeModule } from "../status-change/status-change.module";
 import { FlightAwareController } from "./flightaware.controller";
 import { FlightAwareService } from "./flightaware.service";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
@@ -16,6 +17,7 @@ import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
   imports: [
     ConfigModule,
     DatabaseModule,
+    StatusChangeModule,
     BullModule.registerQueue({
       name: FLIGHT_ALERTS_QUEUE,
       defaultJobOptions: {
