@@ -1,15 +1,10 @@
 import type { IncomingHttpHeaders } from "node:http";
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
+import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
-import type { RoleName } from "../auth.types";
 
 /**
  * Converts Express IncomingHttpHeaders to a Headers object.
@@ -21,6 +16,23 @@ function toHeaders(incomingHeaders: IncomingHttpHeaders): Headers {
     headers.set(key, Array.isArray(value) ? value.join(", ") : value);
   }
   return headers;
+}
+
+function isInvalidSessionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes("invalid session") ||
+    message.includes("expired session") ||
+    message.includes("session expired") ||
+    message.includes("session is invalid") ||
+    message.includes("unauthorized") ||
+    message.includes("not authenticated")
+  );
 }
 
 export const AUTH_SESSION_KEY = "authSession";
@@ -47,27 +59,40 @@ export interface AuthSession {
  */
 @Injectable()
 export class SessionGuard implements CanActivate {
+  private readonly logger = new Logger(SessionGuard.name);
+
   constructor(private readonly authService: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (!this.authService.isInitialized) {
-      throw new ServiceUnavailableException(
-        "Authentication service is not configured. Contact support.",
-      );
-    }
-
     const request = context.switchToHttp().getRequest<Request>();
+    const auth = this.authService.auth;
     let session: Awaited<ReturnType<typeof this.authService.auth.api.getSession>> = null;
     try {
-      session = await this.authService.auth.api.getSession({
+      session = await auth.api.getSession({
         headers: toHeaders(request.headers),
       });
-    } catch {
-      throw new UnauthorizedException("Invalid or expired session");
+    } catch (error) {
+      if (isInvalidSessionError(error)) {
+        throw new AuthUnauthorizedException(
+          AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+          "Invalid or expired session",
+          "Invalid Or Expired Session",
+        );
+      }
+
+      this.logger.error(
+        "Unexpected error while validating auth session",
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
     }
 
     if (!session) {
-      throw new UnauthorizedException("Invalid or expired session");
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+        "Invalid or expired session",
+        "Invalid Or Expired Session",
+      );
     }
 
     // Fetch user roles from database

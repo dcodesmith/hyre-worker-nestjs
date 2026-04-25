@@ -1,12 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import type { Request } from "express";
+import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
 import { AuthService } from "../auth.service";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
 
@@ -54,12 +49,12 @@ function hasAuthCredentials(request: Request): boolean {
  *
  * Unlike SessionGuard, this guard allows guest (unauthenticated) requests through,
  * but ONLY when no auth credentials are provided. If credentials are provided
- * but invalid/expired, it throws UnauthorizedException to prevent silent downgrade.
+ * but invalid/expired, it throws AuthUnauthorizedException to prevent silent downgrade.
  *
  * Behavior:
  * - No auth credentials: allows through as guest, @CurrentUser returns null
  * - Valid session: attaches session to request, @CurrentUser returns user
- * - Credentials provided but invalid/expired: throws UnauthorizedException
+ * - Credentials provided but invalid/expired: throws AuthUnauthorizedException
  * - Auth service not initialized: allows through as guest (logs warning)
  *
  * This prevents the dangerous scenario where a user thinks they're logged in
@@ -110,8 +105,10 @@ export class OptionalSessionGuard implements CanActivate {
     if (!session) {
       // User provided credentials but session is invalid/expired
       // Don't silently downgrade to guest - inform them to re-authenticate
-      throw new UnauthorizedException(
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
         "Your session has expired or is invalid. Please log in again.",
+        "Session Expired Or Invalid",
       );
     }
 

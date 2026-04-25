@@ -1,14 +1,3 @@
-/**
- * Role and client type definitions for role-based authentication.
- *
- * These types are used by Better Auth hooks to validate and assign roles
- * during the OTP authentication flow.
- */
-
-// ============================================================================
-// Role Constants
-// ============================================================================
-
 /** Regular customer (can self-register) */
 export const USER = "user" as const;
 
@@ -25,10 +14,6 @@ export const STAFF = "staff" as const;
 export const ROLE_NAMES = [USER, FLEET_OWNER, ADMIN, STAFF] as const;
 export type RoleName = (typeof ROLE_NAMES)[number];
 
-// ============================================================================
-// Client Type Constants
-// ============================================================================
-
 /** Browser-based client (uses Origin header) */
 export const WEB = "web" as const;
 
@@ -38,10 +23,6 @@ export const MOBILE = "mobile" as const;
 /** All valid client types */
 export const CLIENT_TYPES = [WEB, MOBILE] as const;
 export type ClientType = (typeof CLIENT_TYPES)[number];
-
-// ============================================================================
-// Role Categories
-// ============================================================================
 
 /**
  * Roles that can be auto-granted on registration.
@@ -81,14 +62,4 @@ export function isGrantableRole(role: RoleName): boolean {
  */
 export function isProtectedRole(role: RoleName): boolean {
   return (PROTECTED_ROLES as readonly RoleName[]).includes(role);
-}
-
-/**
- * Parameters for validating role against client type and origin.
- */
-export interface ValidateRoleForClientParams {
-  role: RoleName;
-  origin: string | null;
-  clientType: ClientType | null;
-  referer?: string | null;
 }

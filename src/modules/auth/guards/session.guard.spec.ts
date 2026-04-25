@@ -1,12 +1,14 @@
-import {
-  ExecutionContext,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AuthErrorCode,
+  AuthServiceUnavailableException,
+  AuthUnauthorizedException,
+} from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
-import type { RoleName } from "../auth.types";
+import { createMockAuthService } from "../test-utils/auth-test.utils";
 import { AUTH_SESSION_KEY, SessionGuard } from "./session.guard";
 
 describe("SessionGuard", () => {
@@ -38,20 +40,6 @@ describe("SessionGuard", () => {
 
   const mockRoles: RoleName[] = ["user"];
 
-  const createMockAuthService = (isInitialized: boolean) => {
-    mockGetSession = vi.fn();
-    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
-    return {
-      isInitialized,
-      auth: {
-        api: {
-          getSession: mockGetSession,
-        },
-      },
-      getUserRoles: mockGetUserRoles,
-    };
-  };
-
   const createMockExecutionContext = (headers: Record<string, string> = {}) => {
     const mockRequest = { headers, [AUTH_SESSION_KEY]: undefined };
     return {
@@ -63,10 +51,19 @@ describe("SessionGuard", () => {
   };
 
   const setupTestModule = async (isInitialized: boolean) => {
+    mockGetSession = vi.fn();
+    mockGetUserRoles = vi.fn().mockResolvedValue(mockRoles);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SessionGuard,
-        { provide: AuthService, useValue: createMockAuthService(isInitialized) },
+        {
+          provide: AuthService,
+          useValue: createMockAuthService({
+            isInitialized,
+            getSessionMock: mockGetSession,
+            getUserRolesMock: mockGetUserRoles,
+          }),
+        },
       ],
     }).compile();
 
@@ -91,13 +88,47 @@ describe("SessionGuard", () => {
       });
     });
 
-    it("should throw UnauthorizedException when no session found", async () => {
+    it("should throw AuthUnauthorizedException when no session found", async () => {
       mockGetSession.mockResolvedValueOnce(null);
       const context = createMockExecutionContext({ cookie: "session=invalid" });
 
-      await expect(guard.canActivate(context)).rejects.toThrow(
-        new UnauthorizedException("Invalid or expired session"),
+      const resultPromise = guard.canActivate(context);
+      await expect(resultPromise).rejects.toThrow(AuthUnauthorizedException);
+      await expect(resultPromise).rejects.toMatchObject({
+        response: expect.objectContaining({
+          errorCode: AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
+          title: "Invalid Or Expired Session",
+          detail: "Invalid or expired session",
+        }),
+      });
+    });
+
+    it("should rethrow unexpected infrastructure errors from getSession", async () => {
+      mockGetSession.mockRejectedValueOnce(new Error("Database unavailable"));
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      await expect(guard.canActivate(context)).rejects.toThrow("Database unavailable");
+    });
+
+    it("should throw AuthUnauthorizedException for auth-specific session errors", async () => {
+      mockGetSession.mockRejectedValueOnce(new Error("Session expired, please login again"));
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(AuthUnauthorizedException);
+    });
+
+    it("should not map infrastructure session errors to AuthUnauthorizedException", async () => {
+      mockGetSession.mockRejectedValueOnce(
+        new Error("Database session pool timeout while querying Session table"),
       );
+      const context = createMockExecutionContext({ cookie: "session=token-123" });
+
+      const resultPromise = guard.canActivate(context);
+
+      await expect(resultPromise).rejects.toThrow(
+        "Database session pool timeout while querying Session table",
+      );
+      await expect(resultPromise).rejects.not.toThrow(AuthUnauthorizedException);
     });
 
     it("should pass headers to getSession", async () => {
@@ -120,14 +151,18 @@ describe("SessionGuard", () => {
       await setupTestModule(false);
     });
 
-    it("should throw ServiceUnavailableException", async () => {
+    it("should throw AuthServiceUnavailableException", async () => {
       const context = createMockExecutionContext();
 
-      await expect(guard.canActivate(context)).rejects.toThrow(
-        new ServiceUnavailableException(
-          "Authentication service is not configured. Contact support.",
-        ),
-      );
+      const resultPromise = guard.canActivate(context);
+      await expect(resultPromise).rejects.toThrow(AuthServiceUnavailableException);
+      await expect(resultPromise).rejects.toMatchObject({
+        response: expect.objectContaining({
+          errorCode: AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
+          title: "Authentication Service Not Configured",
+          detail: "Authentication service is not configured. Contact support.",
+        }),
+      });
     });
   });
 });

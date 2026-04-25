@@ -1,7 +1,8 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { Request } from "express";
-import type { RoleName } from "../auth.types";
+import { AuthErrorCode, AuthForbiddenException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { ROLES_KEY } from "../decorators/roles.decorator";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
 
@@ -48,8 +49,10 @@ export class RoleGuard implements CanActivate {
 
     if (!authSession) {
       // This should not happen if SessionGuard is used first
-      throw new ForbiddenException(
+      throw new AuthForbiddenException(
+        AuthErrorCode.AUTH_SESSION_NOT_FOUND,
         "Session not found. Ensure SessionGuard is used before RoleGuard.",
+        "Session Not Found",
       );
     }
 
@@ -59,7 +62,11 @@ export class RoleGuard implements CanActivate {
     const hasRole = requiredRoles.some((role) => userRoles.includes(role));
 
     if (!hasRole) {
-      throw new ForbiddenException(`Access denied. Required roles: ${requiredRoles.join(", ")}`);
+      throw new AuthForbiddenException(
+        AuthErrorCode.AUTH_INSUFFICIENT_ROLE,
+        `Access denied. Required roles: ${requiredRoles.join(", ")}`,
+        "Insufficient Role",
+      );
     }
 
     return true;

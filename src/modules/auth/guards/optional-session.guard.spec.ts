@@ -1,8 +1,9 @@
-import { ExecutionContext, UnauthorizedException } from "@nestjs/common";
+import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
-import type { RoleName } from "../auth.types";
 import { OptionalSessionGuard } from "./optional-session.guard";
 import { AUTH_SESSION_KEY } from "./session.guard";
 
@@ -68,6 +69,19 @@ describe("OptionalSessionGuard", () => {
     }).compile();
 
     guard = module.get<OptionalSessionGuard>(OptionalSessionGuard);
+  };
+
+  const expectProblemDetail = async (
+    promise: Promise<unknown>,
+    detail: string,
+    errorCode?: string,
+  ) => {
+    await expect(promise).rejects.toMatchObject({
+      response: expect.objectContaining({
+        detail,
+        ...(errorCode && { errorCode }),
+      }),
+    });
   };
 
   describe("when auth is initialized", () => {
@@ -152,16 +166,19 @@ describe("OptionalSessionGuard", () => {
         });
       });
 
-      it("should throw UnauthorizedException when credentials provided but session is null", async () => {
+      it("should throw AuthUnauthorizedException when credentials provided but session is null", async () => {
         // User has a cookie but session is expired/invalid (getSession returns null)
         mockGetSession.mockResolvedValueOnce(null);
         const context = createMockExecutionContext({
           cookie: "session_token=expired-token",
         });
 
-        await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
-        await expect(guard.canActivate(context)).rejects.toThrow(
-          "Your session has expired or is invalid",
+        const resultPromise = guard.canActivate(context);
+        await expect(resultPromise).rejects.toThrow(AuthUnauthorizedException);
+        await expectProblemDetail(
+          resultPromise,
+          "Your session has expired or is invalid. Please log in again.",
+          AuthErrorCode.AUTH_INVALID_OR_EXPIRED_SESSION,
         );
 
         expect(mockGetSession).toHaveBeenCalled();

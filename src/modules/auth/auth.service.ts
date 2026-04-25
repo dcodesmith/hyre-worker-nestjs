@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  OnModuleInit,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
@@ -15,11 +9,16 @@ import {
   GRANTABLE_ROLES,
   MOBILE,
   PROTECTED_ROLES,
-  type RoleName,
   STAFF,
   USER,
-  type ValidateRoleForClientParams,
-} from "./auth.types";
+} from "./auth.const";
+import {
+  AuthErrorCode,
+  AuthNotFoundException,
+  AuthServiceUnavailableException,
+  AuthUnauthorizedException,
+} from "./auth.error";
+import type { RoleName, ValidateRoleForClientParams } from "./auth.interface";
 import { AuthEmailService } from "./auth-email.service";
 
 @Injectable()
@@ -62,11 +61,25 @@ export class AuthService implements OnModuleInit {
   }
 
   get auth(): Auth {
-    return this._auth;
+    return this.getAuthOrThrow();
   }
 
   get isInitialized(): boolean {
     return this._auth !== null;
+  }
+
+  /**
+   * Ensures Better Auth instance has been initialized.
+   */
+  private getAuthOrThrow(): Auth {
+    if (!this._auth) {
+      throw new AuthServiceUnavailableException(
+        AuthErrorCode.AUTH_SERVICE_NOT_CONFIGURED,
+        "Authentication service is not configured. Contact support.",
+        "Authentication Service Not Configured",
+      );
+    }
+    return this._auth;
   }
 
   /**
@@ -222,9 +235,17 @@ export class AuthService implements OnModuleInit {
     } else if ((PROTECTED_ROLES as readonly RoleName[]).includes(role)) {
       // Protected roles cannot be assigned to new users
       // The before hook should prevent this, but this is a safety check
-      throw new UnauthorizedException(`Protected role "${role}" cannot be assigned to new users`);
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED,
+        `Protected role "${role}" cannot be assigned to new users`,
+        "Protected Role Assignment Denied",
+      );
     } else {
-      throw new UnauthorizedException(`Invalid role: ${role}`);
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_INVALID_ROLE,
+        `Invalid role: ${role}`,
+        "Invalid Role",
+      );
     }
   }
 
@@ -243,7 +264,11 @@ export class AuthService implements OnModuleInit {
 
     if (!user) {
       this.logger.warn(`Cannot assign role: user ${userId} not found`);
-      throw new NotFoundException(`Cannot assign role: user ${userId} not found`);
+      throw new AuthNotFoundException(
+        AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
+        "User not found for role assignment",
+        "User Not Found For Role Assignment",
+      );
     }
 
     const hasRole = user.roles.some((r) => r.name === role);
@@ -275,7 +300,11 @@ export class AuthService implements OnModuleInit {
 
     if (!hasRole) {
       this.logger.warn(`User ${userId} does not have required role: ${role}`);
-      throw new UnauthorizedException(`User does not have required role: ${role}`);
+      throw new AuthUnauthorizedException(
+        AuthErrorCode.AUTH_ROLE_REQUIREMENT_FAILED,
+        `User does not have required role: ${role}`,
+        "Role Requirement Failed",
+      );
     }
   }
 
