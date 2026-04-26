@@ -10,6 +10,8 @@ import { ReferralModule } from "../referral/referral.module";
 import { StatusChangeProcessor } from "./status-change.processor";
 import { StatusChangeScheduler } from "./status-change.scheduler";
 import { StatusChangeService } from "./status-change.service";
+import { StatusChangeEventsListener } from "./status-change-events.listener";
+import { StatusChangeSchedulingService } from "./status-change-scheduling.service";
 
 @Module({
   imports: [
@@ -23,7 +25,13 @@ import { StatusChangeService } from "./status-change.service";
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [StatusChangeService, StatusChangeProcessor, StatusChangeScheduler],
+  providers: [
+    StatusChangeService,
+    StatusChangeProcessor,
+    StatusChangeScheduler,
+    StatusChangeSchedulingService,
+    StatusChangeEventsListener,
+  ],
   exports: [StatusChangeService, BullModule],
 })
 export class StatusChangeModule {}

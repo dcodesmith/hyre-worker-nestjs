@@ -56,6 +56,7 @@ export class AppException extends HttpException {
     };
 
     super(problemDetails, status);
+    this.message = message;
     this.details = options?.details;
     this.problemDetails = problemDetails;
   }

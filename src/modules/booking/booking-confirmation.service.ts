@@ -1,8 +1,10 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger } from "@nestjs/common";
+import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { BookingStatus, type Payment, PaymentStatus, Status } from "@prisma/client";
 import { Queue } from "bullmq";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { normaliseBookingDetails } from "../../shared/helper";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
@@ -32,6 +34,8 @@ export class BookingConfirmationService {
 
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
   ) {}
@@ -109,6 +113,7 @@ export class BookingConfirmationService {
 
     // Queue notification asynchronously (don't block webhook response)
     await this.queueBookingConfirmedNotification(updatedBooking);
+    await this.emitBookingConfirmedEvent(updatedBooking);
 
     return true;
   }
@@ -265,6 +270,45 @@ export class BookingConfirmationService {
       this.logger.error("Failed to queue fleet owner notification", {
         bookingId: booking.id,
         ownerId: booking.car?.owner?.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async emitBookingConfirmedEvent(booking: BookingWithRelations): Promise<void> {
+    if (booking.type !== "AIRPORT_PICKUP") {
+      return;
+    }
+
+    const activationAt = booking.legs.reduce<Date | null>((earliestLegStartTime, leg) => {
+      if (!leg.legStartTime) {
+        return earliestLegStartTime;
+      }
+
+      if (!earliestLegStartTime || leg.legStartTime < earliestLegStartTime) {
+        return leg.legStartTime;
+      }
+
+      return earliestLegStartTime;
+    }, null);
+    if (!activationAt) {
+      this.logger.warn("Airport booking has no leg start time; skipping activation schedule", {
+        bookingId: booking.id,
+      });
+      return;
+    }
+
+    try {
+      await this.eventEmitterReadinessWatcher.waitUntilReady();
+      // Intentionally fire-and-forget: confirmation flow should not wait for listener processing.
+      this.eventEmitter.emit(BOOKING_CONFIRMED_EVENT, {
+        bookingId: booking.id,
+        bookingType: booking.type,
+        activationAt: activationAt.toISOString(),
+      });
+    } catch (error) {
+      this.logger.error("Failed to emit booking confirmed event", {
+        bookingId: booking.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }

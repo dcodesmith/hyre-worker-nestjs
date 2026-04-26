@@ -1,14 +1,22 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { FlightStatus, Prisma } from "@prisma/client";
+import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
 import { DatabaseService } from "../database/database.service";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
 import { FlightAwareWebhookResult, MapEventTypeToStatus } from "./flightaware.interface";
+
+const AIRPORT_BOOKING_BUFFER_MINUTES = 40;
 
 @Injectable()
 export class FlightAwareWebhookService {
   private readonly logger = new Logger(FlightAwareWebhookService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
+  ) {}
 
   async handleWebhook(payload: FlightAwareWebhookDto): Promise<FlightAwareWebhookResult> {
     const { alert_id, event_type, event_time, flight } = payload;
@@ -134,6 +142,23 @@ export class FlightAwareWebhookService {
       },
     });
 
+    const activationAt = this.resolveActivationTime(flight);
+    if (activationAt && this.shouldEmitActivationEvent(txResult.resolvedStatus)) {
+      try {
+        await this.eventEmitterReadinessWatcher.waitUntilReady();
+        // Intentionally fire-and-forget: webhook processing should not wait for listener processing.
+        this.eventEmitter.emit(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+          flightId: flightRecord.id,
+          activationAt: activationAt.toISOString(),
+        });
+      } catch (error) {
+        this.logger.error("Failed to emit flight arrival updated event", {
+          flightId: flightRecord.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     this.logger.log("Processed FlightAware webhook event", {
       flightId: flightRecord.id,
       eventType: event_type,
@@ -231,5 +256,27 @@ export class FlightAwareWebhookService {
 
   private isUniqueConstraintError(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  }
+
+  private shouldEmitActivationEvent(status: FlightStatus): boolean {
+    return status !== FlightStatus.CANCELLED && status !== FlightStatus.DIVERTED;
+  }
+
+  private resolveActivationTime(flight: FlightAwareWebhookDto["flight"]): Date | null {
+    // Use || (not ??) so empty strings fall through, matching buildFlightUpdateData / parseDate.
+    const arrivalTime =
+      flight.actual_in ||
+      flight.actual_on ||
+      flight.estimated_in ||
+      flight.estimated_on ||
+      flight.scheduled_in ||
+      flight.scheduled_on;
+
+    const parsedArrivalTime = this.parseDate(arrivalTime);
+    if (!parsedArrivalTime) {
+      return null;
+    }
+
+    return new Date(parsedArrivalTime.getTime() + AIRPORT_BOOKING_BUFFER_MINUTES * 60 * 1000);
   }
 }

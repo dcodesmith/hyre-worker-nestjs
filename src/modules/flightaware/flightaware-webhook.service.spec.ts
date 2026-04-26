@@ -1,6 +1,8 @@
+import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { FlightStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 
@@ -20,6 +22,8 @@ type MockDatabaseService = {
 describe("FlightAwareWebhookService", () => {
   let service: FlightAwareWebhookService;
   let databaseService: MockDatabaseService;
+  let eventEmitter: { emit: ReturnType<typeof vi.fn> };
+  let eventEmitterReadinessWatcher: EventEmitterReadinessWatcher;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -40,11 +44,27 @@ describe("FlightAwareWebhookService", () => {
             $transaction: vi.fn(),
           },
         },
+        {
+          provide: EventEmitter2,
+          useValue: {
+            emit: vi.fn(),
+          },
+        },
+        {
+          provide: EventEmitterReadinessWatcher,
+          useValue: {
+            waitUntilReady: vi.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<FlightAwareWebhookService>(FlightAwareWebhookService);
     databaseService = module.get(DatabaseService);
+    eventEmitter = module.get(EventEmitter2);
+    eventEmitterReadinessWatcher = module.get<EventEmitterReadinessWatcher>(
+      EventEmitterReadinessWatcher,
+    );
   });
 
   it("returns duplicate result when unique conflict hits already-processed event", async () => {
@@ -225,4 +245,259 @@ describe("FlightAwareWebhookService", () => {
       },
     });
   });
+
+  it("emits flight arrival updated event when activation time is resolved", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-4",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-4" }),
+          update: vi.fn().mockResolvedValue({ id: "event-4" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-4",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA77",
+        fa_flight_id: "fa-4",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-4",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    });
+  });
+
+  it("emits flight arrival updated when earlier arrival fields are empty strings and a later field is valid", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-empty-strings",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-empty" }),
+          update: vi.fn().mockResolvedValue({ id: "event-empty" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-empty-strings",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA83",
+        fa_flight_id: "fa-empty",
+        actual_in: "",
+        actual_on: "",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-empty-strings",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    });
+  });
+
+  it("does not fail webhook processing if flight arrival event emission fails", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-event-failure",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-failure" }),
+          update: vi.fn().mockResolvedValue({ id: "event-failure" }),
+        },
+      }),
+    );
+    vi.mocked(eventEmitterReadinessWatcher.waitUntilReady).mockRejectedValueOnce(
+      new Error("Event emitter not ready"),
+    );
+
+    const result = await service.handleWebhook({
+      alert_id: "alert-event-failure",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA79",
+        fa_flight_id: "fa-event-failure",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(result).toEqual({
+      duplicate: false,
+      flightId: "flight-event-failure",
+      bookingCount: 1,
+      newStatus: FlightStatus.LANDED,
+    });
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it("does not fail webhook processing if flight arrival emit throws synchronously", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-emit-throw",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-emit-throw" }),
+          update: vi.fn().mockResolvedValue({ id: "event-emit-throw" }),
+        },
+      }),
+    );
+    vi.mocked(eventEmitter.emit).mockImplementationOnce(() => {
+      throw new Error("emit failed");
+    });
+
+    const result = await service.handleWebhook({
+      alert_id: "alert-emit-throw",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA82",
+        fa_flight_id: "fa-emit-throw",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(result).toEqual({
+      duplicate: false,
+      flightId: "flight-emit-throw",
+      bookingCount: 1,
+      newStatus: FlightStatus.LANDED,
+    });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-emit-throw",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    });
+  });
+
+  it("does not emit flight arrival updated event when activation time cannot be resolved", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-5",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-5" }),
+          update: vi.fn().mockResolvedValue({ id: "event-5" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-5",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA78",
+        fa_flight_id: "fa-5",
+        estimated_in: "not-a-date",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "cancelled",
+      event_type: "cancelled",
+      alert_id: "alert-cancelled",
+      flightId: "flight-cancelled",
+      ident: "BA80",
+      fa_flight_id: "fa-cancelled",
+      statusEventId: "event-cancelled",
+    },
+    {
+      label: "diverted",
+      event_type: "diverted",
+      alert_id: "alert-diverted",
+      flightId: "flight-diverted",
+      ident: "BA81",
+      fa_flight_id: "fa-diverted",
+      statusEventId: "event-diverted",
+    },
+  ])(
+    "does not emit flight arrival updated event for $label flights",
+    async ({ event_type, alert_id, flightId, ident, fa_flight_id, statusEventId }) => {
+      vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+        id: flightId,
+        status: FlightStatus.SCHEDULED,
+      });
+      vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+      vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+        callback({
+          flight: {
+            update: vi.fn(),
+          },
+          flightStatusEvent: {
+            create: vi.fn().mockResolvedValue({ id: statusEventId }),
+            update: vi.fn().mockResolvedValue({ id: statusEventId }),
+          },
+        }),
+      );
+
+      await service.handleWebhook({
+        alert_id,
+        event_type,
+        event_time: "2030-01-01T10:00:00.000Z",
+        flight: {
+          ident,
+          fa_flight_id,
+          estimated_in: "2030-01-01T11:00:00.000Z",
+          origin: { code: "EGLL" },
+          destination: { code: "DNMM" },
+        },
+      });
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    },
+  );
 });
