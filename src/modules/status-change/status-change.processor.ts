@@ -50,16 +50,17 @@ export class StatusChangeProcessor extends WorkerHost {
 
     try {
       let result: string | undefined;
-      const jobData = job.data;
       if (
         ![CONFIRMED_TO_ACTIVE, ACTIVE_TO_COMPLETED, ACTIVATE_AIRPORT_BOOKING].includes(job.name)
       ) {
         throw new UnknownStatusUpdateJobTypeException(job.name);
       }
 
-      if (!this.isStatusUpdateJobData(jobData)) {
+      const parsed = statusUpdateJobDataSchema.safeParse(job.data);
+      if (!parsed.success) {
         throw new InvalidStatusUpdateJobPayloadException(job.name);
       }
+      const jobData = parsed.data;
 
       if (job.name !== jobData.type) {
         throw new InvalidStatusUpdateJobPayloadException(job.name);
@@ -100,10 +101,6 @@ export class StatusChangeProcessor extends WorkerHost {
       this.logger.error(`Failed to process ${job.name} job:`, error);
       throw wrappedError;
     }
-  }
-
-  private isStatusUpdateJobData(data: unknown): data is StatusUpdateJobData {
-    return statusUpdateJobDataSchema.safeParse(data).success;
   }
 
   @OnWorkerEvent("completed")

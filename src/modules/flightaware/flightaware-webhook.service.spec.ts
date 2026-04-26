@@ -283,6 +283,45 @@ describe("FlightAwareWebhookService", () => {
     });
   });
 
+  it("emits flight arrival updated when earlier arrival fields are empty strings and a later field is valid", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-empty-strings",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-empty" }),
+          update: vi.fn().mockResolvedValue({ id: "event-empty" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-empty-strings",
+      event_type: "arrival",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA83",
+        fa_flight_id: "fa-empty",
+        actual_in: "",
+        actual_on: "",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-empty-strings",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    });
+  });
+
   it("does not fail webhook processing if flight arrival event emission fails", async () => {
     vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
       id: "flight-event-failure",
@@ -323,10 +362,7 @@ describe("FlightAwareWebhookService", () => {
       bookingCount: 1,
       newStatus: FlightStatus.LANDED,
     });
-    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
-      FLIGHT_ARRIVAL_UPDATED_EVENT,
-      expect.any(Object),
-    );
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   it("does not fail webhook processing if flight arrival emit throws synchronously", async () => {
@@ -406,10 +442,7 @@ describe("FlightAwareWebhookService", () => {
       },
     });
 
-    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
-      FLIGHT_ARRIVAL_UPDATED_EVENT,
-      expect.any(Object),
-    );
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -464,10 +497,7 @@ describe("FlightAwareWebhookService", () => {
         },
       });
 
-      expect(eventEmitter.emit).not.toHaveBeenCalledWith(
-        FLIGHT_ARRIVAL_UPDATED_EVENT,
-        expect.any(Object),
-      );
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     },
   );
 });

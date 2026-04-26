@@ -162,6 +162,30 @@ describe("StatusChangeProcessor", () => {
     });
   });
 
+  it("should pass trimmed bookingId to activateAirportBooking", async () => {
+    const activationAt = new Date().toISOString();
+    const job = {
+      id: "job-trim-booking",
+      name: ACTIVATE_AIRPORT_BOOKING,
+      data: {
+        type: ACTIVATE_AIRPORT_BOOKING,
+        bookingId: "  booking-airport-trim  ",
+        activationAt,
+      },
+    } as Job<StatusUpdateJobData, { success: boolean; result?: string }, string>;
+
+    vi.mocked(statusChangeService.activateAirportBooking).mockResolvedValueOnce(
+      "Activated airport booking booking-airport-trim",
+    );
+
+    await processor.process(job);
+
+    expect(statusChangeService.activateAirportBooking).toHaveBeenCalledExactlyOnceWith(
+      "booking-airport-trim",
+      activationAt,
+    );
+  });
+
   it("should throw invalid payload error when job.name and data.type do not match", async () => {
     const job = {
       id: "job-9",

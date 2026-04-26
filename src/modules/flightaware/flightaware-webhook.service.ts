@@ -263,20 +263,17 @@ export class FlightAwareWebhookService {
   }
 
   private resolveActivationTime(flight: FlightAwareWebhookDto["flight"]): Date | null {
+    // Use || (not ??) so empty strings fall through, matching buildFlightUpdateData / parseDate.
     const arrivalTime =
-      flight.actual_in ??
-      flight.actual_on ??
-      flight.estimated_in ??
-      flight.estimated_on ??
-      flight.scheduled_in ??
+      flight.actual_in ||
+      flight.actual_on ||
+      flight.estimated_in ||
+      flight.estimated_on ||
+      flight.scheduled_in ||
       flight.scheduled_on;
 
-    if (!arrivalTime) {
-      return null;
-    }
-
-    const parsedArrivalTime = new Date(arrivalTime);
-    if (Number.isNaN(parsedArrivalTime.getTime())) {
+    const parsedArrivalTime = this.parseDate(arrivalTime);
+    if (!parsedArrivalTime) {
       return null;
     }
 
