@@ -81,9 +81,6 @@ export class StatusChangeProcessor extends WorkerHost {
           break;
         }
         case ACTIVATE_AIRPORT_BOOKING: {
-          if (jobData.bookingId.trim().length === 0) {
-            throw new InvalidStatusUpdateJobPayloadException(job.name);
-          }
           result = await this.statusChangeService.activateAirportBooking(
             jobData.bookingId,
             jobData.activationAt,
