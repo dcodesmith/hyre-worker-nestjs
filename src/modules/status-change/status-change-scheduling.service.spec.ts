@@ -113,7 +113,7 @@ describe("StatusChangeSchedulingService", () => {
     await expect(
       service.scheduleAirportActivationsForFlight("flight-1", new Date()),
     ).rejects.toThrow(
-      "Failed to schedule 1 airport activations for flight flight-1: Status Update Scheduling Failed Exception",
+      "Failed to schedule 1 airport activations for flight flight-1: Failed to schedule activate-airport-booking job: Queue error",
     );
   });
 });

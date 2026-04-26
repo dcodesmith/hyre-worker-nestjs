@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import { Job } from "bullmq";
+import { z } from "zod";
 import {
   ACTIVATE_AIRPORT_BOOKING,
   ACTIVE_TO_COMPLETED,
@@ -15,6 +16,22 @@ import {
 } from "./status-change.error";
 import { StatusUpdateJobData } from "./status-change.interface";
 import { StatusChangeService } from "./status-change.service";
+
+const statusUpdateJobDataSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal(CONFIRMED_TO_ACTIVE),
+    timestamp: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal(ACTIVE_TO_COMPLETED),
+    timestamp: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal(ACTIVATE_AIRPORT_BOOKING),
+    bookingId: z.string().trim().min(1),
+    activationAt: z.string().optional(),
+  }),
+]);
 
 @Processor(STATUS_UPDATES_QUEUE)
 export class StatusChangeProcessor extends WorkerHost {
@@ -60,6 +77,9 @@ export class StatusChangeProcessor extends WorkerHost {
           break;
         }
         case ACTIVATE_AIRPORT_BOOKING: {
+          if (jobData.bookingId.trim().length === 0) {
+            throw new InvalidStatusUpdateJobPayloadException(job.name);
+          }
           result = await this.statusChangeService.activateAirportBooking(
             jobData.bookingId,
             jobData.activationAt,
@@ -82,23 +102,7 @@ export class StatusChangeProcessor extends WorkerHost {
   }
 
   private isStatusUpdateJobData(data: unknown): data is StatusUpdateJobData {
-    if (!data || typeof data !== "object" || !("type" in data) || typeof data.type !== "string") {
-      return false;
-    }
-
-    switch (data.type) {
-      case CONFIRMED_TO_ACTIVE:
-      case ACTIVE_TO_COMPLETED:
-        return !("timestamp" in data) || typeof data.timestamp === "string";
-      case ACTIVATE_AIRPORT_BOOKING:
-        return (
-          "bookingId" in data &&
-          typeof data.bookingId === "string" &&
-          (!("activationAt" in data) || typeof data.activationAt === "string")
-        );
-      default:
-        return false;
-    }
+    return statusUpdateJobDataSchema.safeParse(data).success;
   }
 
   @OnWorkerEvent("completed")

@@ -6,7 +6,10 @@ import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
-import { ConfirmedToActiveUpdateFailedException } from "./status-change.error";
+import {
+  AirportBookingActivationFailedException,
+  ConfirmedToActiveUpdateFailedException,
+} from "./status-change.error";
 import { StatusChangeService } from "./status-change.service";
 
 describe("StatusChangeService", () => {
@@ -373,5 +376,12 @@ describe("StatusChangeService", () => {
 
     expect(mockDatabaseService.booking.findUnique).not.toHaveBeenCalled();
     expect(result).toBe("Skipped airport activation for airport-2: booking not eligible");
+  });
+
+  it("should throw when airport activation bookingId is missing", async () => {
+    await expect(
+      service.activateAirportBooking(undefined as unknown as string, new Date().toISOString()),
+    ).rejects.toBeInstanceOf(AirportBookingActivationFailedException);
+    expect(mockDatabaseService.booking.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ describe("AppException", () => {
     );
 
     expect(exception.getStatus()).toBe(HttpStatus.NOT_FOUND);
+    expect(exception.message).toBe("Booking not found");
     expect(exception.getResponse()).toEqual({
       type: "BOOKING_NOT_FOUND",
       title: "Booking Not Found",
@@ -48,5 +49,6 @@ describe("AppException", () => {
       errors: [{ field: "email", code: "invalid_string", message: "Invalid email" }],
       details: { source: "schema" },
     });
+    expect(exception.message).toBe("One or more validation errors occurred");
   });
 });

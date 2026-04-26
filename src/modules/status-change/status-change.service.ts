@@ -117,10 +117,21 @@ export class StatusChangeService {
   }
 
   async activateAirportBooking(bookingId: string, activationAt?: string) {
+    if (typeof bookingId !== "string" || bookingId.trim().length === 0) {
+      const wrappedError = new AirportBookingActivationFailedException(
+        "unknown",
+        "Invalid bookingId for airport activation",
+      );
+      this.logger.error(wrappedError.message);
+      throw wrappedError;
+    }
+
+    const normalizedBookingId = bookingId.trim();
+
     try {
       const updatedCount = await this.databaseService.booking.updateMany({
         where: {
-          id: bookingId,
+          id: normalizedBookingId,
           type: BookingType.AIRPORT_PICKUP,
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
@@ -131,11 +142,11 @@ export class StatusChangeService {
       });
 
       if (updatedCount.count === 0) {
-        return `Skipped airport activation for ${bookingId}: booking not eligible`;
+        return `Skipped airport activation for ${normalizedBookingId}: booking not eligible`;
       }
 
       const updatedBooking = await this.databaseService.booking.findUnique({
-        where: { id: bookingId },
+        where: { id: normalizedBookingId },
         include: {
           car: { include: { owner: true } },
           user: true,
@@ -145,7 +156,7 @@ export class StatusChangeService {
       });
 
       if (!updatedBooking) {
-        return `Skipped airport activation for ${bookingId}: booking not found`;
+        return `Skipped airport activation for ${normalizedBookingId}: booking not found`;
       }
 
       await this.queueStatusNotification(
@@ -156,17 +167,17 @@ export class StatusChangeService {
       );
 
       this.logger.log(`Airport booking activated`, {
-        bookingId,
+        bookingId: normalizedBookingId,
         activationAt,
       });
 
-      return `Activated airport booking ${bookingId}`;
+      return `Activated airport booking ${normalizedBookingId}`;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const wrappedError =
         error instanceof StatusChangeException
           ? error
-          : new AirportBookingActivationFailedException(bookingId, reason);
+          : new AirportBookingActivationFailedException(normalizedBookingId, reason);
       this.logger.error(wrappedError.message);
       throw wrappedError;
     }

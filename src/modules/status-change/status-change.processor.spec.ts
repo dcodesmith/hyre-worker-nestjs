@@ -210,6 +210,10 @@ describe("StatusChangeProcessor", () => {
     },
     {
       jobName: ACTIVATE_AIRPORT_BOOKING,
+      data: { type: ACTIVATE_AIRPORT_BOOKING, bookingId: "   " },
+    },
+    {
+      jobName: ACTIVATE_AIRPORT_BOOKING,
       data: { type: ACTIVATE_AIRPORT_BOOKING, bookingId: "booking-1", activationAt: 123 },
     },
   ])(
