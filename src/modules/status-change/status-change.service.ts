@@ -135,6 +135,7 @@ export class StatusChangeService {
           type: BookingType.AIRPORT_PICKUP,
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
+          deletedAt: null,
           chauffeurId: { not: null },
           car: { status: Status.BOOKED },
         },

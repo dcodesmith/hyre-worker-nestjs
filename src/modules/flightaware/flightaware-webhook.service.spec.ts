@@ -365,4 +365,78 @@ describe("FlightAwareWebhookService", () => {
       expect.any(Object),
     );
   });
+
+  it("does not emit flight arrival updated event for cancelled flights", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-cancelled",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-cancelled" }),
+          update: vi.fn().mockResolvedValue({ id: "event-cancelled" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-cancelled",
+      event_type: "cancelled",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA80",
+        fa_flight_id: "fa-cancelled",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+      FLIGHT_ARRIVAL_UPDATED_EVENT,
+      expect.any(Object),
+    );
+  });
+
+  it("does not emit flight arrival updated event for diverted flights", async () => {
+    vi.mocked(databaseService.flight.findFirst).mockResolvedValueOnce({
+      id: "flight-diverted",
+      status: FlightStatus.SCHEDULED,
+    });
+    vi.mocked(databaseService.booking.count).mockResolvedValueOnce(1);
+    vi.mocked(databaseService.$transaction).mockImplementationOnce(async (callback) =>
+      callback({
+        flight: {
+          update: vi.fn(),
+        },
+        flightStatusEvent: {
+          create: vi.fn().mockResolvedValue({ id: "event-diverted" }),
+          update: vi.fn().mockResolvedValue({ id: "event-diverted" }),
+        },
+      }),
+    );
+
+    await service.handleWebhook({
+      alert_id: "alert-diverted",
+      event_type: "diverted",
+      event_time: "2030-01-01T10:00:00.000Z",
+      flight: {
+        ident: "BA81",
+        fa_flight_id: "fa-diverted",
+        estimated_in: "2030-01-01T11:00:00.000Z",
+        origin: { code: "EGLL" },
+        destination: { code: "DNMM" },
+      },
+    });
+
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+      FLIGHT_ARRIVAL_UPDATED_EVENT,
+      expect.any(Object),
+    );
+  });
 });

@@ -143,7 +143,7 @@ export class FlightAwareWebhookService {
     });
 
     const activationAt = this.resolveActivationTime(flight);
-    if (activationAt) {
+    if (activationAt && this.shouldEmitActivationEvent(txResult.resolvedStatus)) {
       try {
         await this.eventEmitterReadinessWatcher.waitUntilReady();
         // Intentionally fire-and-forget: webhook processing should not wait for listener processing.
@@ -256,6 +256,10 @@ export class FlightAwareWebhookService {
 
   private isUniqueConstraintError(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  }
+
+  private shouldEmitActivationEvent(status: FlightStatus): boolean {
+    return status !== FlightStatus.CANCELLED && status !== FlightStatus.DIVERTED;
   }
 
   private resolveActivationTime(flight: FlightAwareWebhookDto["flight"]): Date | null {

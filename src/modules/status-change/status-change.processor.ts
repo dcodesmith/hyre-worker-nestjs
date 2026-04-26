@@ -17,19 +17,23 @@ import {
 import { StatusUpdateJobData } from "./status-change.interface";
 import { StatusChangeService } from "./status-change.service";
 
+const dateTimeString = z
+  .string()
+  .refine((value) => !Number.isNaN(new Date(value).getTime()), "Invalid datetime");
+
 const statusUpdateJobDataSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal(CONFIRMED_TO_ACTIVE),
-    timestamp: z.string().optional(),
+    timestamp: dateTimeString.optional(),
   }),
   z.object({
     type: z.literal(ACTIVE_TO_COMPLETED),
-    timestamp: z.string().optional(),
+    timestamp: dateTimeString.optional(),
   }),
   z.object({
     type: z.literal(ACTIVATE_AIRPORT_BOOKING),
     bookingId: z.string().trim().min(1),
-    activationAt: z.string().optional(),
+    activationAt: dateTimeString.optional(),
   }),
 ]);
 
