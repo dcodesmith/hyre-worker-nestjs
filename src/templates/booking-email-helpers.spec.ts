@@ -11,6 +11,10 @@ describe("booking-email-helpers", () => {
     it("returns input unchanged when no spaces exist", () => {
       expect(firstNameFrom("Cher")).toBe("Cher");
     });
+
+    it("handles leading and repeated whitespace", () => {
+      expect(firstNameFrom("  Alex   Johnson ")).toBe("Alex");
+    });
   });
 
   describe("bookingLegToTripCardData", () => {

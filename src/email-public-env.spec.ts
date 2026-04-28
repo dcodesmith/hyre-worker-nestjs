@@ -24,7 +24,7 @@ describe("getEmailPublicEnv", () => {
 
   it("falls back WEBSITE_URL to DOMAIN when WEBSITE_URL is unset", () => {
     vi.stubEnv("DOMAIN", "https://fallback.example");
-    vi.stubEnv("WEBSITE_URL", undefined);
+    delete process.env.WEBSITE_URL;
 
     expect(getEmailPublicEnv().websiteUrl).toBe("https://fallback.example");
   });

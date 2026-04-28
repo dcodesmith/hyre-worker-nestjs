@@ -1,11 +1,13 @@
 import { ReviewReceivedEmailForOwner } from "../emails";
 import { sampleReviewReceived } from "./preview-data";
 
+const OWNER_NAME = "Fleet Lagos Ltd";
+
 export default function ReviewOwnerPreview() {
-  return <ReviewReceivedEmailForOwner ownerName="Fleet Lagos Ltd" data={sampleReviewReceived} />;
+  return <ReviewReceivedEmailForOwner ownerName={OWNER_NAME} data={sampleReviewReceived} />;
 }
 
 ReviewOwnerPreview.PreviewProps = {
-  ownerName: "Fleet Lagos Ltd",
+  ownerName: OWNER_NAME,
   data: sampleReviewReceived,
 };

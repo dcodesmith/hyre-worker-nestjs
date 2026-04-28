@@ -117,6 +117,8 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
   const firstName = firstNameFrom(booking.customerName);
   const bookingUrl =
     websiteUrl && websiteUrl !== "#" ? `${websiteUrl}/bookings/${booking.id}` : undefined;
+  const reviewUrl =
+    websiteUrl && websiteUrl !== "#" ? `${websiteUrl}/bookings/${booking.id}#review` : undefined;
   const previewText = `Your booking has ${booking.title}`;
   const showReviewRequest = booking.showReviewRequest ?? false;
 
@@ -162,12 +164,14 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
           </Section>
           <Hr className="m-0 border-t border-solid border-[#EFEFF1]" />
           <Section className="px-5 py-4 bg-[#FAFAFB] text-center">
-            <Button
-              href={`${websiteUrl}/bookings/${booking.id}#review`}
-              className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
-            >
-              Leave your review
-            </Button>
+            {reviewUrl && (
+              <Button
+                href={reviewUrl}
+                className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+              >
+                Leave your review
+              </Button>
+            )}
           </Section>
         </Section>
       )}
@@ -201,6 +205,10 @@ export function BookingReminderEmail({
   const { websiteUrl } = getEmailPublicEnv();
   const cardTrip = bookingLegToTripCardData(bookingLeg);
   const firstName = firstNameFrom(recipientName);
+  const extendBookingUrl =
+    websiteUrl && websiteUrl !== "#"
+      ? `${websiteUrl}/bookings/${bookingLeg.bookingId}/extend`
+      : undefined;
 
   const vehicleDescription =
     recipientType === "client"
@@ -231,12 +239,13 @@ export function BookingReminderEmail({
       {recipientType === "client" && !isStartReminder && (
         <Text className="text-[13px] leading-[18px] text-[#6A6A71] mt-6 mb-0">
           Want to keep the car longer?{" "}
-          <Link
-            href={`${websiteUrl}/bookings/${bookingLeg.bookingId}/extend`}
-            className="text-[#0B0B0F] font-medium underline"
-          >
-            Extend booking
-          </Link>
+          {extendBookingUrl ? (
+            <Link href={extendBookingUrl} className="text-[#0B0B0F] font-medium underline">
+              Extend booking
+            </Link>
+          ) : (
+            <span>Extend booking</span>
+          )}
         </Text>
       )}
 

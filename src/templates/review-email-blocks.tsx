@@ -3,11 +3,13 @@ import type { ReviewReceivedTemplateData } from "../modules/notification/templat
 import { firstNameFrom } from "./booking-email-helpers";
 
 export function formatReviewDateDisplay(reviewDate: Date | string): string {
-  const parsedDate = reviewDate instanceof Date ? reviewDate : new Date(reviewDate);
-  if (Number.isNaN(parsedDate.getTime())) {
+  if (typeof reviewDate === "string") {
+    return reviewDate;
+  }
+  if (Number.isNaN(reviewDate.getTime())) {
     return String(reviewDate);
   }
-  return parsedDate.toLocaleString();
+  return reviewDate.toLocaleString();
 }
 
 export function formatRating(rating: unknown): string {

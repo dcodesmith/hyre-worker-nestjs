@@ -18,6 +18,11 @@ describe("review-email-blocks", () => {
   });
 
   describe("formatReviewDateDisplay", () => {
+    it("returns preformatted string inputs unchanged", () => {
+      const input = "Wed, Apr 22, 2026";
+      expect(formatReviewDateDisplay(input)).toBe(input);
+    });
+
     it("returns a readable date for valid input", () => {
       const output = formatReviewDateDisplay(new Date("2026-04-22T10:00:00.000Z"));
       expect(output.length).toBeGreaterThan(0);

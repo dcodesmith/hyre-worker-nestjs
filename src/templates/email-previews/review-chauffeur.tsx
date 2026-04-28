@@ -1,11 +1,15 @@
 import { ReviewReceivedEmailForChauffeur } from "../emails";
 import { sampleReviewReceived } from "./preview-data";
 
+const CHAUFFEUR_NAME = "Sam Driver";
+
 export default function ReviewChauffeurPreview() {
-  return <ReviewReceivedEmailForChauffeur chauffeurName="Sam Driver" data={sampleReviewReceived} />;
+  return (
+    <ReviewReceivedEmailForChauffeur chauffeurName={CHAUFFEUR_NAME} data={sampleReviewReceived} />
+  );
 }
 
 ReviewChauffeurPreview.PreviewProps = {
-  chauffeurName: "Sam Driver",
+  chauffeurName: CHAUFFEUR_NAME,
   data: sampleReviewReceived,
 };
