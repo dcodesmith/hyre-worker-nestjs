@@ -39,9 +39,22 @@ export interface EmailTemplateProps {
 
 const CURRENT_YEAR = new Date().getFullYear();
 
+function makeWebsiteUrl(websiteUrl: string | undefined, path?: string) {
+  if (!websiteUrl || websiteUrl === "#") {
+    return undefined;
+  }
+
+  if (!path) {
+    return websiteUrl;
+  }
+
+  return `${websiteUrl}${path}`;
+}
+
 export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplateProps) {
   const effectivePageTitle = pageTitle || previewText;
   const { appName: companyName, websiteUrl, supportEmail, companyAddress } = getEmailPublicEnv();
+  const companyWebsiteUrl = makeWebsiteUrl(websiteUrl);
 
   return (
     <Tailwind config={{ presets: [pixelBasedPreset] }}>
@@ -93,10 +106,10 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
               <Text className="text-[12px] text-[#9A9A9F] mt-4 m-0 leading-5">
                 &copy; {CURRENT_YEAR} {companyName} &middot; {companyAddress}
               </Text>
-              {websiteUrl && websiteUrl !== "#" && (
+              {companyWebsiteUrl && (
                 <Text className="text-[12px] text-[#9A9A9F] mt-1 m-0 leading-5">
-                  <Link href={websiteUrl} className="text-[#9A9A9F] underline">
-                    {websiteUrl.replace(/^https?:\/\//, "")}
+                  <Link href={companyWebsiteUrl} className="text-[#9A9A9F] underline">
+                    {companyWebsiteUrl.replace(/^https?:\/\//, "")}
                   </Link>
                 </Text>
               )}
@@ -115,10 +128,8 @@ export type BookingStatusUpdateEmailProps = {
 export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailProps) {
   const { websiteUrl } = getEmailPublicEnv();
   const firstName = firstNameFrom(booking.customerName);
-  const bookingUrl =
-    websiteUrl && websiteUrl !== "#" ? `${websiteUrl}/bookings/${booking.id}` : undefined;
-  const reviewUrl =
-    websiteUrl && websiteUrl !== "#" ? `${websiteUrl}/bookings/${booking.id}#review` : undefined;
+  const bookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
+  const reviewUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}#review`);
   const previewText = `Your booking has ${booking.title}`;
   const showReviewRequest = booking.showReviewRequest ?? false;
 
@@ -151,7 +162,7 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
         </Section>
       )}
 
-      {showReviewRequest && (
+      {showReviewRequest && reviewUrl && (
         <Section className="mt-6 border border-solid border-[#E6E6E8] rounded-[14px] overflow-hidden">
           <Section className="px-5 py-4">
             <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
@@ -164,14 +175,12 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
           </Section>
           <Hr className="m-0 border-t border-solid border-[#EFEFF1]" />
           <Section className="px-5 py-4 bg-[#FAFAFB] text-center">
-            {reviewUrl && (
-              <Button
-                href={reviewUrl}
-                className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
-              >
-                Leave your review
-              </Button>
-            )}
+            <Button
+              href={reviewUrl}
+              className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+            >
+              Leave your review
+            </Button>
           </Section>
         </Section>
       )}
@@ -205,10 +214,7 @@ export function BookingReminderEmail({
   const { websiteUrl } = getEmailPublicEnv();
   const cardTrip = bookingLegToTripCardData(bookingLeg);
   const firstName = firstNameFrom(recipientName);
-  const extendBookingUrl =
-    websiteUrl && websiteUrl !== "#"
-      ? `${websiteUrl}/bookings/${bookingLeg.bookingId}/extend`
-      : undefined;
+  const extendBookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${bookingLeg.bookingId}/extend`);
 
   const vehicleDescription =
     recipientType === "client"
@@ -279,8 +285,7 @@ export function BookingConfirmationEmail({
 }) {
   const { websiteUrl } = getEmailPublicEnv();
   const firstName = firstNameFrom(booking.customerName);
-  const bookingUrl =
-    websiteUrl && websiteUrl !== "#" ? `${websiteUrl}/bookings/${booking.id}` : undefined;
+  const bookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
   const previewText = `Your ride is booked for ${booking.startDate}`;
 
   return (
@@ -538,12 +543,10 @@ export function FleetOwnerNewBookingEmail({
   const previewText = "New Booking Alert - Action Required";
   const { websiteUrl } = getEmailPublicEnv();
   const firstName = firstNameFrom(booking.ownerName);
-  const bookingLink =
-    websiteUrl && websiteUrl !== "#"
-      ? `${websiteUrl}/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(
-          booking.startDate,
-        )}`
-      : undefined;
+  const bookingLink = makeWebsiteUrl(
+    websiteUrl,
+    `/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(booking.startDate)}`,
+  );
 
   return (
     <EmailTemplate previewText={previewText} pageTitle="New Booking Notification">
