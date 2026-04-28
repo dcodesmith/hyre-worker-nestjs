@@ -15,8 +15,24 @@ export const envSchema = z
       { error: "REDIS_URL must use redis:// or rediss://" },
     ),
 
-    RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
-    RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
+    EMAIL_PROVIDER: z.enum(["resend", "smtp"]).optional(),
+    EMAIL_FROM: z.email("EMAIL_FROM must be a valid email").optional(),
+    RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required").optional(),
+    RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email").optional(),
+    SMTP_HOST: z.string().default("127.0.0.1"),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
+    SMTP_SECURE: z
+      .preprocess((val) => {
+        if (typeof val === "string") {
+          const normalized = val.toLowerCase();
+          if (normalized === "true") return true;
+          if (normalized === "false") return false;
+        }
+        return val;
+      }, z.boolean("SMTP_SECURE must be a boolean or 'true'/'false'"))
+      .default(false),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASS: z.string().min(1).optional(),
 
     APP_NAME: z.string().min(1, "APP_NAME is required"),
     PORT: z.coerce.number().default(3000),
@@ -110,6 +126,9 @@ export const envSchema = z
   .superRefine((env, ctx) => {
     const hasUsername = typeof env.BULL_BOARD_USERNAME === "string";
     const hasPassword = typeof env.BULL_BOARD_PASSWORD === "string";
+    const hasSmtpUser = typeof env.SMTP_USER === "string";
+    const hasSmtpPass = typeof env.SMTP_PASS === "string";
+    const provider = env.EMAIL_PROVIDER ?? (env.NODE_ENV === "production" ? "resend" : "smtp");
 
     if (hasUsername !== hasPassword) {
       ctx.addIssue({
@@ -118,6 +137,32 @@ export const envSchema = z
         message:
           "BULL_BOARD_USERNAME and BULL_BOARD_PASSWORD must be provided together or both omitted",
       });
+    }
+
+    if (hasSmtpUser !== hasSmtpPass) {
+      ctx.addIssue({
+        code: "custom",
+        path: hasSmtpUser ? ["SMTP_PASS"] : ["SMTP_USER"],
+        message: "SMTP_USER and SMTP_PASS must be provided together or both omitted",
+      });
+    }
+
+    if (provider === "resend") {
+      if (!env.RESEND_API_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["RESEND_API_KEY"],
+          message: "RESEND_API_KEY is required when EMAIL_PROVIDER=resend",
+        });
+      }
+
+      if (!env.EMAIL_FROM && !env.RESEND_FROM_EMAIL) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["EMAIL_FROM"],
+          message: "EMAIL_FROM or RESEND_FROM_EMAIL must be provided when EMAIL_PROVIDER=resend",
+        });
+      }
     }
   });
 

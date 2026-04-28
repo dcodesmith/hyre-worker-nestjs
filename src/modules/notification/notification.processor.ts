@@ -13,7 +13,7 @@ import {
   renderReviewReceivedEmailForOwner,
   renderUserBookingCancellationEmail,
 } from "../../templates/emails";
-import { EmailService } from "./email.service";
+import { EmailService } from "../email/email.service";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
