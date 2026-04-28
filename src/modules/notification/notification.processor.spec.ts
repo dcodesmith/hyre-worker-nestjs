@@ -2,7 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as emailTemplates from "../../templates/emails";
-import { EmailService } from "./email.service";
+import { EmailService } from "../email/email.service";
 import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,

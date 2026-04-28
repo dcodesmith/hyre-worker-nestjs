@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import type { EnvConfig } from "../../config/env.config";
 import { maskEmail } from "../../shared/helper";
 import { renderAuthOTPEmail } from "../../templates/emails";
-import { EmailService } from "../notification/email.service";
+import { EmailService } from "../email/email.service";
 
 @Injectable()
 export class AuthEmailService {
@@ -21,7 +21,6 @@ export class AuthEmailService {
 
     if (isDevelopment) {
       this.logger.log(`Dev OTP for ${maskedEmail}: ${otp}`);
-      return;
     }
 
     this.logger.log(`Sending OTP email to ${maskedEmail}`);

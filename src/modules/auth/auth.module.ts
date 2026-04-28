@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { DatabaseModule } from "../database/database.module";
-import { NotificationModule } from "../notification/notification.module";
+import { EmailModule } from "../email/email.module";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AuthEmailService } from "./auth-email.service";
@@ -9,7 +9,7 @@ import { RoleGuard } from "./guards/role.guard";
 import { SessionGuard } from "./guards/session.guard";
 
 @Module({
-  imports: [DatabaseModule, NotificationModule],
+  imports: [DatabaseModule, EmailModule],
   controllers: [AuthController],
   providers: [AuthService, AuthEmailService, SessionGuard, OptionalSessionGuard, RoleGuard],
   exports: [AuthService, SessionGuard, OptionalSessionGuard, RoleGuard],

@@ -1,0 +1,1 @@
+export const EMAIL_TRANSPORT_TOKEN = Symbol("EMAIL_TRANSPORT_TOKEN");

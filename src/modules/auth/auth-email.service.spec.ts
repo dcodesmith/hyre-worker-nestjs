@@ -2,7 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EmailService } from "../notification/email.service";
+import { EmailService } from "../email/email.service";
 import { AuthEmailService } from "./auth-email.service";
 
 vi.mock("../../templates/emails", () => ({
@@ -76,15 +76,16 @@ describe("AuthEmailService", () => {
       expect(renderAuthOTPEmail).toHaveBeenCalledWith({ otp: testOTP });
     });
 
-    it("should log OTP and skip email in development", async () => {
+    it("should send OTP email in development", async () => {
       mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
         if (key === "NODE_ENV") return "development";
         return undefined;
       });
+      mockEmailService.sendEmail.mockResolvedValueOnce({ data: { id: "email-123" } });
 
       await service.sendOTPEmail(testEmail, testOTP);
 
-      expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
     });
   });
 });
