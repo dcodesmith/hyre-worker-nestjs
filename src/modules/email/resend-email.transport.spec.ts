@@ -1,14 +1,20 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EmailProviderResponseException } from "./email.error";
 import { ResendEmailTransport } from "./resend-email.transport";
 
-const mockSend = vi.fn();
-const mockResend = {
-  emails: {
-    send: mockSend,
-  },
-};
+const { mockSend, mockResend } = vi.hoisted(() => {
+  const send = vi.fn();
+  return {
+    mockSend: send,
+    mockResend: {
+      emails: {
+        send,
+      },
+    },
+  };
+});
 
 vi.mock("resend", () => ({
   Resend: vi.fn().mockImplementation(() => mockResend),
@@ -77,6 +83,6 @@ describe("ResendEmailTransport", () => {
         subject: "Test Subject",
         html: "<p>Test HTML</p>",
       }),
-    ).rejects.toThrow("Resend API error");
+    ).rejects.toThrow(EmailProviderResponseException);
   });
 });

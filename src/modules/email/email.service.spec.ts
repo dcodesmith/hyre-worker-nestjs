@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EMAIL_TRANSPORT_TOKEN } from "./email.const";
+import { EmailDeliveryFailedException } from "./email.error";
 import { EmailService } from "./email.service";
 
 describe("EmailService", () => {
@@ -49,7 +50,7 @@ describe("EmailService", () => {
       const error = new Error("Network error");
       mockTransport.sendEmail.mockRejectedValueOnce(error);
 
-      await expect(service.sendEmail(emailData)).rejects.toThrow(error);
+      await expect(service.sendEmail(emailData)).rejects.toThrow(EmailDeliveryFailedException);
     });
   });
 });

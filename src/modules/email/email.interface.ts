@@ -10,7 +10,7 @@ export interface EmailSendResult {
   } | null;
   error?: unknown;
   headers?: unknown;
-  [key: string]: unknown;
+  meta?: Record<string, unknown>;
 }
 
 export interface EmailTransport {
@@ -18,8 +18,3 @@ export interface EmailTransport {
 }
 
 export type EmailProvider = "resend" | "smtp";
-
-export type ResolveEmailProviderInput = {
-  NODE_ENV: "development" | "production" | "test";
-  EMAIL_PROVIDER?: EmailProvider;
-};

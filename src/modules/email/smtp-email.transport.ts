@@ -2,12 +2,14 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import nodemailer, { Transporter } from "nodemailer";
 import { EnvConfig } from "src/config/env.config";
+import { EmailDeliveryFailedException } from "./email.error";
 import { getFromAddress } from "./email.helper";
 import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface";
 
 @Injectable()
 export class SmtpEmailTransport implements EmailTransport {
   private readonly logger = new Logger(SmtpEmailTransport.name);
+  private readonly provider = "smtp";
   private readonly transporter: Transporter;
   private readonly from: string;
 
@@ -34,24 +36,37 @@ export class SmtpEmailTransport implements EmailTransport {
   }
 
   async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
-    const info = await this.transporter.sendMail({
-      from: this.from,
-      to,
-      subject,
-      html,
-    });
+    const recipientDomain = to.includes("@") ? to.split("@")[1] : "unknown";
 
-    this.logger.log("Email sent via SMTP", {
-      to,
-      subject,
-      messageId: info.messageId,
-      response: info.response,
-    });
+    try {
+      const info = await this.transporter.sendMail({
+        from: this.from,
+        to,
+        subject,
+        html,
+      });
 
-    return {
-      data: {
-        id: info.messageId,
-      },
-    };
+      this.logger.log("Email sent via SMTP", {
+        provider: this.provider,
+        status: "sent",
+        messageId: info.messageId,
+      });
+
+      return {
+        data: { id: info.messageId },
+      };
+    } catch (error) {
+      this.logger.error("Failed to send email via SMTP", {
+        provider: this.provider,
+        recipientDomain,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw new EmailDeliveryFailedException("SMTP request failed", {
+        provider: this.provider,
+        recipientDomain,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

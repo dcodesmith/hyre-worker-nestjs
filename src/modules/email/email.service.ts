@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EMAIL_TRANSPORT_TOKEN } from "./email.const";
+import { EmailDeliveryFailedException, EmailException } from "./email.error";
 import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface";
 
 @Injectable()
@@ -17,7 +18,15 @@ export class EmailService {
         subject,
         error: String(error),
       });
-      throw error;
+
+      if (error instanceof EmailException) {
+        throw error;
+      }
+
+      throw new EmailDeliveryFailedException(undefined, {
+        subject,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

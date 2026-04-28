@@ -22,11 +22,14 @@ export const envSchema = z
     SMTP_HOST: z.string().default("127.0.0.1"),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
     SMTP_SECURE: z
-      .union([z.boolean(), z.string()])
-      .transform((val) => {
-        if (typeof val === "boolean") return val;
-        return val.toLowerCase() === "true";
-      })
+      .preprocess((val) => {
+        if (typeof val === "string") {
+          const normalized = val.toLowerCase();
+          if (normalized === "true") return true;
+          if (normalized === "false") return false;
+        }
+        return val;
+      }, z.boolean("SMTP_SECURE must be a boolean or 'true'/'false'"))
       .default(false),
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASS: z.string().min(1).optional(),

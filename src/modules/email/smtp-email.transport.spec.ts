@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EmailDeliveryFailedException } from "./email.error";
 import { SmtpEmailTransport } from "./smtp-email.transport";
 
 const { mockSendMail, mockCreateTransport } = vi.hoisted(() => {
@@ -82,5 +83,17 @@ describe("SmtpEmailTransport", () => {
         id: "smtp-message-id",
       },
     });
+  });
+
+  it("should throw EmailDeliveryFailedException when SMTP send fails", async () => {
+    mockSendMail.mockRejectedValueOnce(new Error("Connection refused"));
+
+    await expect(
+      transport.sendEmail({
+        to: "recipient@example.com",
+        subject: "Test Subject",
+        html: "<p>Test HTML</p>",
+      }),
+    ).rejects.toThrow(EmailDeliveryFailedException);
   });
 });
