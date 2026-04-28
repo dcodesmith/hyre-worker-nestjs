@@ -133,7 +133,7 @@ if (!globalThis.__E2E_REDIS_REJECTION_HANDLER_ATTACHED__) {
 }
 
 // Mock email template rendering functions to avoid React dependency in e2e tests
-// The NotificationProcessor imports these functions which use @react-email/components (React)
+// The NotificationProcessor imports these functions which use react-email (React)
 // Since BullMQ workers are created independently of NestJS DI, we need to mock at module level
 vi.mock("../src/templates/emails", () => ({
   renderBookingConfirmationEmail: vi
