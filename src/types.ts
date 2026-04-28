@@ -31,6 +31,7 @@ export type NormalisedBookingDetails = {
 export type NormalisedBookingLegDetails = {
   bookingLegId: string;
   bookingId: string;
+  bookingReference: string;
   customerName: string;
   chauffeurName: string;
   customerPhone?: string;

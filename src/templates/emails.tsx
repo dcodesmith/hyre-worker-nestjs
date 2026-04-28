@@ -39,6 +39,10 @@ export interface EmailTemplateProps {
 
 const CURRENT_YEAR = new Date().getFullYear();
 
+function formatExtensionHours(hours: number): string {
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
 function makeWebsiteUrl(websiteUrl: string | undefined, path?: string) {
   if (!websiteUrl || websiteUrl === "#") {
     return undefined;
@@ -48,7 +52,14 @@ function makeWebsiteUrl(websiteUrl: string | undefined, path?: string) {
     return websiteUrl;
   }
 
-  return `${websiteUrl}${path}`;
+  const normalizedWebsiteUrl = websiteUrl.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/^\/+/, "");
+
+  if (!normalizedPath) {
+    return normalizedWebsiteUrl;
+  }
+
+  return `${normalizedWebsiteUrl}/${normalizedPath}`;
 }
 
 export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplateProps) {
@@ -459,9 +470,8 @@ export function BookingExtensionConfirmationEmail({
       </Heading>
       <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
         Your booking for <span className="font-semibold">{extension.carName}</span> on{" "}
-        {extension.legDate} has been extended for{" "}
-        {extension.extensionHours === 1 ? "1 hour" : `${extension.extensionHours} hours`} from{" "}
-        {extension.from} to {extension.to}.
+        {extension.legDate} has been extended for {formatExtensionHours(extension.extensionHours)}{" "}
+        from {extension.from} to {extension.to}.
       </Text>
 
       <Section className="mt-6 border border-solid border-[#E6E6E8] rounded-[14px] overflow-hidden">
@@ -473,9 +483,7 @@ export function BookingExtensionConfirmationEmail({
             {extension.from} - {extension.to}
           </Text>
           <Text className="text-[13px] leading-[18px] text-[#6A6A71] m-0 mt-1">
-            {extension.extensionHours === 1
-              ? "Extension duration: 1 hour"
-              : `Extension duration: ${extension.extensionHours} hours`}
+            Extension duration: {formatExtensionHours(extension.extensionHours)}
           </Text>
         </Section>
         <Hr className="m-0 border-t border-solid border-[#EFEFF1]" />

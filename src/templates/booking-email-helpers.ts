@@ -12,7 +12,7 @@ export function firstNameFrom(fullName: string): string {
 /** Maps a booking leg to the trip card shape (hireApp-style route + totals row). */
 export function bookingLegToTripCardData(leg: NormalisedBookingLegDetails): TripCardData {
   return {
-    bookingReference: leg.bookingId,
+    bookingReference: leg.bookingReference,
     carName: leg.carName,
     pickupLocation: leg.pickupLocation,
     returnLocation: leg.returnLocation,

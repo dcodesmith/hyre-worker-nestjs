@@ -44,6 +44,7 @@ export const sampleBookingStatusWithReview: NormalisedBookingDetails & {
 export const sampleBookingLeg: NormalisedBookingLegDetails = {
   bookingLegId: "clsampleleg001",
   bookingId: "clsamplebooking001",
+  bookingReference: "TRP-8F2K9Q",
   customerName: "Alex Johnson",
   chauffeurName: "Sam Driver",
   legDate: "Tue, Apr 21, 2026",

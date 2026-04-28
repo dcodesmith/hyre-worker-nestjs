@@ -22,6 +22,7 @@ describe("booking-email-helpers", () => {
       const leg: NormalisedBookingLegDetails = {
         bookingLegId: "leg-1",
         bookingId: "booking-123",
+        bookingReference: "TRP-8F2K9Q",
         customerName: "Alex Johnson",
         chauffeurName: "Sam Driver",
         legDate: "Mon, Apr 21, 2026",
@@ -33,7 +34,7 @@ describe("booking-email-helpers", () => {
       };
 
       expect(bookingLegToTripCardData(leg)).toEqual({
-        bookingReference: "booking-123",
+        bookingReference: "TRP-8F2K9Q",
         carName: "Mercedes-Benz S-Class (2024)",
         pickupLocation: "MMIA, Lagos",
         returnLocation: "Eko Hotels, VI",

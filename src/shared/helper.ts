@@ -178,6 +178,7 @@ export function normaliseBookingLegDetails(
   return {
     bookingLegId: bookingLeg.id,
     bookingId: booking.id,
+    bookingReference: booking.bookingReference,
     customerName,
     customerPhone: customerDetails.phone_number || undefined,
     customerEmail: customerDetails.email || undefined,
