@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import {
   Body,
+  Button,
   Container,
   Font,
   Head,
@@ -8,19 +10,26 @@ import {
   Html,
   Link,
   Preview,
+  pixelBasedPreset,
+  render,
   Section,
   Tailwind,
   Text,
-} from "@react-email/components";
-import { render } from "@react-email/render";
-import { ReactNode } from "react";
-import tailwindConfig from "../email-tailwind.config";
+} from "react-email";
+import { getEmailPublicEnv } from "../email-public-env";
 import type {
   BookingCancelledTemplateData,
   BookingExtensionConfirmedTemplateData,
   ReviewReceivedTemplateData,
 } from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
+import { BookingTripCard } from "./booking-email-cards";
+import { bookingLegToTripCardData, firstNameFrom } from "./booking-email-helpers";
+import {
+  formatRating,
+  ReviewReceivedChauffeurContent,
+  ReviewReceivedOwnerContent,
+} from "./review-email-blocks";
 
 export interface EmailTemplateProps {
   readonly children: ReactNode;
@@ -28,23 +37,44 @@ export interface EmailTemplateProps {
   readonly pageTitle?: string;
 }
 
-const COMPANY_NAME = process.env.APP_NAME || "Tripdly";
-const COMPANY_ADDRESS = process.env.COMPANY_ADDRESS || "Lagos, Nigeria";
-const WEBSITE_URL = process.env.DOMAIN;
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@dcodesmith.com";
 const CURRENT_YEAR = new Date().getFullYear();
+
+function formatExtensionHours(hours: number): string {
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+function makeWebsiteUrl(websiteUrl: string | undefined, path?: string) {
+  if (!websiteUrl || websiteUrl === "#") {
+    return undefined;
+  }
+
+  if (!path) {
+    return websiteUrl;
+  }
+
+  const normalizedWebsiteUrl = websiteUrl.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/^\/+/, "");
+
+  if (!normalizedPath) {
+    return normalizedWebsiteUrl;
+  }
+
+  return `${normalizedWebsiteUrl}/${normalizedPath}`;
+}
 
 export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplateProps) {
   const effectivePageTitle = pageTitle || previewText;
+  const { appName: companyName, websiteUrl, supportEmail, companyAddress } = getEmailPublicEnv();
+  const companyWebsiteUrl = makeWebsiteUrl(websiteUrl);
 
   return (
-    <Tailwind config={tailwindConfig}>
+    <Tailwind config={{ presets: [pixelBasedPreset] }}>
       <Html lang="en">
         <Head>
-          <title className="capitalize">{effectivePageTitle.toLowerCase()}</title>
+          <title>{effectivePageTitle}</title>
           <Font
             fontFamily="Nunito Sans"
-            fallbackFontFamily="sans-serif"
+            fallbackFontFamily={["Arial", "sans-serif"]}
             webFont={{
               url: "https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,200..900;1,200..900&display=swap",
               format: "woff2",
@@ -57,37 +87,40 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
           </style>
           <Preview>{previewText}</Preview>
         </Head>
-        <Body className="bg-gray-100 text-gray-800 font-sans text-base leading-relaxed">
-          <Container className="bg-white border border-gray-200 rounded-md shadow-sm mx-auto my-8 p-6 sm:p-8 max-w-xl">
-            <Section className="mb-6 text-center">
-              <Text
-                style={{ fontFamily: '"Dancing Script", cursive' }}
-                className="mx-auto mb-4 text-4xl leading-tight text-gray-900"
-              >
-                {COMPANY_NAME}
-              </Text>
+        <Body
+          className="bg-[#F4F4F5] m-0 py-8"
+          style={{ fontFamily: '"Nunito Sans", Arial, sans-serif' }}
+        >
+          <Container className="max-w-[560px] mx-auto">
+            <Section className="bg-white rounded-[16px] overflow-hidden">
+              <Section className="px-8 pt-8 pb-2">
+                <Text
+                  className="text-[28px] leading-[32px] text-[#0B0B0F] m-0"
+                  style={{ fontFamily: '"Dancing Script", cursive', fontWeight: 700 }}
+                >
+                  {companyName}
+                </Text>
+              </Section>
+              <Section className="px-8 pb-8 pt-4">{children}</Section>
             </Section>
 
-            <Section>{children}</Section>
-
-            <Hr className="my-6 border-gray-300" />
-            <Section className="text-center text-xs text-gray-500">
-              <Text className="mb-1">
-                &copy; {CURRENT_YEAR} {COMPANY_NAME}. All rights reserved.
+            <Section className="px-8 pt-6">
+              <Text className="text-[12px] text-[#6A6A71] m-0 leading-5">
+                Need a hand?{" "}
+                <Link
+                  href={`mailto:${supportEmail}`}
+                  className="text-[#0B0B0F] font-medium underline"
+                >
+                  {supportEmail}
+                </Link>
               </Text>
-              {COMPANY_ADDRESS && <Text className="mb-1">{COMPANY_ADDRESS}</Text>}
-              {WEBSITE_URL && WEBSITE_URL !== "#" && (
-                <Text className="mb-1">
-                  <Link href={WEBSITE_URL} className="text-blue-600 hover:underline">
-                    Visit our website
-                  </Link>
-                </Text>
-              )}
-              {SUPPORT_EMAIL && (
-                <Text>
-                  Need help? Contact{" "}
-                  <Link href={`mailto:${SUPPORT_EMAIL}`} className="text-blue-600 hover:underline">
-                    {SUPPORT_EMAIL}
+              <Text className="text-[12px] text-[#9A9A9F] mt-4 m-0 leading-5">
+                &copy; {CURRENT_YEAR} {companyName} &middot; {companyAddress}
+              </Text>
+              {companyWebsiteUrl && (
+                <Text className="text-[12px] text-[#9A9A9F] mt-1 m-0 leading-5">
+                  <Link href={companyWebsiteUrl} className="text-[#9A9A9F] underline">
+                    {companyWebsiteUrl.replace(/^https?:\/\//, "")}
                   </Link>
                 </Text>
               )}
@@ -99,119 +132,146 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
   );
 }
 
-interface DetailListItemProps {
-  readonly label: string;
-  readonly value: string | number | undefined | null;
-  readonly isCurrency?: boolean;
-  readonly currencyCode?: string;
-}
+export type BookingStatusUpdateEmailProps = {
+  readonly booking: NormalisedBookingDetails & { showReviewRequest?: boolean };
+};
 
-function formatReviewDate(reviewDate: Date | string): string {
-  const parsedDate = reviewDate instanceof Date ? reviewDate : new Date(reviewDate);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return String(reviewDate);
-  }
-  return parsedDate.toLocaleString();
-}
-
-function DetailListItem({
-  label,
-  value,
-  isCurrency = false,
-  currencyCode = "NGN",
-}: DetailListItemProps) {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-
-  let displayValue: string | number = value;
-
-  if (isCurrency) {
-    displayValue = new Intl.NumberFormat("en-NG", {
-      // Consider making locale dynamic if needed
-      style: "currency",
-      currency: currencyCode,
-    }).format(Number(value));
-  }
+export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailProps) {
+  const { websiteUrl } = getEmailPublicEnv();
+  const firstName = firstNameFrom(booking.customerName);
+  const bookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
+  const reviewUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}#review`);
+  const previewText = `Your booking has ${booking.title}`;
+  const showReviewRequest = booking.showReviewRequest ?? false;
 
   return (
-    <Text className="m-0 py-1">
-      {" "}
-      {/* Adjusted to text-sm for potentially long lists */}
-      <span className="font-semibold">{label}:</span> {displayValue}
-    </Text>
+    <EmailTemplate previewText={previewText} pageTitle={`Booking ${booking.status}`}>
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Booking update
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        Hi {firstName}, your trip is {booking.status}.
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Your booking for the <span className="font-semibold">{booking.carName}</span> has{" "}
+        {booking.title}.
+      </Text>
+
+      <BookingTripCard
+        trip={booking}
+        vehicleDescription="We'll keep you posted as your ride progresses."
+      />
+
+      {bookingUrl && (
+        <Section className="mt-6 text-center">
+          <Button
+            href={bookingUrl}
+            className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+          >
+            View booking
+          </Button>
+        </Section>
+      )}
+
+      {showReviewRequest && reviewUrl && (
+        <Section className="mt-6 border border-solid border-[#E6E6E8] rounded-[14px] overflow-hidden">
+          <Section className="px-5 py-4">
+            <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
+              Your feedback
+            </Text>
+            <Text className="text-[14px] leading-[22px] text-[#0B0B0F] m-0 mt-2">
+              Your feedback helps us improve service and vehicle quality. Share your experience in
+              about two minutes.
+            </Text>
+          </Section>
+          <Hr className="m-0 border-t border-solid border-[#EFEFF1]" />
+          <Section className="px-5 py-4 bg-[#FAFAFB] text-center">
+            <Button
+              href={reviewUrl}
+              className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+            >
+              Leave your review
+            </Button>
+          </Section>
+        </Section>
+      )}
+    </EmailTemplate>
   );
 }
 
 export async function renderBookingStatusUpdateEmail(
   booking: NormalisedBookingDetails & { showReviewRequest?: boolean },
 ) {
-  const previewText = `Your booking has ${booking.title}`;
-  const showReviewRequest = booking.showReviewRequest ?? false;
+  return await render(<BookingStatusUpdateEmail booking={booking} />);
+}
 
-  return await render(
-    <EmailTemplate previewText={previewText} pageTitle={`Booking ${booking.title}`}>
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Booking {booking.title}
-      </Heading>
-      <Text className="mb-3">Hello {booking.customerName},</Text>
-      <Text className="mb-3">
-        Your booking for the <span className="font-semibold">{booking.carName}</span> has{" "}
-        {booking.title} and is now {booking.status}.
+export type BookingReminderEmailProps = {
+  readonly bookingLeg: NormalisedBookingLegDetails;
+  readonly recipientType: "client" | "chauffeur";
+  readonly isStartReminder?: boolean;
+};
+
+export function BookingReminderEmail({
+  bookingLeg,
+  recipientType,
+  isStartReminder = true,
+}: BookingReminderEmailProps) {
+  const recipientName =
+    recipientType === "client" ? bookingLeg.customerName : bookingLeg.chauffeurName;
+
+  const reminderAction = isStartReminder ? "starts" : "ends";
+  const previewText = `Reminder: Your booking ${reminderAction} in 1 hour.`;
+  const carName = bookingLeg.carName;
+  const { websiteUrl } = getEmailPublicEnv();
+  const cardTrip = bookingLegToTripCardData(bookingLeg);
+  const firstName = firstNameFrom(recipientName);
+  const extendBookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${bookingLeg.bookingId}/extend`);
+
+  const vehicleDescription =
+    recipientType === "client"
+      ? isStartReminder
+        ? `Your chauffeur (${bookingLeg.chauffeurName}) will meet you at pickup.`
+        : "Please plan your return and drop-off on time."
+      : isStartReminder
+        ? `Pickup with ${bookingLeg.customerName} at the scheduled location.`
+        : "Coordinate return timing with your client.";
+
+  return (
+    <EmailTemplate
+      previewText={previewText}
+      pageTitle={`Booking Leg ${isStartReminder ? "Start" : "End"} Reminder`}
+    >
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Trip reminder
       </Text>
-      <Section className="mt-4 border-t border-gray-200 pt-4">
-        <Text className="font-semibold mb-2 underline">
-          Booking Details (Booking Reference: {booking.bookingReference})
-        </Text>
-        <DetailListItem label="Start Date" value={booking.startDate} />
-        <DetailListItem label="End Date" value={booking.endDate} />
-        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
-        <Hr className="my-2 border-gray-300" />
-        <DetailListItem label="Total Amount" value={booking.totalAmount} />
-      </Section>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        Hi {firstName}, your booking {reminderAction} in about an hour.
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        This is a reminder for the <span className="font-semibold">{carName}</span> booking.
+      </Text>
 
-      {showReviewRequest && (
-        <Section className="mt-6 border-t-2 border-blue-200 pt-6">
-          <Section className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 mb-4">
-            <Heading as="h3" className="text-xl font-bold mb-3 text-gray-900">
-              Your Feedback Matters
-            </Heading>
-            <Text className="mb-3 text-gray-700 leading-relaxed">
-              Your feedback is essential to our service improvement process. We review every comment
-              and rating to identify areas for enhancement and celebrate what we're doing right.
-            </Text>
-            <Text className="mb-4 text-gray-700 leading-relaxed">
-              Your review helps us maintain high standards and improve our service. We use your
-              feedback to make data-driven decisions that directly impact vehicle quality, chauffeur
-              training, and customer experience.
-            </Text>
-            <Section className="bg-white rounded-md p-4 border border-blue-100 mb-4">
-              <Text className="text-sm text-gray-600 mb-2 font-semibold">
-                Share your experience in just 2 minutes:
-              </Text>
-              <Text className="text-sm text-gray-700 mb-0">
-                • Rate your overall experience, the car, chauffeur, and service
-              </Text>
-              <Text className="text-sm text-gray-700 mb-0">
-                • Help us understand what we did well and where we can improve
-              </Text>
-            </Section>
-            <Section className="text-center">
-              <Link
-                href={`${WEBSITE_URL}/bookings/${booking.id}#review`}
-                className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-3 rounded-lg text-base shadow-md transition-colors"
-              >
-                Leave Your Review
-              </Link>
-            </Section>
-            <Text className="mt-4 text-xs text-gray-500 text-center italic">
-              Thank you for being part of our journey to excellence
-            </Text>
-          </Section>
-        </Section>
+      <BookingTripCard trip={cardTrip} vehicleDescription={vehicleDescription} />
+
+      {recipientType === "client" && !isStartReminder && (
+        <Text className="text-[13px] leading-[18px] text-[#6A6A71] mt-6 mb-0">
+          Want to keep the car longer?{" "}
+          {extendBookingUrl ? (
+            <Link href={extendBookingUrl} className="text-[#0B0B0F] font-medium underline">
+              Extend booking
+            </Link>
+          ) : (
+            <span>Extend booking</span>
+          )}
+        </Text>
       )}
-    </EmailTemplate>,
+
+      {isStartReminder && (
+        <Text className="text-[13px] leading-[18px] text-[#6A6A71] mt-6 mb-0">
+          Please be prepared for the scheduled time.
+        </Text>
+      )}
+    </EmailTemplate>
   );
 }
 
@@ -220,269 +280,342 @@ export async function renderBookingReminderEmail(
   recipientType: "client" | "chauffeur",
   isStartReminder = true,
 ) {
-  const recipientName =
-    recipientType === "client" ? bookingLeg.customerName : bookingLeg.chauffeurName;
-
-  const reminderAction = isStartReminder ? "starts" : "ends";
-  const previewText = `Reminder: Your booking ${reminderAction} in 1 hour.`;
-  const carName = bookingLeg.carName;
-
   return await render(
-    <EmailTemplate
-      previewText={previewText}
-      pageTitle={`Booking Leg ${isStartReminder ? "Start" : "End"} Reminder`}
-    >
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Booking Reminder
+    <BookingReminderEmail
+      bookingLeg={bookingLeg}
+      recipientType={recipientType}
+      isStartReminder={isStartReminder}
+    />,
+  );
+}
+
+export function BookingConfirmationEmail({
+  booking,
+}: {
+  readonly booking: NormalisedBookingDetails;
+}) {
+  const { websiteUrl } = getEmailPublicEnv();
+  const firstName = firstNameFrom(booking.customerName);
+  const bookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
+  const previewText = `Your ride is booked for ${booking.startDate}`;
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="Booking confirmed">
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Trip confirmed
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        See you soon, {firstName}.
       </Heading>
-
-      <Text className="mb-3">Hello {recipientName},</Text>
-
-      <Text className="mb-3">
-        This is a friendly reminder that your booking for the {carName} {reminderAction} in
-        approximately 1 hour.
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Your ride in the <span className="font-semibold text-[#0B0B0F]">{booking.carName}</span> is
+        all set. Here are the details for your trip.
       </Text>
 
-      <Section className="border border-gray-200 p-4">
-        <Text className="font-semibold mb-2 underline">Booking Leg Details</Text>
-        <DetailListItem label="Car" value={carName} />
-        <DetailListItem label="Start Date & Time" value={bookingLeg.legStartTime} />
-        <DetailListItem label="End Date & Time" value={bookingLeg.legEndTime} />
-        <DetailListItem label="Pickup Location" value={bookingLeg.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={bookingLeg.returnLocation} />
-      </Section>
+      <BookingTripCard
+        trip={booking}
+        vehicleDescription="A chauffeur will be assigned and introduced before your pickup."
+      />
 
-      {recipientType === "client" && isStartReminder && (
-        <Text className="mb-3">
-          Your chauffeur, {bookingLeg.chauffeurName}, will meet you at the pickup location.
-        </Text>
-      )}
-
-      {recipientType === "chauffeur" && isStartReminder && (
-        <Text className="mb-3">
-          Your client, {bookingLeg.customerName}, will meet you at the pickup location.
-        </Text>
-      )}
-
-      {recipientType === "client" && !isStartReminder && (
-        // format(endDateToCheck, "HH:mm") !== "00:00" && (
-        <Text className="mt-4 mb-3">
-          Want to keep the car longer?{" "}
-          <Link
-            href={`${process.env.DOMAIN}/bookings/${bookingLeg.bookingId}/extend`} // Ensure this link is correct
-            className="text-blue-600 underline"
+      {bookingUrl && (
+        <Section className="mt-6 text-center">
+          <Button
+            href={bookingUrl}
+            className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
           >
-            Extend Booking
-          </Link>
-        </Text>
+            Manage booking
+          </Button>
+        </Section>
       )}
 
-      {isStartReminder && <Text className="mt-4">Please be prepared for the scheduled time.</Text>}
-    </EmailTemplate>,
+      <Text className="text-[13px] leading-[18px] text-[#6A6A71] mt-6 mb-0">
+        Please be ready at the pickup location on time. We&apos;ll email you again as soon as your
+        chauffeur is assigned.
+      </Text>
+
+      <Hr className="my-6 border-t border-solid border-[#EFEFF1]" />
+
+      <Text className="text-[12px] leading-[18px] text-[#9A9A9F] m-0">
+        Need to make a change? Reply to this email or{" "}
+        {bookingUrl ? (
+          <Link href={bookingUrl} className="text-[#0B0B0F] font-medium underline">
+            manage your booking online
+          </Link>
+        ) : (
+          <span>manage your booking online</span>
+        )}
+        .
+      </Text>
+    </EmailTemplate>
   );
 }
 
 export async function renderBookingConfirmationEmail(booking: NormalisedBookingDetails) {
-  const customerName = booking.customerName;
-  const carName = booking.carName;
-  const previewText = "Your booking is confirmed!";
-
-  return await render(
-    <EmailTemplate previewText={previewText} pageTitle="Booking Confirmation">
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Booking Confirmed!
-      </Heading>
-      <Text className="mb-3">Hello {customerName},</Text>
-      <Text className="mb-3">
-        Your booking for the <span className="font-semibold">{carName}</span> has been confirmed.
-      </Text>
-      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
-        <Text className="font-semibold mb-2 underline">
-          Booking Details (Booking Reference: {booking.bookingReference})
-        </Text>
-        <DetailListItem label="Start Date & Time" value={booking.startDate} />
-        <DetailListItem label="End Date & Time" value={booking.endDate} />
-        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
-        <Hr className="my-2 border-gray-300" />
-        <DetailListItem label="Total Amount" value={booking.totalAmount} />
-      </Section>
-      <Text className="mb-3">
-        Please be at the pickup location on time. You'll be assigned a chauffeur shortly, and we
-        will notify you with their details.
-      </Text>
-    </EmailTemplate>,
-  );
+  return await render(<BookingConfirmationEmail booking={booking} />);
 }
 
-export async function renderUserBookingCancellationEmail(booking: BookingCancelledTemplateData) {
+export function UserBookingCancellationEmail({
+  booking,
+}: {
+  readonly booking: BookingCancelledTemplateData;
+}) {
+  const firstName = firstNameFrom(booking.customerName);
   const previewText = "Your booking has been cancelled";
 
-  return await render(
+  return (
     <EmailTemplate previewText={previewText} pageTitle="Booking Cancellation Confirmation">
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Your Booking Has Been Cancelled
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Booking cancelled
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        We&apos;ve cancelled your trip, {firstName}.
       </Heading>
-      <Text className="mb-3">Hello {booking.customerName},</Text>
-
-      <Text className="mb-3">
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
         Your booking for the <span className="font-semibold">{booking.carName}</span> has been
         cancelled.
       </Text>
 
-      <Text className="mb-3">
+      <Text className="text-[14px] leading-[20px] text-[#4A4A52] mt-3 mb-0">
         Your payment of <span className="font-semibold">{booking.totalAmount}</span> will be
         refunded shortly according to our policy.
       </Text>
 
-      {booking.cancellationReason && (
-        <Text className="mt-3">
-          <span className="font-semibold">Reason for cancellation:</span>{" "}
-          {booking.cancellationReason}
-        </Text>
-      )}
+      <BookingTripCard
+        trip={booking}
+        vehicleDescription="If you'd like to travel at a different time, you can make a new booking anytime."
+        extraSection={
+          booking.cancellationReason ? (
+            <>
+              <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
+                Cancellation reason
+              </Text>
+              <Text className="text-[14px] leading-[20px] font-semibold text-[#0B0B0F] m-0 mt-1">
+                {booking.cancellationReason}
+              </Text>
+            </>
+          ) : undefined
+        }
+      />
+    </EmailTemplate>
+  );
+}
 
-      <Section className="mt-4 border-t border-gray-200 pt-4">
-        <Text className="font-semibold mb-2 underline">
-          Cancelled Booking Details (Booking Reference: {booking.bookingReference})
-        </Text>
-        <DetailListItem label="Start Date & Time" value={booking.startDate} />
-        <DetailListItem label="End Date & Time" value={booking.endDate} />
-        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
-      </Section>
-    </EmailTemplate>,
+export async function renderUserBookingCancellationEmail(booking: BookingCancelledTemplateData) {
+  return await render(<UserBookingCancellationEmail booking={booking} />);
+}
+
+export function FleetOwnerBookingCancellationEmail({
+  booking,
+}: {
+  readonly booking: BookingCancelledTemplateData;
+}) {
+  const firstName = firstNameFrom(booking.ownerName);
+  const previewText = "A booking for your vehicle has been cancelled";
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="Booking Cancellation Notification">
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Fleet update
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        Booking cancelled, {firstName}.
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        The booking for your <span className="font-semibold">{booking.carName}</span> has been
+        cancelled by {booking.customerName}.
+      </Text>
+
+      <BookingTripCard
+        trip={booking}
+        amountLabel="Booking amount"
+        vehicleDescription="This trip slot is now open and can accept a new booking."
+        extraSection={
+          booking.cancellationReason ? (
+            <>
+              <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
+                Cancellation reason
+              </Text>
+              <Text className="text-[14px] leading-[20px] font-semibold text-[#0B0B0F] m-0 mt-1">
+                {booking.cancellationReason}
+              </Text>
+            </>
+          ) : undefined
+        }
+      />
+    </EmailTemplate>
   );
 }
 
 export async function renderFleetOwnerBookingCancellationEmail(
   booking: BookingCancelledTemplateData,
 ) {
-  const previewText = "A booking for your vehicle has been cancelled";
+  return await render(<FleetOwnerBookingCancellationEmail booking={booking} />);
+}
 
-  return await render(
-    <EmailTemplate previewText={previewText} pageTitle="Booking Cancellation Notification">
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Booking Cancelled
+export function BookingExtensionConfirmationEmail({
+  extension,
+}: {
+  readonly extension: BookingExtensionConfirmedTemplateData;
+}) {
+  const firstName = firstNameFrom(extension.customerName);
+  const previewText = "Your booking has been extended";
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="Booking Extension Confirmation">
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        Trip extension
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        Your trip was extended, {firstName}.
       </Heading>
-      <Text className="mb-3">Hello {booking.ownerName},</Text>
-
-      <Text className="mb-3">
-        The booking for your vehicle, <span className="font-semibold">{booking.carName}</span>, has
-        been cancelled by {booking.customerName}.
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Your booking for <span className="font-semibold">{extension.carName}</span> on{" "}
+        {extension.legDate} has been extended for {formatExtensionHours(extension.extensionHours)}{" "}
+        from {extension.from} to {extension.to}.
       </Text>
 
-      {booking.cancellationReason && (
-        <DetailListItem label="Reason for cancellation" value={booking.cancellationReason} />
-      )}
-
-      <Section className="mt-4 border-t border-gray-200 pt-4">
-        <Text className="font-semibold mb-2 underline">
-          Cancelled Booking Details (Booking Reference: {booking.bookingReference})
-        </Text>
-        <DetailListItem label="Customer" value={booking.customerName} />
-        <DetailListItem label="Start Date & Time" value={booking.startDate} />
-        <DetailListItem label="End Date & Time" value={booking.endDate} />
-        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
-        <DetailListItem label="Booking Amount" value={booking.totalAmount} />
+      <Section className="mt-6 border border-solid border-[#E6E6E8] rounded-[14px] overflow-hidden">
+        <Section className="px-5 py-4">
+          <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
+            Updated timeline
+          </Text>
+          <Text className="text-[18px] leading-[24px] font-bold text-[#0B0B0F] m-0 mt-1">
+            {extension.from} - {extension.to}
+          </Text>
+          <Text className="text-[13px] leading-[18px] text-[#6A6A71] m-0 mt-1">
+            Extension duration: {formatExtensionHours(extension.extensionHours)}
+          </Text>
+        </Section>
+        <Hr className="m-0 border-t border-solid border-[#EFEFF1]" />
+        <Section className="px-5 py-4 bg-[#FAFAFB]">
+          <Text className="text-[13px] text-[#6A6A71] m-0">Date</Text>
+          <Text className="text-[14px] leading-[20px] font-semibold text-[#0B0B0F] m-0 mt-1">
+            {extension.legDate}
+          </Text>
+        </Section>
       </Section>
-    </EmailTemplate>,
+
+      <Text className="text-[13px] leading-[18px] text-[#6A6A71] mt-6 mb-0">
+        Your chauffeur and trip details remain unchanged. Safe travels.
+      </Text>
+    </EmailTemplate>
   );
 }
 
 export async function renderBookingExtensionConfirmationEmail(
   extension: BookingExtensionConfirmedTemplateData,
 ) {
-  const previewText = "Your booking extension is confirmed!";
-
-  return await render(
-    <EmailTemplate previewText={previewText} pageTitle="Booking Extension Confirmed">
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        Booking Extension Confirmed
-      </Heading>
-      <Text className="mb-3">Hello {extension.customerName},</Text>
-      <Text className="mb-3">
-        Your booking for <span className="font-semibold">{extension.carName}</span> on{" "}
-        {extension.legDate} has been extended.
-      </Text>
-      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
-        <Text className="font-semibold mb-2 underline">
-          Updated Time ({extension.extensionHours}{" "}
-          {extension.extensionHours === 1 ? "hour" : "hours"} extension)
-        </Text>
-        <DetailListItem label="From" value={extension.from} />
-        <DetailListItem label="To" value={extension.to} />
-      </Section>
-      <Text className="mt-4">Your chauffeur and trip details remain unchanged. Safe travels.</Text>
-    </EmailTemplate>,
-  );
+  return await render(<BookingExtensionConfirmationEmail extension={extension} />);
 }
 
 export interface AuthOTPEmailProps {
   readonly otp: string;
 }
 
-export async function renderAuthOTPEmail({ otp }: AuthOTPEmailProps) {
-  return await render(
+export function AuthOTPEmail({ otp }: AuthOTPEmailProps) {
+  return (
     <EmailTemplate previewText="Your verification code" pageTitle="Verification Code">
-      <Heading as="h2" className="text-xl font-semibold mb-4 text-center">
+      <Heading as="h2" className="text-xl font-semibold mb-4 text-center text-[#0B0B0F]">
         Your Verification Code
       </Heading>
 
-      <Text className="mb-4 text-center text-gray-600">
+      <Text className="mb-4 text-center text-[#6A6A71]">
         Use the code below to complete your sign in. This code will expire in 10 minutes.
       </Text>
 
-      <Section className="bg-gray-50 border border-gray-200 rounded-lg p-6 my-6 text-center">
+      <Section className="bg-[#FAFAFA] border border-solid border-[#E6E6E8] rounded-[14px] p-6 my-6 text-center">
         <Text
-          className="text-4xl font-bold tracking-widest text-gray-900 m-0"
+          className="text-4xl font-bold tracking-widest text-[#0B0B0F] m-0"
           style={{ letterSpacing: "0.5em" }}
         >
           {otp}
         </Text>
       </Section>
 
-      <Text className="text-sm text-gray-500 text-center">
+      <Text className="text-sm text-[#9A9A9F] text-center">
         If you didn't request this code, you can safely ignore this email.
       </Text>
-    </EmailTemplate>,
+    </EmailTemplate>
+  );
+}
+
+export async function renderAuthOTPEmail(props: AuthOTPEmailProps) {
+  return await render(<AuthOTPEmail {...props} />);
+}
+
+export function FleetOwnerNewBookingEmail({
+  booking,
+}: {
+  readonly booking: NormalisedBookingDetails;
+}) {
+  const previewText = "New Booking Alert - Action Required";
+  const { websiteUrl } = getEmailPublicEnv();
+  const firstName = firstNameFrom(booking.ownerName);
+  const bookingLink = makeWebsiteUrl(
+    websiteUrl,
+    `/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(booking.startDate)}`,
+  );
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="New Booking Notification">
+      <Text className="text-[12px] font-semibold tracking-[0.08em] uppercase text-[#6A6A71] m-0 mb-2">
+        New booking
+      </Text>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        Assign a chauffeur, {firstName}.
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        A new booking has been made for your{" "}
+        <span className="font-semibold">{booking.carName}</span>. Please assign a chauffeur to
+        confirm operations.
+      </Text>
+
+      <BookingTripCard
+        trip={booking}
+        vehicleDescription={`Customer: ${booking.customerName}`}
+        extraSection={
+          <>
+            <Text className="text-[11px] font-semibold tracking-[0.1em] uppercase text-[#6A6A71] m-0">
+              Action required
+            </Text>
+            <Text className="text-[14px] leading-[20px] text-[#0B0B0F] m-0 mt-1">
+              Assign a chauffeur to this trip so the customer receives final travel details.
+            </Text>
+          </>
+        }
+      />
+
+      {bookingLink && (
+        <Section className="mt-6 text-center">
+          <Button
+            href={bookingLink}
+            className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+          >
+            Assign chauffeur
+          </Button>
+        </Section>
+      )}
+    </EmailTemplate>
   );
 }
 
 export async function renderFleetOwnerNewBookingEmail(booking: NormalisedBookingDetails) {
-  const previewText = "New Booking Alert - Action Required";
-  const dashboardUrl = `${WEBSITE_URL}/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(booking.startDate)}`;
+  return await render(<FleetOwnerNewBookingEmail booking={booking} />);
+}
 
-  return await render(
-    <EmailTemplate previewText={previewText} pageTitle="New Booking Notification">
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        New Booking Alert - Action Required
-      </Heading>
-      <Text className="mb-3">Hello {booking.ownerName},</Text>
-      <Text className="mb-3">
-        A new booking has been made for your{" "}
-        <span className="font-semibold">{booking.carName}</span>. Please{" "}
-        <Link href={dashboardUrl} className="text-blue-600 underline">
-          assign a chauffeur
-        </Link>{" "}
-        for this booking as soon as possible.
-      </Text>
-      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
-        <Text className="font-semibold mb-2 underline">Booking Details</Text>
-        <DetailListItem label="Customer" value={booking.customerName} />
-        <DetailListItem label="Start Date & Time" value={booking.startDate} />
-        <DetailListItem label="End Date & Time" value={booking.endDate} />
-        <DetailListItem label="Car" value={booking.carName} />
-        <DetailListItem label="Pickup Location" value={booking.pickupLocation} />
-        <DetailListItem label="Drop-off Location" value={booking.returnLocation} />
-        <Hr className="my-2 border-gray-300" />
-        <DetailListItem label="Total Amount" value={booking.totalAmount} />
-      </Section>
-      <Text className="mt-4 text-sm text-gray-600">
-        If you have any questions, feel free to contact us.
-      </Text>
-    </EmailTemplate>,
+export function ReviewReceivedEmailForOwner({
+  ownerName,
+  data,
+}: {
+  readonly ownerName: string;
+  readonly data: ReviewReceivedTemplateData;
+}) {
+  const previewText = `You received a ${formatRating(data.overallRating)}-star review from ${data.customerName}`;
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="New Review Received">
+      <ReviewReceivedOwnerContent ownerName={ownerName} reviewData={data} />
+    </EmailTemplate>
   );
 }
 
@@ -490,30 +623,22 @@ export async function renderReviewReceivedEmailForOwner(
   ownerName: string,
   data: ReviewReceivedTemplateData,
 ) {
-  return await render(
-    <EmailTemplate
-      previewText={`New ${data.overallRating}-star review received`}
-      pageTitle="New Review Received"
-    >
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        New Review Received
-      </Heading>
-      <Text className="mb-3">Hello {ownerName},</Text>
-      <Text className="mb-3">
-        A customer left a new review for <span className="font-semibold">{data.carName}</span>.
-      </Text>
-      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
-        <Text className="font-semibold mb-2 underline">Review Details</Text>
-        <DetailListItem label="Customer" value={data.customerName} />
-        <DetailListItem label="Booking Reference" value={data.bookingReference} />
-        <DetailListItem label="Overall Rating" value={`${data.overallRating}/5`} />
-        <DetailListItem label="Car Rating" value={`${data.carRating}/5`} />
-        <DetailListItem label="Chauffeur Rating" value={`${data.chauffeurRating}/5`} />
-        <DetailListItem label="Service Rating" value={`${data.serviceRating}/5`} />
-        <DetailListItem label="Comment" value={data.comment || "No comment"} />
-        <DetailListItem label="Review Date" value={formatReviewDate(data.reviewDate)} />
-      </Section>
-    </EmailTemplate>,
+  return await render(<ReviewReceivedEmailForOwner ownerName={ownerName} data={data} />);
+}
+
+export function ReviewReceivedEmailForChauffeur({
+  chauffeurName,
+  data,
+}: {
+  readonly chauffeurName: string;
+  readonly data: ReviewReceivedTemplateData;
+}) {
+  const previewText = `You received a ${formatRating(data.chauffeurRating)}-star chauffeur review from ${data.customerName}`;
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle="New Review Received">
+      <ReviewReceivedChauffeurContent chauffeurName={chauffeurName} reviewData={data} />
+    </EmailTemplate>
   );
 }
 
@@ -522,25 +647,6 @@ export async function renderReviewReceivedEmailForChauffeur(
   data: ReviewReceivedTemplateData,
 ) {
   return await render(
-    <EmailTemplate
-      previewText={`New ${data.chauffeurRating}-star review received`}
-      pageTitle="New Review Received"
-    >
-      <Heading as="h2" className="text-xl font-semibold mb-4">
-        New Review Received
-      </Heading>
-      <Text className="mb-3">Hello {chauffeurName},</Text>
-      <Text className="mb-3">A customer left feedback about your service.</Text>
-      <Section className="border border-gray-200 rounded-md p-4 bg-gray-50">
-        <Text className="font-semibold mb-2 underline">Review Details</Text>
-        <DetailListItem label="Customer" value={data.customerName} />
-        <DetailListItem label="Booking Reference" value={data.bookingReference} />
-        <DetailListItem label="Car" value={data.carName} />
-        <DetailListItem label="Your Rating" value={`${data.chauffeurRating}/5`} />
-        <DetailListItem label="Overall Rating" value={`${data.overallRating}/5`} />
-        <DetailListItem label="Comment" value={data.comment || "No comment"} />
-        <DetailListItem label="Review Date" value={formatReviewDate(data.reviewDate)} />
-      </Section>
-    </EmailTemplate>,
+    <ReviewReceivedEmailForChauffeur chauffeurName={chauffeurName} data={data} />,
   );
 }

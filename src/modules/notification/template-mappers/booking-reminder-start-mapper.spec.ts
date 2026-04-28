@@ -72,6 +72,7 @@ describe("BookingReminderStartMapper", () => {
       templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
       bookingLegId: "leg-123",
       bookingId: "booking-123",
+      bookingReference: "TRP-8F2K9Q",
       legDate: "2024-01-15",
       chauffeurName: "John Driver",
       carName: "Toyota Camry (2022)",
