@@ -1,5 +1,4 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Inject } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
@@ -42,7 +41,7 @@ const statusUpdateJobDataSchema = z.discriminatedUnion("type", [
 export class StatusChangeProcessor extends WorkerHost {
   constructor(
     private readonly statusChangeService: StatusChangeService,
-    @Inject(PinoLogger) private readonly logger: PinoLogger,
+    private readonly logger: PinoLogger,
   ) {
     super();
     this.logger.setContext(StatusChangeProcessor.name);

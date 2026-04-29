@@ -47,7 +47,7 @@ export class DatabaseService extends PrismaClient implements OnModuleInit, OnMod
           {
             durationMs: event.duration,
             query: event.query,
-            params: event.params,
+            paramsLength: event.params?.length ?? 0,
           },
           "Prisma slow query detected",
         );

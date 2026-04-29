@@ -39,7 +39,7 @@ export class TwilioWebhookGuard implements CanActivate {
     if (!isValid) {
       this.logger.warn(
         {
-          signature,
+          signaturePreview: this.getSignaturePreview(signature),
           webhookUrl: this.webhookUrl,
         },
         "Invalid Twilio webhook signature",
@@ -75,5 +75,13 @@ export class TwilioWebhookGuard implements CanActivate {
       },
       {},
     );
+  }
+
+  private getSignaturePreview(signature: string): string {
+    if (signature.length <= 8) {
+      return "***";
+    }
+
+    return `${signature.slice(0, 4)}***${signature.slice(-4)}`;
   }
 }

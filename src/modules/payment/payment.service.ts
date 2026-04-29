@@ -44,11 +44,11 @@ export class PaymentService {
 
     if (!bankDetails.isVerified) {
       this.logger.warn(
-        "Bank details for fleet owner are not verified. Cannot process payout for booking",
         {
           fleetOwnerId: fleetOwner.id,
           bookingId: booking.id,
         },
+        "Bank details for fleet owner are not verified. Cannot process payout for booking",
       );
       return null;
     }

@@ -35,9 +35,11 @@ export class CreateBookingNode {
     const { draft, selectedOption } = state;
 
     if (!selectedOption) {
-      this.logger.error("Create booking node called without selected option", {
-        conversationId: state.conversationId,
-      });
+      this.logger.error(
+        { conversationId: state.conversationId },
+        "Create booking node called without selected option",
+      );
+
       return {
         error: "No vehicle selected for booking",
         stage: "confirming",
@@ -155,7 +157,7 @@ export class CreateBookingNode {
     });
 
     if (!conversation) {
-      this.logger.error("Conversation not found for booking creation", { conversationId });
+      this.logger.error({ conversationId }, "Conversation not found for booking creation");
     }
 
     return conversation;
@@ -173,10 +175,10 @@ export class CreateBookingNode {
     }
 
     if (stateCustomerId && stateCustomerId !== conversation.linkedUserId) {
-      this.logger.warn("State customerId does not match linked conversation userId", {
-        stateCustomerId,
-        linkedUserId: conversation.linkedUserId,
-      });
+      this.logger.warn(
+        { stateCustomerId, linkedUserId: conversation.linkedUserId },
+        "State customerId does not match linked conversation userId",
+      );
     }
 
     return conversation.linkedUserId;
@@ -212,9 +214,11 @@ export class CreateBookingNode {
         missingRequiredDraftFields.push("pickupTime");
       }
 
-      this.logger.error("Missing required date/time fields in draft - cannot create booking", {
-        missingRequiredDraftFields,
-      });
+      this.logger.error(
+        { missingRequiredDraftFields },
+        "Missing required date/time fields in draft - cannot create booking",
+      );
+
       return {
         error:
           "Missing required booking details. Please provide pickup date, drop-off date, and pickup time.",

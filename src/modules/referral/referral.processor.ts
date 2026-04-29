@@ -42,6 +42,7 @@ export class ReferralProcessor extends WorkerHost {
           jobId: job.id,
           bookingId: job.data.bookingId,
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : String(error),
         },
         `Failed to process ${job.name} job:`,
       );

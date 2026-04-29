@@ -51,7 +51,7 @@ export class WhatsAppSenderService {
       outboxId = outbox.id;
     } catch (error) {
       if (this.persistenceService.isUniqueViolation(error)) {
-        this.logger.debug("Skipping duplicate outbound enqueue", { dedupeKey: input.dedupeKey });
+        this.logger.debug({ dedupeKey: input.dedupeKey }, "Skipping duplicate outbound enqueue");
         return;
       }
       throw error;

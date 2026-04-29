@@ -124,7 +124,13 @@ export class StatusChangeService {
         "unknown",
         "Invalid bookingId for airport activation",
       );
-      this.logger.error({ error: wrappedError.message }, "Airport booking activation failed");
+      this.logger.error(
+        {
+          error: wrappedError.message,
+          cause: "Invalid bookingId for airport activation",
+        },
+        "Airport booking activation failed",
+      );
       throw wrappedError;
     }
 

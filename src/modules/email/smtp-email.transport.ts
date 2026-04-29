@@ -72,7 +72,7 @@ export class SmtpEmailTransport implements EmailTransport {
       throw new EmailDeliveryFailedException("SMTP request failed", {
         provider: this.provider,
         recipientDomain,
-        cause: errorMessage,
+        cause: error,
       });
     }
   }

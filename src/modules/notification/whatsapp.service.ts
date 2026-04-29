@@ -66,6 +66,7 @@ export class WhatsAppService {
     templateKey: Template;
   }): Promise<MessageInstance | null> {
     const contentSid = contentSidMap[templateKey];
+    const maskedRecipient = this.maskPhone(to);
 
     if (!contentSid) {
       this.logger.error({ templateKey }, "Could not find SID for template key");
@@ -73,7 +74,7 @@ export class WhatsAppService {
     }
 
     this.logger.info(
-      { recipient: to, templateKey, contentSid },
+      { recipient: maskedRecipient, templateKey, contentSid },
       "Attempting to send WhatsApp template",
     );
 
@@ -89,7 +90,7 @@ export class WhatsAppService {
         {
           sid: message.sid,
           status: message.status,
-          recipient: to,
+          recipient: maskedRecipient,
           templateKey,
         },
         "WhatsApp message sent successfully",
@@ -100,7 +101,7 @@ export class WhatsAppService {
 
       this.logger.error(
         {
-          recipient: to,
+          recipient: maskedRecipient,
           templateKey,
           error: errorMessage,
         },
@@ -109,5 +110,15 @@ export class WhatsAppService {
 
       return null;
     }
+  }
+
+  private maskPhone(value: string): string {
+    const digits = value.replaceAll(/\D/g, "");
+    if (digits.length <= 4) {
+      return "****";
+    }
+
+    const suffix = digits.slice(-4);
+    return `${"*".repeat(digits.length - 4)}${suffix}`;
   }
 }

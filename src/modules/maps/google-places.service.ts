@@ -150,7 +150,7 @@ export class GooglePlacesService {
       );
       this.logger.warn(
         {
-          query,
+          queryLength: query.length,
           status: info.status,
           error: info.message,
         },
@@ -176,7 +176,7 @@ export class GooglePlacesService {
       const info = this.httpClientService.handleError(error, "fetchPlaceDetails", "GooglePlaces");
       this.logger.warn(
         {
-          placeId,
+          placeIdSuffix: placeId.slice(-6),
           status: info.status,
           error: info.message,
         },

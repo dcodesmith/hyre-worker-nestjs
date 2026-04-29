@@ -68,13 +68,7 @@ export class LangGraphResponderService {
         "Responder generating response",
       );
 
-      this.logger.debug(
-        {
-          conversationId,
-          userContext,
-        },
-        "Responder full user context",
-      );
+      this.logger.debug({ conversationId, userContext }, "Responder user context diagnostics");
 
       const response = await this.claude.invoke([
         { role: "system", content: systemPrompt },
@@ -106,11 +100,7 @@ export class LangGraphResponderService {
         },
         "Response generation failed",
       );
-      this.logger.debug("Response generation error details", {
-        conversationId,
-        stage,
-        errorType: error instanceof Error ? error.constructor.name : typeof error,
-      });
+
       throw new LangGraphResponseFailedException(
         conversationId,
         error instanceof Error ? error.message : String(error),

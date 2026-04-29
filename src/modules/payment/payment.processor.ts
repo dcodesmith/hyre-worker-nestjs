@@ -19,7 +19,7 @@ export class PaymentProcessor extends WorkerHost {
     this.logger.setContext(PaymentProcessor.name);
   }
 
-  async process(job: Job<PayoutJobData, any, string>) {
+  async process(job: Job<PayoutJobData, unknown, string>) {
     this.logger.info(job.data, `Processing payout job: ${job.name}`);
 
     if (job.name !== PROCESS_PAYOUT_FOR_BOOKING) {
@@ -105,6 +105,7 @@ export class PaymentProcessor extends WorkerHost {
 
   @OnWorkerEvent("progress")
   onProgress(job: Job<PayoutJobData>, progress: number | object) {
-    this.logger.debug(progress, `Payout job progress: ${job.name} [${job.id}]`);
+    const normalizedProgress = typeof progress === "number" ? { progress } : progress;
+    this.logger.debug(normalizedProgress, `Payout job progress: ${job.name} [${job.id}]`);
   }
 }
