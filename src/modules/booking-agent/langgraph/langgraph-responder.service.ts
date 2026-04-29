@@ -101,10 +101,7 @@ export class LangGraphResponderService {
         "Response generation failed",
       );
 
-      throw new LangGraphResponseFailedException(
-        conversationId,
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new LangGraphResponseFailedException(conversationId);
     }
   }
 

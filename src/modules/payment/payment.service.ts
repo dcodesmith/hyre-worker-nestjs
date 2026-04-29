@@ -196,7 +196,7 @@ export class PaymentService {
         bookingId,
         transactionId: updatedTransaction.id,
       },
-      "Payout for booking initiated successfully. Transaction ID",
+      "Payout for booking initiated successfully",
     );
   }
 
@@ -234,7 +234,7 @@ export class PaymentService {
         bookingId,
         reason: errorMessage,
       },
-      "Payout initiation for booking failed. Reason",
+      "Payout initiation for booking failed",
     );
   }
 
@@ -299,7 +299,7 @@ export class PaymentService {
           "Failed to initiate payout",
         );
       } else {
-        this.logger.error(`Failed to initiate payout: ${String(error)}`);
+        this.logger.error({ error }, "Failed to initiate payout");
       }
       throw error;
     }

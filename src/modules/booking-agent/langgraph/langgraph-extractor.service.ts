@@ -119,7 +119,7 @@ export class LangGraphExtractorService {
         },
         "Extraction failed",
       );
-      throw new LangGraphExtractionFailedException(conversationId, errorMessage);
+      throw new LangGraphExtractionFailedException(conversationId);
     }
   }
 
