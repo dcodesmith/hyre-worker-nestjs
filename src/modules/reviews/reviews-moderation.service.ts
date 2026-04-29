@@ -1,12 +1,16 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { ReviewNotFoundException } from "./reviews.error";
 
 @Injectable()
 export class ReviewsModerationService {
-  private readonly logger = new Logger(ReviewsModerationService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ReviewsModerationService.name);
+  }
 
   async hideReview(reviewId: string, moderatorId: string, moderationNotes?: string) {
     const review = await this.databaseService.review.findUnique({
@@ -37,10 +41,7 @@ export class ReviewsModerationService {
       },
     });
 
-    this.logger.log("Review hidden successfully", {
-      reviewId,
-      moderatorId,
-    });
+    this.logger.info({ reviewId, moderatorId }, "Review hidden successfully");
 
     return updatedReview;
   }

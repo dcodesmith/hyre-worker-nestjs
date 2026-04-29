@@ -1,9 +1,9 @@
 import { getQueueToken } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PayoutTransactionStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { createBooking, createCar, createOwner } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
@@ -18,7 +18,6 @@ describe("PaymentService", () => {
   const payoutsQueue = {
     add: vi.fn(),
   };
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -56,7 +55,9 @@ describe("PaymentService", () => {
           useValue: payoutsQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<PaymentService>(PaymentService);
     databaseService = module.get<DatabaseService>(DatabaseService);
@@ -70,9 +71,6 @@ describe("PaymentService", () => {
           callback(databaseService),
       ),
     });
-
-    // Suppress logger noise for expected error-path tests
-    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
   });
   it("should use a deterministic reference derived from payout transaction id", async () => {
     const booking = createBooking({

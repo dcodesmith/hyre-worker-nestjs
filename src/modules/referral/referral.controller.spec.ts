@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { ReferralController } from "./referral.controller";
@@ -62,7 +63,9 @@ describe("ReferralController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<ReferralController>(ReferralController);
     referralService = module.get<ReferralService>(ReferralService);

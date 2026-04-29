@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { WhatsAppMessageKind } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import type { InboundMessageContext, OrchestratorResult } from "./booking-agent.interface";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
 import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
@@ -10,13 +11,14 @@ const LANGGRAPH_ERROR_FALLBACK_TEXT =
 
 @Injectable()
 export class BookingAgentOrchestratorService {
-  private readonly logger = new Logger(BookingAgentOrchestratorService.name);
-
   constructor(
     private readonly windowPolicyService: BookingAgentWindowPolicyService,
     private readonly langGraphService: LangGraphGraphService,
     private readonly langGraphStateService: LangGraphStateService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingAgentOrchestratorService.name);
+  }
 
   /**
    * Main orchestration entry point.
@@ -96,10 +98,13 @@ export class BookingAgentOrchestratorService {
       });
 
       if (result.error) {
-        this.logger.error("LangGraph execution returned error", {
-          conversationId: context.conversationId,
-          error: result.error,
-        });
+        this.logger.error(
+          {
+            conversationId: context.conversationId,
+            error: result.error,
+          },
+          "LangGraph execution returned error",
+        );
       }
 
       const outboxItems: OrchestratorResult["enqueueOutbox"] = result.outboxItems.map(
@@ -126,10 +131,13 @@ export class BookingAgentOrchestratorService {
         ...(hasHandoffOutbox ? { markAsHandoff: { reason: "USER_REQUESTED_AGENT" } } : {}),
       };
     } catch (error) {
-      this.logger.error("LangGraph orchestration failed, falling back to error response", {
-        conversationId: context.conversationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          conversationId: context.conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "LangGraph orchestration failed, falling back to error response",
+      );
 
       return {
         enqueueOutbox: [

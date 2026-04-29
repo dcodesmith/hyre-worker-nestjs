@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -27,7 +28,9 @@ describe("ReminderProcessor", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = module.get<ReminderProcessor>(ReminderProcessor);
     reminderService = module.get<ReminderService>(ReminderService);
@@ -38,7 +41,7 @@ describe("ReminderProcessor", () => {
       id: "job-1",
       name: BOOKING_LEG_START_REMINDER,
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     vi.mocked(reminderService.sendBookingStartReminderEmails).mockResolvedValueOnce(
       "Queued 10 start reminder notifications.",
@@ -58,7 +61,7 @@ describe("ReminderProcessor", () => {
       id: "job-2",
       name: BOOKING_LEG_END_REMINDER,
       data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     vi.mocked(reminderService.sendBookingEndReminderEmails).mockResolvedValueOnce(
       "Queued 5 end reminder notifications.",
@@ -78,7 +81,7 @@ describe("ReminderProcessor", () => {
       id: "job-3",
       name: BOOKING_LEG_START_REMINDER,
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     vi.mocked(reminderService.sendBookingStartReminderEmails).mockResolvedValueOnce(
       "No relevant booking legs today, so no start reminders to send.",
@@ -97,7 +100,7 @@ describe("ReminderProcessor", () => {
       id: "job-4",
       name: BOOKING_LEG_END_REMINDER,
       data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     vi.mocked(reminderService.sendBookingEndReminderEmails).mockResolvedValueOnce(
       "No relevant booking legs today, so no end reminders to send.",
@@ -116,7 +119,7 @@ describe("ReminderProcessor", () => {
       id: "job-5",
       name: "unknown-job-type",
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     await expect(processor.process(job)).rejects.toThrow(
       "Unknown reminder job type: unknown-job-type",
@@ -128,7 +131,7 @@ describe("ReminderProcessor", () => {
       id: "job-6",
       name: BOOKING_LEG_START_REMINDER,
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     const serviceError = new Error("Notification service unavailable");
     vi.mocked(reminderService.sendBookingStartReminderEmails).mockRejectedValueOnce(serviceError);
@@ -142,7 +145,7 @@ describe("ReminderProcessor", () => {
       id: "job-7",
       name: BOOKING_LEG_END_REMINDER,
       data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, any, string>;
+    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     const serviceError = new Error("Database connection failed");
     vi.mocked(reminderService.sendBookingEndReminderEmails).mockRejectedValueOnce(serviceError);

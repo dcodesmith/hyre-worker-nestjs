@@ -3,6 +3,7 @@ import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
 import { DocumentProxyService } from "./document-proxy.service";
 import { DocumentsController } from "./documents.controller";
@@ -35,7 +36,9 @@ describe("DocumentsController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<DocumentsController>(DocumentsController);
     documentProxyService = module.get<DocumentProxyService>(DocumentProxyService);

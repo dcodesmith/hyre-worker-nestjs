@@ -1,6 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { createReview } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
@@ -82,7 +83,9 @@ describe("ReviewsController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<ReviewsController>(ReviewsController);
     reviewsWriteService = module.get<ReviewsWriteService>(ReviewsWriteService);

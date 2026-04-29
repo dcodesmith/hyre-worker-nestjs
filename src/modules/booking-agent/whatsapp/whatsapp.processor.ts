@@ -1,8 +1,9 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import { Job, type Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import {
   PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
   PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
@@ -47,18 +48,18 @@ type WhatsAppAgentJobData =
 @Injectable()
 @Processor(WHATSAPP_AGENT_QUEUE, { concurrency: 10 })
 export class WhatsAppProcessor extends WorkerHost {
-  private readonly logger = new Logger(WhatsAppProcessor.name);
-
   constructor(
     private readonly persistenceService: WhatsAppPersistenceService,
     private readonly bookingAgentOrchestratorService: BookingAgentOrchestratorService,
     private readonly langGraphStateService: LangGraphStateService,
     private readonly senderService: WhatsAppSenderService,
     private readonly audioTranscriptionService: WhatsAppAudioTranscriptionService,
+    private readonly logger: PinoLogger,
     @InjectQueue(WHATSAPP_AGENT_QUEUE)
     private readonly whatsappAgentQueue: Queue<WhatsAppAgentJobData>,
   ) {
     super();
+    this.logger.setContext(WhatsAppProcessor.name);
   }
 
   async process(job: Job<WhatsAppAgentJobData, unknown, string>): Promise<{ success: boolean }> {
@@ -114,19 +115,25 @@ export class WhatsAppProcessor extends WorkerHost {
       await this.handleInboundOrchestratorResult(result, context.conversationId, messageId);
 
       await this.persistenceService.markInboundMessageProcessed(messageId);
-      this.logger.log("Processed inbound WhatsApp message", {
-        traceId,
-        outboundCount: result.enqueueOutbox.length,
-        durationMs: Date.now() - startedAt,
-      });
+      this.logger.info(
+        {
+          traceId,
+          outboundCount: result.enqueueOutbox.length,
+          durationMs: Date.now() - startedAt,
+        },
+        "Processed inbound WhatsApp message",
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await this.persistenceService.markInboundMessageFailed(messageId, errorMessage);
-      this.logger.warn("Failed processing inbound WhatsApp message", {
-        traceId,
-        durationMs: Date.now() - startedAt,
-        error: errorMessage,
-      });
+      this.logger.warn(
+        {
+          traceId,
+          durationMs: Date.now() - startedAt,
+          error: errorMessage,
+        },
+        "Failed processing inbound WhatsApp message",
+      );
       throw error;
     } finally {
       await this.persistenceService.releaseProcessingLock(conversationId, lockToken);
@@ -175,10 +182,13 @@ export class WhatsAppProcessor extends WorkerHost {
 
       return { body: transcript, kind: WhatsAppMessageKind.TEXT };
     } catch (error) {
-      this.logger.warn("Audio transcription failed; falling back to media flow", {
-        traceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        {
+          traceId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Audio transcription failed; falling back to media flow",
+      );
       return { body: context.body ?? undefined, kind: context.kind };
     }
   }
@@ -273,11 +283,14 @@ export class WhatsAppProcessor extends WorkerHost {
       },
     );
 
-    this.logger.log("Scheduled inactivity clear after nudge", {
-      conversationId,
-      messageId,
-      nudgeScheduledAtMs: scheduledAtMs,
-    });
+    this.logger.info(
+      {
+        conversationId,
+        messageId,
+        nudgeScheduledAtMs: scheduledAtMs,
+      },
+      "Scheduled inactivity clear after nudge",
+    );
   }
 
   private async processInactivityClear(
@@ -309,10 +322,13 @@ export class WhatsAppProcessor extends WorkerHost {
       templateVariables: undefined,
     });
 
-    this.logger.log("Cleared LangGraph state after inactivity grace period elapsed", {
-      conversationId,
-      nudgeScheduledAtMs,
-    });
+    this.logger.info(
+      {
+        conversationId,
+        nudgeScheduledAtMs,
+      },
+      "Cleared LangGraph state after inactivity grace period elapsed",
+    );
   }
 
   private async scheduleInactivityNudge(conversationId: string, messageId: string): Promise<void> {
@@ -398,12 +414,23 @@ export class WhatsAppProcessor extends WorkerHost {
     const errorMessage = error.message;
     const errorStack = error.stack;
     if (!job) {
-      this.logger.error(`WhatsApp agent job failed without context: ${errorMessage}`, errorStack);
+      this.logger.error(
+        {
+          errorMessage,
+          stack: errorStack,
+        },
+        "WhatsApp agent job failed without context",
+      );
       return;
     }
     this.logger.error(
-      `WhatsApp agent job failed: ${job.name} [${job.id}] - ${errorMessage}`,
-      errorStack,
+      {
+        jobName: job.name,
+        jobId: job.id,
+        errorMessage,
+        stack: errorStack,
+      },
+      "WhatsApp agent job failed",
     );
   }
 }

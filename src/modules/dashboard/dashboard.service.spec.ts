@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, PayoutTransactionStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { DashboardValidationException } from "./dashboard.error";
 import { DashboardService } from "./dashboard.service";
@@ -32,7 +33,9 @@ describe("DashboardService", () => {
     vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [DashboardService, { provide: DatabaseService, useValue: databaseServiceMock }],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<DashboardService>(DashboardService);
   });

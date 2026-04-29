@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ExtractNode } from "./extract.node";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
@@ -18,7 +19,9 @@ describe("ExtractNode", () => {
         ExtractNode,
         { provide: LangGraphExtractorService, useValue: extractorServiceMock },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     extractNode = moduleRef.get(ExtractNode);
   });

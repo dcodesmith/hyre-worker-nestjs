@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingFetchFailedException, BookingNotFoundException } from "./booking.error";
 import { BookingReadService } from "./booking-read.service";
@@ -17,7 +18,9 @@ describe("BookingReadService", () => {
     vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [BookingReadService, { provide: DatabaseService, useValue: databaseServiceMock }],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingReadService>(BookingReadService);
   });

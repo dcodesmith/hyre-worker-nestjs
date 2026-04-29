@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { ACTIVATE_AIRPORT_BOOKING, STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { StatusUpdateSchedulingFailedException } from "./status-change.error";
@@ -9,13 +10,14 @@ import type { ActivateAirportBookingJobData, StatusUpdateJobData } from "./statu
 
 @Injectable()
 export class StatusChangeSchedulingService {
-  private readonly logger = new Logger(StatusChangeSchedulingService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     @InjectQueue(STATUS_UPDATES_QUEUE)
     private readonly statusUpdateQueue: Queue<StatusUpdateJobData>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(StatusChangeSchedulingService.name);
+  }
 
   async scheduleAirportActivation(bookingId: string, activationAt: Date): Promise<void> {
     const delay = Math.max(0, activationAt.getTime() - Date.now());
@@ -46,10 +48,14 @@ export class StatusChangeSchedulingService {
         ACTIVATE_AIRPORT_BOOKING,
         reason,
       );
-      this.logger.error(wrappedError.message, {
-        bookingId,
-        activationAt: activationAt.toISOString(),
-      });
+      this.logger.error(
+        {
+          bookingId,
+          activationAt: activationAt.toISOString(),
+          error: wrappedError.message,
+        },
+        "Airport activation scheduling failed",
+      );
       throw wrappedError;
     }
   }
@@ -68,10 +74,13 @@ export class StatusChangeSchedulingService {
         select: { id: true },
       });
     } catch (error) {
-      this.logger.error("Failed to fetch airport bookings for flight activation scheduling", {
-        flightId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          flightId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch airport bookings for flight activation scheduling",
+      );
       throw error;
     }
 

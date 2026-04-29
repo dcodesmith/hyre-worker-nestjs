@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "./langgraph.tokens";
@@ -25,7 +26,9 @@ describe("LangGraphResponderService", () => {
           useValue: claudeMock,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(LangGraphResponderService);
   });

@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import type { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlightAwareWebhookGuard } from "./flightaware-webhook.guard";
 
 describe("FlightAwareWebhookGuard", () => {
@@ -23,7 +24,9 @@ describe("FlightAwareWebhookGuard", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     guard = module.get<FlightAwareWebhookGuard>(FlightAwareWebhookGuard);
   });

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { AddonType, PlatformFeeType } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import type {
   CreateAddonRateDto,
@@ -21,13 +22,15 @@ import { RatesService } from "./rates.service";
 
 @Injectable()
 export class RatesAdminService {
-  private readonly logger = new Logger(RatesAdminService.name);
   private readonly serializableIsolationLevel = "Serializable" as const;
 
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly ratesService: RatesService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(RatesAdminService.name);
+  }
 
   async getAllRates() {
     try {
@@ -66,9 +69,12 @@ export class RatesAdminService {
       if (error instanceof RatesException) {
         throw error;
       }
-      this.logger.error("Failed to get all rates", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to get all rates",
+      );
       throw new RatesFetchFailedException();
     }
   }
@@ -103,10 +109,13 @@ export class RatesAdminService {
       if (error instanceof RatesException) {
         throw error;
       }
-      this.logger.error("Failed to create platform fee rate", {
-        dto,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          dto,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to create platform fee rate",
+      );
       throw new RateCreateFailedException();
     }
   }
@@ -135,10 +144,13 @@ export class RatesAdminService {
       if (error instanceof RatesException) {
         throw error;
       }
-      this.logger.error("Failed to create VAT rate", {
-        dto,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          dto,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to create VAT rate",
+      );
       throw new RateCreateFailedException();
     }
   }
@@ -173,10 +185,13 @@ export class RatesAdminService {
       if (error instanceof RatesException) {
         throw error;
       }
-      this.logger.error("Failed to create addon rate", {
-        dto,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          dto,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to create addon rate",
+      );
       throw new RateCreateFailedException();
     }
   }
@@ -216,10 +231,13 @@ export class RatesAdminService {
       if (error instanceof RatesException) {
         throw error;
       }
-      this.logger.error("Failed to end addon rate", {
-        addonRateId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          addonRateId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to end addon rate",
+      );
       throw new RateUpdateFailedException();
     }
   }

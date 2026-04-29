@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { NotificationChannel, NotificationType } from "../notification/notification.interface";
@@ -38,7 +39,9 @@ describe("ExtensionConfirmationService", () => {
           useValue: queueMock,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<ExtensionConfirmationService>(ExtensionConfirmationService);
   });

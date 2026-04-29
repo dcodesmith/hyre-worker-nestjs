@@ -1,6 +1,7 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { FlightStatus, Prisma } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
 import { DatabaseService } from "../database/database.service";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
@@ -10,13 +11,14 @@ const AIRPORT_BOOKING_BUFFER_MINUTES = 40;
 
 @Injectable()
 export class FlightAwareWebhookService {
-  private readonly logger = new Logger(FlightAwareWebhookService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly eventEmitter: EventEmitter2,
     private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(FlightAwareWebhookService.name);
+  }
 
   async handleWebhook(payload: FlightAwareWebhookDto): Promise<FlightAwareWebhookResult> {
     const { alert_id, event_type, event_time, flight } = payload;
@@ -152,21 +154,27 @@ export class FlightAwareWebhookService {
           activationAt: activationAt.toISOString(),
         });
       } catch (error) {
-        this.logger.error("Failed to emit flight arrival updated event", {
-          flightId: flightRecord.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.logger.error(
+          {
+            flightId: flightRecord.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to emit flight arrival updated event",
+        );
       }
     }
 
-    this.logger.log("Processed FlightAware webhook event", {
-      flightId: flightRecord.id,
-      eventType: event_type,
-      oldStatus,
-      newStatus,
-      statusEventId: txResult.statusEventId,
-      bookingCount,
-    });
+    this.logger.info(
+      {
+        flightId: flightRecord.id,
+        eventType: event_type,
+        oldStatus,
+        newStatus,
+        statusEventId: txResult.statusEventId,
+        bookingCount,
+      },
+      "Processed FlightAware webhook event",
+    );
 
     return {
       duplicate: txResult.duplicate,
@@ -217,12 +225,15 @@ export class FlightAwareWebhookService {
       }
     }
 
-    this.logger.warn("Unknown FlightAware event type, defaulting to SCHEDULED", {
-      eventType,
-      flightId,
-      callSign,
-      eventTime: eventTime?.toISOString(),
-    });
+    this.logger.warn(
+      {
+        eventType,
+        flightId,
+        callSign,
+        eventTime: eventTime?.toISOString(),
+      },
+      "Unknown FlightAware event type, defaulting to SCHEDULED",
+    );
 
     return FlightStatus.SCHEDULED;
   }

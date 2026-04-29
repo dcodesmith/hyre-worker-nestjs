@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PayoutTransaction } from "@prisma/client";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
@@ -10,14 +11,15 @@ import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
 
 @Injectable()
 export class PaymentService {
-  private readonly logger = new Logger(PaymentService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
+    private readonly logger: PinoLogger,
     @InjectQueue(PAYOUTS_QUEUE)
     private readonly payoutsQueue: Queue<PayoutJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(PaymentService.name);
+  }
 
   private hasNoPayoutAmount(booking: BookingWithRelations): boolean {
     return !booking.fleetOwnerPayoutAmountNet || booking.fleetOwnerPayoutAmountNet.isZero();
@@ -30,20 +32,23 @@ export class PaymentService {
     });
 
     if (!bankDetails) {
-      this.logger.warn("Fleet owner has no bank details. Cannot process payout for booking", {
-        fleetOwnerId: fleetOwner.id,
-        bookingId: booking.id,
-      });
+      this.logger.warn(
+        {
+          fleetOwnerId: fleetOwner.id,
+          bookingId: booking.id,
+        },
+        "Fleet owner has no bank details. Cannot process payout for booking",
+      );
       return null;
     }
 
     if (!bankDetails.isVerified) {
       this.logger.warn(
-        "Bank details for fleet owner are not verified. Cannot process payout for booking",
         {
           fleetOwnerId: fleetOwner.id,
           bookingId: booking.id,
         },
+        "Bank details for fleet owner are not verified. Cannot process payout for booking",
       );
       return null;
     }
@@ -87,9 +92,12 @@ export class PaymentService {
         throw error;
       }
 
-      this.logger.log("Payout transaction already exists for booking, fetching existing record", {
-        bookingId: booking.id,
-      });
+      this.logger.info(
+        {
+          bookingId: booking.id,
+        },
+        "Payout transaction already exists for booking, fetching existing record",
+      );
 
       const existingTransaction = await this.databaseService.payoutTransaction.findFirst({
         where: { bookingId: booking.id },
@@ -108,17 +116,23 @@ export class PaymentService {
             payoutMethodDetails,
           },
         });
-        this.logger.log("Updated existing payout transaction with latest values", {
-          bookingId: booking.id,
-          transactionId: updatedTransaction.id,
-        });
+        this.logger.info(
+          {
+            bookingId: booking.id,
+            transactionId: updatedTransaction.id,
+          },
+          "Updated existing payout transaction with latest values",
+        );
         return updatedTransaction;
       } catch (updateError) {
-        this.logger.error("Failed to update existing payout transaction with latest values", {
-          bookingId: booking.id,
-          transactionId: existingTransaction.id,
-          error: updateError instanceof Error ? updateError.message : String(updateError),
-        });
+        this.logger.error(
+          {
+            bookingId: booking.id,
+            transactionId: existingTransaction.id,
+            error: updateError instanceof Error ? updateError.message : String(updateError),
+          },
+          "Failed to update existing payout transaction with latest values",
+        );
         throw updateError;
       }
     }
@@ -129,15 +143,18 @@ export class PaymentService {
     payoutTransaction: PayoutTransaction,
   ) {
     if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
-      this.logger.log("Payout already processed or in progress for booking", {
-        bookingId,
-        status: payoutTransaction.status,
-      });
+      this.logger.info(
+        {
+          bookingId,
+          status: payoutTransaction.status,
+        },
+        "Payout already processed or in progress for booking",
+      );
       return "NON_RETRIABLE";
     }
 
     if (payoutTransaction.status === "FAILED") {
-      this.logger.log("Retrying failed payout for booking", { bookingId });
+      this.logger.info({ bookingId }, "Retrying failed payout for booking");
     }
 
     return "RETRIABLE";
@@ -174,10 +191,13 @@ export class PaymentService {
       return updated;
     });
 
-    this.logger.log("Payout for booking initiated successfully. Transaction ID", {
-      bookingId,
-      transactionId: updatedTransaction.id,
-    });
+    this.logger.info(
+      {
+        bookingId,
+        transactionId: updatedTransaction.id,
+      },
+      "Payout for booking initiated successfully. Transaction ID",
+    );
   }
 
   private extractErrorMessage(data: unknown): string {
@@ -209,10 +229,13 @@ export class PaymentService {
       });
     });
 
-    this.logger.error("Payout initiation for booking failed. Reason", {
-      bookingId,
-      reason: errorMessage,
-    });
+    this.logger.error(
+      {
+        bookingId,
+        reason: errorMessage,
+      },
+      "Payout initiation for booking failed. Reason",
+    );
   }
 
   /**
@@ -222,7 +245,10 @@ export class PaymentService {
   async initiatePayout(booking: BookingWithRelations) {
     try {
       if (this.hasNoPayoutAmount(booking)) {
-        this.logger.log("Booking has no payout amount. Skipping payout", { bookingId: booking.id });
+        this.logger.info(
+          { bookingId: booking.id },
+          "Booking has no payout amount. Skipping payout",
+        );
         return;
       }
 
@@ -268,7 +294,10 @@ export class PaymentService {
       }
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Failed to initiate payout: ${error.message}`, error.stack);
+        this.logger.error(
+          { error: error.message, stack: error.stack },
+          "Failed to initiate payout",
+        );
       } else {
         this.logger.error(`Failed to initiate payout: ${String(error)}`);
       }
@@ -298,12 +327,15 @@ export class PaymentService {
         },
       );
 
-      this.logger.log(`Queued payout processing for booking ${bookingId}`);
+      this.logger.info(`Queued payout processing for booking ${bookingId}`);
     } catch (error) {
-      this.logger.error("Failed to queue payout processing", {
-        bookingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue payout processing",
+      );
       throw error;
     }
   }

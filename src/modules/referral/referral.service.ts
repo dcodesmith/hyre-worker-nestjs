@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import { getRequestOrigin } from "../../common/http/request.helper";
 import type { ReferralEligibilityQueryDto, ValidateReferralQueryDto } from "./dto/referral.dto";
 import {
@@ -15,7 +16,6 @@ import { ReferralProcessingService } from "./referral-processing.service";
 
 @Injectable()
 export class ReferralService {
-  private readonly logger = new Logger(ReferralService.name);
   private readonly userSummaryTtlMs = 30 * 1000;
   private readonly maxPruneChecksPerWrite = 25;
   private readonly userSummaryCache = new Map<
@@ -29,7 +29,10 @@ export class ReferralService {
   constructor(
     private readonly referralApiService: ReferralApiService,
     private readonly referralProcessingService: ReferralProcessingService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ReferralService.name);
+  }
 
   private async withReferralExceptionBoundary<T>(
     operation: () => Promise<T>,
@@ -42,9 +45,12 @@ export class ReferralService {
       if (error instanceof ReferralException) {
         throw error;
       }
-      this.logger.error(`Unhandled referral error in ${operationName}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        `Unhandled referral error in ${operationName}`,
+      );
       throw fallback();
     }
   }

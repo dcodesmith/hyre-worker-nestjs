@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import {
   AccountDeleteFailedException,
@@ -9,9 +10,12 @@ import type { DeleteAccountResponse } from "./account.interface";
 
 @Injectable()
 export class AccountService {
-  private readonly logger = new Logger(AccountService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(AccountService.name);
+  }
 
   async deleteUserAccount(userId: string): Promise<DeleteAccountResponse> {
     try {
@@ -37,10 +41,13 @@ export class AccountService {
         }),
       ]);
 
-      this.logger.log("Account deleted", {
-        userId,
-        anonymizedBookings: anonymizedBookings.count,
-      });
+      this.logger.info(
+        {
+          userId,
+          anonymizedBookings: anonymizedBookings.count,
+        },
+        "Account deleted",
+      );
 
       return { success: true };
     } catch (error) {

@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
 import { AuthService } from "../auth.service";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
@@ -75,9 +76,12 @@ function hasAuthCredentials(request: Request): boolean {
  */
 @Injectable()
 export class OptionalSessionGuard implements CanActivate {
-  private readonly logger = new Logger(OptionalSessionGuard.name);
-
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(OptionalSessionGuard.name);
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // If auth service is not initialized, allow request through (guest mode)

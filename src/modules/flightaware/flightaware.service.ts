@@ -1,7 +1,8 @@
-import { HttpStatus, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { HttpStatus, Injectable, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
+import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
@@ -44,7 +45,6 @@ const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
  */
 @Injectable()
 export class FlightAwareService implements OnModuleDestroy {
-  private readonly logger = new Logger(FlightAwareService.name);
   private readonly apiKey: string;
   private readonly timezone: string;
   private readonly baseUrl = "https://aeroapi.flightaware.com/aeroapi";
@@ -62,7 +62,9 @@ export class FlightAwareService implements OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
+    private readonly logger: PinoLogger,
   ) {
+    this.logger.setContext(FlightAwareService.name);
     this.apiKey = this.configService.get("FLIGHTAWARE_API_KEY", { infer: true });
     this.timezone = this.configService.get("TZ", { infer: true });
 
@@ -102,17 +104,17 @@ export class FlightAwareService implements OnModuleDestroy {
     // 2. Check cache
     const cached = this.getCachedFlight(normalizedFlightNumber, pickupDate);
     if (cached !== undefined) {
-      this.logger.debug("Flight cache HIT", { flightNumber: normalizedFlightNumber, pickupDate });
+      this.logger.debug({ flightNumber: normalizedFlightNumber, pickupDate }, "Flight cache HIT");
       if (cached === null) {
         throw new FlightNotFoundException(normalizedFlightNumber, pickupDate);
       }
       return cached;
     }
 
-    this.logger.debug("Flight cache MISS - calling API", {
-      flightNumber: normalizedFlightNumber,
-      pickupDate,
-    });
+    this.logger.debug(
+      { flightNumber: normalizedFlightNumber, pickupDate },
+      "Flight cache MISS - calling API",
+    );
 
     // 3. Calculate search window
     const { startDate, endDate } = this.getPickupSearchWindow(pickupDate);
@@ -272,7 +274,7 @@ export class FlightAwareService implements OnModuleDestroy {
 
     const tryFlightNumber = async (flightNum: string): Promise<InternalFlightResult | null> => {
       const apiUrl = `/flights/${flightNum}?start=${start}&end=${end}`;
-      this.logger.debug("FlightAware LIVE API request", { apiUrl });
+      this.logger.debug({ apiUrl }, "FlightAware LIVE API request");
 
       try {
         const response = await this.httpClient.get<FlightAwareResponse>(apiUrl);
@@ -336,7 +338,7 @@ export class FlightAwareService implements OnModuleDestroy {
       const flightNumDigits = match[2];
 
       const apiUrl = `/schedules/${startDateStr}/${endDateStr}?airline=${airlineCode}&flight_number=${flightNumDigits}`;
-      this.logger.debug("FlightAware SCHEDULES API request", { apiUrl });
+      this.logger.debug({ apiUrl }, "FlightAware SCHEDULES API request");
 
       try {
         const response = await this.httpClient.get<FlightAwareSchedulesResponse>(apiUrl);
@@ -392,7 +394,7 @@ export class FlightAwareService implements OnModuleDestroy {
     operation = "fetchFlight",
   ): InternalFlightResult {
     const errorInfo = this.httpClientService.handleError(error, operation, "FlightAware");
-    this.logger.warn("FlightAware API error", { operation, status: errorInfo.status, flightNum });
+    this.logger.warn({ operation, status: errorInfo.status, flightNum }, "FlightAware API error");
 
     if (errorInfo.status === HttpStatus.NOT_FOUND) {
       return { type: "notFound" };
@@ -643,10 +645,10 @@ export class FlightAwareService implements OnModuleDestroy {
     }
 
     if (removedCount > 0) {
-      this.logger.debug("Cleaned up expired cache entries", {
-        removedCount,
-        remainingCount: this.flightCache.size,
-      });
+      this.logger.debug(
+        { removedCount, remainingCount: this.flightCache.size },
+        "Cleaned up expired cache entries",
+      );
     }
   }
 

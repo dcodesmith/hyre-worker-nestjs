@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import type { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
   PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
@@ -132,7 +133,9 @@ describe("WhatsAppProcessor", () => {
           useValue: whatsappAgentQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = moduleRef.get(WhatsAppProcessor);
   });

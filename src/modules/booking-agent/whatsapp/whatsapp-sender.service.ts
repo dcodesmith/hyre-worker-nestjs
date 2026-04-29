@@ -1,8 +1,9 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import type { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import twilio, { Twilio } from "twilio";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { PROCESS_WHATSAPP_OUTBOX_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
@@ -22,16 +23,17 @@ import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 
 @Injectable()
 export class WhatsAppSenderService {
-  private readonly logger = new Logger(WhatsAppSenderService.name);
   private readonly twilioClient: Twilio;
   private readonly whatsAppNumber: string;
 
   constructor(
     private readonly persistenceService: WhatsAppPersistenceService,
     private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
     @InjectQueue(WHATSAPP_AGENT_QUEUE)
     private readonly whatsappAgentQueue: Queue<ProcessWhatsAppOutboxJobData>,
   ) {
+    this.logger.setContext(WhatsAppSenderService.name);
     const accountSid = this.configService.get("TWILIO_ACCOUNT_SID", { infer: true });
     const authToken = this.configService.get("TWILIO_AUTH_TOKEN", { infer: true });
     this.whatsAppNumber = this.configService.get("TWILIO_WHATSAPP_NUMBER", { infer: true });
@@ -49,7 +51,7 @@ export class WhatsAppSenderService {
       outboxId = outbox.id;
     } catch (error) {
       if (this.persistenceService.isUniqueViolation(error)) {
-        this.logger.debug("Skipping duplicate outbound enqueue", { dedupeKey: input.dedupeKey });
+        this.logger.debug({ dedupeKey: input.dedupeKey }, "Skipping duplicate outbound enqueue");
         return;
       }
       throw error;
@@ -72,11 +74,15 @@ export class WhatsAppSenderService {
       try {
         await this.persistenceService.deleteOutbox(outboxId);
       } catch (cleanupError) {
-        this.logger.error("Failed to cleanup outbound outbox record after queue failure", {
-          outboxId,
-          dedupeKey: input.dedupeKey,
-          cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        });
+        this.logger.error(
+          {
+            outboxId,
+            dedupeKey: input.dedupeKey,
+            cleanupError:
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          },
+          "Failed to cleanup outbound outbox record after queue failure",
+        );
       }
       throw error;
     }
@@ -91,7 +97,7 @@ export class WhatsAppSenderService {
 
     const outbox = await this.persistenceService.getOutboxForDispatch(outboxId);
     if (!outbox) {
-      this.logger.warn("Claimed outbox record missing for dispatch", { outboxId });
+      this.logger.warn({ outboxId }, "Claimed outbox record missing for dispatch");
       return;
     }
 
@@ -117,10 +123,13 @@ export class WhatsAppSenderService {
         throw error;
       }
 
-      this.logger.error("Outbox moved to dead-letter after max attempts", {
-        outboxId: outbox.id,
-        attemptsMade,
-      });
+      this.logger.error(
+        {
+          outboxId: outbox.id,
+          attemptsMade,
+        },
+        "Outbox moved to dead-letter after max attempts",
+      );
     }
   }
 
@@ -146,7 +155,7 @@ export class WhatsAppSenderService {
           : undefined;
       const variableKeys = this.extractTemplateVariableKeys(outbox.templateVariables);
 
-      this.logger.log(
+      this.logger.info(
         {
           outboxId: outbox.id,
           contentSid: outbox.templateName,

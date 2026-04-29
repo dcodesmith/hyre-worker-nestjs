@@ -1,4 +1,4 @@
-import { HttpStatus, Logger } from "@nestjs/common";
+import { HttpStatus } from "@nestjs/common";
 import { AppException } from "../../../common/errors/app.exception";
 
 export const LangGraphErrorCode = {
@@ -11,13 +11,10 @@ export const LangGraphErrorCode = {
   LANGGRAPH_TIMEOUT: "LANGGRAPH_TIMEOUT",
 } as const;
 
-const logger = new Logger("LangGraphError");
-
 export class LangGraphException extends AppException {}
 
 export class LangGraphExtractionFailedException extends LangGraphException {
-  constructor(conversationId: string, error: string) {
-    logger.error("LangGraph extraction failed", { conversationId, error });
+  constructor(conversationId: string, _error: string) {
     super(
       LangGraphErrorCode.LANGGRAPH_EXTRACTION_FAILED,
       `Failed to extract intent from message for conversation ${conversationId}`,
@@ -31,8 +28,7 @@ export class LangGraphExtractionFailedException extends LangGraphException {
 }
 
 export class LangGraphResponseFailedException extends LangGraphException {
-  constructor(conversationId: string, error: string) {
-    logger.error("LangGraph response generation failed", { conversationId, error });
+  constructor(conversationId: string, _error: string) {
     super(
       LangGraphErrorCode.LANGGRAPH_RESPONSE_FAILED,
       `Failed to generate response for conversation ${conversationId}`,
@@ -46,8 +42,7 @@ export class LangGraphResponseFailedException extends LangGraphException {
 }
 
 export class LangGraphExecutionFailedException extends LangGraphException {
-  constructor(conversationId: string, node: string, error: string) {
-    logger.error("LangGraph execution failed", { conversationId, node, error });
+  constructor(conversationId: string, node: string, _error: string) {
     super(
       LangGraphErrorCode.LANGGRAPH_GRAPH_EXECUTION_FAILED,
       `Graph execution failed at node "${node}" for conversation ${conversationId}`,
@@ -75,8 +70,7 @@ export class LangGraphStatePersistFailedException extends LangGraphException {
 }
 
 export class LangGraphStateLoadFailedException extends LangGraphException {
-  constructor(conversationId: string, error: string) {
-    logger.error("LangGraph state load failed", { conversationId, error });
+  constructor(conversationId: string, _error: string) {
     super(
       LangGraphErrorCode.LANGGRAPH_STATE_LOAD_FAILED,
       `Failed to load state for conversation ${conversationId}`,

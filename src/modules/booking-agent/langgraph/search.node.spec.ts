@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
@@ -23,7 +24,9 @@ describe("SearchNode", () => {
         { provide: BookingAgentSearchService, useValue: bookingAgentSearchServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     searchNode = moduleRef.get(SearchNode);
   });

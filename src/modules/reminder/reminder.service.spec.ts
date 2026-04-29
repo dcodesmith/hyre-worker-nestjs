@@ -3,6 +3,7 @@ import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { addHours } from "date-fns";
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import {
   createBooking,
@@ -41,7 +42,9 @@ describe("ReminderService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<ReminderService>(ReminderService);
     databaseService = module.get<DatabaseService>(DatabaseService);

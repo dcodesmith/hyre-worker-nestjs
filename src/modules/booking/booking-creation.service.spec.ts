@@ -4,6 +4,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { createBookingFinancials, createCar, createUser } from "../../shared/helper.fixtures";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -169,7 +170,9 @@ describe("BookingCreationService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingCreationService>(BookingCreationService);
     databaseService = module.get<DatabaseService>(DatabaseService);

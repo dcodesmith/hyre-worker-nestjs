@@ -3,9 +3,10 @@ import { BullBoardModule } from "@bull-board/nestjs";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { BullModule } from "@nestjs/bullmq";
-import { Inject, Logger, Module, OnModuleDestroy } from "@nestjs/common";
+import { Inject, Module, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
+import { PinoLogger } from "nestjs-pino";
 import { WHATSAPP_AGENT_QUEUE } from "../../config/constants";
 import type { EnvConfig } from "../../config/env.config";
 import { BookingModule } from "../booking/booking.module";
@@ -86,16 +87,22 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     },
     {
       provide: LANGGRAPH_REDIS_CLIENT,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService<EnvConfig>) => {
+      inject: [ConfigService, PinoLogger],
+      useFactory: (configService: ConfigService<EnvConfig>, logger: PinoLogger) => {
+        logger.setContext("BookingAgentRedisClient");
         const redisUrl = configService.get("REDIS_URL", { infer: true });
-        const logger = new Logger("BookingAgentRedisClient");
         const client = new Redis(redisUrl, {
           maxRetriesPerRequest: 2,
           enableReadyCheck: true,
         });
         client.on("error", (error) => {
-          logger.error("LANGGRAPH_REDIS_CLIENT emitted Redis error", error);
+          logger.error(
+            {
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            },
+            "LANGGRAPH_REDIS_CLIENT emitted Redis error",
+          );
         });
         return client;
       },
@@ -130,22 +137,36 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
   ],
 })
 export class BookingAgentModule implements OnModuleDestroy {
-  private readonly logger = new Logger(BookingAgentModule.name);
-
   constructor(
     @Inject(LANGGRAPH_REDIS_CLIENT)
     private readonly redisClient: Redis,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingAgentModule.name);
+  }
 
   async onModuleDestroy(): Promise<void> {
     try {
       await this.redisClient.quit();
     } catch (error) {
-      this.logger.warn("Failed to quit LANGGRAPH_REDIS_CLIENT, forcing disconnect", error);
+      this.logger.warn(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to quit LANGGRAPH_REDIS_CLIENT, forcing disconnect",
+      );
       try {
         this.redisClient.disconnect();
       } catch (disconnectError) {
-        this.logger.error("Failed to disconnect LANGGRAPH_REDIS_CLIENT", disconnectError);
+        this.logger.error(
+          {
+            error:
+              disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
+            stack: disconnectError instanceof Error ? disconnectError.stack : undefined,
+          },
+          "Failed to disconnect LANGGRAPH_REDIS_CLIENT",
+        );
       }
     }
   }

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import * as emailTemplates from "../../templates/emails";
 import { EmailService } from "../email/email.service";
 import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
@@ -70,7 +71,9 @@ describe("NotificationProcessor", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = module.get<NotificationProcessor>(NotificationProcessor);
     emailService = module.get<EmailService>(EmailService);

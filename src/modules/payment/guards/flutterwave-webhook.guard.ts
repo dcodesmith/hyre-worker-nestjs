@@ -1,6 +1,7 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import { timingSafeSecretMatch } from "src/common/security/webhook-signature.helper";
 import { EnvConfig } from "src/config/env.config";
 
@@ -14,11 +15,14 @@ import { EnvConfig } from "src/config/env.config";
  */
 @Injectable()
 export class FlutterwaveWebhookGuard implements CanActivate {
-  private readonly logger = new Logger(FlutterwaveWebhookGuard.name);
   private readonly webhookSecret: string;
   private readonly hmacKey: string;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(FlutterwaveWebhookGuard.name);
     this.webhookSecret = this.configService.get("FLUTTERWAVE_WEBHOOK_SECRET", {
       infer: true,
     });
@@ -44,10 +48,13 @@ export class FlutterwaveWebhookGuard implements CanActivate {
     const isValid = this.verifySignature(signature, this.webhookSecret);
 
     if (!isValid) {
-      this.logger.warn("Invalid webhook signature", {
-        receivedLength: signature.length,
-        expectedLength: this.webhookSecret.length,
-      });
+      this.logger.warn(
+        {
+          receivedLength: signature.length,
+          expectedLength: this.webhookSecret.length,
+        },
+        "Invalid webhook signature",
+      );
     }
 
     return isValid;

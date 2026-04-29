@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
@@ -12,12 +13,13 @@ import {
 
 @Injectable()
 export class BookingCancellationService {
-  private readonly logger = new Logger(BookingCancellationService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingCancellationService.name);
+  }
 
   async cancelBooking(bookingId: string, userId: string, reason: string) {
     try {
@@ -79,12 +81,15 @@ export class BookingCancellationService {
         throw error;
       }
 
-      this.logger.error("Failed to cancel booking", {
-        bookingId,
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          bookingId,
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to cancel booking",
+      );
       throw new BookingCancellationFailedException();
     }
   }
@@ -93,10 +98,13 @@ export class BookingCancellationService {
     try {
       await this.notificationService.queueBookingCancellationNotifications(booking);
     } catch (error) {
-      this.logger.error("Failed to queue cancellation notification", {
-        bookingId: booking.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue cancellation notification",
+      );
     }
   }
 }

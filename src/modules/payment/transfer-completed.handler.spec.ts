@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PayoutTransactionStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPayoutTransaction } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
@@ -9,7 +10,6 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
 describe("TransferCompletedHandler", () => {
   let handler: TransferCompletedHandler;
   let databaseService: DatabaseService;
-
   const mockTransferData: FlutterwaveTransferWebhookData = {
     id: 67890,
     account_number: "1234567890",
@@ -44,7 +44,9 @@ describe("TransferCompletedHandler", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     handler = module.get<TransferCompletedHandler>(TransferCompletedHandler);
     databaseService = module.get<DatabaseService>(DatabaseService);

@@ -1,7 +1,7 @@
-import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CREATE_FLIGHT_ALERT_JOB } from "../../config/constants";
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
@@ -10,14 +10,6 @@ import { FlightAwareAlertService } from "./flightaware-alert.service";
 describe("FlightAlertProcessor", () => {
   let processor: FlightAlertProcessor;
   let flightAwareAlertService: FlightAwareAlertService;
-
-  beforeAll(() => {
-    Logger.overrideLogger([]);
-  });
-
-  afterAll(() => {
-    Logger.overrideLogger(undefined);
-  });
 
   const mockJobData: FlightAlertJobData = {
     flightId: "flight-123",
@@ -37,7 +29,9 @@ describe("FlightAlertProcessor", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = module.get<FlightAlertProcessor>(FlightAlertProcessor);
     flightAwareAlertService = module.get<FlightAwareAlertService>(FlightAwareAlertService);

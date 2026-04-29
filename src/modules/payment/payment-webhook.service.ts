@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import type { FlutterwaveWebhookPayload } from "../flutterwave/flutterwave.interface";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { RefundCompletedHandler } from "./refund-completed.handler";
@@ -14,13 +15,14 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
  */
 @Injectable()
 export class PaymentWebhookService {
-  private readonly logger = new Logger(PaymentWebhookService.name);
-
   constructor(
     private readonly chargeCompletedHandler: ChargeCompletedHandler,
     private readonly transferCompletedHandler: TransferCompletedHandler,
     private readonly refundCompletedHandler: RefundCompletedHandler,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(PaymentWebhookService.name);
+  }
 
   /**
    * Main entry point for handling Flutterwave webhook events.
@@ -29,7 +31,7 @@ export class PaymentWebhookService {
    * The discriminated union ensures type-safe routing.
    */
   async handleWebhook(payload: FlutterwaveWebhookPayload): Promise<void> {
-    this.logger.log("Processing Flutterwave webhook", { event: payload.event });
+    this.logger.info({ event: payload.event }, "Processing Flutterwave webhook");
 
     switch (payload.event) {
       case "charge.completed":
@@ -45,9 +47,12 @@ export class PaymentWebhookService {
         break;
 
       default:
-        this.logger.warn("Received unknown webhook event", {
-          event: (payload as { event: string }).event,
-        });
+        this.logger.warn(
+          {
+            event: (payload as { event: string }).event,
+          },
+          "Received unknown webhook event",
+        );
     }
   }
 }

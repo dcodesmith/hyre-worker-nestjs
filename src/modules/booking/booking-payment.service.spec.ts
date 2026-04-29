@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PaymentIntentFailedException } from "./booking.error";
@@ -21,7 +22,9 @@ describe("BookingPaymentService", () => {
         BookingPaymentService,
         { provide: FlutterwaveService, useValue: flutterwaveService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingPaymentService>(BookingPaymentService);
     const result = await service.createPaymentIntent(
@@ -49,7 +52,9 @@ describe("BookingPaymentService", () => {
         BookingPaymentService,
         { provide: FlutterwaveService, useValue: flutterwaveService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingPaymentService>(BookingPaymentService);
 
@@ -73,7 +78,9 @@ describe("BookingPaymentService", () => {
         BookingPaymentService,
         { provide: FlutterwaveService, useValue: flutterwaveService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingPaymentService>(BookingPaymentService);
 

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarSearchService } from "../car/car-search.service";
 import type { CarSearchResponseDto, SearchCarDto } from "../car/dto/car-search.dto";
 import { RatesService } from "../rates/rates.service";
@@ -81,7 +82,9 @@ describe("BookingAgentSearchService", () => {
           useValue: ratesService,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(BookingAgentSearchService);
   });

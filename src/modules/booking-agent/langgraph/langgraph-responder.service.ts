@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
 import { addHours, format } from "date-fns";
+import { PinoLogger } from "nestjs-pino";
 import {
   getDefaultPickupTime,
   normalizeBookingTimeWindow,
@@ -25,7 +26,6 @@ import { buildResponderSystemPrompt, buildResponderUserContext } from "./prompts
 
 @Injectable()
 export class LangGraphResponderService {
-  private readonly logger = new Logger(LangGraphResponderService.name);
   private static readonly MAX_MESSAGE_HISTORY = 6;
   private static readonly MAX_CONTEXT_FIELD_CHARS = 300;
   private static readonly MAX_DRAFT_CONTEXT_CHARS = 600;
@@ -33,7 +33,10 @@ export class LangGraphResponderService {
 
   constructor(
     @Inject(LANGGRAPH_ANTHROPIC_CLIENT) private readonly claude: LangGraphAnthropicClient,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(LangGraphResponderService.name);
+  }
 
   async generateResponse(state: BookingAgentState): Promise<AgentResponse> {
     const deterministicResponse = this.getDeterministicResponse(state);
@@ -51,21 +54,21 @@ export class LangGraphResponderService {
         maxOptionContextItems: LangGraphResponderService.MAX_OPTION_CONTEXT_ITEMS,
       });
 
-      this.logger.log("Responder generating response", {
-        conversationId,
-        stage,
-        availableOptionsCount: availableOptions.length,
-        availableOptionsList: availableOptions.map(
-          (o) => `${o.make} ${o.model} - ₦${o.estimatedTotalInclVat}`,
-        ),
-        messageCount: messages.length,
-        userContextLength: userContext.length,
-      });
+      this.logger.info(
+        {
+          conversationId,
+          stage,
+          availableOptionsCount: availableOptions.length,
+          availableOptionsList: availableOptions.map(
+            (o) => `${o.make} ${o.model} - ₦${o.estimatedTotalInclVat}`,
+          ),
+          messageCount: messages.length,
+          userContextLength: userContext.length,
+        },
+        "Responder generating response",
+      );
 
-      this.logger.debug("Responder full user context", {
-        conversationId,
-        userContext,
-      });
+      this.logger.debug({ conversationId, userContext }, "Responder user context diagnostics");
 
       const response = await this.claude.invoke([
         { role: "system", content: systemPrompt },
@@ -89,12 +92,15 @@ export class LangGraphResponderService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Response generation failed: ${errorMessage}`, errorStack);
-      this.logger.debug("Response generation error details", {
-        conversationId,
-        stage,
-        errorType: error instanceof Error ? error.constructor.name : typeof error,
-      });
+      this.logger.error(
+        {
+          conversationId,
+          error: errorMessage,
+          stack: errorStack,
+        },
+        "Response generation failed",
+      );
+
       throw new LangGraphResponseFailedException(
         conversationId,
         error instanceof Error ? error.message : String(error),

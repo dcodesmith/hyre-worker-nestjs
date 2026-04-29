@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   createMockAxiosInstance,
   createMockHttpClientService,
@@ -29,7 +30,9 @@ describe("GooglePlacesService", () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: HttpClientService, useValue: mockHttpClientService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     return module.get<GooglePlacesService>(GooglePlacesService);
   };

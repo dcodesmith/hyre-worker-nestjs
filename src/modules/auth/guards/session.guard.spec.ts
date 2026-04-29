@@ -1,6 +1,7 @@
 import { ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   AuthErrorCode,
   AuthServiceUnavailableException,
@@ -65,7 +66,9 @@ describe("SessionGuard", () => {
           }),
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     guard = module.get<SessionGuard>(SessionGuard);
   };

@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { RatesService } from "./rates.service";
 
@@ -54,7 +55,9 @@ describe("RatesService", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [RatesService, { provide: DatabaseService, useValue: databaseService }],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<RatesService>(RatesService);
 

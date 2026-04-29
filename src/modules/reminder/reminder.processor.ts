@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
+import { Inject } from "@nestjs/common";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -11,31 +12,40 @@ import { ReminderService } from "./reminder.service";
 
 @Processor(REMINDERS_QUEUE)
 export class ReminderProcessor extends WorkerHost {
-  private readonly logger = new Logger(ReminderProcessor.name);
-
-  constructor(private readonly reminderService: ReminderService) {
+  constructor(
+    private readonly reminderService: ReminderService,
+    @Inject(PinoLogger) private readonly logger: PinoLogger,
+  ) {
     super();
+    this.logger.setContext(ReminderProcessor.name);
   }
 
-  async process(job: Job<ReminderJobData, any, string>) {
-    this.logger.log(`Processing reminder job: ${job.name}`, job.data);
+  async process(job: Job<ReminderJobData, { success: boolean; result?: string }, string>) {
+    this.logger.info({ jobName: job.name, jobData: job.data }, "Processing reminder job");
 
     try {
       let result: string | undefined;
 
       if (job.name === BOOKING_LEG_START_REMINDER) {
         result = await this.reminderService.sendBookingStartReminderEmails();
-        this.logger.log("Booking start reminders processed:", result);
+        this.logger.info({ result }, "Booking start reminders processed");
       } else if (job.name === BOOKING_LEG_END_REMINDER) {
         result = await this.reminderService.sendBookingEndReminderEmails();
-        this.logger.log("Booking end reminders processed:", result);
+        this.logger.info({ result }, "Booking end reminders processed");
       } else {
         throw new Error(`Unknown reminder job type: ${job.name}`);
       }
 
       return { success: true, result };
     } catch (error) {
-      this.logger.error(`Failed to process ${job.name} job:`, error);
+      this.logger.error(
+        {
+          jobName: job.name,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to process reminder job",
+      );
       throw error;
     }
   }
@@ -43,31 +53,39 @@ export class ReminderProcessor extends WorkerHost {
   @OnWorkerEvent("completed")
   onCompleted(job: Job<ReminderJobData>) {
     const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
-    this.logger.log(`Job completed: ${job.name} [${job.id}] - Duration: ${duration}ms`);
+    this.logger.info({ jobName: job.name, jobId: job.id, durationMs: duration }, "Job completed");
   }
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<ReminderJobData>, error: Error) {
-    this.logger.error(`Job failed: ${job.name} [${job.id}]`, {
-      error: error.message,
-      stack: error.stack,
-      attempts: job.attemptsMade,
-      maxAttempts: job.opts.attempts,
-    });
+    this.logger.error(
+      {
+        jobName: job.name,
+        jobId: job.id,
+        error: error.message,
+        stack: error.stack,
+        attempts: job.attemptsMade,
+        maxAttempts: job.opts.attempts,
+      },
+      "Job failed",
+    );
   }
 
   @OnWorkerEvent("active")
   onActive(job: Job<ReminderJobData>) {
-    this.logger.log(`Job started: ${job.name} [${job.id}] - Attempt ${job.attemptsMade + 1}`);
+    this.logger.info(
+      { jobName: job.name, jobId: job.id, attempt: job.attemptsMade + 1 },
+      "Job started",
+    );
   }
 
   @OnWorkerEvent("stalled")
   onStalled(jobId: string) {
-    this.logger.warn(`Job stalled: ${jobId}`);
+    this.logger.warn({ jobId }, "Job stalled");
   }
 
   @OnWorkerEvent("progress")
   onProgress(job: Job<ReminderJobData>, progress: number | object) {
-    this.logger.debug(`Job progress: ${job.name} [${job.id}]`, progress);
+    this.logger.debug({ jobName: job.name, jobId: job.id, progress }, "Job progress");
   }
 }

@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
@@ -12,7 +13,6 @@ describe("PaymentProcessor", () => {
   let processor: PaymentProcessor;
   let databaseService: DatabaseService;
   let paymentService: PaymentService;
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -32,7 +32,9 @@ describe("PaymentProcessor", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = module.get<PaymentProcessor>(PaymentProcessor);
     databaseService = module.get<DatabaseService>(DatabaseService);

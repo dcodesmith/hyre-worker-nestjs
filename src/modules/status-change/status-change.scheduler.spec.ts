@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,
@@ -27,7 +28,9 @@ describe("StatusChangeScheduler", () => {
           useValue: mockQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     scheduler = module.get<StatusChangeScheduler>(StatusChangeScheduler);
     statusUpdateQueue = module.get<Queue<StatusUpdateJobData>>(getQueueToken(STATUS_UPDATES_QUEUE));

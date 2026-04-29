@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   createAxiosErrorWithResponse,
   createMockAxiosInstance,
@@ -38,7 +39,9 @@ describe("FlutterwaveService", () => {
         },
         { provide: HttpClientService, useValue: mockHttpClientService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<FlutterwaveService>(FlutterwaveService);
   });

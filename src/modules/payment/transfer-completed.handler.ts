@@ -1,22 +1,29 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PayoutTransactionStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
 
 @Injectable()
 export class TransferCompletedHandler {
-  private readonly logger = new Logger(TransferCompletedHandler.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(TransferCompletedHandler.name);
+  }
 
   async handle(data: FlutterwaveTransferWebhookData): Promise<void> {
     const { reference, status, id: transferId } = data;
 
-    this.logger.log("Processing transfer.completed webhook", {
-      reference,
-      transferId,
-      status,
-    });
+    this.logger.info(
+      {
+        reference,
+        transferId,
+        status,
+      },
+      "Processing transfer.completed webhook",
+    );
 
     if (!reference) {
       this.logger.warn(
@@ -30,7 +37,7 @@ export class TransferCompletedHandler {
     });
 
     if (!payoutTransaction) {
-      this.logger.warn("Payout transaction not found for webhook", { reference });
+      this.logger.warn({ reference }, "Payout transaction not found for webhook");
       return;
     }
 
@@ -38,20 +45,23 @@ export class TransferCompletedHandler {
       payoutTransaction.status === PayoutTransactionStatus.PAID_OUT ||
       payoutTransaction.status === PayoutTransactionStatus.FAILED
     ) {
-      this.logger.log("Payout transaction already finalized, skipping", {
-        reference,
-        currentStatus: payoutTransaction.status,
-      });
+      this.logger.info(
+        {
+          reference,
+          currentStatus: payoutTransaction.status,
+        },
+        "Payout transaction already finalized, skipping",
+      );
       return;
     }
 
     const normalizedStatus = typeof status === "string" ? status.trim().toUpperCase() : "";
     if (!normalizedStatus) {
       this.logger.warn(
-        "Missing or invalid status in transfer.completed webhook, marking as failed",
         {
           reference,
         },
+        "Missing or invalid status in transfer.completed webhook, marking as failed",
       );
     }
     const newStatus =
@@ -67,10 +77,13 @@ export class TransferCompletedHandler {
       },
     });
 
-    this.logger.log("Payout transaction status updated from webhook", {
-      reference,
-      payoutTransactionId: payoutTransaction.id,
-      newStatus,
-    });
+    this.logger.info(
+      {
+        reference,
+        payoutTransactionId: payoutTransaction.id,
+        newStatus,
+      },
+      "Payout transaction status updated from webhook",
+    );
   }
 }

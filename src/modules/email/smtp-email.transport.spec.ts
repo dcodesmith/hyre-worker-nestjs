@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { EmailDeliveryFailedException } from "./email.error";
 import { SmtpEmailTransport } from "./smtp-email.transport";
 
@@ -45,7 +46,9 @@ describe("SmtpEmailTransport", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     transport = module.get<SmtpEmailTransport>(SmtpEmailTransport);
   });

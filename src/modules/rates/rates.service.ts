@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { buildActiveWindowWhere } from "./rates.helper";
 import type { PlatformRates } from "./rates.interface";
@@ -11,8 +12,6 @@ import type { PlatformRates } from "./rates.interface";
  */
 @Injectable()
 export class RatesService {
-  private readonly logger = new Logger(RatesService.name);
-
   private readonly cache: {
     data: PlatformRates | null;
     timestamp: number;
@@ -23,7 +22,12 @@ export class RatesService {
 
   private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(RatesService.name);
+  }
 
   /**
    * Get current platform rates for booking/extension calculations.
@@ -104,12 +108,15 @@ export class RatesService {
     this.cache.data = result;
     this.cache.timestamp = now;
 
-    this.logger.debug("Rates fetched and cached", {
-      platformFee: platformFeeRate.ratePercent.toString(),
-      fleetOwnerCommission: fleetOwnerCommissionRate.ratePercent.toString(),
-      vat: vatRate.ratePercent.toString(),
-      securityDetail: securityDetailAddonRate.rateAmount.toString(),
-    });
+    this.logger.debug(
+      {
+        platformFee: platformFeeRate.ratePercent.toString(),
+        fleetOwnerCommission: fleetOwnerCommissionRate.ratePercent.toString(),
+        vat: vatRate.ratePercent.toString(),
+        securityDetail: securityDetailAddonRate.rateAmount.toString(),
+      },
+      "Rates fetched and cached",
+    );
 
     return result;
   }

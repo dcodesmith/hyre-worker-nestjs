@@ -4,6 +4,7 @@ import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
 import { normaliseBookingLegDetails } from "src/shared/helper";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
   createBooking,
@@ -46,7 +47,9 @@ describe("NotificationService", () => {
           useValue: mockQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<NotificationService>(NotificationService);
   });

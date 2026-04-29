@@ -1,8 +1,9 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { BookingStatus, type Payment, PaymentStatus, Status } from "@prisma/client";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { normaliseBookingDetails } from "../../shared/helper";
@@ -30,15 +31,16 @@ import {
  */
 @Injectable()
 export class BookingConfirmationService {
-  private readonly logger = new Logger(BookingConfirmationService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly eventEmitter: EventEmitter2,
     private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
+    private readonly logger: PinoLogger,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(BookingConfirmationService.name);
+  }
 
   /**
    * Confirm a booking after successful payment verification.
@@ -53,10 +55,13 @@ export class BookingConfirmationService {
     const { bookingId, txRef } = payment;
 
     if (!bookingId) {
-      this.logger.warn("Payment has no associated booking, skipping confirmation", {
-        paymentId: payment.id,
-        txRef,
-      });
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef,
+        },
+        "Payment has no associated booking, skipping confirmation",
+      );
       return false;
     }
 
@@ -72,11 +77,14 @@ export class BookingConfirmationService {
 
     // If no records were updated, booking doesn't exist or is not in PENDING status
     if (updateResult.count === 0) {
-      this.logger.log("Booking not found or not in PENDING status, skipping confirmation", {
-        bookingId,
-        paymentId: payment.id,
-        txRef,
-      });
+      this.logger.info(
+        {
+          bookingId,
+          paymentId: payment.id,
+          txRef,
+        },
+        "Booking not found or not in PENDING status, skipping confirmation",
+      );
       return false;
     }
 
@@ -93,20 +101,26 @@ export class BookingConfirmationService {
 
     if (!updatedBooking) {
       // This shouldn't happen since we just updated the booking, but handle gracefully
-      this.logger.error("Booking not found after successful update", {
-        bookingId,
-        paymentId: payment.id,
-        txRef,
-      });
+      this.logger.error(
+        {
+          bookingId,
+          paymentId: payment.id,
+          txRef,
+        },
+        "Booking not found after successful update",
+      );
       return false;
     }
 
-    this.logger.log("Booking confirmed after payment", {
-      bookingId,
-      newStatus: BookingStatus.CONFIRMED,
-      paymentId: payment.id,
-      txRef,
-    });
+    this.logger.info(
+      {
+        bookingId,
+        newStatus: BookingStatus.CONFIRMED,
+        paymentId: payment.id,
+        txRef,
+      },
+      "Booking confirmed after payment",
+    );
 
     // Update car status to BOOKED to prevent double-booking
     await this.updateCarStatusToBooked(updatedBooking.carId, bookingId);
@@ -129,19 +143,25 @@ export class BookingConfirmationService {
         data: { status: Status.BOOKED },
       });
 
-      this.logger.log("Car status updated to BOOKED", {
-        carId,
-        bookingId,
-        newStatus: Status.BOOKED,
-      });
+      this.logger.info(
+        {
+          carId,
+          bookingId,
+          newStatus: Status.BOOKED,
+        },
+        "Car status updated to BOOKED",
+      );
     } catch (error) {
       // Log but don't throw - car status update failure shouldn't fail the confirmation
       // The booking is already confirmed, and the car can be manually updated if needed
-      this.logger.error("Failed to update car status to BOOKED", {
-        carId,
-        bookingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          bookingId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to update car status to BOOKED",
+      );
     }
   }
 
@@ -160,10 +180,13 @@ export class BookingConfirmationService {
       await this.queueFleetOwnerNotification(booking, bookingDetails);
     } catch (error) {
       // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error("Failed to queue booking notifications", {
-        bookingId: booking.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue booking notifications",
+      );
     }
   }
 
@@ -177,9 +200,12 @@ export class BookingConfirmationService {
     try {
       const channels = deriveNotificationChannels(bookingDetails);
       if (channels.length === 0) {
-        this.logger.warn("No customer delivery channel available for booking confirmation", {
-          bookingId,
-        });
+        this.logger.warn(
+          {
+            bookingId,
+          },
+          "No customer delivery channel available for booking confirmation",
+        );
         return;
       }
 
@@ -203,16 +229,22 @@ export class BookingConfirmationService {
 
       await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
 
-      this.logger.log("Queued booking confirmation notification", {
-        bookingId,
-        notificationId: jobData.id,
-      });
+      this.logger.info(
+        {
+          bookingId,
+          notificationId: jobData.id,
+        },
+        "Queued booking confirmation notification",
+      );
     } catch (error) {
       // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error("Failed to queue booking confirmation notification", {
-        bookingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue booking confirmation notification",
+      );
     }
   }
 
@@ -229,10 +261,13 @@ export class BookingConfirmationService {
 
     // Skip if fleet owner has no contact info
     if (!ownerEmail && !ownerPhone) {
-      this.logger.warn("Fleet owner has no contact info, skipping notification", {
-        bookingId: booking.id,
-        ownerId: booking.car?.owner?.id,
-      });
+      this.logger.warn(
+        {
+          bookingId: booking.id,
+          ownerId: booking.car?.owner?.id,
+        },
+        "Fleet owner has no contact info, skipping notification",
+      );
       return;
     }
 
@@ -260,18 +295,24 @@ export class BookingConfirmationService {
 
       await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
 
-      this.logger.log("Queued fleet owner new booking notification", {
-        bookingId: booking.id,
-        notificationId: jobData.id,
-        ownerId: booking.car?.owner?.id,
-      });
+      this.logger.info(
+        {
+          bookingId: booking.id,
+          notificationId: jobData.id,
+          ownerId: booking.car?.owner?.id,
+        },
+        "Queued fleet owner new booking notification",
+      );
     } catch (error) {
       // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error("Failed to queue fleet owner notification", {
-        bookingId: booking.id,
-        ownerId: booking.car?.owner?.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          ownerId: booking.car?.owner?.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue fleet owner notification",
+      );
     }
   }
 
@@ -292,9 +333,12 @@ export class BookingConfirmationService {
       return earliestLegStartTime;
     }, null);
     if (!activationAt) {
-      this.logger.warn("Airport booking has no leg start time; skipping activation schedule", {
-        bookingId: booking.id,
-      });
+      this.logger.warn(
+        {
+          bookingId: booking.id,
+        },
+        "Airport booking has no leg start time; skipping activation schedule",
+      );
       return;
     }
 
@@ -307,10 +351,13 @@ export class BookingConfirmationService {
         activationAt: activationAt.toISOString(),
       });
     } catch (error) {
-      this.logger.error("Failed to emit booking confirmed event", {
-        bookingId: booking.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to emit booking confirmed event",
+      );
     }
   }
 }

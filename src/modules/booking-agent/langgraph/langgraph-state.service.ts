@@ -1,5 +1,6 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../../config/env.config";
 import {
   buildLangGraphStateKey,
@@ -17,7 +18,6 @@ import { LANGGRAPH_REDIS_CLIENT } from "./langgraph.tokens";
 
 @Injectable()
 export class LangGraphStateService {
-  private readonly logger = new Logger(LangGraphStateService.name);
   private readonly historyLimit: number;
   private readonly maxPersistAttempts = 3;
   private readonly persistRetryBaseDelayMs = 100;
@@ -25,7 +25,9 @@ export class LangGraphStateService {
   constructor(
     @Inject(LANGGRAPH_REDIS_CLIENT) private readonly redis: LangGraphRedisClient,
     private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
   ) {
+    this.logger.setContext(LangGraphStateService.name);
     this.historyLimit =
       this.configService.get("LANGGRAPH_HISTORY_LIMIT", { infer: true }) ??
       LANGGRAPH_DEFAULT_HISTORY_LIMIT;
@@ -58,10 +60,13 @@ export class LangGraphStateService {
         locationValidation,
       };
     } catch (error) {
-      this.logger.error("Failed to load LangGraph state", {
-        conversationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to load LangGraph state",
+      );
       throw new LangGraphStateLoadFailedException(
         conversationId,
         error instanceof Error ? error.message : String(error),
@@ -94,11 +99,14 @@ export class LangGraphStateService {
         await this.redis.setex(key, LANGGRAPH_STATE_TTL_SECONDS, JSON.stringify(persisted));
         return;
       } catch (error) {
-        this.logger.warn("Failed to persist LangGraph state", {
-          conversationId,
-          attempt,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.logger.warn(
+          {
+            conversationId,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to persist LangGraph state",
+        );
 
         if (attempt === this.maxPersistAttempts) {
           throw new LangGraphStatePersistFailedException(conversationId, attempt);
@@ -114,10 +122,13 @@ export class LangGraphStateService {
       const key = buildLangGraphStateKey(conversationId);
       await this.redis.del(key);
     } catch (error) {
-      this.logger.warn("Failed to clear LangGraph state", {
-        conversationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to clear LangGraph state",
+      );
     }
   }
 

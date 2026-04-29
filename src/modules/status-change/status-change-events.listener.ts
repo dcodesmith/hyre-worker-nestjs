@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
+import { PinoLogger } from "nestjs-pino";
 import {
   BOOKING_CONFIRMED_EVENT,
   type BookingConfirmedEventPayload,
@@ -10,9 +11,12 @@ import { StatusChangeSchedulingService } from "./status-change-scheduling.servic
 
 @Injectable()
 export class StatusChangeEventsListener {
-  private readonly logger = new Logger(StatusChangeEventsListener.name);
-
-  constructor(private readonly schedulingService: StatusChangeSchedulingService) {}
+  constructor(
+    private readonly schedulingService: StatusChangeSchedulingService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(StatusChangeEventsListener.name);
+  }
 
   @OnEvent(BOOKING_CONFIRMED_EVENT, { suppressErrors: true })
   async onBookingConfirmed(payload: BookingConfirmedEventPayload): Promise<void> {
@@ -22,7 +26,10 @@ export class StatusChangeEventsListener {
 
     const activationAt = new Date(payload.activationAt);
     if (Number.isNaN(activationAt.getTime())) {
-      this.logger.warn("Invalid airport activation timestamp in booking.confirmed event", payload);
+      this.logger.warn(
+        { payload },
+        "Invalid airport activation timestamp in booking.confirmed event",
+      );
       return;
     }
 
@@ -34,8 +41,8 @@ export class StatusChangeEventsListener {
     const activationAt = new Date(payload.activationAt);
     if (Number.isNaN(activationAt.getTime())) {
       this.logger.warn(
+        { payload },
         "Invalid airport activation timestamp in flight.arrival-updated event",
-        payload,
       );
       return;
     }

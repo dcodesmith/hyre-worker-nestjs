@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { buildLangGraphStateKey } from "./langgraph.const";
 import type { BookingAgentState } from "./langgraph.interface";
 import { LANGGRAPH_REDIS_CLIENT } from "./langgraph.tokens";
@@ -44,7 +45,9 @@ describe("LangGraphStateService", () => {
           useValue: configServiceMock,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(LangGraphStateService);
   });

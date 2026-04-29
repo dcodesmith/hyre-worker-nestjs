@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import type {
   FlutterwaveChargeData,
   FlutterwaveRefundWebhookData,
@@ -15,7 +16,6 @@ describe("PaymentWebhookService", () => {
   const chargeCompletedHandler = { handle: vi.fn() };
   const transferCompletedHandler = { handle: vi.fn() };
   const refundCompletedHandler = { handle: vi.fn() };
-
   const chargeData: FlutterwaveChargeData = {
     id: 12345,
     tx_ref: "tx-ref-123",
@@ -87,7 +87,9 @@ describe("PaymentWebhookService", () => {
         { provide: TransferCompletedHandler, useValue: transferCompletedHandler },
         { provide: RefundCompletedHandler, useValue: refundCompletedHandler },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<PaymentWebhookService>(PaymentWebhookService);
     vi.clearAllMocks();

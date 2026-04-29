@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import { calculateLegCount } from "../booking/booking.helper";
 import { CarSearchService } from "../car/car-search.service";
@@ -17,7 +18,6 @@ import { VehicleSearchQueryBuilder } from "./vehicle-search-query.builder";
 
 @Injectable()
 export class BookingAgentSearchService {
-  private readonly logger = new Logger(BookingAgentSearchService.name);
   private readonly maxExactMatches = 3;
   private readonly maxAlternatives = 3;
   private readonly maxSearchCandidates = 10;
@@ -31,7 +31,10 @@ export class BookingAgentSearchService {
   constructor(
     private readonly carSearchService: CarSearchService,
     private readonly ratesService: RatesService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingAgentSearchService.name);
+  }
 
   async searchVehiclesFromExtracted(
     extracted: ExtractedAiSearchParams,
@@ -40,9 +43,12 @@ export class BookingAgentSearchService {
   ): Promise<VehicleSearchToolResult> {
     const precondition = this.preconditionPolicy.resolve(extracted);
     if (precondition) {
-      this.logger.debug("Returning search precondition prompt", {
-        missingField: precondition.missingField,
-      });
+      this.logger.debug(
+        {
+          missingField: precondition.missingField,
+        },
+        "Returning search precondition prompt",
+      );
       return {
         interpretation,
         extracted,
@@ -82,10 +88,13 @@ export class BookingAgentSearchService {
           return [result.value];
         }
         const operation = `car-search:alternative:${index + 1}`;
-        this.logger.warn("Alternative car search query failed", {
-          operation,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        });
+        this.logger.warn(
+          {
+            operation,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          },
+          "Alternative car search query failed",
+        );
         return [];
       });
       const alternativeCandidates = this.excludeOptionId(
@@ -152,9 +161,12 @@ export class BookingAgentSearchService {
       const rates = await this.ratesService.getRates();
       return rates.vatRatePercent.toNumber();
     } catch (error) {
-      this.logger.warn("Failed to resolve VAT rate for search estimate", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to resolve VAT rate for search estimate",
+      );
       return 0;
     }
   }

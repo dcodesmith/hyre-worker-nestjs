@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import {
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,
@@ -14,16 +15,17 @@ import { StatusUpdateJobData } from "./status-change.interface";
 
 @Injectable()
 export class StatusChangeScheduler {
-  private readonly logger = new Logger(StatusChangeScheduler.name);
-
   constructor(
     @InjectQueue(STATUS_UPDATES_QUEUE)
     private readonly statusUpdateQueue: Queue<StatusUpdateJobData>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(StatusChangeScheduler.name);
+  }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleConfirmedToActiveUpdates() {
-    this.logger.log("Scheduling confirmed to active status updates...");
+    this.logger.info("Scheduling confirmed to active status updates");
 
     try {
       await this.statusUpdateQueue.add(CONFIRMED_TO_ACTIVE, {
@@ -35,15 +37,15 @@ export class StatusChangeScheduler {
         error instanceof Error ? error.message : String(error),
       );
       this.logger.error(
+        { error: schedulingError.message },
         "Failed to schedule confirmed to active status updates",
-        schedulingError.message,
       );
     }
   }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleActiveToCompletedUpdates() {
-    this.logger.log("Scheduling active to completed status updates...");
+    this.logger.info("Scheduling active to completed status updates");
 
     try {
       await this.statusUpdateQueue.add(ACTIVE_TO_COMPLETED, {
@@ -55,8 +57,8 @@ export class StatusChangeScheduler {
         error instanceof Error ? error.message : String(error),
       );
       this.logger.error(
+        { error: schedulingError.message },
         "Failed to schedule active to completed status updates",
-        schedulingError.message,
       );
     }
   }

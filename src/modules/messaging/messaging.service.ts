@@ -1,15 +1,21 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import type { TwilioWebhookPayload } from "./messaging.interface";
 
 @Injectable()
 export class MessagingService {
-  private readonly logger = new Logger(MessagingService.name);
+  constructor(private readonly logger: PinoLogger) {
+    this.logger.setContext(MessagingService.name);
+  }
 
   async handleTwilioStatusCallback(payload: TwilioWebhookPayload): Promise<void> {
-    this.logger.log("Processed Twilio status callback", {
-      messageSid: payload.MessageSid ?? null,
-      messageStatus: payload.MessageStatus ?? null,
-      hasErrorCode: Boolean(payload.ErrorCode),
-    });
+    this.logger.info(
+      {
+        messageSid: payload.MessageSid ?? null,
+        messageStatus: payload.MessageStatus ?? null,
+        hasErrorCode: Boolean(payload.ErrorCode),
+      },
+      "Processed Twilio status callback",
+    );
   }
 }
