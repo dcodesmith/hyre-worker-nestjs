@@ -67,10 +67,7 @@ export class LangGraphStateService {
         },
         "Failed to load LangGraph state",
       );
-      throw new LangGraphStateLoadFailedException(
-        conversationId,
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new LangGraphStateLoadFailedException(conversationId);
     }
   }
 

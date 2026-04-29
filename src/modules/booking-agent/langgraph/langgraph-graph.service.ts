@@ -88,11 +88,7 @@ export class LangGraphGraphService {
         },
         "Graph execution failed",
       );
-      throw new LangGraphExecutionFailedException(
-        conversationId,
-        "invoke",
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new LangGraphExecutionFailedException(conversationId, "invoke");
     }
   }
 

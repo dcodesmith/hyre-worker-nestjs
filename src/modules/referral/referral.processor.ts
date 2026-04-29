@@ -30,7 +30,8 @@ export class ReferralProcessor extends WorkerHost {
           job.data.bookingId,
         );
         this.logger.info(
-          `Referral completion processed successfully for booking ${job.data.bookingId}`,
+          { jobId: job.id, bookingId: job.data.bookingId },
+          "Referral completion processed successfully",
         );
         return { success: true };
       }
