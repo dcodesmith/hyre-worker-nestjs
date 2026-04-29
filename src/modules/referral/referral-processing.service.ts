@@ -1,20 +1,22 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingReferralStatus, Prisma, ReferralRewardStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { REFERRAL_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 
 @Injectable()
 export class ReferralProcessingService {
-  private readonly logger = new Logger(ReferralProcessingService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
     @InjectQueue(REFERRAL_QUEUE)
     private readonly referralQueue: Queue<ReferralJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(ReferralProcessingService.name);
+  }
 
   /**
    * Queue a referral completion job for async processing
@@ -26,12 +28,15 @@ export class ReferralProcessingService {
         timestamp: new Date().toISOString(),
       });
 
-      this.logger.log(`Queued referral processing for booking ${bookingId}`);
+      this.logger.info(`Queued referral processing for booking ${bookingId}`);
     } catch (error) {
-      this.logger.error("Failed to queue referral processing", {
-        bookingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue referral processing",
+      );
       throw error;
     }
   }
@@ -58,19 +63,25 @@ export class ReferralProcessingService {
       | "COMPLETED";
 
     if (REFERRAL_RELEASE_CONDITION !== "PAID" && REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
-      this.logger.warn("Invalid REFERRAL_RELEASE_CONDITION value", {
-        value: REFERRAL_RELEASE_CONDITION,
-      });
+      this.logger.warn(
+        {
+          value: REFERRAL_RELEASE_CONDITION,
+        },
+        "Invalid REFERRAL_RELEASE_CONDITION value",
+      );
       return;
     }
 
     const REFERRAL_EXPIRY_DAYS = Number(configMap.REFERRAL_EXPIRY_DAYS ?? 0);
 
     if (!REFERRAL_ENABLED || REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
-      this.logger.log("Skipping referral completion due to config", {
-        REFERRAL_ENABLED,
-        REFERRAL_RELEASE_CONDITION,
-      });
+      this.logger.info(
+        {
+          REFERRAL_ENABLED,
+          REFERRAL_RELEASE_CONDITION,
+        },
+        "Skipping referral completion due to config",
+      );
       return;
     }
 
@@ -89,13 +100,16 @@ export class ReferralProcessingService {
       !booking?.userId ||
       !booking?.referralReferrerUserId
     ) {
-      this.logger.log("Skipping referral completion: booking not eligible", {
-        bookingId,
-        hasBooking: !!booking,
-        referralStatus: booking?.referralStatus,
-        hasUser: !!booking?.userId,
-        hasReferrer: !!booking?.referralReferrerUserId,
-      });
+      this.logger.info(
+        {
+          bookingId,
+          hasBooking: !!booking,
+          referralStatus: booking?.referralStatus,
+          hasUser: !!booking?.userId,
+          hasReferrer: !!booking?.referralReferrerUserId,
+        },
+        "Skipping referral completion: booking not eligible",
+      );
       return;
     }
 
@@ -108,10 +122,13 @@ export class ReferralProcessingService {
         });
 
         if (alreadyReleased) {
-          this.logger.warn("Referral reward already released for booking", {
-            bookingId: booking.id,
-            rewardId: alreadyReleased.id,
-          });
+          this.logger.warn(
+            {
+              bookingId: booking.id,
+              rewardId: alreadyReleased.id,
+            },
+            "Referral reward already released for booking",
+          );
           return;
         }
 
@@ -127,12 +144,15 @@ export class ReferralProcessingService {
           );
 
           if (daysSinceSignup > REFERRAL_EXPIRY_DAYS) {
-            this.logger.warn("Referral expired before completion; not releasing reward", {
-              bookingId: booking.id,
-              userId: booking.userId,
-              daysSinceSignup,
-              expiryDays: REFERRAL_EXPIRY_DAYS,
-            });
+            this.logger.warn(
+              {
+                bookingId: booking.id,
+                userId: booking.userId,
+                daysSinceSignup,
+                expiryDays: REFERRAL_EXPIRY_DAYS,
+              },
+              "Referral expired before completion; not releasing reward",
+            );
             return;
           }
         }
@@ -147,10 +167,13 @@ export class ReferralProcessingService {
             data: { referralDiscountUsed: true },
           });
 
-          this.logger.log("Referral discount marked as used on completion (fallback)", {
-            bookingId: booking.id,
-            userId: booking.userId,
-          });
+          this.logger.info(
+            {
+              bookingId: booking.id,
+              userId: booking.userId,
+            },
+            "Referral discount marked as used on completion (fallback)",
+          );
         }
 
         // Release pending reward
@@ -159,9 +182,12 @@ export class ReferralProcessingService {
         });
 
         if (!pendingReward) {
-          this.logger.log("No pending referral reward found for booking", {
-            bookingId: booking.id,
-          });
+          this.logger.info(
+            {
+              bookingId: booking.id,
+            },
+            "No pending referral reward found for booking",
+          );
           return;
         }
 
@@ -199,18 +225,24 @@ export class ReferralProcessingService {
           },
         });
 
-        this.logger.log("Referral reward released on completion", {
-          bookingId: booking.id,
-          rewardId: pendingReward.id,
-          rewardAmount: pendingReward.amount,
-          referrerId: pendingReward.referrerUserId,
-        });
+        this.logger.info(
+          {
+            bookingId: booking.id,
+            rewardId: pendingReward.id,
+            rewardAmount: pendingReward.amount,
+            referrerId: pendingReward.referrerUserId,
+          },
+          "Referral reward released on completion",
+        );
       });
     } catch (error) {
-      this.logger.error("Failed to process referral completion", {
-        bookingId: booking.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to process referral completion",
+      );
       // Don't throw - allow graceful degradation
     }
   }

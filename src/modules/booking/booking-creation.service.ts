@@ -1,9 +1,10 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Booking } from "@prisma/client";
 import { Queue } from "bullmq";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
@@ -62,8 +63,6 @@ export type CreateBookingRequest = {
  */
 @Injectable()
 export class BookingCreationService {
-  private readonly logger = new Logger(BookingCreationService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly validationService: BookingValidationService,
@@ -74,9 +73,12 @@ export class BookingCreationService {
     private readonly eligibilityService: BookingEligibilityService,
     private readonly paymentService: BookingPaymentService,
     private readonly persistenceService: BookingPersistenceService,
+    private readonly logger: PinoLogger,
     @InjectQueue(FLIGHT_ALERTS_QUEUE)
     private readonly flightAlertQueue: Queue<FlightAlertJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(BookingCreationService.name);
+  }
 
   /**
    * Create a new booking.
@@ -95,14 +97,17 @@ export class BookingCreationService {
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
 
-    this.logger.log("Starting booking creation", {
-      carId: normalizedBooking.carId,
-      bookingType: normalizedBooking.bookingType,
-      startDate: normalizedBooking.startDate.toISOString(),
-      endDate: normalizedBooking.endDate.toISOString(),
-      isGuest: isGuestBooking(normalizedBooking),
-      userId: sessionUser?.id,
-    });
+    this.logger.info(
+      {
+        carId: normalizedBooking.carId,
+        bookingType: normalizedBooking.bookingType,
+        startDate: normalizedBooking.startDate.toISOString(),
+        endDate: normalizedBooking.endDate.toISOString(),
+        isGuest: isGuestBooking(normalizedBooking),
+        userId: sessionUser?.id,
+      },
+      "Starting booking creation",
+    );
 
     this.validationService.validateDates({
       startDate: normalizedBooking.startDate,
@@ -178,9 +183,12 @@ export class BookingCreationService {
       preliminaryReferralEligibility,
     });
 
-    this.logger.log("Booking created successfully", {
-      bookingId: result.bookingId,
-    });
+    this.logger.info(
+      {
+        bookingId: result.bookingId,
+      },
+      "Booking created successfully",
+    );
 
     return result;
   }
@@ -422,12 +430,15 @@ export class BookingCreationService {
           );
 
         if (referralEligibilityChanged) {
-          this.logger.warn("Referral eligibility changed during booking transaction", {
-            bookingReference,
-            userId: sessionUser?.id,
-            previousDiscountAmount: preliminaryReferralEligibility.discountAmount.toString(),
-            updatedDiscountAmount: verifiedReferralEligibility.discountAmount.toString(),
-          });
+          this.logger.warn(
+            {
+              bookingReference,
+              userId: sessionUser?.id,
+              previousDiscountAmount: preliminaryReferralEligibility.discountAmount.toString(),
+              updatedDiscountAmount: verifiedReferralEligibility.discountAmount.toString(),
+            },
+            "Referral eligibility changed during booking transaction",
+          );
           throw new BookingCreationFailedException(
             "Referral eligibility changed during booking creation. Please retry.",
           );
@@ -475,11 +486,14 @@ export class BookingCreationService {
         throw error;
       }
 
-      this.logger.error("Booking creation transaction failed", {
-        bookingReference,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          bookingReference,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Booking creation transaction failed",
+      );
 
       throw new BookingCreationFailedException();
     }
@@ -522,21 +536,28 @@ export class BookingCreationService {
 
   private async handlePaymentFailureCompensation(booking: Booking, originalError: unknown) {
     // Step 3: Compensation - keep booking in unpaid state if payment creation fails
-    this.logger.warn("Payment intent failed, keeping booking in UNPAID state", {
-      bookingId: booking.id,
-      bookingReference: booking.bookingReference,
-    });
+    this.logger.warn(
+      {
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+      },
+      "Payment intent failed, keeping booking in UNPAID state",
+    );
 
     try {
       await this.persistenceService.markBookingUnpaid(booking.id);
     } catch (markUnpaidError) {
-      this.logger.error("Failed to mark booking as UNPAID after payment failure", {
-        bookingId: booking.id,
-        bookingReference: booking.bookingReference,
-        error: markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
-        originalPaymentError:
-          originalError instanceof Error ? originalError.message : String(originalError),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+          error:
+            markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
+          originalPaymentError:
+            originalError instanceof Error ? originalError.message : String(originalError),
+        },
+        "Failed to mark booking as UNPAID after payment failure",
+      );
 
       throw new BookingCreationFailedException(
         "Payment failed and compensation failed to mark booking as UNPAID.",
@@ -555,12 +576,12 @@ export class BookingCreationService {
       });
     } catch (updateError) {
       this.logger.error(
-        "Payment created but booking update failed; manual reconciliation required",
         {
           bookingId,
           paymentIntentId,
           error: updateError instanceof Error ? updateError.message : String(updateError),
         },
+        "Payment created but booking update failed; manual reconciliation required",
       );
       throw new BookingPaymentSyncFailedException();
     }
@@ -590,16 +611,22 @@ export class BookingCreationService {
         jobId: `flight-alert-${flightRecordId}`,
       });
 
-      this.logger.log("Queued flight alert creation", {
-        flightId: flightRecordId,
-        flightNumber: flightData.flightNumber,
-      });
+      this.logger.info(
+        {
+          flightId: flightRecordId,
+          flightNumber: flightData.flightNumber,
+        },
+        "Queued flight alert creation",
+      );
     } catch (error) {
-      this.logger.error("Failed to queue flight alert creation", {
-        flightId: flightRecordId,
-        flightNumber: flightData.flightNumber,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          flightId: flightRecordId,
+          flightNumber: flightData.flightNumber,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue flight alert creation",
+      );
     }
   }
 }

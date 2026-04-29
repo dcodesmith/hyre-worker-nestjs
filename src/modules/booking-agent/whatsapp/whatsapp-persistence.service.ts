@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import {
   Prisma,
   WhatsAppLinkStatus,
   WhatsAppMessageKind,
   WhatsAppOutboxStatus,
 } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { DatabaseService } from "../../database/database.service";
 import { WHATSAPP_PROCESSING_LOCK_TTL_MS } from "../booking-agent.const";
@@ -38,9 +39,12 @@ export type InboundMessageContextRecord = Prisma.WhatsAppMessageGetPayload<{
 
 @Injectable()
 export class WhatsAppPersistenceService {
-  private readonly logger = new Logger(WhatsAppPersistenceService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(WhatsAppPersistenceService.name);
+  }
 
   async upsertConversationForInbound(input: {
     phoneE164: string;
@@ -334,7 +338,7 @@ export class WhatsAppPersistenceService {
     }
 
     if (message.direction !== "INBOUND") {
-      this.logger.warn("Non-inbound message was passed to inbound processor", { messageId });
+      this.logger.warn({ messageId }, "Non-inbound message was passed to inbound processor");
       return null;
     }
 

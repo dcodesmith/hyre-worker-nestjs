@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { MessagingController } from "./messaging.controller";
 import { MessagingService } from "./messaging.service";
 
@@ -30,7 +31,9 @@ describe("MessagingController", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<MessagingController>(MessagingController);
     messagingService = module.get<MessagingService>(MessagingService);

@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { TIMEZONE } from "../../config/constants";
 import { createActivePromotion } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
@@ -399,7 +400,9 @@ describe("PromotionService — DB-backed", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<PromotionService>(PromotionService);
   });

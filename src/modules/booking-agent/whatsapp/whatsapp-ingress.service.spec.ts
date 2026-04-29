@@ -1,6 +1,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import { WhatsAppIngressService } from "./whatsapp-ingress.service";
@@ -49,7 +50,9 @@ describe("WhatsAppIngressService", () => {
           useValue: whatsappAgentQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(WhatsAppIngressService);
   });

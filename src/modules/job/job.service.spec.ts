@@ -1,8 +1,8 @@
 import { getQueueToken } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   ACTIVE_TO_COMPLETED,
   BOOKING_LEG_END_REMINDER,
@@ -45,14 +45,13 @@ describe("JobService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<JobService>(JobService);
     reminderQueue = module.get<Queue>(getQueueToken(REMINDERS_QUEUE));
     statusUpdateQueue = module.get<Queue>(getQueueToken(STATUS_UPDATES_QUEUE));
-
-    // Suppress logger noise for expected error-path tests
-    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, BookingType, PaymentStatus, Status } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import { PaymentService } from "../payment/payment.service";
@@ -13,14 +14,15 @@ import {
 
 @Injectable()
 export class StatusChangeService {
-  private readonly logger = new Logger(StatusChangeService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
     private readonly paymentService: PaymentService,
     private readonly referralService: ReferralService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(StatusChangeService.name);
+  }
 
   private getCurrentUtcHourWindow(): { gte: Date; lte: Date } {
     const now = new Date();
@@ -75,7 +77,7 @@ export class StatusChangeService {
       });
 
       if (bookingsToUpdate.length === 0) {
-        this.logger.log("No bookings to update from confirmed to active");
+        this.logger.info("No bookings to update from confirmed to active");
         return "No bookings to update";
       }
 
@@ -111,7 +113,7 @@ export class StatusChangeService {
         error instanceof StatusChangeException
           ? error
           : new ConfirmedToActiveUpdateFailedException(reason);
-      this.logger.error(wrappedError.message);
+      this.logger.error({ error: wrappedError.message }, "Confirmed to active update failed");
       throw wrappedError;
     }
   }
@@ -122,7 +124,7 @@ export class StatusChangeService {
         "unknown",
         "Invalid bookingId for airport activation",
       );
-      this.logger.error(wrappedError.message);
+      this.logger.error({ error: wrappedError.message }, "Airport booking activation failed");
       throw wrappedError;
     }
 
@@ -167,10 +169,10 @@ export class StatusChangeService {
         BookingStatus.ACTIVE,
       );
 
-      this.logger.log(`Airport booking activated`, {
-        bookingId: normalizedBookingId,
-        activationAt,
-      });
+      this.logger.info(
+        { bookingId: normalizedBookingId, activationAt },
+        "Airport booking activated",
+      );
 
       return `Activated airport booking ${normalizedBookingId}`;
     } catch (error) {
@@ -179,7 +181,7 @@ export class StatusChangeService {
         error instanceof StatusChangeException
           ? error
           : new AirportBookingActivationFailedException(normalizedBookingId, reason);
-      this.logger.error(wrappedError.message);
+      this.logger.error({ error: wrappedError.message }, "Airport booking activation failed");
       throw wrappedError;
     }
   }
@@ -207,7 +209,7 @@ export class StatusChangeService {
       });
 
       if (bookingsToUpdate.length === 0) {
-        this.logger.log("No bookings to update from active to completed");
+        this.logger.info("No bookings to update from active to completed");
         return "No bookings to update";
       }
 
@@ -244,8 +246,13 @@ export class StatusChangeService {
           // Only update car status if there's no upcoming booking
           // If hasUpcomingBooking is true, the car should already be BOOKED, so no update needed
           if (hasUpcomingBooking) {
-            this.logger.log(
-              `Car ${booking.carId} remains BOOKED due to upcoming booking ${hasUpcomingBooking.id} (status: ${hasUpcomingBooking.status})`,
+            this.logger.info(
+              {
+                carId: booking.carId,
+                upcomingBookingId: hasUpcomingBooking.id,
+                upcomingBookingStatus: hasUpcomingBooking.status,
+              },
+              "Car remains BOOKED due to upcoming booking",
             );
           } else {
             await tx.car.update({
@@ -277,7 +284,11 @@ export class StatusChangeService {
           await this.referralService.queueReferralProcessing(booking.id);
         } catch (error) {
           this.logger.error(
-            `Failed to queue referral processing for booking ${booking.id}: ${error}`,
+            {
+              bookingId: booking.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "Failed to queue referral processing",
           );
           // Continue without failing the entire operation
         }
@@ -287,9 +298,11 @@ export class StatusChangeService {
           await this.paymentService.queuePayoutForBooking(booking.id);
         } catch (error) {
           this.logger.error(
-            `Failed to queue payout processing for booking ${booking.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            {
+              bookingId: booking.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "Failed to queue payout processing",
           );
           // Do not throw so that other bookings can continue processing
         }
@@ -302,7 +315,7 @@ export class StatusChangeService {
         error instanceof StatusChangeException
           ? error
           : new ActiveToCompletedUpdateFailedException(reason);
-      this.logger.error(wrappedError.message);
+      this.logger.error({ error: wrappedError.message }, "Active to completed update failed");
       throw wrappedError;
     }
   }
@@ -323,9 +336,7 @@ export class StatusChangeService {
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `Failed to queue status notification for booking ${bookingId}: ${errorMessage}`,
-      );
+      this.logger.error({ bookingId, error: errorMessage }, "Failed to queue status notification");
       // Continue without failing booking status updates
     }
   }

@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import twilio from "twilio";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { TwilioWebhookGuard } from "./twilio-webhook.guard";
 
 describe("TwilioWebhookGuard", () => {
@@ -39,7 +40,9 @@ describe("TwilioWebhookGuard", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     guard = module.get<TwilioWebhookGuard>(TwilioWebhookGuard);
   });

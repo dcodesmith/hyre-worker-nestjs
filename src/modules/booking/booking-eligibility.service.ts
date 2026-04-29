@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Prisma, ReferralReleaseCondition, ReferralRewardStatus } from "@prisma/client";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { ReferralDiscountNoLongerAvailableException } from "./booking.error";
@@ -8,9 +9,12 @@ import type { ReferralEligibility } from "./booking.interface";
 
 @Injectable()
 export class BookingEligibilityService {
-  private readonly logger = new Logger(BookingEligibilityService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingEligibilityService.name);
+  }
 
   private getIneligibleReferralEligibility(): ReferralEligibility {
     return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
@@ -54,20 +58,23 @@ export class BookingEligibilityService {
     const freshUser = users[0];
 
     if (!freshUser) {
-      this.logger.warn("User not found during referral verification", { userId });
+      this.logger.warn({ userId }, "User not found during referral verification");
       return this.getIneligibleReferralEligibility();
     }
 
     if (freshUser.referralDiscountUsed) {
-      this.logger.warn("Referral discount already used (race condition detected)", {
-        userId,
-        preliminaryEligible: preliminaryEligibility.eligible,
-      });
+      this.logger.warn(
+        {
+          userId,
+          preliminaryEligible: preliminaryEligibility.eligible,
+        },
+        "Referral discount already used (race condition detected)",
+      );
       throw new ReferralDiscountNoLongerAvailableException();
     }
 
     if (!freshUser.referredByUserId) {
-      this.logger.warn("User no longer has a referrer", { userId });
+      this.logger.warn({ userId }, "User no longer has a referrer");
       return this.getIneligibleReferralEligibility();
     }
 
@@ -76,7 +83,7 @@ export class BookingEligibilityService {
       data: { referralDiscountUsed: true },
     });
 
-    this.logger.log("Referral discount claimed and marked as used", { userId });
+    this.logger.info({ userId }, "Referral discount claimed and marked as used");
     return preliminaryEligibility;
   }
 
@@ -132,11 +139,14 @@ export class BookingEligibilityService {
       },
     });
 
-    this.logger.log("Created pending referral reward", {
-      bookingId,
-      referrerUserId: referralEligibility.referrerUserId,
-      rewardAmount: rewardAmount.toString(),
-    });
+    this.logger.info(
+      {
+        bookingId,
+        referrerUserId: referralEligibility.referrerUserId,
+        rewardAmount: rewardAmount.toString(),
+      },
+      "Created pending referral reward",
+    );
   }
 
   private async getReferralConfig(referrerUserId: string): Promise<ReferralEligibility> {
@@ -198,10 +208,13 @@ export class BookingEligibilityService {
       return Number.isFinite(parsed) ? new Decimal(parsed) : new Decimal(0);
     }
 
-    this.logger.warn(`Invalid ${key} config value type`, {
-      type: typeof rawValue,
-      value: rawValue,
-    });
+    this.logger.warn(
+      {
+        type: typeof rawValue,
+        value: rawValue,
+      },
+      `Invalid ${key} config value type`,
+    );
     return new Decimal(0);
   }
 

@@ -1,7 +1,8 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import type { Session, User } from "better-auth";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import { AuthErrorCode, AuthUnauthorizedException } from "../auth.error";
 import type { RoleName } from "../auth.interface";
 import { AuthService } from "../auth.service";
@@ -59,9 +60,12 @@ export interface AuthSession {
  */
 @Injectable()
 export class SessionGuard implements CanActivate {
-  private readonly logger = new Logger(SessionGuard.name);
-
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(SessionGuard.name);
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -81,8 +85,11 @@ export class SessionGuard implements CanActivate {
       }
 
       this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
         "Unexpected error while validating auth session",
-        error instanceof Error ? error.stack : undefined,
       );
       throw error;
     }

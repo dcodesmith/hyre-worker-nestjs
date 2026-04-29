@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PaymentIntentFailedException } from "./booking.error";
@@ -7,9 +8,12 @@ import type { BookingFinancials } from "./booking-calculation.interface";
 
 @Injectable()
 export class BookingPaymentService {
-  private readonly logger = new Logger(BookingPaymentService.name);
-
-  constructor(private readonly flutterwaveService: FlutterwaveService) {}
+  constructor(
+    private readonly flutterwaveService: FlutterwaveService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingPaymentService.name);
+  }
 
   async createPaymentIntent(
     createdBooking: { id: string; bookingReference: string },
@@ -41,11 +45,14 @@ export class BookingPaymentService {
         paymentIntentId: paymentResult.paymentIntentId,
       };
     } catch (error) {
-      this.logger.error("Payment intent creation failed", {
-        bookingId: createdBooking.id,
-        bookingReference: createdBooking.bookingReference,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: createdBooking.id,
+          bookingReference: createdBooking.bookingReference,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Payment intent creation failed",
+      );
 
       if (error instanceof FlutterwaveError) {
         throw new PaymentIntentFailedException(error.message);

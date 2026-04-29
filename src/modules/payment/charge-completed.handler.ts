@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { Booking, Payment, Prisma } from "@prisma/client";
 import { PaymentAttemptStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
@@ -9,24 +10,28 @@ import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 
 @Injectable()
 export class ChargeCompletedHandler {
-  private readonly logger = new Logger(ChargeCompletedHandler.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ChargeCompletedHandler.name);
+  }
 
   async handle(data: FlutterwaveChargeData): Promise<void> {
     const { tx_ref, id: transactionId, status, charged_amount } = data;
 
-    this.logger.log("Processing charge.completed webhook", {
-      txRef: tx_ref,
-      transactionId,
-      status,
-      chargedAmount: charged_amount,
-    });
+    this.logger.info(
+      {
+        txRef: tx_ref,
+        transactionId,
+        status,
+        chargedAmount: charged_amount,
+      },
+      "Processing charge.completed webhook",
+    );
 
     if (!this.validateChargeWebhookFields(tx_ref, transactionId)) {
       return;
@@ -35,11 +40,14 @@ export class ChargeCompletedHandler {
     try {
       await this.processVerifiedCharge(data);
     } catch (error) {
-      this.logger.error("Failed to verify transaction", {
-        txRef: tx_ref,
-        transactionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          txRef: tx_ref,
+          transactionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to verify transaction",
+      );
       throw error;
     }
   }
@@ -57,8 +65,8 @@ export class ChargeCompletedHandler {
 
     if (transactionId == null) {
       this.logger.warn(
-        "Missing id in charge.completed webhook, skipping to prevent data corruption",
         { txRef },
+        "Missing id in charge.completed webhook, skipping to prevent data corruption",
       );
       return false;
     }
@@ -87,16 +95,19 @@ export class ChargeCompletedHandler {
 
     const payment = await this.findOrCreatePayment(data, paymentStatus);
     if (!payment) {
-      this.logger.warn("Payment not found and could not be created for webhook", { txRef });
+      this.logger.warn({ txRef }, "Payment not found and could not be created for webhook");
       return;
     }
 
-    this.logger.log("Payment created from webhook", {
-      txRef,
-      paymentId: payment.id,
-      status: paymentStatus,
-      verifiedStatus: verificationData.status,
-    });
+    this.logger.info(
+      {
+        txRef,
+        paymentId: payment.id,
+        status: paymentStatus,
+        verifiedStatus: verificationData.status,
+      },
+      "Payment created from webhook",
+    );
 
     if (payment.status !== PaymentAttemptStatus.SUCCESSFUL) {
       return;
@@ -119,45 +130,57 @@ export class ChargeCompletedHandler {
     chargedAmount: number,
   ): { status: string; charged_amount: number } | null {
     if (verification.status !== "success") {
-      this.logger.warn("Transaction verification failed", {
-        txRef,
-        transactionId,
-        verificationStatus: verification.status,
-      });
+      this.logger.warn(
+        {
+          txRef,
+          transactionId,
+          verificationStatus: verification.status,
+        },
+        "Transaction verification failed",
+      );
       return null;
     }
 
     const data = verification.data;
     if (!data) {
-      this.logger.warn("Transaction verification returned no data", { txRef, transactionId });
+      this.logger.warn({ txRef, transactionId }, "Transaction verification returned no data");
       return null;
     }
 
     if (data.tx_ref !== txRef) {
-      this.logger.warn("Transaction verification tx_ref mismatch", {
-        webhookTxRef: txRef,
-        verifiedTxRef: data.tx_ref,
-        transactionId,
-      });
+      this.logger.warn(
+        {
+          webhookTxRef: txRef,
+          verifiedTxRef: data.tx_ref,
+          transactionId,
+        },
+        "Transaction verification tx_ref mismatch",
+      );
       return null;
     }
 
     if (data.id !== transactionId) {
-      this.logger.warn("Transaction verification id mismatch", {
-        webhookTransactionId: transactionId,
-        verifiedTransactionId: data.id,
-        txRef,
-      });
+      this.logger.warn(
+        {
+          webhookTransactionId: transactionId,
+          verifiedTransactionId: data.id,
+          txRef,
+        },
+        "Transaction verification id mismatch",
+      );
       return null;
     }
 
     if (data.charged_amount !== chargedAmount) {
-      this.logger.warn("Transaction verification charged_amount mismatch", {
-        txRef,
-        transactionId,
-        webhookChargedAmount: chargedAmount,
-        verifiedChargedAmount: data.charged_amount,
-      });
+      this.logger.warn(
+        {
+          txRef,
+          transactionId,
+          webhookChargedAmount: chargedAmount,
+          verifiedChargedAmount: data.charged_amount,
+        },
+        "Transaction verification charged_amount mismatch",
+      );
       return null;
     }
 
@@ -194,11 +217,14 @@ export class ChargeCompletedHandler {
     let amountExpected = webhookAmount;
 
     if (booking && extension) {
-      this.logger.error("Duplicate txRef matched both booking and extension, skipping webhook", {
-        txRef,
-        bookingId: booking.id,
-        extensionId: extension.id,
-      });
+      this.logger.error(
+        {
+          txRef,
+          bookingId: booking.id,
+          extensionId: extension.id,
+        },
+        "Duplicate txRef matched both booking and extension, skipping webhook",
+      );
       return null;
     }
 
@@ -209,20 +235,26 @@ export class ChargeCompletedHandler {
       extensionId = extension.id;
       amountExpected = extension.totalAmount.toNumber() || amountExpected;
     } else {
-      this.logger.error("No booking or extension found for txRef, cannot create payment record", {
-        txRef,
-      });
+      this.logger.error(
+        {
+          txRef,
+        },
+        "No booking or extension found for txRef, cannot create payment record",
+      );
       return null;
     }
 
-    this.logger.log("Creating payment record from webhook", {
-      txRef,
-      bookingId,
-      extensionId,
-      amountExpected,
-      amountCharged,
-      status,
-    });
+    this.logger.info(
+      {
+        txRef,
+        bookingId,
+        extensionId,
+        amountExpected,
+        amountCharged,
+        status,
+      },
+      "Creating payment record from webhook",
+    );
 
     return this.databaseService.payment.upsert({
       where: { txRef },

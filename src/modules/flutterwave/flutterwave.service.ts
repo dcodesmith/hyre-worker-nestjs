@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosError, AxiosInstance } from "axios";
+import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
@@ -21,13 +22,13 @@ import {
 
 @Injectable()
 export class FlutterwaveService {
-  private readonly logger = new Logger(FlutterwaveService.name);
   private readonly config: FlutterwaveConfig;
   private readonly httpClient: AxiosInstance;
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
+    private readonly logger: PinoLogger,
   ) {
     // Environment variables are validated at startup, so we can safely use them
     this.config = {
@@ -46,7 +47,8 @@ export class FlutterwaveService {
       serviceName: "Flutterwave",
     });
 
-    this.logger.log("Flutterwave client initialized successfully");
+    this.logger.setContext(FlutterwaveService.name);
+    this.logger.info("Flutterwave client initialized successfully");
   }
 
   async initiatePayout(request: PayoutRequest): Promise<PayoutResponse> {
@@ -64,19 +66,25 @@ export class FlutterwaveService {
     };
 
     try {
-      this.logger.log("Initiating payout request", {
-        payload: { ...payload, account_number: "***" }, // Mask account number in logs
-      });
+      this.logger.info(
+        {
+          payload: { ...payload, account_number: "***" }, // Mask account number in logs
+        },
+        "Initiating payout request",
+      );
 
       const { data: response } = await this.httpClient.post<
         FlutterwaveResponse<FlutterwaveTransferData>
       >("/v3/transfers", payload);
 
-      this.logger.log("Flutterwave transfer initiation response", {
-        status: response.status,
-        message: response.message,
-        transferId: response.data?.id,
-      });
+      this.logger.info(
+        {
+          status: response.status,
+          message: response.message,
+          transferId: response.data?.id,
+        },
+        "Flutterwave transfer initiation response",
+      );
 
       if (response.status === "success") {
         return {
@@ -90,11 +98,14 @@ export class FlutterwaveService {
         data: { message: response.message },
       };
     } catch (error) {
-      this.logger.error("Failed to initiate payout via Flutterwave", {
-        error: String(error),
-        bookingId,
-        bookingReference,
-      });
+      this.logger.error(
+        {
+          error: String(error),
+          bookingId,
+          bookingReference,
+        },
+        "Failed to initiate payout via Flutterwave",
+      );
 
       const handledError = this.handleError(error, "initiatePayout");
 
@@ -114,10 +125,13 @@ export class FlutterwaveService {
       >(`/v3/transactions/${transactionId}/verify`);
       return response;
     } catch (error) {
-      this.logger.error("Failed to verify transaction", {
-        error: String(error),
-        transactionId,
-      });
+      this.logger.error(
+        {
+          error: String(error),
+          transactionId,
+        },
+        "Failed to verify transaction",
+      );
       throw this.handleError(error, "verifyTransaction");
     }
   }
@@ -134,11 +148,14 @@ export class FlutterwaveService {
     }
 
     try {
-      this.logger.log("Initiating refund", {
-        transactionId,
-        amount,
-        idempotencyKey,
-      });
+      this.logger.info(
+        {
+          transactionId,
+          amount,
+          idempotencyKey,
+        },
+        "Initiating refund",
+      );
 
       const { data: response } = await this.httpClient.post<
         FlutterwaveResponse<FlutterwaveRefundData>
@@ -149,12 +166,15 @@ export class FlutterwaveService {
       });
 
       if (response.status === "success" && response.data) {
-        this.logger.log("Refund initiated successfully", {
-          transactionId,
-          refundId: response.data.id,
-          amountRefunded: response.data.amount_refunded,
-          status: response.data.status,
-        });
+        this.logger.info(
+          {
+            transactionId,
+            refundId: response.data.id,
+            amountRefunded: response.data.amount_refunded,
+            status: response.data.status,
+          },
+          "Refund initiated successfully",
+        );
 
         return {
           success: true,
@@ -169,10 +189,13 @@ export class FlutterwaveService {
         error: response.message || "Failed to initiate refund",
       };
     } catch (error) {
-      this.logger.error("Failed to initiate refund", {
-        error: String(error),
-        transactionId,
-      });
+      this.logger.error(
+        {
+          error: String(error),
+          transactionId,
+        },
+        "Failed to initiate refund",
+      );
 
       // Handle error to extract proper error message and code from HTTP responses
       const handledError = this.handleError(error, "initiateRefund");
@@ -215,21 +238,27 @@ export class FlutterwaveService {
     };
 
     try {
-      this.logger.log("Creating payment intent", {
-        txRef,
-        amount: options.amount,
-        transactionType: options.transactionType,
-      });
+      this.logger.info(
+        {
+          txRef,
+          amount: options.amount,
+          transactionType: options.transactionType,
+        },
+        "Creating payment intent",
+      );
 
       const { data: response } = await this.httpClient.post<
         FlutterwaveResponse<FlutterwavePaymentLinkData>
       >("/v3/payments", payload);
 
       if (response.status === "success" && response.data?.link) {
-        this.logger.log("Payment intent created successfully", {
-          txRef,
-          checkoutUrl: response.data.link,
-        });
+        this.logger.info(
+          {
+            txRef,
+            checkoutUrl: response.data.link,
+          },
+          "Payment intent created successfully",
+        );
 
         return {
           paymentIntentId: txRef,
@@ -242,10 +271,13 @@ export class FlutterwaveService {
         "PAYMENT_LINK_FAILED",
       );
     } catch (error) {
-      this.logger.error("Failed to create payment intent", {
-        error: String(error),
-        txRef,
-      });
+      this.logger.error(
+        {
+          error: String(error),
+          txRef,
+        },
+        "Failed to create payment intent",
+      );
 
       if (error instanceof FlutterwaveError) {
         throw error;

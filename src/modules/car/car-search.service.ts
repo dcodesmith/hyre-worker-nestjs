@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import {
   BookingStatus,
   BookingType,
@@ -7,6 +7,7 @@ import {
   Prisma,
   Status,
 } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { DatabaseService } from "../database/database.service";
@@ -27,12 +28,13 @@ interface AvailabilityInterval {
 
 @Injectable()
 export class CarSearchService {
-  private readonly logger = new Logger(CarSearchService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CarSearchService.name);
+  }
 
   /**
    * Parses search query params, applying free-text mapping if needed.
@@ -148,7 +150,8 @@ export class CarSearchService {
     });
 
     this.logger.debug(
-      `Found ${unavailableOwners.length} unavailable fleet owners for ${date.toISOString()}`,
+      { unavailableOwners: unavailableOwners.length, date: date.toISOString() },
+      "Computed unavailable fleet owners",
     );
 
     return unavailableOwners.map((owner) => owner.id);
@@ -293,11 +296,15 @@ export class CarSearchService {
       const hasPreviousPage = query.page > 1;
 
       const totalTime = Date.now() - startTime;
-      this.logger.log(`Search completed in ${totalTime}ms`, {
-        totalCount,
-        returnedCount: cars.length,
-        page: query.page,
-      });
+      this.logger.info(
+        {
+          totalTimeMs: totalTime,
+          totalCount,
+          returnedCount: cars.length,
+          page: query.page,
+        },
+        "Search completed",
+      );
 
       return {
         cars: enrichedCars,
@@ -319,10 +326,13 @@ export class CarSearchService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Search failed", {
-        error: error instanceof Error ? error.message : String(error),
-        query,
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          query,
+        },
+        "Search failed",
+      );
       throw new CarFetchFailedException();
     }
   }
@@ -378,10 +388,13 @@ export class CarSearchService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to fetch public car", {
-        carId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch public car",
+      );
       throw new CarFetchFailedException();
     }
   }

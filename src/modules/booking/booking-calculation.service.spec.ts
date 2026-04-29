@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createActivePromotion } from "../../shared/helper.fixtures";
 import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
@@ -67,7 +68,9 @@ describe("BookingCalculationService", () => {
         { provide: RatesService, useValue: ratesService },
         { provide: PromotionService, useValue: promotionService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingCalculationService>(BookingCalculationService);
   });

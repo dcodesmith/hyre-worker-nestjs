@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { REFERRAL_QUEUE } from "src/config/constants";
 import { createBooking } from "src/shared/helper.fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 import { ReferralProcessingService } from "./referral-processing.service";
@@ -51,7 +52,9 @@ describe("ReferralProcessingService", () => {
           useValue: mockQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<ReferralProcessingService>(ReferralProcessingService);
     databaseService = module.get<DatabaseService>(DatabaseService);

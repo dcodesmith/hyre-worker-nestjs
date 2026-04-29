@@ -2,13 +2,13 @@ import type { ExecutionContext } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlutterwaveWebhookGuard } from "./flutterwave-webhook.guard";
 
 describe("FlutterwaveWebhookGuard", () => {
   let guard: FlutterwaveWebhookGuard;
 
   const WEBHOOK_SECRET = "test-webhook-secret-12345";
-
   const createMockExecutionContext = (
     headers: Record<string, string | undefined>,
   ): ExecutionContext =>
@@ -31,7 +31,9 @@ describe("FlutterwaveWebhookGuard", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     guard = module.get<FlutterwaveWebhookGuard>(FlutterwaveWebhookGuard);
   });
@@ -85,7 +87,9 @@ describe("FlutterwaveWebhookGuard", () => {
             },
           },
         ],
-      }).compile();
+      })
+        .useMocker(mockPinoLoggerToken)
+        .compile();
 
       const guardWithNoSecret =
         moduleWithNoSecret.get<FlutterwaveWebhookGuard>(FlutterwaveWebhookGuard);

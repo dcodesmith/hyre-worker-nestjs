@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { buildState, buildVehicleOption } from "./langgraph.factory";
 import type { InteractiveReply } from "./langgraph.interface";
 import { LANGGRAPH_OPENAI_CLIENT } from "./langgraph.tokens";
@@ -25,7 +26,9 @@ describe("LangGraphExtractorService", () => {
           useValue: openaiMock,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(LangGraphExtractorService);
   });

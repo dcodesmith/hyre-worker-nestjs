@@ -2,6 +2,7 @@ import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
 import type { CarCreateFiles } from "./car.interface";
 import { CarService } from "./car.service";
@@ -48,7 +49,9 @@ describe("FleetOwnerCarController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<FleetOwnerCarController>(FleetOwnerCarController);
     carService = module.get<CarService>(CarService);

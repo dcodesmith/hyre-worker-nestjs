@@ -1,8 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, type Promotion } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import { TIMEZONE } from "../../config/constants";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
@@ -32,12 +33,13 @@ const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 @Injectable()
 export class PromotionService {
-  private readonly logger = new Logger(PromotionService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService<EnvConfig, true>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(PromotionService.name);
+  }
 
   toPromotionWindowExclusive(input: PromotionWindowInput): PromotionWindow {
     return PromotionService.toPromotionWindowExclusive({
@@ -157,21 +159,27 @@ export class PromotionService {
       const best = PromotionService.chooseBestPromotion(candidates, baseAmount);
 
       if (candidates.length > 1 && typeof baseAmount !== "number") {
-        this.logger.warn("Multiple active promotions in same scope without baseAmount", {
-          ownerId,
-          carId,
-          promotionIds: candidates.map((p) => p.id),
-        });
+        this.logger.warn(
+          {
+            ownerId,
+            carId,
+            promotionIds: candidates.map((p) => p.id),
+          },
+          "Multiple active promotions in same scope without baseAmount",
+        );
       }
 
       return best;
     } catch (error) {
       if (error instanceof PromotionException) throw error;
-      this.logger.error("Failed to fetch active promotion for car", {
-        carId,
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch active promotion for car",
+      );
       throw new PromotionFetchFailedException();
     }
   }
@@ -226,9 +234,12 @@ export class PromotionService {
       return result;
     } catch (error) {
       if (error instanceof PromotionException) throw error;
-      this.logger.error("Failed to batch fetch active promotions", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to batch fetch active promotions",
+      );
       throw new PromotionFetchFailedException();
     }
   }
@@ -262,11 +273,14 @@ export class PromotionService {
       });
     } catch (error) {
       if (error instanceof PromotionException) throw error;
-      this.logger.error("Failed to fetch overlapping promotions for car", {
-        carId,
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch overlapping promotions for car",
+      );
       throw new PromotionFetchFailedException();
     }
   }
@@ -291,10 +305,13 @@ export class PromotionService {
       });
     } catch (error) {
       if (error instanceof PromotionException) throw error;
-      this.logger.error("Failed to list owner promotions", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to list owner promotions",
+      );
       throw new PromotionFetchFailedException();
     }
   }
@@ -365,12 +382,15 @@ export class PromotionService {
         });
       });
 
-      this.logger.log("Promotion created", {
-        promotionId: promotion.id,
-        ownerId: data.ownerId,
-        carId: data.carId,
-        discountPercent: data.discountValue,
-      });
+      this.logger.info(
+        {
+          promotionId: promotion.id,
+          ownerId: data.ownerId,
+          carId: data.carId,
+          discountPercent: data.discountValue,
+        },
+        "Promotion created",
+      );
 
       return promotion;
     } catch (error) {
@@ -378,10 +398,13 @@ export class PromotionService {
       if (PromotionService.isPromotionOverlapConstraintViolation(error)) {
         throw new PromotionOverlapException();
       }
-      this.logger.error("Failed to create promotion", {
-        ownerId: data.ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId: data.ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to create promotion",
+      );
       throw new PromotionCreateFailedException();
     }
   }
@@ -407,11 +430,14 @@ export class PromotionService {
       });
     } catch (error) {
       if (error instanceof PromotionException) throw error;
-      this.logger.error("Failed to deactivate promotion", {
-        promotionId,
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          promotionId,
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to deactivate promotion",
+      );
       throw new PromotionUpdateFailedException();
     }
   }

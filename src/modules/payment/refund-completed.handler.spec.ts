@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentAttemptStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveRefundWebhookData } from "../flutterwave/flutterwave.interface";
@@ -10,7 +11,6 @@ import { RefundCompletedHandler } from "./refund-completed.handler";
 describe("RefundCompletedHandler", () => {
   let handler: RefundCompletedHandler;
   let databaseService: DatabaseService;
-
   const mockRefundData: FlutterwaveRefundWebhookData = {
     id: 11111,
     AmountRefunded: 10000,
@@ -41,7 +41,9 @@ describe("RefundCompletedHandler", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     handler = module.get<RefundCompletedHandler>(RefundCompletedHandler);
     databaseService = module.get<DatabaseService>(DatabaseService);

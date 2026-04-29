@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, DocumentType, Prisma, Status } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import { CAR_S3_CATEGORY_DOCUMENTS, CAR_S3_CATEGORY_IMAGES } from "./car.const";
@@ -20,7 +21,6 @@ import type { UpdateCarBodyDto } from "./dto/update-car.dto";
 
 @Injectable()
 export class CarService {
-  private readonly logger = new Logger(CarService.name);
   private readonly carDetailsInclude = Prisma.validator<Prisma.CarInclude>()({
     owner: {
       select: {
@@ -53,7 +53,10 @@ export class CarService {
     private readonly databaseService: DatabaseService,
     private readonly storageService: StorageService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CarService.name);
+  }
 
   private getObjectKey(ownerId: string, carId: string, fileName: string, category: string): string {
     const timestamp = Date.now();
@@ -218,10 +221,13 @@ export class CarService {
       try {
         await this.storageService.deleteObjectByKey(key);
       } catch (deleteError) {
-        this.logger.error("Failed to delete uploaded car asset", {
-          key,
-          error: deleteError instanceof Error ? deleteError.message : String(deleteError),
-        });
+        this.logger.error(
+          {
+            key,
+            error: deleteError instanceof Error ? deleteError.message : String(deleteError),
+          },
+          "Failed to delete uploaded car asset",
+        );
       }
     }
   }
@@ -243,10 +249,13 @@ export class CarService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to list owner cars", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to list owner cars",
+      );
       throw new CarFetchFailedException();
     }
   }
@@ -271,11 +280,14 @@ export class CarService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to fetch owner car", {
-        carId,
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch owner car",
+      );
       throw new CarFetchFailedException();
     }
   }
@@ -299,10 +311,13 @@ export class CarService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to create car", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to create car",
+      );
       throw new CarCreateFailedException();
     }
   }
@@ -351,11 +366,14 @@ export class CarService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to update car", {
-        carId,
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to update car",
+      );
       throw new CarUpdateFailedException();
     }
   }

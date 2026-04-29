@@ -1,10 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { LANGGRAPH_NODE_NAMES, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { RouteNode } from "./route.node";
 
 describe("RouteNode", () => {
-  const routeNode = new RouteNode();
+  let routeNode: RouteNode;
+
+  beforeEach(async () => {
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      providers: [RouteNode],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    routeNode = moduleRef.get(RouteNode);
+  });
 
   it("routes to respond/greeting on service outage marker", () => {
     const result = routeNode.run({

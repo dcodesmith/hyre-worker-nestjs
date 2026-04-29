@@ -1,6 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
 import { RatesController } from "./rates.controller";
 import { RatesAdminService } from "./rates-admin.service";
@@ -40,7 +41,9 @@ describe("RatesController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<RatesController>(RatesController);
   });

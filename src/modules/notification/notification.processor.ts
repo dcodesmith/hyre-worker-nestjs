@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
+import { Inject } from "@nestjs/common";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
   renderBookingConfirmationEmail,
@@ -57,14 +58,15 @@ import { Template, WhatsAppService } from "./whatsapp.service";
   concurrency: 5,
 })
 export class NotificationProcessor extends WorkerHost {
-  private readonly logger = new Logger(NotificationProcessor.name);
   private readonly templateMappers: TemplateVariableMapper[];
 
   constructor(
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
+    @Inject(PinoLogger) private readonly logger: PinoLogger,
   ) {
     super();
+    this.logger.setContext(NotificationProcessor.name);
     // Initialize template mappers in order of specificity
     this.templateMappers = [
       new BookingConfirmedMapper(),
@@ -83,12 +85,10 @@ export class NotificationProcessor extends WorkerHost {
   ): Promise<NotificationResult[]> {
     const { id, type, channels, recipients, templateData } = job.data;
 
-    this.logger.log("Processing notification", {
-      notificationId: id,
-      type,
-      channels,
-      bookingId: job.data.bookingId,
-    });
+    this.logger.info(
+      { notificationId: id, type, channels, bookingId: job.data.bookingId },
+      "Processing notification",
+    );
 
     const succeededChannels = new Set(getSucceededChannels(job.progress));
     const results: NotificationResult[] = [];
@@ -96,10 +96,10 @@ export class NotificationProcessor extends WorkerHost {
     // Process each channel
     for (const channel of channels) {
       if (succeededChannels.has(channel)) {
-        this.logger.log("Skipping already-succeeded notification channel", {
-          notificationId: id,
-          channel,
-        });
+        this.logger.info(
+          { notificationId: id, channel },
+          "Skipping already-succeeded notification channel",
+        );
         continue;
       }
 
@@ -147,11 +147,14 @@ export class NotificationProcessor extends WorkerHost {
 
       return null;
     } catch (error) {
-      this.logger.error("Failed to process notification channel", {
-        notificationId,
-        channel,
-        error: String(error),
-      });
+      this.logger.error(
+        {
+          notificationId,
+          channel,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to process notification channel",
+      );
 
       return {
         channel,
@@ -176,13 +179,16 @@ export class NotificationProcessor extends WorkerHost {
 
     const skipped = channels.length - results.length;
 
-    this.logger.log("Notification processing complete", {
-      notificationId,
-      totalChannels: channels.length,
-      successful: successCount,
-      failed: failureCount,
-      skipped,
-    });
+    this.logger.info(
+      {
+        notificationId,
+        totalChannels: channels.length,
+        successful: successCount,
+        failed: failureCount,
+        skipped,
+      },
+      "Notification processing complete",
+    );
   }
 
   private async sendEmailNotification(
@@ -246,10 +252,10 @@ export class NotificationProcessor extends WorkerHost {
         perRecipientResults,
       };
     } catch (error) {
-      this.logger.error("Failed to send email notification", {
-        type,
-        error: String(error),
-      });
+      this.logger.error(
+        { type, error: error instanceof Error ? error.message : String(error) },
+        "Failed to send email notification",
+      );
 
       return {
         channel: NotificationChannel.EMAIL,
@@ -472,10 +478,10 @@ export class NotificationProcessor extends WorkerHost {
         messageId: "whatsapp-sent",
       };
     } catch (error) {
-      this.logger.error("Failed to send WhatsApp notification", {
-        type,
-        error: String(error),
-      });
+      this.logger.error(
+        { type, error: error instanceof Error ? error.message : String(error) },
+        "Failed to send WhatsApp notification",
+      );
 
       return {
         channel: NotificationChannel.WHATSAPP,
@@ -505,8 +511,9 @@ export class NotificationProcessor extends WorkerHost {
   @OnWorkerEvent("completed")
   onCompleted(job: Job<NotificationJobData, NotificationResult[]>) {
     const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
-    this.logger.log(
-      `Notification job completed: ${job.data.type} [${job.id}] - Duration: ${duration}ms`,
+    this.logger.info(
+      { type: job.data.type, jobId: job.id, durationMs: duration },
+      "Notification job completed",
     );
   }
 
@@ -518,36 +525,47 @@ export class NotificationProcessor extends WorkerHost {
     const maxAttempts =
       error instanceof NotificationDispatchError ? error.maxAttempts : job.opts.attempts;
 
-    this.logger.error(`Notification job failed: ${job.data.type} [${job.id}]`, {
-      notificationId: job.data.id,
-      bookingId: job.data.bookingId,
-      channels: job.data.channels,
-      failedChannels,
-      error: error.message,
-      stack: error.stack,
-      attempts: attempt,
-      maxAttempts,
-    });
+    this.logger.error(
+      {
+        type: job.data.type,
+        jobId: job.id,
+        notificationId: job.data.id,
+        bookingId: job.data.bookingId,
+        channels: job.data.channels,
+        failedChannels,
+        error: error.message,
+        stack: error.stack,
+        attempts: attempt,
+        maxAttempts,
+      },
+      "Notification job failed",
+    );
   }
 
   @OnWorkerEvent("active")
   onActive(job: Job<NotificationJobData, NotificationResult[]>) {
-    this.logger.log(
-      `Notification job started: ${job.data.type} [${job.id}] - Attempt ${job.attemptsMade + 1}`,
+    this.logger.info(
       {
+        type: job.data.type,
+        jobId: job.id,
+        attempt: job.attemptsMade + 1,
         notificationId: job.data.id,
         channels: job.data.channels,
       },
+      "Notification job started",
     );
   }
 
   @OnWorkerEvent("stalled")
   onStalled(jobId: string) {
-    this.logger.warn(`Notification job stalled: ${jobId}`);
+    this.logger.warn({ jobId }, "Notification job stalled");
   }
 
   @OnWorkerEvent("progress")
   onProgress(job: Job<NotificationJobData, NotificationResult[]>, progress: number | object) {
-    this.logger.debug(`Notification job progress: ${job.data.type} [${job.id}]`, progress);
+    this.logger.debug(
+      { type: job.data.type, jobId: job.id, progress },
+      "Notification job progress",
+    );
   }
 }

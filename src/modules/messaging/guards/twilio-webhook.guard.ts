@@ -1,16 +1,20 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import twilio from "twilio";
 import type { EnvConfig } from "../../../config/env.config";
 
 @Injectable()
 export class TwilioWebhookGuard implements CanActivate {
-  private readonly logger = new Logger(TwilioWebhookGuard.name);
   private readonly authToken: string | undefined;
   private readonly webhookUrl: string | undefined;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(TwilioWebhookGuard.name);
     this.authToken = this.configService.get("TWILIO_AUTH_TOKEN", { infer: true });
     this.webhookUrl = this.configService.get("TWILIO_WEBHOOK_URL", { infer: true });
   }
@@ -33,7 +37,13 @@ export class TwilioWebhookGuard implements CanActivate {
     const isValid = twilio.validateRequest(this.authToken, signature, this.webhookUrl, params);
 
     if (!isValid) {
-      this.logger.warn("Invalid Twilio webhook signature");
+      this.logger.warn(
+        {
+          signature,
+          webhookUrl: this.webhookUrl,
+        },
+        "Invalid Twilio webhook signature",
+      );
     }
 
     return isValid;

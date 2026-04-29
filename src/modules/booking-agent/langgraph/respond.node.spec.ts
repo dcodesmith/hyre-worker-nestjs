@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { LangGraphResponderService } from "./langgraph-responder.service";
 import { RespondNode } from "./respond.node";
@@ -18,7 +19,9 @@ describe("RespondNode", () => {
         RespondNode,
         { provide: LangGraphResponderService, useValue: responderServiceMock },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     respondNode = moduleRef.get(RespondNode);
   });

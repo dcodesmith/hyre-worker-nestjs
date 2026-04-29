@@ -1,7 +1,8 @@
-import { HttpStatus, Injectable, Logger } from "@nestjs/common";
+import { HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
 import { format } from "date-fns";
+import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "src/config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
@@ -10,7 +11,6 @@ import type { CreateAlertParams, FlightAwareAlertResponse } from "./flightaware.
 
 @Injectable()
 export class FlightAwareAlertService {
-  private readonly logger = new Logger(FlightAwareAlertService.name);
   private readonly apiKey: string;
   private readonly baseUrl = "https://aeroapi.flightaware.com/aeroapi";
   private readonly httpClient: AxiosInstance;
@@ -19,7 +19,9 @@ export class FlightAwareAlertService {
     private readonly configService: ConfigService<EnvConfig>,
     private readonly databaseService: DatabaseService,
     private readonly httpClientService: HttpClientService,
+    private readonly logger: PinoLogger,
   ) {
+    this.logger.setContext(FlightAwareAlertService.name);
     this.apiKey = this.configService.get("FLIGHTAWARE_API_KEY", { infer: true });
 
     this.httpClient = this.httpClientService.createClient({
@@ -41,11 +43,7 @@ export class FlightAwareAlertService {
   }: CreateAlertParams): Promise<string> {
     const dateStr = format(flightDate, "yyyy-MM-dd");
 
-    this.logger.log("Creating FlightAware alert", {
-      flightNumber,
-      flightDate: dateStr,
-      events,
-    });
+    this.logger.info({ flightNumber, flightDate: dateStr, events }, "Creating FlightAware alert");
 
     const requestBody: Record<string, unknown> = {
       ident: flightNumber.toUpperCase(),
@@ -62,10 +60,10 @@ export class FlightAwareAlertService {
     try {
       const response = await this.httpClient.post<FlightAwareAlertResponse>("/alerts", requestBody);
 
-      this.logger.log("FlightAware alert created", {
-        alertId: response.data.alert_id,
-        flightNumber: response.data.ident,
-      });
+      this.logger.info(
+        { alertId: response.data.alert_id, flightNumber: response.data.ident },
+        "FlightAware alert created",
+      );
 
       return response.data.alert_id;
     } catch (error) {
@@ -90,10 +88,10 @@ export class FlightAwareAlertService {
   }
 
   async getOrCreateFlightAlert(flightId: string, params: CreateAlertParams): Promise<string> {
-    this.logger.log("Getting or creating flight alert", {
-      flightId,
-      flightNumber: params.flightNumber,
-    });
+    this.logger.info(
+      { flightId, flightNumber: params.flightNumber },
+      "Getting or creating flight alert",
+    );
 
     const lockId = Array.from(flightId).reduce(
       (acc, char) => (acc * 31 + (char.codePointAt(0) ?? 0)) % 2147483647,
@@ -114,10 +112,10 @@ export class FlightAwareAlertService {
         }
 
         if (flight.alertId && flight.alertEnabled) {
-          this.logger.log("Flight already has active alert, reusing", {
-            flightId,
-            alertId: flight.alertId,
-          });
+          this.logger.info(
+            { flightId, alertId: flight.alertId },
+            "Flight already has active alert, reusing",
+          );
           return flight.alertId;
         }
 
@@ -136,11 +134,11 @@ export class FlightAwareAlertService {
   }
 
   async disableFlightAlert(alertId: string): Promise<void> {
-    this.logger.log("Disabling FlightAware alert", { alertId });
+    this.logger.info({ alertId }, "Disabling FlightAware alert");
 
     try {
       await this.httpClient.delete(`/alerts/${alertId}`);
-      this.logger.log("FlightAware alert deleted", { alertId });
+      this.logger.info({ alertId }, "FlightAware alert deleted");
     } catch (error) {
       const errorInfo = this.httpClientService.handleError(
         error,
@@ -149,7 +147,7 @@ export class FlightAwareAlertService {
       );
 
       if (errorInfo.status === HttpStatus.NOT_FOUND) {
-        this.logger.log("FlightAware alert already deleted", { alertId });
+        this.logger.info({ alertId }, "FlightAware alert already deleted");
         return;
       }
 
@@ -164,7 +162,7 @@ export class FlightAwareAlertService {
   }
 
   async cleanupFlightAlert(flightId: string): Promise<void> {
-    this.logger.log("Cleaning up flight alert", { flightId });
+    this.logger.info({ flightId }, "Cleaning up flight alert");
 
     const flight = await this.databaseService.flight.findUnique({
       where: { id: flightId },
@@ -172,7 +170,7 @@ export class FlightAwareAlertService {
     });
 
     if (!flight?.alertId || !flight.alertEnabled) {
-      this.logger.log("Flight has no active alert to cleanup", { flightId });
+      this.logger.info({ flightId }, "Flight has no active alert to cleanup");
       return;
     }
 
@@ -183,6 +181,6 @@ export class FlightAwareAlertService {
       data: { alertEnabled: false },
     });
 
-    this.logger.log("Flight alert cleaned up", { flightId, alertId: flight.alertId });
+    this.logger.info({ flightId, alertId: flight.alertId }, "Flight alert cleaned up");
   }
 }

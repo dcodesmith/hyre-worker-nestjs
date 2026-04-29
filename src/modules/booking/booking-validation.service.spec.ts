@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -42,7 +43,9 @@ describe("BookingValidationService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingValidationService>(BookingValidationService);
     databaseService = module.get<DatabaseService>(DatabaseService);

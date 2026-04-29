@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { LANGGRAPH_BUTTON_ID } from "./langgraph.const";
 import { LangGraphExtractionFailedException } from "./langgraph.error";
@@ -53,9 +54,12 @@ const extractionSchema = z.object({
 
 @Injectable()
 export class LangGraphExtractorService {
-  private readonly logger = new Logger(LangGraphExtractorService.name);
-
-  constructor(@Inject(LANGGRAPH_OPENAI_CLIENT) private readonly openai: LangGraphOpenAIClient) {}
+  constructor(
+    @Inject(LANGGRAPH_OPENAI_CLIENT) private readonly openai: LangGraphOpenAIClient,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(LangGraphExtractorService.name);
+  }
 
   async extract(state: BookingAgentState): Promise<ExtractionResult> {
     const {
@@ -78,7 +82,7 @@ export class LangGraphExtractorService {
     }
 
     try {
-      this.logger.debug("Starting extraction", { conversationId, inboundMessage, stage });
+      this.logger.debug({ conversationId, inboundMessage, stage }, "Starting extraction");
       const systemPrompt = buildExtractorSystemPrompt({
         currentDraft: draft,
         lastShownOptions,
@@ -89,7 +93,7 @@ export class LangGraphExtractorService {
         { role: "system", content: systemPrompt },
         { role: "user", content: inboundMessage },
       ]);
-      this.logger.debug("Extraction response received", { conversationId });
+      this.logger.debug({ conversationId }, "Extraction response received");
 
       const content = this.getTextContent(response.content);
       const parsed = JSON.parse(content);
@@ -106,11 +110,15 @@ export class LangGraphExtractorService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Extraction failed: ${errorMessage}`, {
-        conversationId,
-        inboundMessage,
-        stack: errorStack,
-      });
+      this.logger.error(
+        {
+          conversationId,
+          inboundMessage,
+          stack: errorStack,
+          error: errorMessage,
+        },
+        "Extraction failed",
+      );
       throw new LangGraphExtractionFailedException(conversationId, errorMessage);
     }
   }
@@ -187,10 +195,13 @@ export class LangGraphExtractorService {
       // Twilio Content Templates send the button payload directly as the ID
       const selectedByRawId = lastShownOptions.find((v) => v.id === buttonId);
       if (selectedByRawId) {
-        this.logger.log("Vehicle selected via raw ID button", {
-          vehicleId: buttonId,
-          vehicle: `${selectedByRawId.make} ${selectedByRawId.model}`,
-        });
+        this.logger.info(
+          {
+            vehicleId: buttonId,
+            vehicle: `${selectedByRawId.make} ${selectedByRawId.model}`,
+          },
+          "Vehicle selected via raw ID button",
+        );
         return {
           intent: "select_option",
           draftPatch: {

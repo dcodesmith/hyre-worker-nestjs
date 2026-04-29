@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import nodemailer, { Transporter } from "nodemailer";
 import { EnvConfig } from "src/config/env.config";
 import { EmailDeliveryFailedException } from "./email.error";
@@ -8,12 +9,15 @@ import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface
 
 @Injectable()
 export class SmtpEmailTransport implements EmailTransport {
-  private readonly logger = new Logger(SmtpEmailTransport.name);
   private readonly provider = "smtp";
   private readonly transporter: Transporter;
   private readonly from: string;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(SmtpEmailTransport.name);
     const host = this.configService.get("SMTP_HOST", { infer: true }) ?? "127.0.0.1";
     const port = this.configService.get("SMTP_PORT", { infer: true }) ?? 1025;
     const secure = this.configService.get("SMTP_SECURE", { infer: true }) ?? false;
@@ -28,11 +32,7 @@ export class SmtpEmailTransport implements EmailTransport {
     });
 
     this.from = getFromAddress(this.configService);
-    this.logger.log("SMTP email transport initialized", {
-      host,
-      port,
-      secure,
-    });
+    this.logger.info({ host, port, secure }, "SMTP email transport initialized");
   }
 
   async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
@@ -46,26 +46,33 @@ export class SmtpEmailTransport implements EmailTransport {
         html,
       });
 
-      this.logger.log("Email sent via SMTP", {
-        provider: this.provider,
-        status: "sent",
-        messageId: info.messageId,
-      });
+      this.logger.info(
+        {
+          provider: this.provider,
+          status: "sent",
+          messageId: info.messageId,
+        },
+        "Email sent via SMTP",
+      );
 
       return {
         data: { id: info.messageId },
       };
     } catch (error) {
-      this.logger.error("Failed to send email via SMTP", {
-        provider: this.provider,
-        recipientDomain,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        {
+          provider: this.provider,
+          recipientDomain,
+          error: errorMessage,
+        },
+        "Failed to send email via SMTP",
+      );
 
       throw new EmailDeliveryFailedException("SMTP request failed", {
         provider: this.provider,
         recipientDomain,
-        cause: error instanceof Error ? error.message : String(error),
+        cause: errorMessage,
       });
     }
   }

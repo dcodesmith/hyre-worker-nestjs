@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import twilio, { Twilio } from "twilio";
 import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 
@@ -31,20 +32,26 @@ const contentSidMap: Record<Template, string> = {
 
 @Injectable()
 export class WhatsAppService {
-  private readonly logger = new Logger(WhatsAppService.name);
   private readonly twilioClient: Twilio;
   private readonly whatsAppNumber: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(WhatsAppService.name);
     const accountSid = this.configService.get<string>("TWILIO_ACCOUNT_SID");
     const authToken = this.configService.get<string>("TWILIO_AUTH_TOKEN");
     this.whatsAppNumber = this.configService.get<string>("TWILIO_WHATSAPP_NUMBER");
 
     try {
       this.twilioClient = twilio(accountSid, authToken);
-      this.logger.log("Twilio client initialized successfully");
+      this.logger.info("Twilio client initialized successfully");
     } catch (error) {
-      this.logger.error("Failed to initialize Twilio client", { error: String(error) });
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to initialize Twilio client",
+      );
       throw error;
     }
   }
@@ -61,15 +68,14 @@ export class WhatsAppService {
     const contentSid = contentSidMap[templateKey];
 
     if (!contentSid) {
-      this.logger.error("Could not find SID for template key", { templateKey });
+      this.logger.error({ templateKey }, "Could not find SID for template key");
       return null;
     }
 
-    this.logger.log(`Attempting to send template '${templateKey}' (${contentSid}) to ${to}...`, {
-      recipient: to,
-      templateKey,
-      contentSid,
-    });
+    this.logger.info(
+      { recipient: to, templateKey, contentSid },
+      "Attempting to send WhatsApp template",
+    );
 
     try {
       const message = await this.twilioClient.messages.create({
@@ -79,23 +85,26 @@ export class WhatsAppService {
         contentVariables: JSON.stringify(variables),
       });
 
-      this.logger.log(`Message sent successfully! SID: ${message.sid}, Status: ${message.status}`, {
-        sid: message.sid,
-        status: message.status,
-        to,
-        templateKey,
-      });
+      this.logger.info(
+        {
+          sid: message.sid,
+          status: message.status,
+          recipient: to,
+          templateKey,
+        },
+        "WhatsApp message sent successfully",
+      );
       return message;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       this.logger.error(
-        `Error sending WhatsApp message to ${to} using template '${templateKey}': ${errorMessage}`,
         {
           recipient: to,
           templateKey,
           error: errorMessage,
         },
+        "Error sending WhatsApp message",
       );
 
       return null;

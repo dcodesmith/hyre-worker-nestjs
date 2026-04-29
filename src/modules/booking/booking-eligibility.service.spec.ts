@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createUser } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { ReferralDiscountNoLongerAvailableException } from "./booking.error";
@@ -19,7 +20,9 @@ describe("BookingEligibilityService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
     const result = await service.checkPreliminaryReferralEligibility(null);
@@ -53,7 +56,9 @@ describe("BookingEligibilityService", () => {
         BookingEligibilityService,
         { provide: DatabaseService, useValue: databaseService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
     const result = await service.checkPreliminaryReferralEligibility({
@@ -79,7 +84,9 @@ describe("BookingEligibilityService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
 
@@ -125,7 +132,9 @@ describe("BookingEligibilityService", () => {
         BookingEligibilityService,
         { provide: DatabaseService, useValue: databaseService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
     const result = await service.checkPreliminaryReferralEligibility({ id: "user-1" } as never);
@@ -149,7 +158,9 @@ describe("BookingEligibilityService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
     const rewardCreate = vi.fn().mockResolvedValue({});

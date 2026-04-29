@@ -1,7 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
 import { isSameDay } from "date-fns";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import type { FieldError } from "src/common/errors/problem-details.interface";
 import { maskEmail } from "src/shared/helper";
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
@@ -35,9 +36,12 @@ import { isGuestBooking } from "./dto/create-booking.dto";
  */
 @Injectable()
 export class BookingValidationService {
-  private readonly logger = new Logger(BookingValidationService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingValidationService.name);
+  }
 
   /**
    * Validate booking dates and times based on business rules.
@@ -205,19 +209,25 @@ export class BookingValidationService {
 
     // Check car approval status - only approved cars can be booked
     if (car.approvalStatus !== CarApprovalStatus.APPROVED) {
-      this.logger.log("Attempt to book unapproved car", {
-        carId,
-        approvalStatus: car.approvalStatus,
-      });
+      this.logger.info(
+        {
+          carId,
+          approvalStatus: car.approvalStatus,
+        },
+        "Attempt to book unapproved car",
+      );
       throw new CarNotAvailableException(carId, "This vehicle is not available for booking");
     }
 
     // Check car status - only available cars can be booked
     if (car.status !== Status.AVAILABLE) {
-      this.logger.log("Attempt to book unavailable car", {
-        carId,
-        status: car.status,
-      });
+      this.logger.info(
+        {
+          carId,
+          status: car.status,
+        },
+        "Attempt to book unavailable car",
+      );
 
       const statusMessages: Record<Exclude<Status, "AVAILABLE">, string> = {
         [Status.BOOKED]: "This vehicle is currently booked",
@@ -255,17 +265,20 @@ export class BookingValidationService {
     });
 
     if (conflictingBookings.length > 0) {
-      this.logger.log("Car availability conflict found", {
-        carId,
-        requestedStart: startDate.toISOString(),
-        requestedEnd: endDate.toISOString(),
-        conflictingBookings: conflictingBookings.map((b) => ({
-          id: b.id,
-          reference: b.bookingReference,
-          start: b.startDate.toISOString(),
-          end: b.endDate.toISOString(),
-        })),
-      });
+      this.logger.info(
+        {
+          carId,
+          requestedStart: startDate.toISOString(),
+          requestedEnd: endDate.toISOString(),
+          conflictingBookings: conflictingBookings.map((b) => ({
+            id: b.id,
+            reference: b.bookingReference,
+            start: b.startDate.toISOString(),
+            end: b.endDate.toISOString(),
+          })),
+        },
+        "Car availability conflict found",
+      );
 
       throw new CarNotAvailableException(
         carId,
@@ -294,9 +307,12 @@ export class BookingValidationService {
     });
 
     if (existingUser) {
-      this.logger.log("Guest email already registered", {
-        email: maskEmail(input.guestEmail),
-      });
+      this.logger.info(
+        {
+          email: maskEmail(input.guestEmail),
+        },
+        "Guest email already registered",
+      );
 
       throw new BookingValidationException([
         {
@@ -328,11 +344,14 @@ export class BookingValidationService {
       const difference = clientDecimal.minus(serverTotal).abs();
 
       if (difference.greaterThan(PRICE_TOLERANCE)) {
-        this.logger.warn("Price mismatch detected", {
-          clientTotal: clientDecimal.toString(),
-          serverTotal: serverTotal.toString(),
-          difference: difference.toString(),
-        });
+        this.logger.warn(
+          {
+            clientTotal: clientDecimal.toString(),
+            serverTotal: serverTotal.toString(),
+            difference: difference.toString(),
+          },
+          "Price mismatch detected",
+        );
 
         throw new BookingValidationException([
           {

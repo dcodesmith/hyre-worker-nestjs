@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ModuleRef } from "@nestjs/core";
 import { EnvConfig } from "src/config/env.config";
 import { EMAIL_TRANSPORT_TOKEN } from "./email.const";
 import { EmailService } from "./email.service";
@@ -11,17 +12,17 @@ import { SmtpEmailTransport } from "./smtp-email.transport";
     EmailService,
     {
       provide: EMAIL_TRANSPORT_TOKEN,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService<EnvConfig>) => {
+      inject: [ConfigService, ModuleRef],
+      useFactory: async (configService: ConfigService<EnvConfig>, moduleRef: ModuleRef) => {
         const nodeEnv = configService.get("NODE_ENV", { infer: true });
         const emailProvider = configService.get("EMAIL_PROVIDER", { infer: true });
         const provider = emailProvider ?? (nodeEnv === "production" ? "resend" : "smtp");
 
         if (provider === "resend") {
-          return new ResendEmailTransport(configService);
+          return moduleRef.create(ResendEmailTransport);
         }
 
-        return new SmtpEmailTransport(configService);
+        return moduleRef.create(SmtpEmailTransport);
       },
     },
   ],

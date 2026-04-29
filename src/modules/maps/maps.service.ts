@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
+import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
 import { FALLBACK_DURATION_MINUTES, LAGOS_AIRPORT_COORDS } from "./maps.const";
@@ -8,7 +9,6 @@ import type { DriveTimeResult, GoogleRoutesOrigin, GoogleRoutesResponse } from "
 
 @Injectable()
 export class MapsService {
-  private readonly logger = new Logger(MapsService.name);
   private readonly apiKey: string | undefined;
   private readonly baseUrl = "https://routes.googleapis.com/directions/v2:computeRoutes";
   private readonly httpClient: AxiosInstance;
@@ -16,6 +16,7 @@ export class MapsService {
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
+    private readonly logger: PinoLogger,
   ) {
     this.apiKey = this.configService.get("GOOGLE_DISTANCE_MATRIX_API_KEY", { infer: true });
 
@@ -28,6 +29,8 @@ export class MapsService {
       },
       serviceName: "GoogleMaps",
     });
+
+    this.logger.setContext(MapsService.name);
   }
 
   /**
@@ -62,7 +65,7 @@ export class MapsService {
       });
 
       if (!data.routes || data.routes.length === 0) {
-        this.logger.warn("No routes found", { destinationAddress });
+        this.logger.warn({ destinationAddress }, "No routes found");
         return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
       }
 
@@ -70,11 +73,14 @@ export class MapsService {
       const durationSeconds = Number.parseInt(route.duration.replace("s", ""), 10);
       const durationMinutes = Math.ceil(durationSeconds / 60);
 
-      this.logger.debug("Drive time calculated", {
-        destinationAddress,
-        durationMinutes,
-        distanceMeters: route.distanceMeters,
-      });
+      this.logger.debug(
+        {
+          destinationAddress,
+          durationMinutes,
+          distanceMeters: route.distanceMeters,
+        },
+        "Drive time calculated",
+      );
 
       return {
         durationMinutes,
@@ -84,11 +90,14 @@ export class MapsService {
     } catch (error) {
       const errorInfo = this.httpClientService.handleError(error, methodName, "GoogleMaps");
 
-      this.logger.error("Google Routes API error", {
-        status: errorInfo.status,
-        error: errorInfo.message,
-        destinationAddress,
-      });
+      this.logger.error(
+        {
+          status: errorInfo.status,
+          error: errorInfo.message,
+          destinationAddress,
+        },
+        "Google Routes API error",
+      );
 
       return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
     }

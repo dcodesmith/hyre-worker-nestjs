@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../../database/database.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 
@@ -62,7 +63,9 @@ describe("WhatsAppPersistenceService", () => {
           useValue: databaseService,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(WhatsAppPersistenceService);
   });

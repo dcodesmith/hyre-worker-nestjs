@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { BookingAgentOrchestratorService } from "./booking-agent-orchestrator.service";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
 import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
@@ -51,7 +52,9 @@ describe("BookingAgentOrchestratorService", () => {
           useValue: langGraphStateService,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(BookingAgentOrchestratorService);
   });

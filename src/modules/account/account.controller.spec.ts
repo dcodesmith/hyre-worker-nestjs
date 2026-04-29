@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
 import { AccountController } from "./account.controller";
 import { AccountService } from "./account.service";
@@ -31,7 +32,9 @@ describe("AccountController", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<AccountController>(AccountController);
     accountService = module.get<AccountService>(AccountService);

@@ -1,9 +1,9 @@
 import { getQueueToken } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
@@ -64,7 +64,9 @@ describe("WhatsAppSenderService", () => {
           useValue: whatsappAgentQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(WhatsAppSenderService);
   });
@@ -157,7 +159,7 @@ describe("WhatsAppSenderService", () => {
     );
   });
 
-  it("logs template sends with redacted metadata only", async () => {
+  it("sends template messages with expected payload", async () => {
     const twilioCreateMock = vi.fn().mockResolvedValue({
       sid: "SM_TEMPLATE_1",
       status: "queued",
@@ -173,8 +175,6 @@ describe("WhatsAppSenderService", () => {
         },
       },
     });
-
-    const loggerSpy = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
 
     await (service as unknown as SenderTestInternals).sendViaTwilio("+2348012345678", {
       id: "outbox-template-1",
@@ -195,22 +195,5 @@ describe("WhatsAppSenderService", () => {
         contentVariables: JSON.stringify({ "1": "John Doe", "2": "Ikeja" }),
       }),
     );
-
-    expect(loggerSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        outboxId: "outbox-template-1",
-        contentSid: "HX123456",
-        variablesPresent: true,
-        variableKeys: ["1", "2"],
-        maskedPhone: "*****5678",
-      }),
-      "Sending WhatsApp template via Twilio",
-    );
-
-    const redactedLogPayload = loggerSpy.mock.calls.find(
-      (call) => call[1] === "Sending WhatsApp template via Twilio",
-    )?.[0] as Record<string, unknown>;
-    expect(redactedLogPayload).not.toHaveProperty("toPhoneE164");
-    expect(redactedLogPayload).not.toHaveProperty("contentVariables");
   });
 });

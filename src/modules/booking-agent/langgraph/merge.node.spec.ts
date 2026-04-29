@@ -1,9 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { MergeNode } from "./merge.node";
 
 describe("MergeNode", () => {
-  const mergeNode = new MergeNode();
+  let mergeNode: MergeNode;
+
+  beforeEach(async () => {
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      providers: [MergeNode],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    mergeNode = moduleRef.get(MergeNode);
+  });
 
   it("applies extraction draft patch and clears stale options when draft changed", () => {
     const result = mergeNode.run({

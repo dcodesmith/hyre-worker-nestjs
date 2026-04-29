@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { subDays } from "date-fns";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
 import type { CreateReviewDto, UpdateReviewDto } from "./dto/reviews.dto";
@@ -53,12 +54,13 @@ type ReviewCreationBookingWithChauffeur = ReviewCreationBooking & {
 
 @Injectable()
 export class ReviewsWriteService {
-  private readonly logger = new Logger(ReviewsWriteService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ReviewsWriteService.name);
+  }
 
   async createReview(userId: string, input: CreateReviewDto) {
     const booking = await this.databaseService.booking.findFirst({
@@ -225,11 +227,14 @@ export class ReviewsWriteService {
         },
       });
     } catch (error) {
-      this.logger.error("Failed to queue review received notifications", {
-        bookingId: booking.id,
-        bookingReference: booking.bookingReference,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue review received notifications",
+      );
     }
   }
 }

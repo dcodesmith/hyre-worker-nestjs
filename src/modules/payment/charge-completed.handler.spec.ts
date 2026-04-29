@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentAttemptStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPaymentRecord } from "../../shared/helper.fixtures";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
@@ -23,7 +24,6 @@ describe("ChargeCompletedHandler", () => {
   const mockExtensionConfirmationService = {
     confirmFromPayment: vi.fn(),
   };
-
   const mockChargeData: FlutterwaveChargeData = {
     id: 12345,
     tx_ref: "tx-ref-123",
@@ -78,7 +78,9 @@ describe("ChargeCompletedHandler", () => {
         { provide: BookingConfirmationService, useValue: mockBookingConfirmationService },
         { provide: ExtensionConfirmationService, useValue: mockExtensionConfirmationService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     handler = module.get<ChargeCompletedHandler>(ChargeCompletedHandler);
     databaseService = module.get<DatabaseService>(DatabaseService);

@@ -2,6 +2,7 @@ import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitt
 import { Test, type TestingModule } from "@nestjs/testing";
 import { FlightStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
@@ -57,7 +58,9 @@ describe("FlightAwareWebhookService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<FlightAwareWebhookService>(FlightAwareWebhookService);
     databaseService = module.get(DatabaseService);

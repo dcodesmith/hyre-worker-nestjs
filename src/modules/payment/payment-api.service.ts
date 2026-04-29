@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PaymentStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -9,12 +10,13 @@ import type { RefundPaymentDto } from "./dto/refund-payment.dto";
 import type { PaymentStatusResponse, UserInfo } from "./payment.interface";
 @Injectable()
 export class PaymentApiService {
-  private readonly logger = new Logger(PaymentApiService.name);
-
   constructor(
     private readonly flutterwaveService: FlutterwaveService,
     private readonly databaseService: DatabaseService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(PaymentApiService.name);
+  }
 
   /**
    * Initialize a payment for a booking or extension.
@@ -23,23 +25,29 @@ export class PaymentApiService {
     dto: InitializePaymentDto,
     user: UserInfo,
   ): Promise<PaymentIntentResponse> {
-    this.logger.log("Initializing payment", {
-      type: dto.type,
-      entityId: dto.entityId,
-      userId: user.id,
-    });
+    this.logger.info(
+      {
+        type: dto.type,
+        entityId: dto.entityId,
+        userId: user.id,
+      },
+      "Initializing payment",
+    );
 
     // Validate entity and get server-side amount
     const serverAmount = await this.validateEntityForPayment(dto.type, dto.entityId, user.id);
 
     // Reject if client-supplied amount doesn't match server-side amount
     if (dto.amount !== serverAmount) {
-      this.logger.warn("Payment amount mismatch", {
-        clientAmount: dto.amount,
-        serverAmount,
-        type: dto.type,
-        entityId: dto.entityId,
-      });
+      this.logger.warn(
+        {
+          clientAmount: dto.amount,
+          serverAmount,
+          type: dto.type,
+          entityId: dto.entityId,
+        },
+        "Payment amount mismatch",
+      );
       throw new BadRequestException(
         `Payment amount mismatch: expected ${serverAmount}, received ${dto.amount}`,
       );
@@ -62,11 +70,14 @@ export class PaymentApiService {
       },
     });
 
-    this.logger.log("Payment intent created", {
-      paymentIntentId: paymentIntent.paymentIntentId,
-      type: dto.type,
-      entityId: dto.entityId,
-    });
+    this.logger.info(
+      {
+        paymentIntentId: paymentIntent.paymentIntentId,
+        type: dto.type,
+        entityId: dto.entityId,
+      },
+      "Payment intent created",
+    );
 
     return paymentIntent;
   }
@@ -123,7 +134,10 @@ export class PaymentApiService {
     dto: RefundPaymentDto,
     userId: string,
   ): Promise<RefundResponse> {
-    this.logger.log("Initiating refund", { txRef, amount: dto.amount, reason: dto.reason, userId });
+    this.logger.info(
+      { txRef, amount: dto.amount, reason: dto.reason, userId },
+      "Initiating refund",
+    );
 
     const payment = await this.fetchPaymentForRefund(txRef);
     this.validateRefundEligibility(payment, userId, dto.amount);
@@ -263,12 +277,15 @@ export class PaymentApiService {
       data: { status: "REFUND_ERROR" },
     });
 
-    this.logger.error("Refund request failed with error, status set to REFUND_ERROR", {
-      txRef,
-      paymentId,
-      idempotencyKey,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    this.logger.error(
+      {
+        txRef,
+        paymentId,
+        idempotencyKey,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Refund request failed with error, status set to REFUND_ERROR",
+    );
   }
 
   private async handleRefundResult(
@@ -279,10 +296,13 @@ export class PaymentApiService {
     if (refundResult.success) {
       // Refund initiated successfully - stays as REFUND_PROCESSING
       // Webhook will update to REFUND_PARTIAL or REFUND_FULL when complete
-      this.logger.log("Refund initiated successfully", {
-        txRef,
-        refundId: refundResult.refundId,
-      });
+      this.logger.info(
+        {
+          txRef,
+          refundId: refundResult.refundId,
+        },
+        "Refund initiated successfully",
+      );
       return;
     }
 
@@ -292,10 +312,13 @@ export class PaymentApiService {
       data: { status: "REFUND_FAILED" },
     });
 
-    this.logger.warn("Refund request rejected by provider", {
-      txRef,
-      error: refundResult.error,
-    });
+    this.logger.warn(
+      {
+        txRef,
+        error: refundResult.error,
+      },
+      "Refund request rejected by provider",
+    );
   }
 
   /**

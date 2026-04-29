@@ -7,6 +7,7 @@ import {
   VehicleType,
 } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
@@ -73,7 +74,9 @@ describe("CarSearchService", () => {
         { provide: PromotionService, useValue: promotionServiceMock },
         CarPromotionEnrichmentService,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<CarSearchService>(CarSearchService);
   });

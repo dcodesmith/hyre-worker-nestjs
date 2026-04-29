@@ -6,6 +6,7 @@ import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Status } from "@pri
 import type { Job, Queue } from "bullmq";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { createBooking, createCar, createOwner, createUser } from "../../shared/helper.fixtures";
@@ -118,7 +119,9 @@ describe("BookingConfirmationService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingConfirmationService>(BookingConfirmationService);
     databaseService = module.get<DatabaseService>(DatabaseService);

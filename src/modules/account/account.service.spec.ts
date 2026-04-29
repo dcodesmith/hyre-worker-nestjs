@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createUser } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { AccountDeleteFailedException, AccountUserNotFoundException } from "./account.error";
@@ -27,7 +28,9 @@ describe("AccountService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<AccountService>(AccountService);
     databaseService = module.get<DatabaseService>(DatabaseService);

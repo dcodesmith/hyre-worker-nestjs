@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createReview } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { ReviewNotFoundException } from "./reviews.error";
@@ -23,7 +24,9 @@ describe("ReviewsModerationService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<ReviewsModerationService>(ReviewsModerationService);
     databaseService = module.get<DatabaseService>(DatabaseService);

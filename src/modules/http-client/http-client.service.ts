@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
+import { PinoLogger } from "nestjs-pino";
 
 export interface HttpClientConfig {
   baseURL?: string;
@@ -17,7 +18,9 @@ export interface ErrorInfo {
 
 @Injectable()
 export class HttpClientService {
-  private readonly logger = new Logger(HttpClientService.name);
+  constructor(private readonly logger: PinoLogger) {
+    this.logger.setContext(HttpClientService.name);
+  }
 
   /**
    * Create a configured axios instance with interceptors for logging
@@ -37,13 +40,24 @@ export class HttpClientService {
     // Request interceptor
     client.interceptors.request.use(
       (requestConfig) => {
-        this.logger.log(
-          `${config.serviceName} request: ${requestConfig.method?.toUpperCase()} ${requestConfig.url}`,
+        this.logger.info(
+          {
+            serviceName: config.serviceName,
+            method: requestConfig.method?.toUpperCase(),
+            url: requestConfig.url,
+          },
+          "Outgoing HTTP request",
         );
         return requestConfig;
       },
       (error) => {
-        this.logger.error(`${config.serviceName} request error: ${error.message}`);
+        this.logger.error(
+          {
+            serviceName: config.serviceName,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "HTTP request interceptor error",
+        );
         return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
@@ -52,12 +66,24 @@ export class HttpClientService {
     client.interceptors.response.use(
       (response) => {
         this.logger.debug(
-          `${config.serviceName} response: ${response.config.method?.toUpperCase()} ${response.config.url} - Status: ${response.status}`,
+          {
+            serviceName: config.serviceName,
+            method: response.config.method?.toUpperCase(),
+            url: response.config.url,
+            status: response.status,
+          },
+          "Incoming HTTP response",
         );
         return response;
       },
       (error) => {
-        this.logger.error(`${config.serviceName} response error: ${error.message}`);
+        this.logger.error(
+          {
+            serviceName: config.serviceName,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "HTTP response interceptor error",
+        );
         return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
@@ -71,7 +97,7 @@ export class HttpClientService {
   handleError(error: unknown, operation: string, serviceName: string): ErrorInfo {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
-    this.logger.error(`${serviceName} ${operation} failed: ${errorMessage}`);
+    this.logger.error({ serviceName, operation, error: errorMessage }, "HTTP operation failed");
 
     if (axios.isAxiosError(error) && error.response) {
       const { status, data } = error.response;

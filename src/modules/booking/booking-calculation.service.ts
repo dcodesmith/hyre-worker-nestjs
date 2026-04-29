@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import type { ActivePromotion } from "../promotion/promotion.interface";
 import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
@@ -34,12 +35,13 @@ import type {
  */
 @Injectable()
 export class BookingCalculationService {
-  private readonly logger = new Logger(BookingCalculationService.name);
-
   constructor(
     private readonly ratesService: RatesService,
     private readonly promotionService: PromotionService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingCalculationService.name);
+  }
 
   /**
    * Calculate complete booking cost breakdown.
@@ -184,12 +186,12 @@ export class BookingCalculationService {
       );
     } catch (error) {
       this.logger.warn(
-        "Failed to fetch promotions for booking calculation; continuing without promo",
         {
           carId: car.id,
           ownerId: car.ownerId,
           error: error instanceof Error ? error.message : String(error),
         },
+        "Failed to fetch promotions for booking calculation; continuing without promo",
       );
       return [];
     }

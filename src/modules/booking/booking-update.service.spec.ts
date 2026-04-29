@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
   BookingNotFoundException,
@@ -36,7 +37,9 @@ describe("BookingUpdateService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<BookingUpdateService>(BookingUpdateService);
   });

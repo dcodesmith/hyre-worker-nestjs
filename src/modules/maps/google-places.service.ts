@@ -1,6 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { AxiosInstance } from "axios";
+import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "src/config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
 import { LAGOS_VIEWPORT_BOUNDS } from "./maps.const";
@@ -13,7 +14,6 @@ import type {
 
 @Injectable()
 export class GooglePlacesService {
-  private readonly logger = new Logger(GooglePlacesService.name);
   private readonly apiKey: string | undefined;
   private readonly maxSuggestions = 4;
   private readonly autocompleteUrl = "https://places.googleapis.com/v1/places:autocomplete";
@@ -46,6 +46,7 @@ export class GooglePlacesService {
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
+    private readonly logger: PinoLogger,
   ) {
     this.apiKey = this.configService.get("GOOGLE_DISTANCE_MATRIX_API_KEY", { infer: true });
     this.httpClient = this.httpClientService.createClient({
@@ -58,6 +59,8 @@ export class GooglePlacesService {
       },
       serviceName: "GooglePlaces",
     });
+
+    this.logger.setContext(GooglePlacesService.name);
   }
 
   async validateAddress(input: string): Promise<AddressLookupResult> {
@@ -68,7 +71,7 @@ export class GooglePlacesService {
 
     const suggestions = await this.fetchAutocompleteSuggestions(query);
     if (suggestions.length === 0) {
-      this.logger.debug("Address validation failed", { failureReason: "NO_MATCH" });
+      this.logger.debug({ failureReason: "NO_MATCH" }, "Address validation failed");
       return { isValid: false, failureReason: "NO_MATCH" };
     }
 
@@ -76,7 +79,7 @@ export class GooglePlacesService {
     const details = topMatch?.placeId ? await this.fetchPlaceDetails(topMatch.placeId) : null;
 
     if (details && this.isAreaOnlyFromPlaceDetails(details)) {
-      this.logger.debug("Address validation failed", { failureReason: "AREA_ONLY" });
+      this.logger.debug({ failureReason: "AREA_ONLY" }, "Address validation failed");
       return {
         isValid: false,
         failureReason: "AREA_ONLY",
@@ -92,7 +95,7 @@ export class GooglePlacesService {
     }
 
     if (!details && this.isAreaOnlyInput(query, suggestions)) {
-      this.logger.debug("Address validation failed", { failureReason: "AREA_ONLY" });
+      this.logger.debug({ failureReason: "AREA_ONLY" }, "Address validation failed");
       return {
         isValid: false,
         failureReason: "AREA_ONLY",
@@ -110,7 +113,7 @@ export class GooglePlacesService {
       failureReason: isValid ? undefined : "AMBIGUOUS",
     };
     if (!result.isValid) {
-      this.logger.debug("Address validation failed", { failureReason: result.failureReason });
+      this.logger.debug({ failureReason: result.failureReason }, "Address validation failed");
     }
     return result;
   }
@@ -145,11 +148,14 @@ export class GooglePlacesService {
         "fetchAutocompleteSuggestions",
         "GooglePlaces",
       );
-      this.logger.warn("Autocomplete suggestions failed", {
-        query,
-        status: info.status,
-        error: info.message,
-      });
+      this.logger.warn(
+        {
+          query,
+          status: info.status,
+          error: info.message,
+        },
+        "Autocomplete suggestions failed",
+      );
       return [];
     }
   }
@@ -168,11 +174,14 @@ export class GooglePlacesService {
       return data ?? null;
     } catch (error) {
       const info = this.httpClientService.handleError(error, "fetchPlaceDetails", "GooglePlaces");
-      this.logger.warn("Place details fetch failed", {
-        placeId,
-        status: info.status,
-        error: info.message,
-      });
+      this.logger.warn(
+        {
+          placeId,
+          status: info.status,
+          error: info.message,
+        },
+        "Place details fetch failed",
+      );
       return null;
     }
   }

@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { OPENAI_SDK_CLIENT } from "../../openai-sdk/openai-sdk.tokens";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 
@@ -45,7 +46,9 @@ describe("WhatsAppAudioTranscriptionService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = moduleRef.get(WhatsAppAudioTranscriptionService);
   });

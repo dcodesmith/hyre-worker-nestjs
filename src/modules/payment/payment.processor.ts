@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { PAYOUTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
@@ -9,17 +10,17 @@ import { PaymentService } from "./payment.service";
 @Processor(PAYOUTS_QUEUE)
 @Injectable()
 export class PaymentProcessor extends WorkerHost {
-  private readonly logger = new Logger(PaymentProcessor.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly paymentService: PaymentService,
+    private readonly logger: PinoLogger,
   ) {
     super();
+    this.logger.setContext(PaymentProcessor.name);
   }
 
   async process(job: Job<PayoutJobData, any, string>) {
-    this.logger.log(`Processing payout job: ${job.name}`, job.data);
+    this.logger.info(job.data, `Processing payout job: ${job.name}`);
 
     if (job.name !== PROCESS_PAYOUT_FOR_BOOKING) {
       throw new Error(`Unknown payout job type: ${job.name}`);
@@ -48,10 +49,13 @@ export class PaymentProcessor extends WorkerHost {
       }
 
       if (booking.status !== "COMPLETED") {
-        this.logger.warn(`Booking ${bookingId} is not in COMPLETED status, skipping payout`, {
-          bookingId,
-          currentStatus: booking.status,
-        });
+        this.logger.warn(
+          {
+            bookingId,
+            currentStatus: booking.status,
+          },
+          `Booking ${bookingId} is not in COMPLETED status, skipping payout`,
+        );
         return { success: false, reason: "INVALID_BOOKING_STATUS" };
       }
 
@@ -71,22 +75,25 @@ export class PaymentProcessor extends WorkerHost {
   @OnWorkerEvent("completed")
   onCompleted(job: Job<PayoutJobData>) {
     const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
-    this.logger.log(`Payout job completed: ${job.name} [${job.id}] - Duration: ${duration}ms`);
+    this.logger.info(`Payout job completed: ${job.name} [${job.id}] - Duration: ${duration}ms`);
   }
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<PayoutJobData>, error: Error) {
-    this.logger.error(`Payout job failed: ${job.name} [${job.id}]`, {
-      error: error.message,
-      stack: error.stack,
-      attempts: job.attemptsMade,
-      maxAttempts: job.opts.attempts,
-    });
+    this.logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        attempts: job.attemptsMade,
+        maxAttempts: job.opts.attempts,
+      },
+      `Payout job failed: ${job.name} [${job.id}]`,
+    );
   }
 
   @OnWorkerEvent("active")
   onActive(job: Job<PayoutJobData>) {
-    this.logger.log(
+    this.logger.info(
       `Payout job started: ${job.name} [${job.id}] - Attempt ${job.attemptsMade + 1}`,
     );
   }
@@ -98,6 +105,6 @@ export class PaymentProcessor extends WorkerHost {
 
   @OnWorkerEvent("progress")
   onProgress(job: Job<PayoutJobData>, progress: number | object) {
-    this.logger.debug(`Payout job progress: ${job.name} [${job.id}]`, progress);
+    this.logger.debug(progress, `Payout job progress: ${job.name} [${job.id}]`);
   }
 }

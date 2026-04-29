@@ -1,6 +1,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { STATUS_UPDATES_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { StatusChangeSchedulingService } from "./status-change-scheduling.service";
@@ -37,7 +38,9 @@ describe("StatusChangeSchedulingService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<StatusChangeSchedulingService>(StatusChangeSchedulingService);
     databaseService = module.get(DatabaseService);

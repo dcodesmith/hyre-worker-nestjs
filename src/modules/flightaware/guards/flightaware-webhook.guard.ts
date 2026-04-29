@@ -1,16 +1,20 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
+import { PinoLogger } from "nestjs-pino";
 import { timingSafeSecretMatch } from "src/common/security/webhook-signature.helper";
 import type { EnvConfig } from "src/config/env.config";
 
 @Injectable()
 export class FlightAwareWebhookGuard implements CanActivate {
-  private readonly logger = new Logger(FlightAwareWebhookGuard.name);
   private readonly webhookSecret: string;
   private readonly hmacKey: string;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(FlightAwareWebhookGuard.name);
     this.webhookSecret = this.configService.getOrThrow("FLIGHTAWARE_WEBHOOK_SECRET", {
       infer: true,
     });

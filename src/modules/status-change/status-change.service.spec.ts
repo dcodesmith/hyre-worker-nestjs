@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { NotificationService } from "../notification/notification.service";
@@ -61,7 +62,9 @@ describe("StatusChangeService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<StatusChangeService>(StatusChangeService);
     mockDatabaseService = module.get<DatabaseService>(DatabaseService);

@@ -1,4 +1,3 @@
-import { Logger } from "@nestjs/common";
 import {
   CHECKOUT_LINK_CONTENT_SID,
   LANGGRAPH_OUTBOUND_MODE,
@@ -19,8 +18,6 @@ type OutboxStateContext = {
   selectedOption: VehicleSearchOption | null;
   availableOptions: VehicleSearchOption[];
 };
-
-const logger = new Logger("LangGraphOutboxBuilder");
 
 function extractCheckoutToken(checkoutUrl: string): string | null {
   try {
@@ -57,12 +54,6 @@ export function buildOutboxItems(
     response.vehicleCards.forEach((card, index) => {
       const vehicle = state.availableOptions.find((option) => option.id === card.vehicleId);
       if (!vehicle) {
-        logger.debug("Skipping vehicle card with missing option reference", {
-          index,
-          vehicleId: card.vehicleId,
-          card,
-          availableOptionIds: state.availableOptions.map((option) => option.id),
-        });
         return;
       }
 
@@ -74,17 +65,6 @@ export function buildOutboxItems(
         "4": "Select",
         "5": vehicle.id,
       } as const;
-
-      logger.log(
-        {
-          conversationId: state.conversationId,
-          inboundMessageId: state.inboundMessageId,
-          vehicleId: vehicle.id,
-          templateName: VEHICLE_CARD_CONTENT_SID,
-          templateVariables,
-        },
-        "Vehicle card template variables set",
-      );
 
       outboxItems.push({
         conversationId: state.conversationId,

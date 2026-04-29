@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, Status } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -14,12 +15,13 @@ import { CATEGORY_DEFINITIONS, MIN_CATEGORY_SIZE } from "./dto/car-categories.dt
 
 @Injectable()
 export class CarCategoriesService {
-  private readonly logger = new Logger(CarCategoriesService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CarCategoriesService.name);
+  }
 
   /**
    * Categorizes cars into meaningful groups for display.
@@ -99,9 +101,12 @@ export class CarCategoriesService {
       if (error instanceof CarException) {
         throw error;
       }
-      this.logger.error("Failed to fetch categorized cars", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to fetch categorized cars",
+      );
       throw new CarFetchFailedException();
     }
   }

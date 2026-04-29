@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import {
   type BookingAgentLocationValidationState,
   type BookingAgentState,
@@ -13,7 +14,9 @@ import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-s
 
 @Injectable()
 export class MergeNode {
-  private readonly logger = new Logger(MergeNode.name);
+  constructor(private readonly logger: PinoLogger) {
+    this.logger.setContext(MergeNode.name);
+  }
 
   run(state: LangGraphNodeState): LangGraphNodeResult {
     const { extraction, draft, preferences } = state;
@@ -34,14 +37,17 @@ export class MergeNode {
     const dropoffLocationChanged = draft.dropoffLocation !== newDraft.dropoffLocation;
     const shouldClearOptions = draftChanged && state.availableOptions.length > 0;
 
-    this.logger.debug("Merge node completed", {
-      autoFilledDropoffLocation: !draft.dropoffLocation && !!newDraft.dropoffLocation,
-      autoFilledDropoffDate: !draft.dropoffDate && !!newDraft.dropoffDate,
-      hasPickupLocation: !!newDraft.pickupLocation,
-      hasDropoffLocation: !!newDraft.dropoffLocation,
-      hasFlightNumber: !!newDraft.flightNumber,
-      draftChanged,
-    });
+    this.logger.debug(
+      {
+        autoFilledDropoffLocation: !draft.dropoffLocation && !!newDraft.dropoffLocation,
+        autoFilledDropoffDate: !draft.dropoffDate && !!newDraft.dropoffDate,
+        hasPickupLocation: !!newDraft.pickupLocation,
+        hasDropoffLocation: !!newDraft.dropoffLocation,
+        hasFlightNumber: !!newDraft.flightNumber,
+        draftChanged,
+      },
+      "Merge node completed",
+    );
 
     const nextLocationValidation = this.nextLocationValidationOnDraftMerge(
       state.locationValidation,

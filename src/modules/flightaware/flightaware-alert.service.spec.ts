@@ -2,6 +2,7 @@ import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
   createAxiosErrorWithResponse,
@@ -47,7 +48,9 @@ describe("FlightAwareAlertService", () => {
         { provide: DatabaseService, useValue: mockDatabaseService },
         { provide: HttpClientService, useValue: mockHttpClientService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<FlightAwareAlertService>(FlightAwareAlertService);
   });

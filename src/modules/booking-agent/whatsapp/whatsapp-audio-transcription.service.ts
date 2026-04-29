@@ -1,13 +1,13 @@
 import { Buffer } from "node:buffer";
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import { toFile } from "openai/uploads";
 import type { EnvConfig } from "../../../config/env.config";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
 
 @Injectable()
 export class WhatsAppAudioTranscriptionService {
-  private readonly logger = new Logger(WhatsAppAudioTranscriptionService.name);
   private readonly twilioAccountSid: string;
   private readonly twilioAuthToken: string;
   private static readonly MEDIA_FETCH_TIMEOUT_MS = 10_000;
@@ -15,7 +15,9 @@ export class WhatsAppAudioTranscriptionService {
   constructor(
     @Inject(OPENAI_SDK_CLIENT) private readonly openaiClient: OpenAiSdkClient,
     private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
   ) {
+    this.logger.setContext(WhatsAppAudioTranscriptionService.name);
     this.twilioAccountSid = this.configService.get("TWILIO_ACCOUNT_SID", { infer: true });
     this.twilioAuthToken = this.configService.get("TWILIO_AUTH_TOKEN", { infer: true });
   }
@@ -38,7 +40,7 @@ export class WhatsAppAudioTranscriptionService {
     const normalizedTranscript = transcript.trim();
 
     if (!normalizedTranscript) {
-      this.logger.warn("Audio transcription returned empty text", { traceId });
+      this.logger.warn({ traceId }, "Audio transcription returned empty text");
       return null;
     }
 

@@ -1,6 +1,7 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
@@ -132,7 +133,9 @@ describe("BookingController", () => {
         { provide: AuthService, useValue: mockAuthService },
         OptionalSessionGuard,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);

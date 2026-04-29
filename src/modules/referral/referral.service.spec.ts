@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import type { Request } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   ReferralEligibilityCheckFailedException,
   ReferralInvalidCodeException,
@@ -43,7 +44,9 @@ describe("ReferralService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<ReferralService>(ReferralService);
     referralApiService = module.get<ReferralApiService>(ReferralApiService);

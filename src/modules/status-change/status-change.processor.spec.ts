@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   ACTIVATE_AIRPORT_BOOKING,
   ACTIVE_TO_COMPLETED,
@@ -32,7 +33,9 @@ describe("StatusChangeProcessor", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     processor = module.get<StatusChangeProcessor>(StatusChangeProcessor);
     statusChangeService = module.get<StatusChangeService>(StatusChangeService);

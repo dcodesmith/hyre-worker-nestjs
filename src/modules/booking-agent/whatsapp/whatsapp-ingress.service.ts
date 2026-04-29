@@ -1,6 +1,7 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "../booking-agent.const";
 import type {
@@ -19,14 +20,15 @@ import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 
 @Injectable()
 export class WhatsAppIngressService {
-  private readonly logger = new Logger(WhatsAppIngressService.name);
-
   constructor(
     private readonly persistenceService: WhatsAppPersistenceService,
     private readonly windowPolicyService: BookingAgentWindowPolicyService,
+    private readonly logger: PinoLogger,
     @InjectQueue(WHATSAPP_AGENT_QUEUE)
     private readonly whatsappAgentQueue: Queue<ProcessWhatsAppInboundJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(WhatsAppIngressService.name);
+  }
 
   async handleInbound(payload: TwilioInboundWebhookPayload): Promise<void> {
     if (!isInboundCustomerMessage(payload)) {
@@ -36,10 +38,13 @@ export class WhatsAppIngressService {
 
     const phoneE164 = normalizeTwilioWhatsAppPhone(payload.From);
     if (!phoneE164) {
-      this.logger.warn("Skipping payload with invalid WhatsApp phone", {
-        from: payload.From,
-        sid: payload.MessageSid,
-      });
+      this.logger.warn(
+        {
+          from: payload.From,
+          sid: payload.MessageSid,
+        },
+        "Skipping payload with invalid WhatsApp phone",
+      );
       return;
     }
 
@@ -71,7 +76,7 @@ export class WhatsAppIngressService {
       messageId = message.id;
     } catch (error) {
       if (this.persistenceService.isUniqueViolation(error)) {
-        this.logger.debug("Duplicate inbound webhook ignored", { dedupeKey, phoneE164 });
+        this.logger.debug({ dedupeKey, phoneE164 }, "Duplicate inbound webhook ignored");
         return;
       }
       throw error;
@@ -94,11 +99,15 @@ export class WhatsAppIngressService {
       try {
         await this.persistenceService.deleteInboundMessage(messageId);
       } catch (cleanupError) {
-        this.logger.error("Failed to cleanup inbound message after enqueue failure", {
-          messageId,
-          dedupeKey,
-          cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        });
+        this.logger.error(
+          {
+            messageId,
+            dedupeKey,
+            cleanupError:
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          },
+          "Failed to cleanup inbound message after enqueue failure",
+        );
       }
       throw error;
     }
@@ -106,11 +115,14 @@ export class WhatsAppIngressService {
     try {
       await this.persistenceService.markInboundMessageQueued(messageId);
     } catch (error) {
-      this.logger.error("Failed to mark inbound message as queued after successful enqueue", {
-        messageId,
-        dedupeKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          messageId,
+          dedupeKey,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to mark inbound message as queued after successful enqueue",
+      );
     }
   }
 }

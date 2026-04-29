@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { type Auth, createAuth } from "./auth.config";
@@ -23,7 +24,6 @@ import { AuthEmailService } from "./auth-email.service";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
-  private readonly logger = new Logger(AuthService.name);
   private _auth: Auth | null = null;
   private trustedOrigins: string[] = [];
 
@@ -31,7 +31,10 @@ export class AuthService implements OnModuleInit {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService<EnvConfig>,
     private readonly authEmailService: AuthEmailService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(AuthService.name);
+  }
 
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
@@ -57,7 +60,7 @@ export class AuthService implements OnModuleInit {
       },
     });
 
-    this.logger.log("Auth service initialized successfully");
+    this.logger.info("Auth service initialized successfully");
   }
 
   get auth(): Auth {
@@ -263,7 +266,7 @@ export class AuthService implements OnModuleInit {
     });
 
     if (!user) {
-      this.logger.warn(`Cannot assign role: user ${userId} not found`);
+      this.logger.warn({ userId }, "Cannot assign role: user not found");
       throw new AuthNotFoundException(
         AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
         "User not found for role assignment",
@@ -278,7 +281,7 @@ export class AuthService implements OnModuleInit {
         where: { id: userId },
         data: { roles: { connect: { name: role } } },
       });
-      this.logger.log(`Assigned role "${role}" to user ${userId}`);
+      this.logger.info({ userId, role }, "Assigned role to user");
     }
   }
 
@@ -299,7 +302,7 @@ export class AuthService implements OnModuleInit {
     const hasRole = user?.roles.some((r) => r.name === role) ?? false;
 
     if (!hasRole) {
-      this.logger.warn(`User ${userId} does not have required role: ${role}`);
+      this.logger.warn({ userId, role }, "User does not have required role");
       throw new AuthUnauthorizedException(
         AuthErrorCode.AUTH_ROLE_REQUIREMENT_FAILED,
         `User does not have required role: ${role}`,

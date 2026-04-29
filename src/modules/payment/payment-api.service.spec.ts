@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -18,7 +19,6 @@ describe("PaymentApiService", () => {
     email: "test@example.com",
     name: "Test User",
   };
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -48,7 +48,9 @@ describe("PaymentApiService", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<PaymentApiService>(PaymentApiService);
     databaseService = module.get<DatabaseService>(DatabaseService);

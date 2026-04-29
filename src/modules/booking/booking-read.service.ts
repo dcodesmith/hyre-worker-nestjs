@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PaymentStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import {
   BookingException,
@@ -9,7 +10,6 @@ import {
 
 @Injectable()
 export class BookingReadService {
-  private readonly logger = new Logger(BookingReadService.name);
   private readonly bookingDetailsInclude = {
     car: { include: { owner: true, images: true } },
     user: true,
@@ -34,7 +34,12 @@ export class BookingReadService {
     },
   } as const;
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingReadService.name);
+  }
 
   async getBookingsByStatus(userId: string) {
     try {
@@ -64,11 +69,14 @@ export class BookingReadService {
         throw error;
       }
 
-      this.logger.error("Failed to fetch bookings by status", {
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to fetch bookings by status",
+      );
       throw new BookingFetchFailedException();
     }
   }
@@ -90,12 +98,15 @@ export class BookingReadService {
         throw error;
       }
 
-      this.logger.error("Failed to fetch booking by id", {
-        bookingId,
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          bookingId,
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to fetch booking by id",
+      );
       throw new BookingFetchFailedException();
     }
   }

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { EMAIL_TRANSPORT_TOKEN } from "./email.const";
 import { EmailDeliveryFailedException } from "./email.error";
 import { EmailService } from "./email.service";
@@ -21,7 +22,9 @@ describe("EmailService", () => {
           useValue: mockTransport,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<EmailService>(EmailService);
   });

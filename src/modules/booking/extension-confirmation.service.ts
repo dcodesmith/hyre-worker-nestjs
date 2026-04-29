@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { type Payment, PaymentStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { normaliseBookingDetails, normaliseExtensionDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
@@ -15,20 +16,24 @@ import { BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND } from "../notification/templ
 
 @Injectable()
 export class ExtensionConfirmationService {
-  private readonly logger = new Logger(ExtensionConfirmationService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
-  ) {}
+  ) {
+    this.logger.setContext(ExtensionConfirmationService.name);
+  }
 
   async confirmFromPayment(payment: Payment): Promise<boolean> {
     if (!payment.extensionId) {
-      this.logger.warn("Payment has no associated extension, skipping confirmation", {
-        paymentId: payment.id,
-        txRef: payment.txRef,
-      });
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+        },
+        "Payment has no associated extension, skipping confirmation",
+      );
       return false;
     }
 
@@ -82,10 +87,13 @@ export class ExtensionConfirmationService {
     });
 
     if (!updatedExtension) {
-      this.logger.log("Extension is already confirmed or not found, skipping", {
-        extensionId: payment.extensionId,
-        paymentId: payment.id,
-      });
+      this.logger.info(
+        {
+          extensionId: payment.extensionId,
+          paymentId: payment.id,
+        },
+        "Extension is already confirmed or not found, skipping",
+      );
       return false;
     }
 
@@ -94,10 +102,13 @@ export class ExtensionConfirmationService {
     const channels = deriveNotificationChannels(bookingDetails);
 
     if (channels.length === 0) {
-      this.logger.warn("No customer delivery channel available for extension confirmation", {
-        extensionId: updatedExtension.id,
-        bookingId: updatedExtension.bookingLeg.booking.id,
-      });
+      this.logger.warn(
+        {
+          extensionId: updatedExtension.id,
+          bookingId: updatedExtension.bookingLeg.booking.id,
+        },
+        "No customer delivery channel available for extension confirmation",
+      );
       return true;
     }
 
@@ -128,11 +139,14 @@ export class ExtensionConfirmationService {
       { jobId: notificationJobId },
     );
 
-    this.logger.log("Extension confirmed after payment", {
-      extensionId: updatedExtension.id,
-      paymentId: payment.id,
-      txRef: payment.txRef,
-    });
+    this.logger.info(
+      {
+        extensionId: updatedExtension.id,
+        paymentId: payment.id,
+        txRef: payment.txRef,
+      },
+      "Extension confirmed after payment",
+    );
 
     return true;
   }

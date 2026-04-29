@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
@@ -16,12 +17,13 @@ import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-s
 
 @Injectable()
 export class SearchNode {
-  private readonly logger = new Logger(SearchNode.name);
-
   constructor(
     private readonly bookingAgentSearchService: BookingAgentSearchService,
     private readonly googlePlacesService: GooglePlacesService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(SearchNode.name);
+  }
 
   async run(state: LangGraphNodeState): Promise<LangGraphNodeResult> {
     try {
@@ -87,7 +89,7 @@ export class SearchNode {
       }
 
       const extractedParams = convertToExtractedParams(validatedDraft);
-      this.logger.log(
+      this.logger.info(
         {
           draft: validatedDraft,
           extractedParams,
@@ -100,10 +102,13 @@ export class SearchNode {
       );
 
       if (searchResult.precondition) {
-        this.logger.warn("Search returned precondition", {
-          precondition: searchResult.precondition,
-          extractedParams,
-        });
+        this.logger.warn(
+          {
+            precondition: searchResult.precondition,
+            extractedParams,
+          },
+          "Search returned precondition",
+        );
         return {
           draft: validatedDraft,
           availableOptions: [],
@@ -129,18 +134,21 @@ export class SearchNode {
 
       const newStage = options.length > 0 ? "presenting_options" : "collecting";
 
-      this.logger.log("Search node completed", {
-        exactMatchCount: searchResult.exactMatches.length,
-        alternativeCount: searchResult.alternatives.length,
-        totalOptions: options.length,
-        newStage,
-        optionDetails: options.map((o) => ({
-          id: o.id,
-          make: o.make,
-          model: o.model,
-          price: o.estimatedTotalInclVat,
-        })),
-      });
+      this.logger.info(
+        {
+          exactMatchCount: searchResult.exactMatches.length,
+          alternativeCount: searchResult.alternatives.length,
+          totalOptions: options.length,
+          newStage,
+          optionDetails: options.map((o) => ({
+            id: o.id,
+            make: o.make,
+            model: o.model,
+            price: o.estimatedTotalInclVat,
+          })),
+        },
+        "Search node completed",
+      );
 
       const noResultsMessage = this.buildSearchStatusMessage({
         optionsCount: options.length,
@@ -160,10 +168,13 @@ export class SearchNode {
         locationValidation,
       };
     } catch (error) {
-      this.logger.error("Search node failed", {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Search node failed",
+      );
       return {
         stage: "collecting",
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,

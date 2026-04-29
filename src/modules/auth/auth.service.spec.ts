@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
 import {
@@ -70,7 +71,9 @@ describe("AuthService", () => {
           useValue: mockConfigService,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<AuthService>(AuthService);
     service.onModuleInit();

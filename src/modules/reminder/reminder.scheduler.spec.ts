@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -29,7 +30,9 @@ describe("ReminderScheduler", () => {
           useValue: mockQueue,
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     scheduler = module.get<ReminderScheduler>(ReminderScheduler);
     reminderQueue = module.get<Queue<ReminderJobData>>(getQueueToken(REMINDERS_QUEUE));

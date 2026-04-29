@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
   RateAlreadyEndedException,
@@ -68,7 +69,9 @@ describe("RatesAdminService", () => {
         { provide: DatabaseService, useValue: databaseService },
         { provide: RatesService, useValue: ratesService },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     service = module.get<RatesAdminService>(RatesAdminService);
   });

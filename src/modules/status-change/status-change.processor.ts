@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
+import { Inject } from "@nestjs/common";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import {
   ACTIVATE_AIRPORT_BOOKING,
@@ -39,14 +40,16 @@ const statusUpdateJobDataSchema = z.discriminatedUnion("type", [
 
 @Processor(STATUS_UPDATES_QUEUE)
 export class StatusChangeProcessor extends WorkerHost {
-  private readonly logger = new Logger(StatusChangeProcessor.name);
-
-  constructor(private readonly statusChangeService: StatusChangeService) {
+  constructor(
+    private readonly statusChangeService: StatusChangeService,
+    @Inject(PinoLogger) private readonly logger: PinoLogger,
+  ) {
     super();
+    this.logger.setContext(StatusChangeProcessor.name);
   }
 
   async process(job: Job<StatusUpdateJobData, { success: boolean; result?: string }, string>) {
-    this.logger.log(`Processing status update job: ${job.name}`, job.data);
+    this.logger.info({ jobName: job.name, jobData: job.data }, "Processing status update job");
 
     try {
       let result: string | undefined;
@@ -71,14 +74,14 @@ export class StatusChangeProcessor extends WorkerHost {
           result = await this.statusChangeService.updateBookingsFromConfirmedToActive(
             jobData.timestamp,
           );
-          this.logger.log(`Confirmed to active updates processed: ${result}`);
+          this.logger.info({ result }, "Confirmed to active updates processed");
           break;
         }
         case ACTIVE_TO_COMPLETED: {
           result = await this.statusChangeService.updateBookingsFromActiveToCompleted(
             jobData.timestamp,
           );
-          this.logger.log(`Active to completed updates processed: ${result}`);
+          this.logger.info({ result }, "Active to completed updates processed");
           break;
         }
         case ACTIVATE_AIRPORT_BOOKING: {
@@ -86,7 +89,7 @@ export class StatusChangeProcessor extends WorkerHost {
             jobData.bookingId,
             jobData.activationAt,
           );
-          this.logger.log(`Airport booking activation processed: ${result}`);
+          this.logger.info({ result }, "Airport booking activation processed");
           break;
         }
       }
@@ -98,7 +101,14 @@ export class StatusChangeProcessor extends WorkerHost {
         error instanceof StatusChangeException
           ? error
           : new StatusUpdateJobProcessingFailedException(job.name, reason);
-      this.logger.error(`Failed to process ${job.name} job:`, error);
+      this.logger.error(
+        {
+          jobName: job.name,
+          error: wrappedError.message,
+          stack: wrappedError instanceof Error ? wrappedError.stack : undefined,
+        },
+        "Failed to process status update job",
+      );
       throw wrappedError;
     }
   }
@@ -106,31 +116,39 @@ export class StatusChangeProcessor extends WorkerHost {
   @OnWorkerEvent("completed")
   onCompleted(job: Job<StatusUpdateJobData>) {
     const duration = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : "N/A";
-    this.logger.log(`Job completed: ${job.name} [${job.id}] - Duration: ${duration}ms`);
+    this.logger.info({ jobName: job.name, jobId: job.id, durationMs: duration }, "Job completed");
   }
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<StatusUpdateJobData>, error: Error) {
-    this.logger.error(`Job failed: ${job.name} [${job.id}]`, {
-      error: error.message,
-      stack: error.stack,
-      attempts: job.attemptsMade,
-      maxAttempts: job.opts.attempts,
-    });
+    this.logger.error(
+      {
+        jobName: job.name,
+        jobId: job.id,
+        error: error.message,
+        stack: error.stack,
+        attempts: job.attemptsMade,
+        maxAttempts: job.opts.attempts,
+      },
+      "Job failed",
+    );
   }
 
   @OnWorkerEvent("active")
   onActive(job: Job<StatusUpdateJobData>) {
-    this.logger.log(`Job started: ${job.name} [${job.id}] - Attempt ${job.attemptsMade + 1}`);
+    this.logger.info(
+      { jobName: job.name, jobId: job.id, attempt: job.attemptsMade + 1 },
+      "Job started",
+    );
   }
 
   @OnWorkerEvent("stalled")
   onStalled(jobId: string) {
-    this.logger.warn(`Job stalled: ${jobId}`);
+    this.logger.warn({ jobId }, "Job stalled");
   }
 
   @OnWorkerEvent("progress")
   onProgress(job: Job<StatusUpdateJobData>, progress: number | object) {
-    this.logger.debug(`Job progress: ${job.name} [${job.id}]`, progress);
+    this.logger.debug({ jobName: job.name, jobId: job.id, progress }, "Job progress");
   }
 }

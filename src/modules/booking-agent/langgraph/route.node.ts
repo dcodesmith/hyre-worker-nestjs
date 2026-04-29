@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { LANGGRAPH_NODE_NAMES, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import {
@@ -11,7 +12,9 @@ import { resolveRouteDecision } from "./langgraph-router.policy";
 
 @Injectable()
 export class RouteNode {
-  private readonly logger = new Logger(RouteNode.name);
+  constructor(private readonly logger: PinoLogger) {
+    this.logger.setContext(RouteNode.name);
+  }
 
   run(state: LangGraphNodeState): LangGraphNodeResult {
     const { extraction, draft, stage, availableOptions, selectedOption } = state;
@@ -24,21 +27,24 @@ export class RouteNode {
     }
 
     const missingFields = getMissingRequiredFields(draft);
-    this.logger.log("Route node decision", {
-      intent: extraction?.intent,
-      stage,
-      missingFields,
-      hasSelectedOption: !!selectedOption,
-      availableOptionsCount: availableOptions.length,
-      draft: {
-        bookingType: draft.bookingType,
-        pickupDate: draft.pickupDate,
-        pickupTime: draft.pickupTime,
-        dropoffDate: draft.dropoffDate,
-        hasPickupLocation: !!draft.pickupLocation,
-        hasDropoffLocation: !!draft.dropoffLocation,
+    this.logger.info(
+      {
+        intent: extraction?.intent,
+        stage,
+        missingFields,
+        hasSelectedOption: !!selectedOption,
+        availableOptionsCount: availableOptions.length,
+        draft: {
+          bookingType: draft.bookingType,
+          pickupDate: draft.pickupDate,
+          pickupTime: draft.pickupTime,
+          dropoffDate: draft.dropoffDate,
+          hasPickupLocation: !!draft.pickupLocation,
+          hasDropoffLocation: !!draft.dropoffLocation,
+        },
       },
-    });
+      "Route node decision",
+    );
 
     const decision = resolveRouteDecision(state);
     const isControlIntent =

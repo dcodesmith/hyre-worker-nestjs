@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { metrics } from "@opentelemetry/api";
 import { Job, JobsOptions, Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { normaliseBookingDetails, normaliseBookingLegDetails } from "../../shared/helper";
 import {
@@ -34,7 +35,6 @@ import {
 
 @Injectable()
 export class NotificationService {
-  private readonly logger = new Logger(NotificationService.name);
   private readonly notificationSkippedNoChannelCounter = metrics
     .getMeter("notification-service")
     .createCounter("notification_skipped_no_channel");
@@ -42,7 +42,10 @@ export class NotificationService {
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(NotificationService.name);
+  }
 
   /**
    * Queue a notification for a change in a booking's status.
@@ -62,11 +65,10 @@ export class NotificationService {
       showReviewRequest,
     });
     if (jobData.channels.length === 0) {
-      this.logger.warn("No customer delivery channel available for booking status notification", {
-        bookingId: booking.id,
-        oldStatus,
-        newStatus,
-      });
+      this.logger.warn(
+        { bookingId: booking.id, oldStatus, newStatus },
+        "No customer delivery channel available for booking status notification",
+      );
       this.recordNotificationSkippedNoChannel({
         bookingId: booking.id,
         oldStatus,
@@ -110,9 +112,10 @@ export class NotificationService {
     if (customerJobData.channels.length > 0) {
       jobs.push(this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS));
     } else {
-      this.logger.warn("No customer delivery channel available for booking cancellation", {
-        bookingId: bookingDetails.id,
-      });
+      this.logger.warn(
+        { bookingId: bookingDetails.id },
+        "No customer delivery channel available for booking cancellation",
+      );
     }
 
     const ownerEmail = booking.car?.owner?.email;
@@ -142,9 +145,10 @@ export class NotificationService {
     }
 
     if (jobs.length === 0) {
-      this.logger.warn("No delivery channels available for booking cancellation notifications", {
-        bookingId: bookingDetails.id,
-      });
+      this.logger.warn(
+        { bookingId: bookingDetails.id },
+        "No delivery channels available for booking cancellation notifications",
+      );
       this.recordNotificationSkippedNoChannel({
         bookingId: bookingDetails.id,
         oldStatus: booking.status,
@@ -155,10 +159,10 @@ export class NotificationService {
 
     await Promise.all(jobs);
 
-    this.logger.log("Queued booking cancellation notifications", {
-      bookingId: bookingDetails.id,
-      notifiedOwner: !!(ownerEmail || ownerPhone),
-    });
+    this.logger.info(
+      { bookingId: bookingDetails.id, notifiedOwner: !!(ownerEmail || ownerPhone) },
+      "Queued booking cancellation notifications",
+    );
   }
 
   /**
@@ -221,10 +225,10 @@ export class NotificationService {
 
     await Promise.all([this.addJobToQueue(ownerJobData), this.addJobToQueue(chauffeurJobData)]);
 
-    this.logger.log("Queued review received notifications", {
-      bookingId: params.bookingId,
-      channels: [NotificationChannel.EMAIL],
-    });
+    this.logger.info(
+      { bookingId: params.bookingId, channels: [NotificationChannel.EMAIL] },
+      "Queued review received notifications",
+    );
   }
 
   private createStatusChangeJobData({
@@ -344,12 +348,10 @@ export class NotificationService {
     newStatus: string,
     channels: NotificationChannel[],
   ): void {
-    this.logger.log("Queued booking status notification", {
-      bookingId,
-      oldStatus,
-      newStatus,
-      channels,
-    });
+    this.logger.info(
+      { bookingId, oldStatus, newStatus, channels },
+      "Queued booking status notification",
+    );
   }
 
   private logReminderNotifications(
@@ -358,18 +360,21 @@ export class NotificationService {
   ): void {
     const { chauffeurEmail, chauffeurPhone, customerEmail, customerPhone } = bookingLegDetails;
 
-    this.logger.log("Queued booking reminder notifications", {
-      bookingLegId: bookingLegDetails.bookingLegId,
-      type,
-      customerChannels: deriveNotificationChannels({
-        email: customerEmail,
-        phoneNumber: customerPhone,
-      }),
-      chauffeurChannels: deriveNotificationChannels({
-        email: chauffeurEmail,
-        phoneNumber: chauffeurPhone,
-      }),
-    });
+    this.logger.info(
+      {
+        bookingLegId: bookingLegDetails.bookingLegId,
+        type,
+        customerChannels: deriveNotificationChannels({
+          email: customerEmail,
+          phoneNumber: customerPhone,
+        }),
+        chauffeurChannels: deriveNotificationChannels({
+          email: chauffeurEmail,
+          phoneNumber: chauffeurPhone,
+        }),
+      },
+      "Queued booking reminder notifications",
+    );
   }
 
   private getStatusChangeSubject(status: string): string {
@@ -406,12 +411,15 @@ export class NotificationService {
     oldStatus: string;
     newStatus: string;
   }): void {
-    this.logger.debug("Incrementing notification_skipped_no_channel counter", {
-      bookingId: input.bookingId,
-      oldStatus: input.oldStatus,
-      newStatus: input.newStatus,
-      reason: "no_channel",
-    });
+    this.logger.debug(
+      {
+        bookingId: input.bookingId,
+        oldStatus: input.oldStatus,
+        newStatus: input.newStatus,
+        reason: "no_channel",
+      },
+      "Incrementing notification_skipped_no_channel counter",
+    );
 
     this.notificationSkippedNoChannelCounter.add(1, {
       oldStatus: input.oldStatus,

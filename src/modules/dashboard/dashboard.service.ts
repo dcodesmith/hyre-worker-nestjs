@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, PayoutTransactionStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { DASHBOARD_RANGE_DAYS } from "./dashboard.const";
 import {
@@ -16,9 +17,12 @@ import type { DashboardEarningsQueryDto, DashboardPayoutsQueryDto } from "./dto/
 
 @Injectable()
 export class DashboardService {
-  private readonly logger = new Logger(DashboardService.name);
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(DashboardService.name);
+  }
 
   private toNumber(value: { toNumber(): number } | null | undefined): number {
     return value ? value.toNumber() : 0;
@@ -139,10 +143,13 @@ export class DashboardService {
       if (error instanceof DashboardException) {
         throw error;
       }
-      this.logger.error("Failed to get dashboard overview", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to get dashboard overview",
+      );
       throw new DashboardFetchFailedException();
     }
   }
@@ -220,10 +227,13 @@ export class DashboardService {
       if (error instanceof DashboardException) {
         throw error;
       }
-      this.logger.error("Failed to get dashboard earnings", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to get dashboard earnings",
+      );
       throw new DashboardFetchFailedException();
     }
   }
@@ -278,10 +288,13 @@ export class DashboardService {
       if (error instanceof DashboardException) {
         throw error;
       }
-      this.logger.error("Failed to get dashboard payouts", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to get dashboard payouts",
+      );
       throw new DashboardFetchFailedException();
     }
   }
@@ -325,10 +338,13 @@ export class DashboardService {
       if (error instanceof DashboardException) {
         throw error;
       }
-      this.logger.error("Failed to get dashboard payout summary", {
-        ownerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          ownerId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to get dashboard payout summary",
+      );
       throw new DashboardFetchFailedException();
     }
   }

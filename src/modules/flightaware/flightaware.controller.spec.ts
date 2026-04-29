@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { FlightStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlightAwareController } from "./flightaware.controller";
 import { FlightAwareService } from "./flightaware.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
@@ -42,7 +43,9 @@ describe("FlightAwareController", () => {
           },
         },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<FlightAwareController>(FlightAwareController);
     flightAwareService = module.get<FlightAwareService>(FlightAwareService);

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import {
   addHours,
@@ -14,6 +14,7 @@ import {
   startOfDay,
   subMilliseconds,
 } from "date-fns";
+import { PinoLogger } from "nestjs-pino";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { NotificationType } from "../notification/notification.interface";
@@ -29,23 +30,28 @@ const REMINDER_LABEL_BY_TYPE = {
 
 @Injectable()
 export class ReminderService {
-  private readonly logger = new Logger(ReminderService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationService: NotificationService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ReminderService.name);
+  }
 
   async sendBookingStartReminderEmails() {
     try {
       const now = new Date();
-      this.logger.log(`now: ${now.toISOString()}, new Date(): ${new Date().toISOString()}`);
+      this.logger.info(
+        { now: now.toISOString(), currentDate: new Date().toISOString() },
+        "Preparing booking start reminder query",
+      );
 
       const startOfToday = startOfDay(now);
       const endOfToday = endOfDay(now);
 
-      this.logger.log(
-        `Checking for booking legs starting today. startOfToday: ${startOfToday.toISOString()}, endOfToday: ${endOfToday.toISOString()}`,
+      this.logger.info(
+        { startOfToday: startOfToday.toISOString(), endOfToday: endOfToday.toISOString() },
+        "Checking for booking legs starting today",
       );
 
       const oneHourFromNow = addHours(now, 1);
@@ -82,15 +88,16 @@ export class ReminderService {
       });
 
       if (legs.length === 0) {
-        this.logger.log(
-          "No booking legs found for today matching initial criteria. No start reminders to send.",
-        );
+        this.logger.info("No booking legs found for today matching initial criteria");
         return "No relevant booking legs today, so no start reminders to send.";
       }
 
       let queuedCount = 0;
       for (const leg of legs) {
-        this.logger.log(`Processing leg ${leg.id} legStartTime: ${leg.legStartTime}`);
+        this.logger.info(
+          { legId: leg.id, legStartTime: leg.legStartTime.toISOString() },
+          "Processing booking leg start reminder",
+        );
 
         const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_START);
         if (queued) {
@@ -98,13 +105,14 @@ export class ReminderService {
         }
       }
 
-      this.logger.log("Email queue processing complete.");
+      this.logger.info({ queuedCount }, "Booking start reminder queue processing complete");
       return `Processed and queued start reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in sendBookingStartReminderEmails: ${errorMessage}`, {
-        errorDetails: error,
-      });
+      this.logger.error(
+        { error: errorMessage, errorDetails: error },
+        "Error in sendBookingStartReminderEmails",
+      );
       throw error;
     }
   }
@@ -140,8 +148,12 @@ export class ReminderService {
         end: reminderWindowEnd,
       };
 
-      this.logger.log(
-        `Checking for booking legs ending today. Reminder window (local): ${reminderWindowStart.toISOString()} - ${reminderWindowEnd.toISOString()}`,
+      this.logger.info(
+        {
+          reminderWindowStart: reminderWindowStart.toISOString(),
+          reminderWindowEnd: reminderWindowEnd.toISOString(),
+        },
+        "Checking for booking legs ending today",
       );
 
       // Fetch legs ending today with all necessary relations included
@@ -178,13 +190,14 @@ export class ReminderService {
       });
 
       if (legsEndingToday.length === 0) {
-        this.logger.log(
-          "No booking legs found for today meeting initial criteria. No end reminders to send.",
-        );
+        this.logger.info("No booking legs found for today meeting initial criteria");
         return "No relevant booking legs today, so no end reminders to send.";
       }
 
-      this.logger.log(`Processing ${legsEndingToday.length} legs ending today for end reminders.`);
+      this.logger.info(
+        { legsCount: legsEndingToday.length },
+        "Processing legs ending today for end reminders",
+      );
 
       let queuedCount = 0;
       for (const leg of legsEndingToday) {
@@ -193,8 +206,9 @@ export class ReminderService {
           continue;
         }
 
-        this.logger.log(
-          `Processing end reminder for leg ${leg.id} with effective end time: ${effectiveEndTime.toISOString()}`,
+        this.logger.info(
+          { legId: leg.id, effectiveEndTime: effectiveEndTime.toISOString() },
+          "Processing booking leg end reminder",
         );
 
         const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_END);
@@ -206,9 +220,10 @@ export class ReminderService {
       return `Processed and queued end reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in sendBookingEndReminderEmails: ${errorMessage}`, {
-        errorDetails: error,
-      });
+      this.logger.error(
+        { error: errorMessage, errorDetails: error },
+        "Error in sendBookingEndReminderEmails",
+      );
       throw error;
     }
   }
@@ -237,7 +252,8 @@ export class ReminderService {
 
     if (!isValid(effectiveEndTime)) {
       this.logger.warn(
-        `Could not determine valid effective end time for leg ${leg.id} of booking ${leg.booking.id}.`,
+        { legId: leg.id, bookingId: leg.booking.id },
+        "Could not determine valid effective end time",
       );
       return null;
     }
@@ -270,9 +286,7 @@ export class ReminderService {
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `Failed to queue ${reminderLabel} reminder for leg ${legId}: ${errorMessage}`,
-      );
+      this.logger.error({ reminderLabel, legId, error: errorMessage }, "Failed to queue reminder");
       return false;
     }
   }

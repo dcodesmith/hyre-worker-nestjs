@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { DatabaseService } from "../../database/database.service";
@@ -81,7 +82,9 @@ describe("CreateBookingNode", () => {
         { provide: BookingAgentSearchService, useValue: bookingAgentSearchServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     createBookingNode = moduleRef.get(CreateBookingNode);
   });

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PinoLogger } from "nestjs-pino";
 import { Resend } from "resend";
 import { EnvConfig } from "src/config/env.config";
 import { EmailDeliveryFailedException, EmailProviderResponseException } from "./email.error";
@@ -8,17 +9,19 @@ import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface
 
 @Injectable()
 export class ResendEmailTransport implements EmailTransport {
-  private readonly logger = new Logger(ResendEmailTransport.name);
   private readonly provider = "resend";
   private readonly resend: Resend;
   private readonly from: string;
 
-  constructor(private readonly configService: ConfigService<EnvConfig>) {
+  constructor(
+    private readonly configService: ConfigService<EnvConfig>,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ResendEmailTransport.name);
     const apiKey = this.configService.get("RESEND_API_KEY", { infer: true });
-
     this.resend = new Resend(apiKey);
     this.from = getFromAddress(this.configService);
-    this.logger.log("Resend email transport initialized");
+    this.logger.info("Resend email transport initialized");
   }
 
   async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
@@ -38,23 +41,30 @@ export class ResendEmailTransport implements EmailTransport {
     }
 
     if (result.error) {
-      this.logger.error("Email API returned error", {
-        provider: this.provider,
-        errorCode:
-          typeof result.error === "object" && result.error && "code" in result.error
-            ? result.error.code
-            : result.error,
-      });
+      const errorCode =
+        typeof result.error === "object" && result.error && "code" in result.error
+          ? result.error.code
+          : result.error;
+      this.logger.error(
+        {
+          provider: this.provider,
+          errorCode: String(errorCode),
+        },
+        "Email API returned error",
+      );
 
       throw new EmailProviderResponseException(this.provider, {
         providerError: result.error,
       });
     }
 
-    this.logger.log("Email sent successfully", {
-      provider: this.provider,
-      messageId: result.data?.id,
-    });
+    this.logger.info(
+      {
+        provider: this.provider,
+        messageId: result.data?.id ?? "unknown",
+      },
+      "Email sent successfully",
+    );
 
     return result;
   }

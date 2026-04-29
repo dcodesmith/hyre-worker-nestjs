@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import type { ActivePromotion } from "../promotion/promotion.interface";
 import { PromotionService } from "../promotion/promotion.service";
 import type { CarPromotionDto } from "./dto/car-promotion.dto";
@@ -35,9 +36,12 @@ interface EnrichCarWithPromotionParams<T extends PromotionTarget> {
 
 @Injectable()
 export class CarPromotionEnrichmentService {
-  private readonly logger = new Logger(CarPromotionEnrichmentService.name);
-
-  constructor(private readonly promotionService: PromotionService) {}
+  constructor(
+    private readonly promotionService: PromotionService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CarPromotionEnrichmentService.name);
+  }
 
   async resolvePromotionsForCars({
     targets,
@@ -51,11 +55,14 @@ export class CarPromotionEnrichmentService {
         referenceDate,
       );
     } catch (promotionError) {
-      this.logger.warn(failureMessage, {
-        carCount: targets.length,
-        ownerCount: new Set(targets.map((target) => target.ownerId)).size,
-        error: promotionError instanceof Error ? promotionError.message : String(promotionError),
-      });
+      this.logger.warn(
+        {
+          carCount: targets.length,
+          ownerCount: new Set(targets.map((target) => target.ownerId)).size,
+          error: promotionError instanceof Error ? promotionError.message : String(promotionError),
+        },
+        failureMessage,
+      );
     }
 
     return new Map(
@@ -79,11 +86,14 @@ export class CarPromotionEnrichmentService {
       );
       return mapActivePromotionToCarPromotionDto(promotion);
     } catch (promotionError) {
-      this.logger.warn(failureMessage, {
-        carId: target.id,
-        ownerIdPresent: Boolean(target.ownerId),
-        error: promotionError instanceof Error ? promotionError.message : String(promotionError),
-      });
+      this.logger.warn(
+        {
+          carId: target.id,
+          ownerIdPresent: Boolean(target.ownerId),
+          error: promotionError instanceof Error ? promotionError.message : String(promotionError),
+        },
+        failureMessage,
+      );
       return null;
     }
   }

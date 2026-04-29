@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
@@ -20,14 +21,15 @@ import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-s
 const MAX_FALLBACK_OPTIONS = 5;
 @Injectable()
 export class CreateBookingNode {
-  private readonly logger = new Logger(CreateBookingNode.name);
-
   constructor(
     private readonly bookingCreationService: BookingCreationService,
     private readonly databaseService: DatabaseService,
     private readonly bookingAgentSearchService: BookingAgentSearchService,
     private readonly whatsAppPersistenceService: WhatsAppPersistenceService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CreateBookingNode.name);
+  }
 
   async run(state: LangGraphNodeState): Promise<LangGraphNodeResult> {
     const { draft, selectedOption } = state;
@@ -56,15 +58,18 @@ export class CreateBookingNode {
         return validationError;
       }
 
-      this.logger.log("Creating booking", {
-        conversationId: state.conversationId,
-        vehicleId: selectedOption.id,
-        draftFieldCount: Object.keys(draft).length,
-        hasPickupLocation: !!draft.pickupLocation,
-        hasDropoffLocation: !!draft.dropoffLocation,
-        hasPickupDate: !!draft.pickupDate,
-        hasDropoffDate: !!draft.dropoffDate,
-      });
+      this.logger.info(
+        {
+          conversationId: state.conversationId,
+          vehicleId: selectedOption.id,
+          draftFieldCount: Object.keys(draft).length,
+          hasPickupLocation: !!draft.pickupLocation,
+          hasDropoffLocation: !!draft.dropoffLocation,
+          hasPickupDate: !!draft.pickupDate,
+          hasDropoffDate: !!draft.dropoffDate,
+        },
+        "Creating booking",
+      );
 
       const guestIdentity = buildGuestIdentity(conversation.phoneE164, conversation.profileName);
       const {
@@ -95,9 +100,7 @@ export class CreateBookingNode {
             },
           });
 
-      this.logger.log("Booking created successfully", {
-        bookingId: result.bookingId,
-      });
+      this.logger.info({ bookingId: result.bookingId }, "Booking created successfully");
 
       return {
         bookingId: result.bookingId,
@@ -243,16 +246,22 @@ export class CreateBookingNode {
         MAX_FALLBACK_OPTIONS,
       );
 
-      this.logger.log("Fetched fresh options after booking unavailability", {
-        excludedOptionId,
-        optionCount: options.length,
-      });
+      this.logger.info(
+        {
+          excludedOptionId,
+          optionCount: options.length,
+        },
+        "Fetched fresh options after booking unavailability",
+      );
 
       return options;
     } catch (fallbackError) {
-      this.logger.warn("Failed to fetch fresh options after booking unavailability", {
-        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-      });
+      this.logger.warn(
+        {
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        },
+        "Failed to fetch fresh options after booking unavailability",
+      );
       return [];
     }
   }
@@ -270,7 +279,7 @@ export class CreateBookingNode {
     normalizedStartDate: Date,
     normalizedEndDate: Date,
   ): void {
-    this.logger.log(
+    this.logger.info(
       {
         carId: bookingInput.carId,
         startDate: normalizedStartDate.toISOString(),

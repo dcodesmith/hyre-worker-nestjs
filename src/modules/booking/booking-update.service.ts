@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { BookingStatus, type BookingType, PaymentStatus } from "@prisma/client";
+import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
 import {
@@ -15,7 +16,6 @@ import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
 
 @Injectable()
 export class BookingUpdateService {
-  private readonly logger = new Logger(BookingUpdateService.name);
   private readonly bookingEditWindowMs = 12 * 60 * 60 * 1000;
   private readonly bookingDetailsInclude = {
     car: { include: { owner: true } },
@@ -46,7 +46,10 @@ export class BookingUpdateService {
   constructor(
     private readonly bookingValidationService: BookingValidationService,
     private readonly databaseService: DatabaseService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(BookingUpdateService.name);
+  }
 
   async updateBooking(bookingId: string, userId: string, input: UpdateBookingBodyDto) {
     try {
@@ -56,12 +59,15 @@ export class BookingUpdateService {
         throw error;
       }
 
-      this.logger.error("Failed to update booking", {
-        bookingId,
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      this.logger.error(
+        {
+          bookingId,
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to update booking",
+      );
       throw new BookingUpdateFailedException();
     }
   }

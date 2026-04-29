@@ -1,7 +1,8 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Queue } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -15,15 +16,16 @@ import { ReminderJobData } from "./reminder.interface";
 
 @Injectable()
 export class ReminderScheduler {
-  private readonly logger = new Logger(ReminderScheduler.name);
-
   constructor(
     @InjectQueue(REMINDERS_QUEUE) private readonly reminderQueue: Queue<ReminderJobData>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ReminderScheduler.name);
+  }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingStartReminders() {
-    this.logger.log("Scheduling booking leg start reminder emails...");
+    this.logger.info("Scheduling booking leg start reminder emails");
 
     try {
       await this.reminderQueue.add(
@@ -33,15 +35,15 @@ export class ReminderScheduler {
       );
     } catch (error) {
       this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
         "Failed to enqueue booking start reminders",
-        error instanceof Error ? error.message : String(error),
       );
     }
   }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingEndReminders() {
-    this.logger.log("Scheduling booking leg end reminder emails...");
+    this.logger.info("Scheduling booking leg end reminder emails");
 
     try {
       await this.reminderQueue.add(
@@ -51,8 +53,8 @@ export class ReminderScheduler {
       );
     } catch (error) {
       this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
         "Failed to enqueue booking end reminders",
-        error instanceof Error ? error.message : String(error),
       );
     }
   }

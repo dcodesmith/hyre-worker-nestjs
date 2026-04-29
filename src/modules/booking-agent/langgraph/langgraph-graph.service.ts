@@ -1,5 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { PinoLogger } from "nestjs-pino";
 import { CreateBookingNode } from "./create-booking.node";
 import { ExtractNode } from "./extract.node";
 import { HandoffNode } from "./handoff.node";
@@ -19,7 +20,6 @@ import { SearchNode } from "./search.node";
 
 @Injectable()
 export class LangGraphGraphService {
-  private readonly logger = new Logger(LangGraphGraphService.name);
   private graph: ReturnType<typeof this.buildGraph> | null = null;
 
   constructor(
@@ -31,7 +31,10 @@ export class LangGraphGraphService {
     private readonly createBookingNode: CreateBookingNode,
     private readonly respondNode: RespondNode,
     private readonly handoffNode: HandoffNode,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(LangGraphGraphService.name);
+  }
 
   async invoke(input: LangGraphInvokeInput): Promise<LangGraphInvokeResult> {
     const { conversationId, messageId, message, interactive, customerId } = input;
@@ -78,10 +81,13 @@ export class LangGraphGraphService {
 
       return { response, outboxItems, stage, draft, error };
     } catch (error) {
-      this.logger.error("Graph execution failed", {
-        conversationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Graph execution failed",
+      );
       throw new LangGraphExecutionFailedException(
         conversationId,
         "invoke",

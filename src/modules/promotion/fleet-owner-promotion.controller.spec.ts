@@ -1,6 +1,7 @@
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createOwnerPromotionListItem, createPromotionRecord } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
 import { FleetOwnerPromotionController } from "./fleet-owner-promotion.controller";
@@ -41,7 +42,9 @@ describe("FleetOwnerPromotionController", () => {
         },
         Reflector,
       ],
-    }).compile();
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
     controller = module.get<FleetOwnerPromotionController>(FleetOwnerPromotionController);
     promotionService = module.get<PromotionService>(PromotionService);
