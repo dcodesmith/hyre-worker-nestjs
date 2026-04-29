@@ -299,7 +299,7 @@ export class PaymentService {
           "Failed to initiate payout",
         );
       } else {
-        this.logger.error({ error: String(error) }, "Failed to initiate payout");
+        this.logger.error({ error }, "Failed to initiate payout");
       }
       throw error;
     }
