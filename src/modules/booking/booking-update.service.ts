@@ -125,16 +125,24 @@ export class BookingUpdateService {
           );
         }
 
-        if (booking.chauffeurId === chauffeur.id) {
-          return tx.booking.findUnique({
-            where: { id: booking.id },
-            include: this.bookingDetailsInclude,
-          });
+        const updated = await tx.booking.updateMany({
+          where: {
+            id: booking.id,
+            deletedAt: null,
+            status: BookingStatus.CONFIRMED,
+            car: { ownerId },
+          },
+          data: { chauffeurId: chauffeur.id },
+        });
+
+        if (updated.count === 0) {
+          throw new BookingUpdateNotAllowedException(
+            "Booking changed during assignment. Please retry",
+          );
         }
 
-        return tx.booking.update({
+        return tx.booking.findUniqueOrThrow({
           where: { id: booking.id },
-          data: { chauffeurId: chauffeur.id },
           include: this.bookingDetailsInclude,
         });
       });
