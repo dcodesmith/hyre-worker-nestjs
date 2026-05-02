@@ -1,9 +1,10 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
+  BookingChauffeurNotFoundException,
   BookingNotFoundException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
@@ -21,6 +22,10 @@ describe("BookingUpdateService", () => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    user: {
+      findFirst: vi.fn(),
+    },
+    $transaction: vi.fn(),
   };
 
   const bookingValidationServiceMock = {
@@ -176,5 +181,247 @@ describe("BookingUpdateService", () => {
 
     expect(databaseServiceMock.booking.update).not.toHaveBeenCalled();
     expect(result).toEqual({ id: "booking-1", paymentStatus: PaymentStatus.PAID });
+  });
+
+  describe("assignChauffeur", () => {
+    it("assigns approved chauffeur belonging to fleet owner", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: null,
+            status: BookingStatus.CONFIRMED,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+            status: BookingStatus.CONFIRMED,
+          }),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      const result = await service.assignChauffeur("booking-1", "owner-1", "chauffeur-1");
+
+      expect(result).toEqual({
+        id: "booking-1",
+        chauffeurId: "chauffeur-1",
+        status: BookingStatus.CONFIRMED,
+      });
+      expect(tx.booking.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: "booking-1",
+          deletedAt: null,
+          car: { ownerId: "owner-1" },
+        },
+        select: {
+          id: true,
+          chauffeurId: true,
+          status: true,
+        },
+      });
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: "chauffeur-1",
+          fleetOwnerId: "owner-1",
+        },
+        select: {
+          id: true,
+          chauffeurApprovalStatus: true,
+        },
+      });
+      expect(tx.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: "booking-1",
+            deletedAt: null,
+            status: BookingStatus.CONFIRMED,
+            car: { ownerId: "owner-1" },
+          },
+          data: { chauffeurId: "chauffeur-1" },
+        }),
+      );
+      expect(tx.booking.findUniqueOrThrow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "booking-1" },
+        }),
+      );
+    });
+
+    it("returns booking details for idempotent chauffeur assignment", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+            status: BookingStatus.CONFIRMED,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+          }),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      const result = await service.assignChauffeur("booking-1", "owner-1", "chauffeur-1");
+
+      expect(result).toEqual({ id: "booking-1", chauffeurId: "chauffeur-1" });
+      expect(tx.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: "booking-1",
+            deletedAt: null,
+            status: BookingStatus.CONFIRMED,
+            car: { ownerId: "owner-1" },
+          },
+          data: { chauffeurId: "chauffeur-1" },
+        }),
+      );
+      expect(tx.booking.findUniqueOrThrow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "booking-1" },
+        }),
+      );
+    });
+
+    it("throws when guarded write fails due to concurrent booking change", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: null,
+            status: BookingStatus.CONFIRMED,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+          findUniqueOrThrow: vi.fn(),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(
+        service.assignChauffeur("booking-1", "owner-1", "chauffeur-1"),
+      ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
+      expect(tx.booking.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
+
+    it("throws when booking is not owned by fleet owner", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn(),
+          findUniqueOrThrow: vi.fn(),
+        },
+        user: { findFirst: vi.fn() },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(
+        service.assignChauffeur("booking-1", "owner-1", "chauffeur-1"),
+      ).rejects.toBeInstanceOf(BookingNotFoundException);
+    });
+
+    it("throws when booking is not in confirmed status", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: null,
+            status: BookingStatus.ACTIVE,
+          }),
+          updateMany: vi.fn(),
+          findUniqueOrThrow: vi.fn(),
+        },
+        user: { findFirst: vi.fn() },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(
+        service.assignChauffeur("booking-1", "owner-1", "chauffeur-1"),
+      ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
+      expect(tx.user.findFirst).not.toHaveBeenCalled();
+      expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("throws when chauffeur is not found for fleet owner", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: null,
+            status: BookingStatus.CONFIRMED,
+          }),
+          updateMany: vi.fn(),
+          findUniqueOrThrow: vi.fn(),
+        },
+        user: { findFirst: vi.fn().mockResolvedValue(null) },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(
+        service.assignChauffeur("booking-1", "owner-1", "chauffeur-2"),
+      ).rejects.toBeInstanceOf(BookingChauffeurNotFoundException);
+      expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("throws when chauffeur is not approved", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: null,
+            status: BookingStatus.CONFIRMED,
+          }),
+          updateMany: vi.fn(),
+          findUniqueOrThrow: vi.fn(),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-2",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.PENDING,
+          }),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(
+        service.assignChauffeur("booking-1", "owner-1", "chauffeur-2"),
+      ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
+      expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    });
   });
 });
