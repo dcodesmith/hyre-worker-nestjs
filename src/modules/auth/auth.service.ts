@@ -39,9 +39,10 @@ export class AuthService implements OnModuleInit {
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
-    const trustedOrigins = this.configService.get("TRUSTED_ORIGINS", { infer: true });
+    const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
 
+    const trustedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
     this.trustedOrigins = trustedOrigins;
 
     this._auth = createAuth({
@@ -61,6 +62,33 @@ export class AuthService implements OnModuleInit {
     });
 
     this.logger.info("Auth service initialized successfully");
+  }
+
+  /**
+   * Ensures Better Auth trusts the same origin as `AUTH_BASE_URL` (e.g. LAN dev
+   * `http://192.168.x.x:3000`) without duplicating it in `TRUSTED_ORIGINS`.
+   */
+  private mergeTrustedOriginsWithAuthBase(trustedOrigins: string[], authBaseUrl: string): string[] {
+    let authOrigin: string;
+    try {
+      authOrigin = new URL(authBaseUrl).origin;
+    } catch {
+      return trustedOrigins;
+    }
+
+    const hasAuthOrigin = trustedOrigins.some((entry) => {
+      try {
+        return new URL(entry).origin === authOrigin;
+      } catch {
+        return entry === authOrigin;
+      }
+    });
+
+    if (hasAuthOrigin) {
+      return trustedOrigins;
+    }
+
+    return [...trustedOrigins, authOrigin];
   }
 
   get auth(): Auth {

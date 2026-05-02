@@ -57,7 +57,7 @@ describe("CarCategoriesService", () => {
   });
 
   const findCategory = (
-    categories: { name: string; title: string; cars: PublicCarDto[] }[],
+    categories: { name: string; title: string; type: string; cars: PublicCarDto[] }[],
     name: string,
   ) => categories.find((c) => c.name === name);
 
@@ -84,8 +84,9 @@ describe("CarCategoriesService", () => {
 
       const result = await service.getCategorizedCars({ limit: 50 });
 
-      const suvsCategory = findCategory(result.categories, "suvs");
+      const suvsCategory = findCategory(result.categories, "suv");
       expect(suvsCategory).toBeDefined();
+      expect(suvsCategory?.type).toBe("vehicleType");
       expect(suvsCategory?.title).toBe("SUV");
       expect(suvsCategory?.cars).toHaveLength(3);
       expect(suvsCategory?.cars.map((c) => c.id)).toEqual(["suv-1", "suv-2", "suv-3"]);
@@ -101,9 +102,10 @@ describe("CarCategoriesService", () => {
 
       const result = await service.getCategorizedCars({ limit: 50 });
 
-      const sedansCategory = findCategory(result.categories, "sedans");
+      const sedansCategory = findCategory(result.categories, "sedan");
       expect(sedansCategory).toBeDefined();
-      expect(sedansCategory?.title).toBe("Sedans");
+      expect(sedansCategory?.type).toBe("vehicleType");
+      expect(sedansCategory?.title).toBe("Sedan");
       expect(sedansCategory?.cars).toHaveLength(3);
     });
 
@@ -119,6 +121,7 @@ describe("CarCategoriesService", () => {
 
       const luxuryCategory = findCategory(result.categories, "luxury");
       expect(luxuryCategory).toBeDefined();
+      expect(luxuryCategory?.type).toBe("serviceTier");
       expect(luxuryCategory?.title).toBe("Luxury");
       expect(luxuryCategory?.cars).toHaveLength(3);
     });
@@ -135,6 +138,7 @@ describe("CarCategoriesService", () => {
 
       const execCategory = findCategory(result.categories, "executive");
       expect(execCategory).toBeDefined();
+      expect(execCategory?.type).toBe("serviceTier");
       expect(execCategory?.title).toBe("Executive");
       expect(execCategory?.cars).toHaveLength(3);
     });
@@ -151,6 +155,7 @@ describe("CarCategoriesService", () => {
 
       const budgetCategory = findCategory(result.categories, "budget");
       expect(budgetCategory).toBeDefined();
+      expect(budgetCategory?.type).toBe("serviceTier");
       expect(budgetCategory?.title).toBe("Budget-friendly");
       expect(budgetCategory?.cars).toHaveLength(3);
     });
@@ -167,6 +172,7 @@ describe("CarCategoriesService", () => {
 
       const popularCategory = findCategory(result.categories, "popular");
       expect(popularCategory).toBeDefined();
+      expect(popularCategory?.type).toBe("make");
       expect(popularCategory?.title).toBe("Popular");
       expect(popularCategory?.cars).toHaveLength(3);
     });
@@ -195,7 +201,7 @@ describe("CarCategoriesService", () => {
 
       const result = await service.getCategorizedCars({ limit: 50 });
 
-      const suvsCategory = findCategory(result.categories, "suvs");
+      const suvsCategory = findCategory(result.categories, "suv");
       expect(suvsCategory).toBeUndefined();
       expect(result.allCars).toHaveLength(2);
     });
@@ -226,7 +232,7 @@ describe("CarCategoriesService", () => {
 
       const result = await service.getCategorizedCars({ limit: 50 });
 
-      expect(findCategory(result.categories, "suvs")?.cars).toHaveLength(3);
+      expect(findCategory(result.categories, "suv")?.cars).toHaveLength(3);
       expect(findCategory(result.categories, "luxury")?.cars).toHaveLength(3);
       expect(findCategory(result.categories, "popular")?.cars).toHaveLength(3);
     });

@@ -25,15 +25,15 @@ export class CarCategoriesService {
 
   /**
    * Categorizes cars into meaningful groups for display.
-   * Returns an array of categories with name, title, and cars.
+   * Returns an array of categories with name, title, type, and cars.
    * Only includes categories that meet the minimum size threshold.
    */
   private categorizeCars(cars: PublicCarDto[]): CarCategory[] {
     const buckets: Record<CategoryName, PublicCarDto[]> = {
-      suvs: [],
+      suv: [],
       luxury: [],
       budget: [],
-      sedans: [],
+      sedan: [],
       executive: [],
       popular: [],
     };
@@ -48,9 +48,10 @@ export class CarCategoriesService {
 
     // Build result array, only including categories that meet minimum size
     return CATEGORY_DEFINITIONS.filter(({ name }) => buckets[name].length >= MIN_CATEGORY_SIZE).map(
-      ({ name, title }) => ({
+      ({ name, title, type }) => ({
         name,
         title,
+        type,
         cars: buckets[name],
       }),
     );
@@ -101,6 +102,7 @@ export class CarCategoriesService {
       if (error instanceof CarException) {
         throw error;
       }
+
       this.logger.error(
         {
           error: error instanceof Error ? error.message : String(error),
