@@ -1,5 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, type BookingType, PaymentStatus } from "@prisma/client";
+import {
+  BookingStatus,
+  type BookingType,
+  ChauffeurApprovalStatus,
+  PaymentStatus,
+} from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
@@ -67,6 +72,85 @@ export class BookingUpdateService {
           stack: error instanceof Error ? error.stack : undefined,
         },
         "Failed to update booking",
+      );
+      throw new BookingUpdateFailedException();
+    }
+  }
+
+  async assignChauffeur(bookingId: string, ownerId: string, chauffeurId: string) {
+    try {
+      return await this.databaseService.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({
+          where: {
+            id: bookingId,
+            deletedAt: null,
+            car: { ownerId },
+          },
+          select: {
+            id: true,
+            chauffeurId: true,
+            status: true,
+          },
+        });
+
+        if (!booking) {
+          throw new BookingNotFoundException();
+        }
+
+        if (booking.status !== BookingStatus.CONFIRMED) {
+          throw new BookingUpdateNotAllowedException(
+            "Only confirmed bookings can be assigned a chauffeur",
+          );
+        }
+
+        const chauffeur = await tx.user.findFirst({
+          where: {
+            id: chauffeurId,
+            fleetOwnerId: ownerId,
+          },
+          select: {
+            id: true,
+            chauffeurApprovalStatus: true,
+          },
+        });
+
+        if (!chauffeur) {
+          throw new BookingNotFoundException();
+        }
+
+        if (chauffeur.chauffeurApprovalStatus !== ChauffeurApprovalStatus.APPROVED) {
+          throw new BookingUpdateNotAllowedException(
+            "Only approved chauffeurs can be assigned to a booking",
+          );
+        }
+
+        if (booking.chauffeurId === chauffeur.id) {
+          return tx.booking.findUnique({
+            where: { id: booking.id },
+            include: this.bookingDetailsInclude,
+          });
+        }
+
+        return tx.booking.update({
+          where: { id: booking.id },
+          data: { chauffeurId: chauffeur.id },
+          include: this.bookingDetailsInclude,
+        });
+      });
+    } catch (error) {
+      if (error instanceof BookingException) {
+        throw error;
+      }
+
+      this.logger.error(
+        {
+          bookingId,
+          ownerId,
+          chauffeurId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Failed to assign chauffeur to booking",
       );
       throw new BookingUpdateFailedException();
     }

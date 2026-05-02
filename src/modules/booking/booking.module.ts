@@ -20,6 +20,7 @@ import { BookingReadService } from "./booking-read.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
+import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
 
 @Module({
   imports: [
@@ -31,7 +32,7 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
     MapsModule,
     PromotionModule,
   ],
-  controllers: [BookingController],
+  controllers: [BookingController, FleetOwnerBookingController],
   providers: [
     BookingConfirmationService,
     BookingLegService,
