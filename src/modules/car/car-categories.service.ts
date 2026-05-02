@@ -29,14 +29,9 @@ export class CarCategoriesService {
    * Only includes categories that meet the minimum size threshold.
    */
   private categorizeCars(cars: PublicCarDto[]): CarCategory[] {
-    const buckets: Record<CategoryName, PublicCarDto[]> = {
-      suv: [],
-      luxury: [],
-      budget: [],
-      sedan: [],
-      executive: [],
-      popular: [],
-    };
+    const buckets = Object.fromEntries(
+      CATEGORY_DEFINITIONS.map(({ name }) => [name, [] as PublicCarDto[]]),
+    ) as Record<CategoryName, PublicCarDto[]>;
 
     for (const car of cars) {
       for (const { name, matcher } of CATEGORY_DEFINITIONS) {

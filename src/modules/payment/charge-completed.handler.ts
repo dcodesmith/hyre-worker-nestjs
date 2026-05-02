@@ -222,19 +222,24 @@ export class ChargeCompletedHandler {
     payment: Payment,
     verificationData: { charged_amount: number; currency: string },
   ): boolean {
-    if (payment.amountCharged == null) {
+    const hasPersistedAmountCharged = payment.amountCharged != null;
+    const chargedAmountSource = hasPersistedAmountCharged ? "persisted" : "verification";
+    if (!hasPersistedAmountCharged) {
       this.logger.warn(
         {
           paymentId: payment.id,
           txRef: payment.txRef,
+          chargedAmountSource,
+          verificationChargedAmount: verificationData.charged_amount,
         },
-        "Payment is missing amountCharged; blocking confirmation",
+        "Payment is missing amountCharged; using verified charged amount for confirmation checks",
       );
-      return false;
     }
 
     const expectedAmount = this.toNumber(payment.amountExpected);
-    const chargedAmount = this.toNumber(payment.amountCharged);
+    const chargedAmount = hasPersistedAmountCharged
+      ? this.toNumber(payment.amountCharged)
+      : verificationData.charged_amount;
     const amountDifference = Math.abs(chargedAmount - expectedAmount);
     if (amountDifference > MONEY_TOLERANCE) {
       this.logger.warn(
@@ -243,6 +248,7 @@ export class ChargeCompletedHandler {
           txRef: payment.txRef,
           expectedAmount,
           chargedAmount,
+          chargedAmountSource,
           verificationChargedAmount: verificationData.charged_amount,
           difference: amountDifference,
         },
@@ -251,14 +257,31 @@ export class ChargeCompletedHandler {
       return false;
     }
 
-    const expectedCurrency = (payment.currency ?? "").trim().toUpperCase();
+    const persistedCurrency = (payment.currency ?? "").trim();
+    const expectedCurrencySource = persistedCurrency ? "persisted" : "verification";
+    const expectedCurrency = (persistedCurrency || verificationData.currency || "")
+      .trim()
+      .toUpperCase();
     const verifiedCurrency = (verificationData.currency ?? "").trim().toUpperCase();
+    if (!persistedCurrency) {
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+          expectedCurrencySource,
+          verifiedCurrency,
+        },
+        "Payment is missing currency; using verified currency for confirmation checks",
+      );
+    }
+
     if (!expectedCurrency || expectedCurrency !== verifiedCurrency) {
       this.logger.warn(
         {
           paymentId: payment.id,
           txRef: payment.txRef,
           expectedCurrency,
+          expectedCurrencySource,
           verifiedCurrency,
         },
         "Payment currency mismatch against expected booking/extension currency; blocking confirmation",
