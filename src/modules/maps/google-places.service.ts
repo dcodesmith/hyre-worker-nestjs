@@ -20,6 +20,7 @@ export class GooglePlacesService {
   private readonly maxSuggestions = 4;
   private readonly maxAllowedSuggestions = 8;
   private readonly validationCacheTtlMs = 30 * 1000;
+  private readonly maxValidationCacheSize = 500;
   private readonly autocompleteUrl = "https://places.googleapis.com/v1/places:autocomplete";
   private readonly placeDetailsBaseUrl = "https://places.googleapis.com/v1/places";
   private readonly httpClient: AxiosInstance;
@@ -480,8 +481,17 @@ export class GooglePlacesService {
       return address;
     }
 
-    const escapedDisplayName = displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return address.replace(new RegExp(`^${escapedDisplayName},?\\s*`, "i"), "").trim();
+    const lowerAddress = address.toLowerCase();
+    const lowerDisplayName = displayName.toLowerCase();
+
+    if (!lowerAddress.startsWith(lowerDisplayName)) {
+      return address;
+    }
+
+    let remainder = address.slice(displayName.length);
+    remainder = remainder.replace(/^,?\s*/, "");
+
+    return remainder.trim();
   }
 
   private buildValidationCacheKey(input: string, sessionToken?: string): string {
@@ -506,6 +516,13 @@ export class GooglePlacesService {
 
   private cacheValidationResult(cacheKey: string, result: AddressLookupResult): void {
     this.cleanupExpiredValidationCache();
+
+    if (this.validationResultCache.size >= this.maxValidationCacheSize) {
+      // Evict oldest entry (first key in Map iteration order)
+      const oldestKey = this.validationResultCache.keys().next().value;
+      if (oldestKey) this.validationResultCache.delete(oldestKey);
+    }
+
     this.validationResultCache.set(cacheKey, {
       expiresAt: Date.now() + this.validationCacheTtlMs,
       result,

@@ -9,7 +9,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
-describe("Rates Admin E2E Tests", () => {
+describe("Rates E2E Tests", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let factory: TestDataFactory;
@@ -49,21 +49,49 @@ describe("Rates Admin E2E Tests", () => {
   });
 
   describe("GET /api/rates", () => {
-    it("should reject unauthenticated requests", async () => {
+    it("should return only user-facing rates for unauthenticated requests", async () => {
       const response = await request(app.getHttpServer()).get("/api/rates");
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toEqual({
+        platformCustomerServiceFeeRatePercent: 10,
+        vatRatePercent: 7.5,
+        securityDetailRate: 15000,
+      });
+      expect(response.body).not.toHaveProperty("platformFleetOwnerCommissionRatePercent");
+      expect(response.body).not.toHaveProperty("platformFeeRates");
+      expect(response.body).not.toHaveProperty("taxRates");
+      expect(response.body).not.toHaveProperty("addonRates");
+    });
+
+    it("should return only user-facing rates for authenticated non-admin users", async () => {
+      const response = await request(app.getHttpServer())
+        .get("/api/rates")
+        .set("Cookie", nonAdminCookie);
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toEqual({
+        platformCustomerServiceFeeRatePercent: 10,
+        vatRatePercent: 7.5,
+        securityDetailRate: 15000,
+      });
+    });
+  });
+
+  describe("GET /api/rates/admin", () => {
+    it("should reject unauthenticated requests", async () => {
+      const response = await request(app.getHttpServer()).get("/api/rates/admin");
       expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
     });
 
     it("should reject non-admin users", async () => {
       const response = await request(app.getHttpServer())
-        .get("/api/rates")
+        .get("/api/rates/admin")
         .set("Cookie", nonAdminCookie);
       expect(response.status).toBe(HttpStatus.FORBIDDEN);
     });
 
     it("should return all rates for admin", async () => {
       const response = await request(app.getHttpServer())
-        .get("/api/rates")
+        .get("/api/rates/admin")
         .set("Cookie", adminCookie);
 
       expect(response.status).toBe(HttpStatus.OK);
