@@ -194,6 +194,9 @@ describe("Cars E2E Tests", () => {
     expect(Array.isArray(response.body.categories)).toBe(true);
     expect(Array.isArray(response.body.allCars)).toBe(true);
     expect(response.body.total).toBeGreaterThanOrEqual(1);
+    for (const cat of response.body.categories as { type?: string }[]) {
+      expect(["vehicleType", "serviceTier", "make"]).toContain(cat.type);
+    }
   });
 
   it("GET /api/cars/search returns public search payload", async () => {

@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
+import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -27,6 +27,10 @@ import {
   type CreateExtensionBodyDto,
   createExtensionBodySchema,
 } from "./dto/create-extension.dto";
+import {
+  type BookingPaymentStatusQueryDto,
+  bookingPaymentStatusQuerySchema,
+} from "./dto/get-booking-payment-status.dto";
 import { type UpdateBookingBodyDto, updateBookingBodySchema } from "./dto/update-booking.dto";
 
 /**
@@ -89,6 +93,15 @@ export class BookingController {
   @UseGuards(SessionGuard)
   async getBookingsByStatus(@CurrentUser() sessionUser: AuthSession["user"]) {
     return this.bookingReadService.getBookingsByStatus(sessionUser.id);
+  }
+
+  @Get("payment-status")
+  @UseGuards(OptionalSessionGuard)
+  async getBookingPaymentStatus(
+    @ZodQuery(bookingPaymentStatusQuerySchema) query: BookingPaymentStatusQueryDto,
+    @CurrentUser() sessionUser: AuthSession["user"] | null,
+  ) {
+    return this.bookingReadService.getBookingPaymentStatus(query, sessionUser);
   }
 
   @Get(":bookingId")

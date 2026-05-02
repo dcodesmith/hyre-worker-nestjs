@@ -36,16 +36,15 @@ export interface PublicCarDto {
 /**
  * Category names as a const array for type safety
  */
-export const CATEGORY_NAMES = [
-  "suvs",
-  "luxury",
-  "budget",
-  "sedans",
-  "executive",
-  "popular",
-] as const;
+export const CATEGORY_NAMES = ["suv", "luxury", "budget", "sedan", "executive", "popular"] as const;
 
 export type CategoryName = (typeof CATEGORY_NAMES)[number];
+
+/**
+ * Which field(s) drive this category (for mapping to search filters).
+ * `make` is used for brand-based buckets (e.g. popular makes).
+ */
+export type CarCategoryType = "serviceTier" | "vehicleType" | "make";
 
 /**
  * Category definition with matcher function and display title
@@ -53,6 +52,8 @@ export type CategoryName = (typeof CATEGORY_NAMES)[number];
 export interface CategoryDefinition {
   name: CategoryName;
   title: string;
+  /** Dimension this category groups by */
+  type: CarCategoryType;
   matcher: (car: PublicCarDto) => boolean;
 }
 
@@ -62,34 +63,40 @@ export interface CategoryDefinition {
  */
 export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
   {
-    name: "suvs",
+    name: "suv",
     title: "SUV",
+    type: "vehicleType",
     matcher: (car) => car.vehicleType === VehicleType.SUV,
   },
   {
     name: "luxury",
     title: "Luxury",
+    type: "serviceTier",
     matcher: (car) =>
       car.serviceTier === ServiceTier.LUXURY || car.serviceTier === ServiceTier.ULTRA_LUXURY,
   },
   {
     name: "budget",
     title: "Budget-friendly",
+    type: "serviceTier",
     matcher: (car) => car.serviceTier === ServiceTier.STANDARD,
   },
   {
-    name: "sedans",
-    title: "Sedans",
+    name: "sedan",
+    title: "Sedan",
+    type: "vehicleType",
     matcher: (car) => car.vehicleType === VehicleType.SEDAN,
   },
   {
     name: "executive",
     title: "Executive",
+    type: "serviceTier",
     matcher: (car) => car.serviceTier === ServiceTier.EXECUTIVE,
   },
   {
     name: "popular",
     title: "Popular",
+    type: "make",
     matcher: (car) => {
       const popularMakes = new Set(["toyota", "honda", "lexus"]);
       return popularMakes.has(car.make.toLowerCase());
@@ -103,6 +110,7 @@ export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
 export interface CarCategory {
   name: CategoryName;
   title: string;
+  type: CarCategoryType;
   cars: PublicCarDto[];
 }
 

@@ -505,6 +505,7 @@ export class BookingCreationService {
         createdBooking,
         finalizedFinancials,
         customerDetails,
+        booking.callbackUrl,
       );
       checkoutUrl = paymentResult.checkoutUrl;
       await this.syncPaymentIntentWithBooking(createdBooking.id, paymentResult.paymentIntentId);

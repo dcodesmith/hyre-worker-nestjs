@@ -77,8 +77,9 @@ describe("CarController", () => {
       const mockResponse: CarCategoriesResponseDto = {
         categories: [
           {
-            name: "suvs",
+            name: "suv",
             title: "SUV",
+            type: "vehicleType",
             cars: [
               createMockCar({ id: "suv-1", vehicleType: VehicleType.SUV }),
               createMockCar({ id: "suv-2", vehicleType: VehicleType.SUV }),

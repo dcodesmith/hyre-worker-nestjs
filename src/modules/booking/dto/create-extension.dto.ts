@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { callbackUrlSchema } from "../../../common/validation/callback-url";
 
 export const createExtensionBodySchema = z.object({
   hours: z.coerce.number().int().min(1).max(24),
-  callbackUrl: z.url(),
+  callbackUrl: callbackUrlSchema,
 });
 
 export type CreateExtensionBodyDto = z.infer<typeof createExtensionBodySchema>;

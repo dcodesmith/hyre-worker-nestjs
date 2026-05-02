@@ -1,12 +1,15 @@
 import { Injectable } from "@nestjs/common";
 import type { Booking, Payment, Prisma } from "@prisma/client";
 import { PaymentAttemptStatus } from "@prisma/client";
+import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveChargeData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+
+const MONEY_TOLERANCE = 0.01;
 
 @Injectable()
 export class ChargeCompletedHandler {
@@ -75,7 +78,12 @@ export class ChargeCompletedHandler {
   }
 
   private async processVerifiedCharge(data: FlutterwaveChargeData): Promise<void> {
-    const { tx_ref: txRef, id: transactionId, charged_amount: chargedAmount } = data;
+    const {
+      tx_ref: txRef,
+      id: transactionId,
+      charged_amount: chargedAmount,
+      currency: webhookCurrency,
+    } = data;
 
     const verification = await this.flutterwaveService.verifyTransaction(transactionId.toString());
     const verificationData = this.validateVerification(
@@ -83,6 +91,7 @@ export class ChargeCompletedHandler {
       txRef,
       transactionId,
       chargedAmount,
+      webhookCurrency,
     );
     if (!verificationData) {
       return;
@@ -113,6 +122,10 @@ export class ChargeCompletedHandler {
       return;
     }
 
+    if (!this.matchesExpectedAmountAndCurrency(payment, verificationData)) {
+      return;
+    }
+
     if (payment.bookingId) {
       await this.bookingConfirmationService.confirmFromPayment(payment);
       return;
@@ -128,7 +141,8 @@ export class ChargeCompletedHandler {
     txRef: string,
     transactionId: number,
     chargedAmount: number,
-  ): { status: string; charged_amount: number } | null {
+    webhookCurrency: string,
+  ): { status: string; charged_amount: number; currency: string } | null {
     if (verification.status !== "success") {
       this.logger.warn(
         {
@@ -184,7 +198,104 @@ export class ChargeCompletedHandler {
       return null;
     }
 
-    return { status: data.status, charged_amount: data.charged_amount };
+    if ((data.currency ?? "").toUpperCase() !== (webhookCurrency ?? "").toUpperCase()) {
+      this.logger.warn(
+        {
+          txRef,
+          transactionId,
+          webhookCurrency: (webhookCurrency ?? "").toUpperCase(),
+          verifiedCurrency: (data.currency ?? "").toUpperCase(),
+        },
+        "Transaction verification currency mismatch",
+      );
+      return null;
+    }
+
+    return {
+      status: data.status,
+      charged_amount: data.charged_amount,
+      currency: data.currency,
+    };
+  }
+
+  private matchesExpectedAmountAndCurrency(
+    payment: Payment,
+    verificationData: { charged_amount: number; currency: string },
+  ): boolean {
+    const hasPersistedAmountCharged = payment.amountCharged != null;
+    const chargedAmountSource = hasPersistedAmountCharged ? "persisted" : "verification";
+    if (!hasPersistedAmountCharged) {
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+          chargedAmountSource,
+          verificationChargedAmount: verificationData.charged_amount,
+        },
+        "Payment is missing amountCharged; using verified charged amount for confirmation checks",
+      );
+    }
+
+    const expectedAmount = new Decimal(this.toNumber(payment.amountExpected));
+    const chargedAmount = new Decimal(
+      hasPersistedAmountCharged
+        ? this.toNumber(payment.amountCharged)
+        : verificationData.charged_amount,
+    );
+    const amountDifference = chargedAmount.sub(expectedAmount).abs();
+    if (amountDifference.gt(MONEY_TOLERANCE)) {
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+          expectedAmount: expectedAmount.toNumber(),
+          chargedAmount: chargedAmount.toNumber(),
+          chargedAmountSource,
+          verificationChargedAmount: verificationData.charged_amount,
+          difference: amountDifference.toNumber(),
+        },
+        "Payment amount mismatch against expected booking/extension amount; blocking confirmation",
+      );
+      return false;
+    }
+
+    const persistedCurrency = (payment.currency ?? "").trim();
+    const expectedCurrencySource = persistedCurrency ? "persisted" : "verification";
+    const expectedCurrency = (persistedCurrency || verificationData.currency || "")
+      .trim()
+      .toUpperCase();
+    const verifiedCurrency = (verificationData.currency ?? "").trim().toUpperCase();
+    if (!persistedCurrency) {
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+          expectedCurrencySource,
+          verifiedCurrency,
+        },
+        "Payment is missing currency; using verified currency for confirmation checks",
+      );
+    }
+
+    if (!expectedCurrency || expectedCurrency !== verifiedCurrency) {
+      this.logger.warn(
+        {
+          paymentId: payment.id,
+          txRef: payment.txRef,
+          expectedCurrency,
+          expectedCurrencySource,
+          verifiedCurrency,
+        },
+        "Payment currency mismatch against expected booking/extension currency; blocking confirmation",
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  private toNumber(value: Decimal | number): number {
+    return value instanceof Decimal ? value.toNumber() : value;
   }
 
   private async findOrCreatePayment(

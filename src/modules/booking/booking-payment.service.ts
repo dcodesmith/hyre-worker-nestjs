@@ -19,8 +19,10 @@ export class BookingPaymentService {
     createdBooking: { id: string; bookingReference: string },
     financials: BookingFinancials,
     customerDetails: CustomerDetails,
+    callbackUrl?: string,
   ): Promise<{ checkoutUrl: string; paymentIntentId: string }> {
-    const callbackUrl = this.flutterwaveService.getWebhookUrl("/api/payments/callback");
+    const resolvedCallbackUrl =
+      callbackUrl ?? this.flutterwaveService.getWebhookUrl("/api/payments/callback");
 
     try {
       const paymentResult = await this.flutterwaveService.createPaymentIntent({
@@ -35,7 +37,7 @@ export class BookingPaymentService {
           bookingReference: createdBooking.bookingReference,
           type: "booking_creation",
         },
-        callbackUrl,
+        callbackUrl: resolvedCallbackUrl,
         transactionType: "booking_creation",
         idempotencyKey: createdBooking.id,
       });

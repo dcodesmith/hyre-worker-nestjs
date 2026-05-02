@@ -10,15 +10,24 @@ import type {
   PlaceDetailsResponse,
   PlaceSuggestion,
   PlacesAutocompleteNewResponse,
+  PlacesAutocompleteResponse,
+  ResolvePlaceResponse,
 } from "./maps.interface";
 
 @Injectable()
 export class GooglePlacesService {
   private readonly apiKey: string | undefined;
   private readonly maxSuggestions = 4;
+  private readonly maxAllowedSuggestions = 8;
+  private readonly validationCacheTtlMs = 30 * 1000;
+  private readonly maxValidationCacheSize = 500;
   private readonly autocompleteUrl = "https://places.googleapis.com/v1/places:autocomplete";
   private readonly placeDetailsBaseUrl = "https://places.googleapis.com/v1/places";
   private readonly httpClient: AxiosInstance;
+  private readonly validationResultCache = new Map<
+    string,
+    { expiresAt: number; result: AddressLookupResult }
+  >();
   private readonly areaPlaceTypes = new Set([
     "locality",
     "sublocality",
@@ -63,43 +72,167 @@ export class GooglePlacesService {
     this.logger.setContext(GooglePlacesService.name);
   }
 
-  async validateAddress(input: string): Promise<AddressLookupResult> {
+  async autocompleteAddress(
+    input: string,
+    options?: { limit?: number; sessionToken?: string },
+  ): Promise<PlacesAutocompleteResponse> {
     const query = input.trim();
-    if (!query) {
-      return { isValid: false };
+
+    const { suggestions, degraded } = await this.fetchAutocompleteSuggestions(query, {
+      limit: this.resolveSuggestionLimit(options?.limit),
+      sessionToken: options?.sessionToken,
+    });
+
+    this.logger.debug(
+      {
+        operation: "autocomplete",
+        queryLength: query.length,
+        suggestions,
+        suggestionsCount: suggestions.length,
+        degraded,
+      },
+      "Places autocomplete completed",
+    );
+    return degraded ? { suggestions, meta: { degraded: true } } : { suggestions };
+  }
+
+  async resolvePlace(
+    placeId: string,
+    options?: { sessionToken?: string },
+  ): Promise<ResolvePlaceResponse> {
+    const normalizedPlaceId = placeId.trim();
+    const { details, degraded } = await this.fetchPlaceDetails(normalizedPlaceId, {
+      sessionToken: options?.sessionToken,
+    });
+
+    if (!details) {
+      this.logger.warn(
+        {
+          operation: "resolve",
+          placeIdSuffix: normalizedPlaceId.slice(-6),
+          degraded,
+        },
+        "Place resolution returned no details",
+      );
+      return {
+        placeId: normalizedPlaceId,
+        address: null,
+        types: [],
+        ...(degraded && {
+          meta: {
+            degraded: true,
+          },
+        }),
+      };
     }
 
-    const suggestions = await this.fetchAutocompleteSuggestions(query);
+    const address = this.formatResolvedAddress(details);
+
+    this.logger.debug(
+      {
+        operation: "resolve",
+        placeIdSuffix: normalizedPlaceId.slice(-6),
+        hasAddress: !!address,
+        degraded,
+      },
+      "Place resolution completed",
+    );
+    return {
+      placeId: details.id ?? normalizedPlaceId,
+      address,
+      types: details.types ?? [],
+      ...(degraded && {
+        meta: {
+          degraded: true,
+        },
+      }),
+    };
+  }
+
+  async validateAddress(
+    input: string,
+    options?: { sessionToken?: string },
+  ): Promise<AddressLookupResult> {
+    const query = input.trim();
+    if (!query) {
+      return {
+        isValid: false,
+        normalizedAddress: null,
+        placeId: null,
+        failureReason: "NO_MATCH",
+      };
+    }
+
+    const cacheKey = this.buildValidationCacheKey(query, options?.sessionToken);
+    const cachedResult = this.getCachedValidationResult(cacheKey);
+    if (cachedResult) {
+      this.logger.debug(
+        {
+          operation: "validate",
+          queryLength: query.length,
+          cacheHit: true,
+        },
+        "Address validation served from cache",
+      );
+      return cachedResult;
+    }
+
+    const { suggestions } = await this.fetchAutocompleteSuggestions(query, {
+      limit: this.maxSuggestions,
+      sessionToken: options?.sessionToken,
+    });
     if (suggestions.length === 0) {
       this.logger.debug({ failureReason: "NO_MATCH" }, "Address validation failed");
-      return { isValid: false, failureReason: "NO_MATCH" };
+      const result: AddressLookupResult = {
+        isValid: false,
+        normalizedAddress: null,
+        placeId: null,
+        failureReason: "NO_MATCH",
+      };
+      this.cacheValidationResult(cacheKey, result);
+      return result;
     }
 
     const topMatch = suggestions[0];
-    const details = topMatch?.placeId ? await this.fetchPlaceDetails(topMatch.placeId) : null;
+    const { details } = topMatch?.placeId
+      ? await this.fetchPlaceDetails(topMatch.placeId, {
+          sessionToken: options?.sessionToken,
+        })
+      : { details: null };
 
     if (details && this.isAreaOnlyFromPlaceDetails(details)) {
       this.logger.debug({ failureReason: "AREA_ONLY" }, "Address validation failed");
-      return {
+      const result: AddressLookupResult = {
         isValid: false,
+        normalizedAddress: null,
+        placeId: null,
         failureReason: "AREA_ONLY",
       };
+      this.cacheValidationResult(cacheKey, result);
+      return result;
     }
 
     if (details && this.isSpecificAddressFromPlaceDetails(details)) {
-      return {
+      const result: AddressLookupResult = {
         isValid: true,
-        normalizedAddress: details.formattedAddress ?? topMatch?.description,
-        placeId: topMatch?.placeId,
+        normalizedAddress: details.formattedAddress ?? topMatch?.description ?? null,
+        placeId: topMatch?.placeId ?? null,
+        failureReason: null,
       };
+      this.cacheValidationResult(cacheKey, result);
+      return result;
     }
 
     if (!details && this.isAreaOnlyInput(query, suggestions)) {
       this.logger.debug({ failureReason: "AREA_ONLY" }, "Address validation failed");
-      return {
+      const result: AddressLookupResult = {
         isValid: false,
+        normalizedAddress: null,
+        placeId: null,
         failureReason: "AREA_ONLY",
       };
+      this.cacheValidationResult(cacheKey, result);
+      return result;
     }
 
     const isValid =
@@ -108,17 +241,22 @@ export class GooglePlacesService {
 
     const result: AddressLookupResult = {
       isValid,
-      normalizedAddress: isValid ? topMatch?.description : undefined,
-      placeId: isValid ? topMatch?.placeId : undefined,
-      failureReason: isValid ? undefined : "AMBIGUOUS",
+      normalizedAddress: isValid ? (topMatch?.description ?? null) : null,
+      placeId: isValid ? (topMatch?.placeId ?? null) : null,
+      failureReason: isValid ? null : "AMBIGUOUS",
     };
     if (!result.isValid) {
       this.logger.debug({ failureReason: result.failureReason }, "Address validation failed");
     }
+
+    this.cacheValidationResult(cacheKey, result);
     return result;
   }
 
-  private async fetchAutocompleteSuggestions(query: string): Promise<PlaceSuggestion[]> {
+  private async fetchAutocompleteSuggestions(
+    query: string,
+    options: { limit?: number; sessionToken?: string },
+  ): Promise<{ suggestions: PlaceSuggestion[]; degraded: boolean }> {
     try {
       const { data } = await this.httpClient.post<PlacesAutocompleteNewResponse>(
         this.autocompleteUrl,
@@ -129,19 +267,21 @@ export class GooglePlacesService {
             rectangle: LAGOS_VIEWPORT_BOUNDS,
           },
           includeQueryPredictions: false,
+          ...(options.sessionToken && { sessionToken: options.sessionToken }),
         },
       );
 
-      return (data.suggestions ?? [])
+      const suggestions = (data.suggestions ?? [])
         .map((suggestion) => suggestion.placePrediction)
         .filter((prediction): prediction is NonNullable<typeof prediction> => !!prediction)
         .filter((prediction) => prediction.text?.text && prediction.placeId)
-        .slice(0, this.maxSuggestions)
+        .slice(0, this.resolveSuggestionLimit(options.limit))
         .map((prediction) => ({
           placeId: prediction.placeId,
           description: prediction.text?.text ?? "",
           types: prediction.types ?? [],
         }));
+      return { suggestions, degraded: false };
     } catch (error) {
       const info = this.httpClientService.handleError(
         error,
@@ -156,22 +296,28 @@ export class GooglePlacesService {
         },
         "Autocomplete suggestions failed",
       );
-      return [];
+      return { suggestions: [], degraded: true };
     }
   }
 
-  private async fetchPlaceDetails(placeId: string): Promise<PlaceDetailsResponse | null> {
+  private async fetchPlaceDetails(
+    placeId: string,
+    options?: { sessionToken?: string },
+  ): Promise<{ details: PlaceDetailsResponse | null; degraded: boolean }> {
     try {
       const { data } = await this.httpClient.get<PlaceDetailsResponse>(
         `${this.placeDetailsBaseUrl}/${encodeURIComponent(placeId)}`,
         {
           headers: {
             "X-Goog-FieldMask":
-              "id,types,formattedAddress,addressComponents,displayName.text,displayName.languageCode",
+              "id,types,displayName,formattedAddress,businessStatus,addressComponents",
+          },
+          params: {
+            ...(options?.sessionToken && { sessionToken: options.sessionToken }),
           },
         },
       );
-      return data ?? null;
+      return { details: data ?? null, degraded: false };
     } catch (error) {
       const info = this.httpClientService.handleError(error, "fetchPlaceDetails", "GooglePlaces");
       this.logger.warn(
@@ -182,7 +328,217 @@ export class GooglePlacesService {
         },
         "Place details fetch failed",
       );
+      return { details: null, degraded: true };
+    }
+  }
+
+  private resolveSuggestionLimit(inputLimit?: number): number {
+    const resolvedLimit = inputLimit ?? this.maxSuggestions;
+    return Math.min(this.maxAllowedSuggestions, Math.max(1, resolvedLimit));
+  }
+
+  private formatResolvedAddress(details: PlaceDetailsResponse): string | null {
+    const displayName = details.displayName?.text?.trim() ?? "";
+    const displayNamePrefix = details.businessStatus && displayName ? `${displayName}, ` : "";
+    const cleanedAddress = details.formattedAddress
+      ?.replace(/(?:,?\s*\d{5,6})?,\s*Lagos,\s*Nigeria\.?$/i, "")
+      .trim();
+    const reconstructedAddress = this.buildAddressFromComponents(details);
+    const displayNameAddress = this.buildAddressFromDisplayName(details, cleanedAddress ?? null);
+    const resolvedAddress = reconstructedAddress ?? displayNameAddress ?? cleanedAddress ?? "";
+    const addressWithoutDuplicatedName =
+      details.businessStatus && displayName
+        ? this.removeLeadingDisplayName(resolvedAddress, displayName)
+        : resolvedAddress;
+    const formattedAddress = `${displayNamePrefix}${addressWithoutDuplicatedName}`.trim();
+    if (!formattedAddress) {
       return null;
+    }
+
+    return formattedAddress;
+  }
+
+  private buildAddressFromDisplayName(
+    details: PlaceDetailsResponse,
+    cleanedAddress: string | null,
+  ): string | null {
+    if (details.businessStatus) {
+      return null;
+    }
+
+    const displayName = details.displayName?.text?.trim();
+    if (!displayName) {
+      return null;
+    }
+
+    if (cleanedAddress && this.isSpecificAddressQuery(cleanedAddress)) {
+      return null;
+    }
+
+    const hasSpecificSignal =
+      /\b\d+[a-z]?\b/i.test(displayName) ||
+      /\b(street|st|road|rd|avenue|ave|close|crescent|lane|drive|boulevard|way|expressway)\b/i.test(
+        displayName,
+      );
+    if (!hasSpecificSignal) {
+      return null;
+    }
+
+    const areaTail = this.buildAreaTailFromComponents(details) ?? cleanedAddress;
+    if (!areaTail) {
+      return displayName;
+    }
+
+    return `${displayName}, ${areaTail}`.trim();
+  }
+
+  private buildAreaTailFromComponents(details: PlaceDetailsResponse): string | null {
+    const addressComponents = details.addressComponents ?? [];
+    if (addressComponents.length === 0) {
+      return null;
+    }
+
+    const district =
+      this.getAddressComponentText(addressComponents, "neighborhood") ??
+      this.getAddressComponentText(addressComponents, "sublocality") ??
+      this.getAddressComponentText(addressComponents, "sublocality_level_1");
+    const locality =
+      this.getAddressComponentText(addressComponents, "locality") ??
+      this.getAddressComponentText(addressComponents, "administrative_area_level_2") ??
+      this.getAddressComponentText(addressComponents, "administrative_area_level_1");
+
+    const segments = [district, locality]
+      .map((segment) => segment?.trim())
+      .filter((segment): segment is string => !!segment);
+    const dedupedSegments = segments.filter(
+      (segment, index, list) =>
+        list.findIndex((candidate) => candidate.toLowerCase() === segment.toLowerCase()) === index,
+    );
+    return dedupedSegments.length > 0 ? dedupedSegments.join(", ") : null;
+  }
+
+  private buildAddressFromComponents(details: PlaceDetailsResponse): string | null {
+    const addressComponents = details.addressComponents ?? [];
+    if (addressComponents.length === 0) {
+      return null;
+    }
+
+    const streetNumber = this.getAddressComponentText(addressComponents, "street_number");
+    const route =
+      this.getAddressComponentText(addressComponents, "route", { preferShortText: true }) ??
+      this.getAddressComponentText(addressComponents, "route");
+    if (!streetNumber || !route) {
+      return null;
+    }
+
+    const district =
+      this.getAddressComponentText(addressComponents, "neighborhood") ??
+      this.getAddressComponentText(addressComponents, "sublocality") ??
+      this.getAddressComponentText(addressComponents, "sublocality_level_1");
+    const locality =
+      this.getAddressComponentText(addressComponents, "locality") ??
+      this.getAddressComponentText(addressComponents, "administrative_area_level_2") ??
+      this.getAddressComponentText(addressComponents, "administrative_area_level_1");
+
+    const segments = [`${streetNumber} ${route}`.trim(), district, locality]
+      .map((segment) => segment?.trim())
+      .filter((segment): segment is string => !!segment);
+
+    const dedupedSegments = segments.filter(
+      (segment, index, list) =>
+        list.findIndex((candidate) => candidate.toLowerCase() === segment.toLowerCase()) === index,
+    );
+    return dedupedSegments.length > 0 ? dedupedSegments.join(", ") : null;
+  }
+
+  private getAddressComponentText(
+    components: NonNullable<PlaceDetailsResponse["addressComponents"]>,
+    type: string,
+    options?: { preferShortText?: boolean },
+  ): string | null {
+    const component = components.find((entry) => (entry.types ?? []).includes(type));
+    if (!component) {
+      return null;
+    }
+
+    if (options?.preferShortText && component.shortText?.trim()) {
+      return component.shortText.trim();
+    }
+
+    if (component.longText?.trim()) {
+      return component.longText.trim();
+    }
+
+    if (component.shortText?.trim()) {
+      return component.shortText.trim();
+    }
+
+    return null;
+  }
+
+  private removeLeadingDisplayName(address: string, displayName: string): string {
+    if (!address || !displayName) {
+      return address;
+    }
+
+    const lowerAddress = address.toLowerCase();
+    const lowerDisplayName = displayName.toLowerCase();
+
+    if (!lowerAddress.startsWith(lowerDisplayName)) {
+      return address;
+    }
+
+    let remainder = address.slice(displayName.length);
+    remainder = remainder.replace(/^,?\s*/, "");
+
+    return remainder.trim();
+  }
+
+  private buildValidationCacheKey(input: string, sessionToken?: string): string {
+    const normalizedInput = input.trim().toLowerCase();
+    const normalizedToken = sessionToken?.trim() || "anonymous";
+    return `${normalizedInput}::${normalizedToken}`;
+  }
+
+  private getCachedValidationResult(cacheKey: string): AddressLookupResult | null {
+    const entry = this.validationResultCache.get(cacheKey);
+    if (!entry) {
+      return null;
+    }
+
+    if (entry.expiresAt <= Date.now()) {
+      this.validationResultCache.delete(cacheKey);
+      return null;
+    }
+
+    return { ...entry.result };
+  }
+
+  private cacheValidationResult(cacheKey: string, result: AddressLookupResult): void {
+    this.cleanupExpiredValidationCache();
+
+    if (this.validationResultCache.size >= this.maxValidationCacheSize) {
+      // Evict oldest entry (first key in Map iteration order)
+      const oldestKey = this.validationResultCache.keys().next().value;
+      if (oldestKey) this.validationResultCache.delete(oldestKey);
+    }
+
+    this.validationResultCache.set(cacheKey, {
+      expiresAt: Date.now() + this.validationCacheTtlMs,
+      result,
+    });
+  }
+
+  private cleanupExpiredValidationCache(): void {
+    if (this.validationResultCache.size === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const [cacheKey, entry] of this.validationResultCache.entries()) {
+      if (entry.expiresAt <= now) {
+        this.validationResultCache.delete(cacheKey);
+      }
     }
   }
 

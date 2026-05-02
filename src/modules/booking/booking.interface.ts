@@ -1,4 +1,4 @@
-import type { BookingStatus, BookingType } from "@prisma/client";
+import type { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
 import type Decimal from "decimal.js";
 import type { CarPricing } from "./booking-calculation.interface";
 
@@ -58,6 +58,17 @@ export interface CustomerDetails {
 export interface CreateBookingResponse {
   bookingId: string;
   checkoutUrl: string;
+}
+
+export interface BookingPaymentStatusResponse {
+  bookingId: string;
+  bookingReference: string;
+  txRef: string;
+  bookingStatus: BookingStatus;
+  paymentStatus: PaymentStatus;
+  paymentId: string | null;
+  totalAmount: number;
+  isConfirmed: boolean;
 }
 
 export interface CreateExtensionResponse {
