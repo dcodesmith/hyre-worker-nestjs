@@ -157,6 +157,37 @@ describe("ChargeCompletedHandler", () => {
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 
+  it("allows confirmation when amount difference is exactly tolerance", async () => {
+    const createdPayment = {
+      ...createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+        amountExpected: new Decimal(10000),
+        amountCharged: new Decimal(9999.99), // difference = 0.01
+        currency: "NGN",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData, charged_amount: 9999.99, currency: "NGN" },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(createdPayment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await handler.handle({ ...mockChargeData, charged_amount: 9999.99 });
+
+    expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
+  });
+
   it("creates payment but blocks confirmation when currency differs from expected", async () => {
     const createdPayment = {
       ...createPaymentRecord({

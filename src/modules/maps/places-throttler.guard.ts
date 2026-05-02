@@ -53,7 +53,14 @@ export class PlacesThrottlerGuard implements CanActivate {
 
   private resolveOperation(request: Request): PlacesThrottleOperation {
     const routePath = request.route?.path;
-    const normalizedPath = typeof routePath === "string" ? routePath.replace("/", "") : "";
+    const normalizedPath =
+      typeof routePath === "string"
+        ? (routePath
+            .split("/")
+            .map((segment) => segment.trim())
+            .filter(Boolean)
+            .at(-1) ?? "")
+        : "";
 
     if (normalizedPath === "autocomplete") {
       return "autocomplete";

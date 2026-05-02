@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { callbackUrlSchema } from "../../../common/validation/callback-url";
 
 /**
  * Booking type enum values matching Prisma schema
@@ -20,7 +21,7 @@ const coreBookingFields = z.object({
   startDate: z.coerce.date("Invalid start date format"),
   endDate: z.coerce.date("Invalid end date format"),
   pickupAddress: z.string().min(1, "Pickup address is required"),
-  callbackUrl: z.url("Invalid callback URL").optional(),
+  callbackUrl: callbackUrlSchema.optional(),
   bookingType: z.enum(BOOKING_TYPES, {
     message: "Booking type must be DAY, NIGHT, FULL_DAY, or AIRPORT_PICKUP",
   }),

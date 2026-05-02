@@ -58,8 +58,34 @@ describe("PlacesThrottlerGuard", () => {
     );
   });
 
+  it("uses autocomplete limit for full runtime route paths", async () => {
+    const context = createContext("GET", "/api/places/autocomplete", "203.0.113.12");
+    for (let count = 0; count < PLACES_THROTTLE_CONFIG.limits.autocomplete; count += 1) {
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    }
+
+    await expect(guard.canActivate(context)).rejects.toThrow(PlacesRateLimitExceededException);
+    expect(setHeader).toHaveBeenCalledWith(
+      "RateLimit-Policy",
+      `${PLACES_THROTTLE_CONFIG.limits.autocomplete};w=${PLACES_THROTTLE_CONFIG.ttlSeconds}`,
+    );
+  });
+
   it("enforces per-route limit for resolve endpoint", async () => {
     const context = createContext("POST", "/resolve", "203.0.113.11");
+    for (let count = 0; count < PLACES_THROTTLE_CONFIG.limits.resolve; count += 1) {
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    }
+
+    await expect(guard.canActivate(context)).rejects.toThrow(PlacesRateLimitExceededException);
+    expect(setHeader).toHaveBeenCalledWith(
+      "RateLimit-Policy",
+      `${PLACES_THROTTLE_CONFIG.limits.resolve};w=${PLACES_THROTTLE_CONFIG.ttlSeconds}`,
+    );
+  });
+
+  it("uses resolve limit for full runtime route paths", async () => {
+    const context = createContext("POST", "/api/places/resolve", "203.0.113.13");
     for (let count = 0; count < PLACES_THROTTLE_CONFIG.limits.resolve; count += 1) {
       await expect(guard.canActivate(context)).resolves.toBe(true);
     }

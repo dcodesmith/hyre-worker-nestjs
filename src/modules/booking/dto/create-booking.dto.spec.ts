@@ -122,6 +122,28 @@ describe("CreateBookingSchema", () => {
       }
     });
   });
+
+  describe("callbackUrl validation", () => {
+    it("rejects unsafe callback URL protocols", () => {
+      const booking = {
+        ...validBaseBooking,
+        callbackUrl: "javascript:alert(1)",
+      };
+
+      const result = createBookingSchema.safeParse(booking);
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts mobile deep-link callback URLs", () => {
+      const booking = {
+        ...validBaseBooking,
+        callbackUrl: "hyreapp://payments/complete?tx=abc123",
+      };
+
+      const result = createBookingSchema.safeParse(booking);
+      expect(result.success).toBe(true);
+    });
+  });
 });
 
 describe("CreateGuestBookingSchema", () => {

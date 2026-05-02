@@ -236,21 +236,23 @@ export class ChargeCompletedHandler {
       );
     }
 
-    const expectedAmount = this.toNumber(payment.amountExpected);
-    const chargedAmount = hasPersistedAmountCharged
-      ? this.toNumber(payment.amountCharged)
-      : verificationData.charged_amount;
-    const amountDifference = Math.abs(chargedAmount - expectedAmount);
-    if (amountDifference > MONEY_TOLERANCE) {
+    const expectedAmount = new Decimal(this.toNumber(payment.amountExpected));
+    const chargedAmount = new Decimal(
+      hasPersistedAmountCharged
+        ? this.toNumber(payment.amountCharged)
+        : verificationData.charged_amount,
+    );
+    const amountDifference = chargedAmount.sub(expectedAmount).abs();
+    if (amountDifference.gt(MONEY_TOLERANCE)) {
       this.logger.warn(
         {
           paymentId: payment.id,
           txRef: payment.txRef,
-          expectedAmount,
-          chargedAmount,
+          expectedAmount: expectedAmount.toNumber(),
+          chargedAmount: chargedAmount.toNumber(),
           chargedAmountSource,
           verificationChargedAmount: verificationData.charged_amount,
-          difference: amountDifference,
+          difference: amountDifference.toNumber(),
         },
         "Payment amount mismatch against expected booking/extension amount; blocking confirmation",
       );
