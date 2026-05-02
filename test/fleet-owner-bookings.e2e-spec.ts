@@ -186,5 +186,7 @@ describe("Fleet Owner Booking E2E Tests", () => {
       .send({ chauffeurId: otherOwnerChauffeur.id });
 
     expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    expect(response.body.errorCode).toBe("BOOKING_CHAUFFEUR_NOT_FOUND");
+    expect(response.body.detail).toBe("Chauffeur not found for this fleet owner");
   });
 });

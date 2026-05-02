@@ -9,6 +9,7 @@ import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
 import {
+  BookingChauffeurNotFoundException,
   BookingException,
   BookingNotFoundException,
   BookingUpdateFailedException,
@@ -115,7 +116,7 @@ export class BookingUpdateService {
         });
 
         if (!chauffeur) {
-          throw new BookingNotFoundException();
+          throw new BookingChauffeurNotFoundException();
         }
 
         if (chauffeur.chauffeurApprovalStatus !== ChauffeurApprovalStatus.APPROVED) {

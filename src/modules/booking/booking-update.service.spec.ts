@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
+  BookingChauffeurNotFoundException,
   BookingNotFoundException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
@@ -343,7 +344,7 @@ describe("BookingUpdateService", () => {
 
       await expect(
         service.assignChauffeur("booking-1", "owner-1", "chauffeur-2"),
-      ).rejects.toBeInstanceOf(BookingNotFoundException);
+      ).rejects.toBeInstanceOf(BookingChauffeurNotFoundException);
       expect(tx.booking.update).not.toHaveBeenCalled();
     });
 

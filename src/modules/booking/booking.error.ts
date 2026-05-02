@@ -15,6 +15,7 @@ export const BookingErrorCode = {
   PAYMENT_INTENT_FAILED: "PAYMENT_INTENT_FAILED",
   BOOKING_CREATION_FAILED: "BOOKING_CREATION_FAILED",
   BOOKING_NOT_FOUND: "BOOKING_NOT_FOUND",
+  BOOKING_CHAUFFEUR_NOT_FOUND: "BOOKING_CHAUFFEUR_NOT_FOUND",
   BOOKING_FETCH_FAILED: "BOOKING_FETCH_FAILED",
   BOOKING_UPDATE_FAILED: "BOOKING_UPDATE_FAILED",
   BOOKING_UPDATE_NOT_ALLOWED: "BOOKING_UPDATE_NOT_ALLOWED",
@@ -135,6 +136,17 @@ export class BookingNotFoundException extends BookingException {
       "Booking not found or you do not have access to it",
       HttpStatus.NOT_FOUND,
       { title: "Booking Not Found" },
+    );
+  }
+}
+
+export class BookingChauffeurNotFoundException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_CHAUFFEUR_NOT_FOUND,
+      "Chauffeur not found for this fleet owner",
+      HttpStatus.NOT_FOUND,
+      { title: "Chauffeur Not Found" },
     );
   }
 }
