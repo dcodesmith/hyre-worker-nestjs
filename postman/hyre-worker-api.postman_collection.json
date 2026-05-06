@@ -1,0 +1,946 @@
+{
+  "info": {
+    "name": "Hyre Worker API (Full)",
+    "_postman_id": "447f7863-6f1a-4d0e-9ca0-8b7a8112f16f",
+    "description": "Comprehensive Postman collection for hyre-worker-nestjs endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "apiKey", "value": "" },
+    { "key": "authRole", "value": "user" },
+    { "key": "webOrigin", "value": "http://localhost:5173" },
+    { "key": "fleetOwnerReferer", "value": "http://localhost:5173/fleet-owner/login" },
+    { "key": "userReferer", "value": "http://localhost:5173/login" },
+    { "key": "bookingId", "value": "cbookingidplaceholder00000000" },
+    { "key": "carId", "value": "ccaridplaceholder00000000000" },
+    { "key": "reviewId", "value": "creviewidplaceholder000000000" },
+    { "key": "chauffeurId", "value": "cchauffeuridplaceholder000000" },
+    { "key": "promotionId", "value": "cpromotionidplaceholder000000" },
+    { "key": "addonRateId", "value": "caddonrateidplaceholder00000" },
+    { "key": "documentId", "value": "cdocumentidplaceholder0000000" },
+    { "key": "txRef", "value": "HYRE-TX-12345" },
+    { "key": "authPath", "value": "sign-in/email" },
+    { "key": "flightNumber", "value": "BA75" },
+    { "key": "dateYmd", "value": "2026-05-03" },
+    { "key": "pushToken", "value": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]" },
+    { "key": "placesSessionToken", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const requestUrl = pm.request.url.toString();",
+          "const authRole = (pm.environment.get(\"authRole\") || pm.collectionVariables.get(\"authRole\") || \"user\").trim();",
+          "const webOrigin = pm.environment.get(\"webOrigin\") || pm.collectionVariables.get(\"webOrigin\") || \"http://localhost:5173\";",
+          "const fleetOwnerReferer = pm.environment.get(\"fleetOwnerReferer\") || pm.collectionVariables.get(\"fleetOwnerReferer\") || `${webOrigin}/fleet-owner/login`;",
+          "const userReferer = pm.environment.get(\"userReferer\") || pm.collectionVariables.get(\"userReferer\") || `${webOrigin}/login`;",
+          "",
+          "if (!requestUrl.includes(\"/api/auth/\")) {",
+          "  return;",
+          "}",
+          "",
+          "pm.request.headers.upsert({ key: \"Origin\", value: webOrigin });",
+          "pm.request.headers.upsert({ key: \"Referer\", value: authRole === \"fleetOwner\" ? fleetOwnerReferer : userReferer });",
+          "pm.request.headers.remove(\"x-client-type\");",
+          "",
+          "const roleValidatedPaths = [",
+          "  \"/api/auth/email-otp/send-verification-otp\",",
+          "  \"/api/auth/email-otp/verify-email\",",
+          "  \"/api/auth/sign-in/email-otp\"",
+          "];",
+          "",
+          "const shouldInjectRole = roleValidatedPaths.some((path) => requestUrl.includes(path));",
+          "if (!shouldInjectRole || !pm.request.body || pm.request.body.mode !== \"raw\") {",
+          "  return;",
+          "}",
+          "",
+          "try {",
+          "  const raw = pm.request.body.raw || \"{}\";",
+          "  const payload = JSON.parse(raw);",
+          "  payload.role = authRole;",
+          "  pm.request.body.update(JSON.stringify(payload, null, 2));",
+          "} catch (error) {",
+          "  console.log(\"Skipping role injection: non-JSON auth body\", error);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Core",
+      "item": [
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] }
+          }
+        },
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Better Auth (authPath variable)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/{{authPath}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "{{authPath}}"]
+            }
+          }
+        },
+        {
+          "name": "Get current session",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/auth/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "session"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "item": [
+        {
+          "name": "Delete account",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/account/delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "account", "delete"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "Trigger job (e.g. start-reminders)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-api-key", "value": "{{apiKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/job/trigger/start-reminders",
+              "host": ["{{baseUrl}}"],
+              "path": ["job", "trigger", "start-reminders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI Search",
+      "item": [
+        {
+          "name": "AI search",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"airport transfer with chauffeur\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ai-search",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ai-search"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Booking",
+      "item": [
+        {
+          "name": "Create booking",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"carId\": \"{{carId}}\",\n  \"pickupDate\": \"2026-05-10\",\n  \"returnDate\": \"2026-05-11\",\n  \"pickupTime\": \"10:00\",\n  \"returnTime\": \"10:00\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings"]
+            }
+          }
+        },
+        {
+          "name": "Extend booking",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newEndDate\": \"2026-05-12\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/extensions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "{{bookingId}}", "extensions"]
+            }
+          }
+        },
+        {
+          "name": "List bookings",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings"]
+            }
+          }
+        },
+        {
+          "name": "Booking payment status",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/payment-status?txRef={{txRef}}&bookingId={{bookingId}}&guestEmail=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "payment-status"],
+              "query": [
+                { "key": "txRef", "value": "{{txRef}}" },
+                { "key": "bookingId", "value": "{{bookingId}}" },
+                { "key": "guestEmail", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get booking by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "{{bookingId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update booking",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"pickupDate\": \"2026-05-11\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "{{bookingId}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel booking",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"User requested cancellation\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "{{bookingId}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "Assign chauffeur (fleet owner)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"chauffeurId\": \"{{chauffeurId}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/bookings/{{bookingId}}/chauffeur",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "bookings", "{{bookingId}}", "chauffeur"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Initialize payment",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"booking\",\n  \"entityId\": \"{{bookingId}}\",\n  \"amount\": 10000,\n  \"callbackUrl\": \"https://example.com/payments/callback\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/initialize",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "initialize"]
+            }
+          }
+        },
+        {
+          "name": "Get payment status",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/status/{{txRef}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "status", "{{txRef}}"]
+            }
+          }
+        },
+        {
+          "name": "Request refund",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000,\n  \"reason\": \"Cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/{{txRef}}/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "{{txRef}}", "refund"]
+            }
+          }
+        },
+        {
+          "name": "Flutterwave webhook (inbound)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/webhook/flutterwave",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "webhook", "flutterwave"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cars",
+      "item": [
+        {
+          "name": "List car categories",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/cars/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cars", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Search cars",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/cars/search?pickupDate=2026-05-10&returnDate=2026-05-11",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cars", "search"],
+              "query": [
+                { "key": "pickupDate", "value": "2026-05-10" },
+                { "key": "returnDate", "value": "2026-05-11" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get car by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/cars/{{carId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cars", "{{carId}}"]
+            }
+          }
+        },
+        {
+          "name": "List fleet cars",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/cars",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "cars"]
+            }
+          }
+        },
+        {
+          "name": "Get fleet car by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/cars/{{carId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "cars", "{{carId}}"]
+            }
+          }
+        },
+        {
+          "name": "Create fleet car (multipart)",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "Mercedes S Class", "type": "text" },
+                { "key": "images", "type": "file", "src": "" },
+                { "key": "motCertificate", "type": "file", "src": "" },
+                { "key": "insuranceCertificate", "type": "file", "src": "" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/cars",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "cars"]
+            }
+          }
+        },
+        {
+          "name": "Update fleet car",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Updated vehicle name\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/cars/{{carId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "cars", "{{carId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rates",
+      "item": [
+        {
+          "name": "List rates",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/rates",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates"]
+            }
+          }
+        },
+        {
+          "name": "List rates (admin)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/rates/admin",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates", "admin"]
+            }
+          }
+        },
+        {
+          "name": "Set platform fee rate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ratePercent\": 10\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/rates/platform-fee",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates", "platform-fee"]
+            }
+          }
+        },
+        {
+          "name": "Set VAT rate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ratePercent\": 7.5\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/rates/vat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates", "vat"]
+            }
+          }
+        },
+        {
+          "name": "Create addon rate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"After-hours\",\n  \"amount\": 2000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/rates/addon",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates", "addon"]
+            }
+          }
+        },
+        {
+          "name": "End addon rate",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/api/rates/addon/{{addonRateId}}/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rates", "addon", "{{addonRateId}}", "end"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Referrals",
+      "item": [
+        {
+          "name": "Validate referral code",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/referrals/validate/ABC123?bookingId={{bookingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "referrals", "validate", "ABC123"],
+              "query": [{ "key": "bookingId", "value": "{{bookingId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Referral eligibility",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/referrals/eligibility?bookingId={{bookingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "referrals", "eligibility"],
+              "query": [{ "key": "bookingId", "value": "{{bookingId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Current user referral",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/referrals/user",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "referrals", "user"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "Create review",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\",\n  \"rating\": 5,\n  \"comment\": \"Excellent service\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "create"]
+            }
+          }
+        },
+        {
+          "name": "List reviews for car",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/car/{{carId}}?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "car", "{{carId}}"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "List reviews for chauffeur",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/chauffeur/{{chauffeurId}}?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "chauffeur", "{{chauffeurId}}"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "Get review by booking",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/booking/{{bookingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "booking", "{{bookingId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get review by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/{{reviewId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "{{reviewId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update review",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"comment\": \"Still good\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/{{reviewId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "{{reviewId}}"]
+            }
+          }
+        },
+        {
+          "name": "Hide review (admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"moderationNotes\": \"Hidden by admin\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/{{reviewId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reviews", "{{reviewId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Promotions",
+      "item": [
+        {
+          "name": "List promotions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/promotions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "promotions"]
+            }
+          }
+        },
+        {
+          "name": "Create promotion",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scope\": \"FLEET\",\n  \"name\": \"Summer Promo\",\n  \"discountValue\": 10,\n  \"startDate\": \"2026-05-01\",\n  \"endDate\": \"2026-05-31\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/promotions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "promotions"]
+            }
+          }
+        },
+        {
+          "name": "Deactivate promotion",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/fleet-owner/promotions/{{promotionId}}/deactivate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "fleet-owner", "promotions", "{{promotionId}}", "deactivate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Dashboard overview",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/overview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "overview"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard earnings",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/earnings?period=month",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "earnings"],
+              "query": [{ "key": "period", "value": "month" }]
+            }
+          }
+        },
+        {
+          "name": "Dashboard payouts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/payouts?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "payouts"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "Dashboard payouts summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/payouts/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "payouts", "summary"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notification",
+      "item": [
+        {
+          "name": "Register push token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{pushToken}}\",\n  \"platform\": \"ios\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/push-tokens",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "push-tokens"]
+            }
+          }
+        },
+        {
+          "name": "Revoke push token",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{pushToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/push-tokens",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "push-tokens"]
+            },
+            "description": "Revoke a registered push token. The Expo token is sent in the JSON body (Nest route has no :token path segment)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Maps",
+      "item": [
+        {
+          "name": "Calculate trip duration (airport)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/calculate-trip-duration?destination=Heathrow%20Airport",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculate-trip-duration"],
+              "query": [{ "key": "destination", "value": "Heathrow Airport" }]
+            }
+          }
+        },
+        {
+          "name": "Places autocomplete",
+          "request": {
+            "method": "GET",
+            "description": "Optional query: sessionToken (1–128 chars) for Google Places session billing. limit is 1–8 (default 4).",
+            "url": {
+              "raw": "{{baseUrl}}/api/places/autocomplete?input=London&limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "places", "autocomplete"],
+              "query": [
+                { "key": "input", "value": "London" },
+                { "key": "limit", "value": "5" },
+                { "key": "sessionToken", "value": "{{placesSessionToken}}", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Resolve place",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Optional body field: sessionToken (1–128 chars), same session as autocomplete when using Places session tokens.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"placeId\": \"ChIJdd4hrwug2EcRmSrV3Vo6llI\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/places/resolve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "places", "resolve"]
+            }
+          }
+        },
+        {
+          "name": "Validate address",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"input\": \"10 Downing St, London\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/places/validate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "places", "validate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Flight",
+      "item": [
+        {
+          "name": "Search flight",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/search-flight?flightNumber={{flightNumber}}&date={{dateYmd}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "search-flight"],
+              "query": [
+                { "key": "flightNumber", "value": "{{flightNumber}}" },
+                { "key": "date", "value": "{{dateYmd}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "FlightAware webhook (inbound)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/flightaware",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhooks", "flightaware"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Messaging & Inbound",
+      "item": [
+        {
+          "name": "Twilio messaging webhook (inbound)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [{ "key": "MessageSid", "value": "SM123", "type": "text" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/messaging/webhook/twilio",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "messaging", "webhook", "twilio"]
+            }
+          }
+        },
+        {
+          "name": "WhatsApp / agent Twilio webhook (inbound)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [{ "key": "Body", "value": "Hello", "type": "text" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhook/twilio",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhook", "twilio"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "Proxy PDF document",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/proxy-pdf/{{documentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proxy-pdf", "{{documentId}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
