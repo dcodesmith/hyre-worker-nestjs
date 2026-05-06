@@ -23,7 +23,8 @@
     { "key": "authPath", "value": "sign-in/email" },
     { "key": "flightNumber", "value": "BA75" },
     { "key": "dateYmd", "value": "2026-05-03" },
-    { "key": "pushToken", "value": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]" }
+    { "key": "pushToken", "value": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]" },
+    { "key": "placesSessionToken", "value": "" }
   ],
   "event": [
     {
@@ -773,14 +774,20 @@
           }
         },
         {
-          "name": "DELETE /api/users/me/push-tokens/:token",
+          "name": "DELETE /api/users/me/push-tokens",
           "request": {
             "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{pushToken}}\"\n}"
+            },
             "url": {
-              "raw": "{{baseUrl}}/api/users/me/push-tokens/{{pushToken}}",
+              "raw": "{{baseUrl}}/api/users/me/push-tokens",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "push-tokens", "{{pushToken}}"]
-            }
+              "path": ["api", "users", "me", "push-tokens"]
+            },
+            "description": "Revoke a registered push token. The Expo token is sent in the JSON body (Nest route has no :token path segment)."
           }
         }
       ]
@@ -804,11 +811,16 @@
           "name": "GET /api/places/autocomplete",
           "request": {
             "method": "GET",
+            "description": "Optional query: sessionToken (1–128 chars) for Google Places session billing. limit is 1–8 (default 4).",
             "url": {
               "raw": "{{baseUrl}}/api/places/autocomplete?input=London&limit=5",
               "host": ["{{baseUrl}}"],
               "path": ["api", "places", "autocomplete"],
-              "query": [{ "key": "input", "value": "London" }, { "key": "limit", "value": "5" }]
+              "query": [
+                { "key": "input", "value": "London" },
+                { "key": "limit", "value": "5" },
+                { "key": "sessionToken", "value": "{{placesSessionToken}}", "disabled": true }
+              ]
             }
           }
         },
@@ -817,6 +829,7 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Optional body field: sessionToken (1–128 chars), same session as autocomplete when using Places session tokens.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"placeId\": \"ChIJdd4hrwug2EcRmSrV3Vo6llI\"\n}"
