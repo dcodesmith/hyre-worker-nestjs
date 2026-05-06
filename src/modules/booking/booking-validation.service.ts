@@ -186,7 +186,7 @@ export class BookingValidationService {
    *
    * A car is unavailable if there are overlapping bookings with:
    * - Status: CONFIRMED or ACTIVE
-   * - PaymentStatus: PAID
+   * - PaymentStatus: PAID or REFUND_PROCESSING
    *
    * A 2-hour buffer is applied between bookings for car preparation.
    *
@@ -247,7 +247,7 @@ export class BookingValidationService {
     const conflictingBookings = await this.databaseService.booking.findMany({
       where: {
         carId,
-        paymentStatus: PaymentStatus.PAID,
+        paymentStatus: { in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING] },
         status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
         // Exclude current booking if this is an update
         ...(excludeBookingId && { id: { not: excludeBookingId } }),

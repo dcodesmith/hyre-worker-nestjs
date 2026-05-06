@@ -94,6 +94,11 @@ export class NotificationService {
         { bookingId: booking.id },
         "No customer delivery channel available for chauffeur assignment",
       );
+      this.recordNotificationSkippedNoChannel({
+        bookingId: booking.id,
+        oldStatus: booking.status,
+        newStatus: "CHAUFFEUR_ASSIGNED",
+      });
       return;
     }
 

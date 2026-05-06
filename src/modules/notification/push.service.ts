@@ -30,12 +30,9 @@ export class PushService {
   async sendPushNotifications(
     input: SendPushNotificationsInput,
   ): Promise<SendPushNotificationsResult> {
-    const uniqueTokens = [...new Set(input.tokens)].filter((token) => this.isValidPushToken(token));
-    if (uniqueTokens.length === 0) {
-      return { sent: 0, failed: 0, invalidTokens: [], errors: [] };
-    }
+    const { validTokens, invalidFormatTokens } = this.partitionTokens(input.tokens);
 
-    const messages: ExpoPushMessage[] = uniqueTokens.map((token) => ({
+    const messages: ExpoPushMessage[] = validTokens.map((token) => ({
       to: token,
       sound: "default",
       title: input.title,
@@ -45,8 +42,17 @@ export class PushService {
 
     let sent = 0;
     let failed = 0;
-    const invalidTokens = new Set<string>();
-    const errors: PushDeliveryError[] = [];
+    const invalidTokens = new Set<string>(invalidFormatTokens);
+    const errors: PushDeliveryError[] = invalidFormatTokens.map((token) => ({
+      code: "INVALID_PUSH_TOKEN_FORMAT",
+      retryable: false,
+      token,
+      message: "Invalid Expo push token format",
+    }));
+
+    if (validTokens.length === 0) {
+      return { sent, failed, invalidTokens: [...invalidTokens], errors };
+    }
 
     for (const chunk of this.expo.chunkPushNotifications(messages)) {
       let tickets: ExpoPushTicket[];
@@ -89,6 +95,25 @@ export class PushService {
     }
 
     return { sent, failed, invalidTokens: [...invalidTokens], errors };
+  }
+
+  private partitionTokens(tokens: string[]): {
+    validTokens: string[];
+    invalidFormatTokens: string[];
+  } {
+    const uniqueInputTokens = [...new Set(tokens)];
+    const validTokens: string[] = [];
+    const invalidFormatTokens: string[] = [];
+
+    for (const token of uniqueInputTokens) {
+      if (this.isValidPushToken(token)) {
+        validTokens.push(token);
+      } else {
+        invalidFormatTokens.push(token);
+      }
+    }
+
+    return { validTokens, invalidFormatTokens };
   }
 
   private processTickets(

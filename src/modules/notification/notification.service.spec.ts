@@ -330,6 +330,16 @@ describe("NotificationService", () => {
     });
 
     it("should skip chauffeur assignment notification with no customer channel", async () => {
+      const recordSkippedSpy = vi.spyOn(
+        service as unknown as {
+          recordNotificationSkippedNoChannel: (input: {
+            bookingId: string;
+            oldStatus: string;
+            newStatus: string;
+          }) => void;
+        },
+        "recordNotificationSkippedNoChannel",
+      );
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -347,6 +357,11 @@ describe("NotificationService", () => {
       await service.queueChauffeurAssignedNotifications(booking);
 
       expect(mockQueue.add).not.toHaveBeenCalled();
+      expect(recordSkippedSpy).toHaveBeenCalledWith({
+        bookingId: booking.id,
+        oldStatus: booking.status,
+        newStatus: "CHAUFFEUR_ASSIGNED",
+      });
     });
   });
 });

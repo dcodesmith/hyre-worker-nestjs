@@ -13,7 +13,7 @@ const { chunkPushNotificationsMock, sendPushNotificationsAsyncMock, isExpoPushTo
 
 vi.mock("expo-server-sdk", () => ({
   Expo: class {
-    static isExpoPushToken = isExpoPushTokenMock;
+    static readonly isExpoPushToken = isExpoPushTokenMock;
     chunkPushNotifications = chunkPushNotificationsMock;
     sendPushNotificationsAsync = sendPushNotificationsAsyncMock;
   },
@@ -76,7 +76,7 @@ describe("PushService", () => {
     expect(sendPushNotificationsAsyncMock).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores invalid token formats before sending", async () => {
+  it("returns invalid-format tokens as non-retryable failures", async () => {
     sendPushNotificationsAsyncMock.mockResolvedValueOnce([{ status: "ok" }]);
 
     const result = await service.sendPushNotifications({
@@ -88,9 +88,45 @@ describe("PushService", () => {
     expect(result).toEqual({
       sent: 1,
       failed: 0,
-      invalidTokens: [],
-      errors: [],
+      invalidTokens: ["invalid-token"],
+      errors: [
+        {
+          code: "INVALID_PUSH_TOKEN_FORMAT",
+          retryable: false,
+          token: "invalid-token",
+          message: "Invalid Expo push token format",
+        },
+      ],
     });
     expect(sendPushNotificationsAsyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call Expo when all tokens are invalid format", async () => {
+    const result = await service.sendPushNotifications({
+      tokens: ["bad-token-a", "bad-token-b"],
+      title: "Title",
+      body: "Body",
+    });
+
+    expect(result).toEqual({
+      sent: 0,
+      failed: 0,
+      invalidTokens: ["bad-token-a", "bad-token-b"],
+      errors: [
+        {
+          code: "INVALID_PUSH_TOKEN_FORMAT",
+          retryable: false,
+          token: "bad-token-a",
+          message: "Invalid Expo push token format",
+        },
+        {
+          code: "INVALID_PUSH_TOKEN_FORMAT",
+          retryable: false,
+          token: "bad-token-b",
+          message: "Invalid Expo push token format",
+        },
+      ],
+    });
+    expect(sendPushNotificationsAsyncMock).not.toHaveBeenCalled();
   });
 });
