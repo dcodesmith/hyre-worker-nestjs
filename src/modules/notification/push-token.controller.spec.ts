@@ -56,10 +56,9 @@ describe("PushTokenController", () => {
   });
 
   it("revokes a push token for the current user", async () => {
-    const result = await controller.deletePushToken(
-      { id: "user-1" } as never,
-      "ExponentPushToken[abc123]",
-    );
+    const result = await controller.deletePushToken({ id: "user-1" } as never, {
+      token: "ExponentPushToken[abc123]",
+    });
 
     expect(pushTokenService.revokeToken).toHaveBeenCalledWith(
       "user-1",

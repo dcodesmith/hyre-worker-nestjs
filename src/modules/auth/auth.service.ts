@@ -40,15 +40,12 @@ export class AuthService implements OnModuleInit {
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
-    const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
-
-    const mergedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
-    const devOrigins = getDevLanOriginPatterns(nodeEnv);
-    const trustedOrigins = [...mergedOrigins, ...devOrigins];
+    const trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
     this.trustedOrigins = trustedOrigins;
 
-    if (devOrigins.length > 0) {
+    if (nodeEnv === "development") {
+      const devOrigins = getDevLanOriginPatterns(nodeEnv);
       this.logger.info(
         { devOrigins },
         "Trusting LAN origins for local development (NODE_ENV=development)",
@@ -80,6 +77,10 @@ export class AuthService implements OnModuleInit {
    * CORS in sync with Better Auth's origin check.
    */
   getTrustedOriginPatterns(): readonly string[] {
+    if (this.trustedOrigins.length === 0) {
+      const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
+      this.trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
+    }
     return this.trustedOrigins;
   }
 
@@ -108,6 +109,14 @@ export class AuthService implements OnModuleInit {
     }
 
     return [...trustedOrigins, authOrigin];
+  }
+
+  private buildTrustedOrigins(authBaseUrl: string): string[] {
+    const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
+    const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
+    const mergedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
+    const devOrigins = getDevLanOriginPatterns(nodeEnv);
+    return [...mergedOrigins, ...devOrigins];
   }
 
   get auth(): Auth {

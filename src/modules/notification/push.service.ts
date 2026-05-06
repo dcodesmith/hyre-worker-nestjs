@@ -3,30 +3,11 @@ import { ConfigService } from "@nestjs/config";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
 import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "@/config/env.config";
-
-interface SendPushNotificationsInput {
-  tokens: string[];
-  title: string;
-  body: string;
-  data?: Record<string, string>;
-}
-
-interface SendPushNotificationsResult {
-  sent: number;
-  /**
-   * Retryable failures only (invalid/unregistered tokens are excluded).
-   */
-  failed: number;
-  invalidTokens: string[];
-  errors?: PushDeliveryError[];
-}
-
-interface PushDeliveryError {
-  code: string;
-  retryable: boolean;
-  token?: string;
-  message?: string;
-}
+import {
+  PushDeliveryError,
+  SendPushNotificationsInput,
+  SendPushNotificationsResult,
+} from "./push.interface";
 
 @Injectable()
 export class PushService {
@@ -139,7 +120,7 @@ export class PushService {
         message: ticket.message,
       });
 
-      if (code !== "DeviceNotRegistered") {
+      if (retryable) {
         counters.incrementFailed();
       }
     });

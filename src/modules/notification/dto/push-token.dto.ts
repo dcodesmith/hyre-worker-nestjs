@@ -16,3 +16,9 @@ export const pushTokenParamSchema = z
   .string()
   .min(1, "Push token is required")
   .regex(expoPushTokenPattern, "Invalid Expo push token format");
+
+export const revokePushTokenBodySchema = z.object({
+  token: pushTokenParamSchema,
+});
+
+export type RevokePushTokenBodyDto = z.infer<typeof revokePushTokenBodySchema>;

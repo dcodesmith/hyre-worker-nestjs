@@ -17,7 +17,8 @@ import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import type { EnvConfig } from "./config/env.config";
-import { getDevLanOriginPatterns, isOriginAllowed } from "./modules/auth/origin-pattern";
+import { AuthService } from "./modules/auth/auth.service";
+import { isOriginAllowed } from "./modules/auth/origin-pattern";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -47,17 +48,12 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService<EnvConfig>);
 
-    // Configure CORS for auth endpoints (if TRUSTED_ORIGINS is set).
-    // In development we extend the env-configured origins with RFC1918 LAN
-    // wildcards so that the mobile app and a web client running on the host
-    // machine's LAN IP (e.g. http://192.168.x.x:3000) aren't blocked when the
-    // IP changes between sessions. Production keeps strict, exact-origin
-    // matching.
-    const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true });
-    if (trustedOrigins) {
-      const nodeEnv = configService.get("NODE_ENV", { infer: true });
-      const allowedOriginPatterns = [...trustedOrigins, ...getDevLanOriginPatterns(nodeEnv)];
+    // Configure CORS for auth endpoints using AuthService's effective allow-list
+    // so CORS and Better Auth always evaluate the same origin patterns.
+    const authService = app.get(AuthService);
+    const allowedOriginPatterns = authService.getTrustedOriginPatterns();
 
+    if (allowedOriginPatterns.length > 0) {
       app.enableCors({
         origin: (origin, callback) => {
           // Non-browser callers (mobile, server-to-server, curl) don't always

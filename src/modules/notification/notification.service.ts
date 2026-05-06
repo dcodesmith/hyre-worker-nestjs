@@ -117,9 +117,10 @@ export class NotificationService {
   ): Promise<NotificationJobData | null> {
     const bookingDetails = normaliseBookingDetails(booking);
     const channels = deriveNotificationChannels(bookingDetails);
+    const userId = booking.userId ?? booking.user?.id;
     const pushTokens =
       input?.pushTokens ??
-      (booking.user?.id ? await this.pushTokenService.getActiveTokensForUser(booking.user.id) : []);
+      (userId ? await this.pushTokenService.getActiveTokensForUser(userId) : []);
     if (pushTokens.length > 0) {
       channels.push(NotificationChannel.PUSH);
     }

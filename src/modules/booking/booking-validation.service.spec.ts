@@ -407,6 +407,34 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalled();
     });
 
+    it("should block BOOKED status when an overlapping REFUND_PROCESSING active booking exists", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        createCar({
+          id: "car-123",
+          status: Status.BOOKED,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
+        createBooking({
+          id: "existing-booking-refund-processing",
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
+          bookingReference: "BK-REFUND-PROCESSING",
+          status: BookingStatus.ACTIVE,
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
+        }),
+      ]);
+
+      await expect(
+        service.checkCarAvailability({
+          carId: "car-123",
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
+        }),
+      ).rejects.toThrow(CarNotAvailableException);
+    });
+
     it("should throw CarNotAvailableException when car status is IN_SERVICE", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({

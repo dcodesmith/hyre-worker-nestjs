@@ -144,6 +144,8 @@ model NotificationOutboxEvent {
   eventType    NotificationOutboxEventType
   status       NotificationOutboxStatus @default(PENDING)
   dedupeKey    String                   @unique
+  /// Intentionally not a relation to Booking. Outbox rows must remain durable
+  /// for retry/audit purposes even if a booking is deleted.
   bookingId    String
   payload      Json?
   attempts     Int                      @default(0)

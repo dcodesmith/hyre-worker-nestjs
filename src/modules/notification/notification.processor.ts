@@ -254,6 +254,7 @@ export class NotificationProcessor extends WorkerHost {
 
           perRecipientResults.push({
             recipient,
+            channel: NotificationChannel.EMAIL,
             email,
             success: true,
             messageId: sendResult.data?.id,
@@ -261,6 +262,7 @@ export class NotificationProcessor extends WorkerHost {
         } catch (error) {
           perRecipientResults.push({
             recipient,
+            channel: NotificationChannel.EMAIL,
             email,
             success: false,
             error: error instanceof Error ? error.message : String(error),
@@ -523,10 +525,16 @@ export class NotificationProcessor extends WorkerHost {
     bookingId: string,
     pushPayload: NotificationJobData["pushPayload"],
   ): Promise<NotificationResult | null> {
-    const pushTokens = Object.values(recipients).flatMap(
-      (recipient) => recipient?.pushTokens ?? [],
+    const pushRecipients = Object.entries(recipients).flatMap(([recipientType, recipient]) =>
+      (recipient?.pushTokens ?? []).map((token) => ({
+        recipient: recipientType as RecipientType,
+        pushToken: token,
+      })),
     );
-    const uniqueTokens = [...new Set(pushTokens)];
+    const uniquePushRecipients = Array.from(
+      new Map(pushRecipients.map((entry) => [entry.pushToken, entry])).values(),
+    );
+    const uniqueTokens = uniquePushRecipients.map((entry) => entry.pushToken);
     if (uniqueTokens.length === 0) {
       return null;
     }
@@ -552,7 +560,19 @@ export class NotificationProcessor extends WorkerHost {
     const deliveryErrors = result.errors ?? [];
 
     if (result.invalidTokens.length > 0) {
-      await this.pushTokenService.revokeTokens(result.invalidTokens);
+      try {
+        await this.pushTokenService.revokeTokens(result.invalidTokens);
+      } catch (error) {
+        this.logger.error(
+          {
+            bookingId,
+            type,
+            invalidTokenCount: result.invalidTokens.length,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to revoke invalid push tokens after push delivery",
+        );
+      }
     }
 
     if (deliveryErrors.length > 0) {
@@ -593,6 +613,58 @@ export class NotificationProcessor extends WorkerHost {
       );
     }
 
+    const invalidTokenSet = new Set(result.invalidTokens);
+    const tokenErrorMap = new Map(
+      deliveryErrors
+        .filter((error): error is typeof error & { token: string } => Boolean(error.token))
+        .map((error) => [error.token, error]),
+    );
+    const perRecipientResults: NotificationRecipientResult[] = uniquePushRecipients.map(
+      ({ recipient, pushToken }) => {
+        const tokenError = tokenErrorMap.get(pushToken);
+        const isInvalidToken = invalidTokenSet.has(pushToken);
+        const success = !tokenError && !isInvalidToken;
+
+        if (success) {
+          return {
+            recipient,
+            channel: NotificationChannel.PUSH,
+            pushToken,
+            success: true,
+            messageId: "push-sent",
+          };
+        }
+
+        if (tokenError) {
+          return {
+            recipient,
+            channel: NotificationChannel.PUSH,
+            pushToken,
+            success: false,
+            error: tokenError.message ?? tokenError.code,
+            pushResponse: {
+              code: tokenError.code,
+              retryable: tokenError.retryable,
+              message: tokenError.message,
+            },
+          };
+        }
+
+        return {
+          recipient,
+          channel: NotificationChannel.PUSH,
+          pushToken,
+          success: false,
+          error: "Device not registered",
+          pushResponse: {
+            code: "DeviceNotRegistered",
+            retryable: false,
+            message: "Device not registered",
+          },
+        };
+      },
+    );
+
     return {
       channel: NotificationChannel.PUSH,
       success: result.failed === 0,
@@ -604,6 +676,7 @@ export class NotificationProcessor extends WorkerHost {
               [...new Set((result.errors ?? []).map((error) => error.code))].join(", ") || "unknown"
             })`
           : undefined,
+      perRecipientResults,
     };
   }
 

@@ -1,11 +1,12 @@
 import { Controller, Delete, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
-import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
+import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
 import {
-  pushTokenParamSchema,
   type RegisterPushTokenBodyDto,
+  type RevokePushTokenBodyDto,
   registerPushTokenBodySchema,
+  revokePushTokenBodySchema,
 } from "./dto/push-token.dto";
 import { PushTokenService } from "./push-token.service";
 
@@ -24,13 +25,13 @@ export class PushTokenController {
     return { success: true };
   }
 
-  @Delete(":token")
+  @Delete()
   @HttpCode(HttpStatus.OK)
   async deletePushToken(
     @CurrentUser() user: AuthSession["user"],
-    @ZodParam("token", pushTokenParamSchema) token: string,
+    @ZodBody(revokePushTokenBodySchema) body: RevokePushTokenBodyDto,
   ): Promise<{ success: true }> {
-    await this.pushTokenService.revokeToken(user.id, token);
+    await this.pushTokenService.revokeToken(user.id, body.token);
     return { success: true };
   }
 }

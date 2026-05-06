@@ -153,6 +153,7 @@ describe("NotificationProcessor", () => {
       perRecipientResults: [
         {
           recipient: CLIENT_RECIPIENT_TYPE,
+          channel: NotificationChannel.EMAIL,
           email: "client@example.com",
           success: true,
           messageId: "email-msg-1",
@@ -447,6 +448,7 @@ describe("NotificationProcessor", () => {
       perRecipientResults: [
         {
           recipient: FLEET_OWNER_RECIPIENT_TYPE,
+          channel: NotificationChannel.EMAIL,
           email: "owner@example.com",
           success: true,
           messageId: "email-msg-4",
@@ -569,6 +571,27 @@ describe("NotificationProcessor", () => {
         channel: NotificationChannel.PUSH,
         success: true,
         messageId: "push-sent",
+        perRecipientResults: [
+          {
+            recipient: CLIENT_RECIPIENT_TYPE,
+            channel: NotificationChannel.PUSH,
+            pushToken: "ExponentPushToken[a]",
+            success: true,
+            messageId: "push-sent",
+          },
+          {
+            recipient: CLIENT_RECIPIENT_TYPE,
+            channel: NotificationChannel.PUSH,
+            pushToken: "ExponentPushToken[b]",
+            success: false,
+            error: "Device not registered",
+            pushResponse: {
+              code: "DeviceNotRegistered",
+              retryable: false,
+              message: "Device not registered",
+            },
+          },
+        ],
       },
     ]);
 
@@ -723,6 +746,32 @@ describe("NotificationProcessor", () => {
         channel: NotificationChannel.PUSH,
         success: true,
         messageId: undefined,
+        perRecipientResults: [
+          {
+            recipient: CLIENT_RECIPIENT_TYPE,
+            channel: NotificationChannel.PUSH,
+            pushToken: "ExponentPushToken[x]",
+            success: false,
+            error: "Device not registered",
+            pushResponse: {
+              code: "DeviceNotRegistered",
+              retryable: false,
+              message: "Device not registered",
+            },
+          },
+          {
+            recipient: CLIENT_RECIPIENT_TYPE,
+            channel: NotificationChannel.PUSH,
+            pushToken: "ExponentPushToken[y]",
+            success: false,
+            error: "Device not registered",
+            pushResponse: {
+              code: "DeviceNotRegistered",
+              retryable: false,
+              message: "Device not registered",
+            },
+          },
+        ],
       },
     ]);
     expect(pushTokenService.revokeTokens).toHaveBeenCalledWith([

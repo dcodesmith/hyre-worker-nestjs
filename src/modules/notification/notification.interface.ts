@@ -67,13 +67,28 @@ export interface NotificationResult {
   perRecipientResults?: NotificationRecipientResult[];
 }
 
-export interface NotificationRecipientResult {
+interface NotificationRecipientResultBase {
   recipient: RecipientType;
-  email: string;
+  channel: NotificationChannel;
   success: boolean;
   messageId?: string;
   error?: string;
 }
+
+export type NotificationRecipientResult =
+  | (NotificationRecipientResultBase & {
+      channel: NotificationChannel.EMAIL;
+      email: string;
+    })
+  | (NotificationRecipientResultBase & {
+      channel: NotificationChannel.PUSH;
+      pushToken: string;
+      pushResponse?: {
+        code: string;
+        retryable: boolean;
+        message?: string;
+      };
+    });
 
 export interface QueueReviewReceivedNotificationParams {
   bookingId: string;
