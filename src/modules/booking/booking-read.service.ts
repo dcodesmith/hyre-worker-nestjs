@@ -50,7 +50,12 @@ export class BookingReadService {
         where: {
           userId,
           paymentStatus: {
-            in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED],
+            in: [
+              PaymentStatus.PAID,
+              PaymentStatus.REFUND_PROCESSING,
+              PaymentStatus.PARTIALLY_REFUNDED,
+              PaymentStatus.REFUNDED,
+            ],
           },
         },
         include: this.bookingDetailsInclude,

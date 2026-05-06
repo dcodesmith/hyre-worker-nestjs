@@ -3,6 +3,7 @@ import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus } from "@prisma/c
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   BookingChauffeurNotFoundException,
   BookingNotFoundException,
@@ -33,6 +34,10 @@ describe("BookingUpdateService", () => {
     checkCarAvailability: vi.fn(),
   };
 
+  const notificationOutboxServiceMock = {
+    createChauffeurAssignedEvent: vi.fn(),
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
 
@@ -41,6 +46,7 @@ describe("BookingUpdateService", () => {
         BookingUpdateService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
+        { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -245,6 +251,7 @@ describe("BookingUpdateService", () => {
             id: "booking-1",
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            chauffeurId: null,
             car: { ownerId: "owner-1" },
           },
           data: { chauffeurId: "chauffeur-1" },
@@ -254,6 +261,11 @@ describe("BookingUpdateService", () => {
         expect.objectContaining({
           where: { id: "booking-1" },
         }),
+      );
+      expect(notificationOutboxServiceMock.createChauffeurAssignedEvent).toHaveBeenCalledWith(
+        tx,
+        result,
+        "chauffeur-1",
       );
     });
 
@@ -291,6 +303,7 @@ describe("BookingUpdateService", () => {
             id: "booking-1",
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            chauffeurId: "chauffeur-1",
             car: { ownerId: "owner-1" },
           },
           data: { chauffeurId: "chauffeur-1" },
@@ -301,6 +314,7 @@ describe("BookingUpdateService", () => {
           where: { id: "booking-1" },
         }),
       );
+      expect(notificationOutboxServiceMock.createChauffeurAssignedEvent).not.toHaveBeenCalled();
     });
 
     it("throws when guarded write fails due to concurrent booking change", async () => {

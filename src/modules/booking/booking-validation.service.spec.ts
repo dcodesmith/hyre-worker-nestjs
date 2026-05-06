@@ -387,7 +387,7 @@ describe("BookingValidationService", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("should throw CarNotAvailableException when car status is BOOKED", async () => {
+    it("should allow BOOKED status when there are no overlapping paid active bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -395,16 +395,16 @@ describe("BookingValidationService", () => {
           approvalStatus: CarApprovalStatus.APPROVED,
         }),
       );
+      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       await expect(
         service.checkCarAvailability({
           carId: "car-123",
-          startDate: new Date(),
-          endDate: new Date(),
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
         }),
-      ).rejects.toThrow(CarNotAvailableException);
-
-      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+      ).resolves.toBeUndefined();
+      expect(databaseService.booking.findMany).toHaveBeenCalled();
     });
 
     it("should throw CarNotAvailableException when car status is IN_SERVICE", async () => {

@@ -1,6 +1,6 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject } from "@nestjs/common";
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import {
@@ -29,6 +29,8 @@ import {
 } from "./notification.interface";
 import { NotificationDispatchError } from "./notification.processor.error";
 import { getSucceededChannels } from "./notification.processor.helper";
+import { PushService } from "./push.service";
+import { PushTokenService } from "./push-token.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_CONFIRMED_TEMPLATE_KIND,
@@ -63,6 +65,8 @@ export class NotificationProcessor extends WorkerHost {
   constructor(
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
+    private readonly pushService: PushService,
+    private readonly pushTokenService: PushTokenService,
     @Inject(PinoLogger) private readonly logger: PinoLogger,
   ) {
     super();
@@ -103,7 +107,15 @@ export class NotificationProcessor extends WorkerHost {
         continue;
       }
 
-      const result = await this.processChannel(id, channel, type, recipients, templateData);
+      const result = await this.processChannel(
+        id,
+        channel,
+        type,
+        recipients,
+        templateData,
+        job.data.bookingId,
+        job.data.pushPayload,
+      );
       if (result) results.push(result);
       if (result?.success) {
         succeededChannels.add(channel);
@@ -118,12 +130,19 @@ export class NotificationProcessor extends WorkerHost {
 
     const failed = results.filter((result) => !result.success);
     if (failed.length > 0) {
-      throw new NotificationDispatchError(
+      const dispatchError = new NotificationDispatchError(
         id,
         failed.map((result) => result.channel),
         job.attemptsMade + 1,
         job.opts.attempts,
       );
+
+      if (failed.every((result) => result.retryable === false)) {
+        // Stop queue-level retries when all failed channels are non-retryable
+        // (e.g. InvalidCredentials).
+        throw new UnrecoverableError(dispatchError.message);
+      }
+      throw dispatchError;
     }
 
     return results;
@@ -135,6 +154,8 @@ export class NotificationProcessor extends WorkerHost {
     type: NotificationType,
     recipients: NotificationJobData["recipients"],
     templateData: TemplateData,
+    bookingId: string,
+    pushPayload: NotificationJobData["pushPayload"],
   ): Promise<NotificationResult | null> {
     try {
       if (channel === NotificationChannel.EMAIL) {
@@ -143,6 +164,10 @@ export class NotificationProcessor extends WorkerHost {
 
       if (channel === NotificationChannel.WHATSAPP) {
         return await this.sendWhatsAppNotification(type, recipients, templateData);
+      }
+
+      if (channel === NotificationChannel.PUSH) {
+        return await this.sendPushNotification(type, recipients, bookingId, pushPayload);
       }
 
       return null;
@@ -280,6 +305,7 @@ export class NotificationProcessor extends WorkerHost {
       case NotificationType.BOOKING_CANCELLED:
         return this.buildBookingCancelledEmailHtml(templateData, recipient);
       case NotificationType.BOOKING_STATUS_CHANGE:
+      case NotificationType.CHAUFFEUR_ASSIGNED:
         return this.buildBookingStatusEmailHtml(templateData);
       case NotificationType.BOOKING_REMINDER_START:
       case NotificationType.BOOKING_REMINDER_END:
@@ -489,6 +515,96 @@ export class NotificationProcessor extends WorkerHost {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private async sendPushNotification(
+    type: NotificationType,
+    recipients: NotificationJobData["recipients"],
+    bookingId: string,
+    pushPayload: NotificationJobData["pushPayload"],
+  ): Promise<NotificationResult | null> {
+    const pushTokens = Object.values(recipients).flatMap(
+      (recipient) => recipient?.pushTokens ?? [],
+    );
+    const uniqueTokens = [...new Set(pushTokens)];
+    if (uniqueTokens.length === 0) {
+      return null;
+    }
+
+    const payload = pushPayload ?? {
+      title: "Booking update",
+      body:
+        type === NotificationType.CHAUFFEUR_ASSIGNED
+          ? "Your chauffeur has been assigned."
+          : "You have a new update for your booking.",
+      data: {
+        bookingId,
+        type,
+      },
+    };
+
+    const result = await this.pushService.sendPushNotifications({
+      tokens: uniqueTokens,
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+    const deliveryErrors = result.errors ?? [];
+
+    if (result.invalidTokens.length > 0) {
+      await this.pushTokenService.revokeTokens(result.invalidTokens);
+    }
+
+    if (deliveryErrors.length > 0) {
+      const retryableErrors = deliveryErrors.filter((error) => error.retryable);
+      const nonRetryableErrors = deliveryErrors.filter((error) => !error.retryable);
+      const errorCodeCounts = deliveryErrors.reduce<Record<string, number>>((acc, error) => {
+        acc[error.code] = (acc[error.code] ?? 0) + 1;
+        return acc;
+      }, {});
+
+      this.logger.error(
+        {
+          bookingId,
+          type,
+          sent: result.sent,
+          failed: result.failed,
+          invalidTokenCount: result.invalidTokens.length,
+          retryableErrorCount: retryableErrors.length,
+          nonRetryableErrorCount: nonRetryableErrors.length,
+          errorCodeCounts,
+          sampleErrors: deliveryErrors.slice(0, 3),
+        },
+        "Push notification delivery returned Expo ticket errors",
+      );
+    }
+
+    // All tokens were invalid: nothing was delivered, but retrying with the
+    // same tokens won't help, so do not fail the channel. Emit a high-signal
+    // log so this is observable and alertable.
+    if (result.sent === 0 && result.failed === 0 && result.invalidTokens.length > 0) {
+      this.logger.warn(
+        {
+          bookingId,
+          type,
+          invalidTokenCount: result.invalidTokens.length,
+        },
+        "Push notification skipped: all push tokens for booking are invalid",
+      );
+    }
+
+    return {
+      channel: NotificationChannel.PUSH,
+      success: result.failed === 0,
+      retryable: result.failed > 0 ? deliveryErrors.some((error) => error.retryable) : undefined,
+      messageId: result.sent > 0 ? "push-sent" : undefined,
+      error:
+        result.failed > 0
+          ? `One or more push notifications failed (${
+              [...new Set((result.errors ?? []).map((error) => error.code))].join(", ") || "unknown"
+            })`
+          : undefined,
+    };
   }
 
   private getWhatsAppTemplateKey(

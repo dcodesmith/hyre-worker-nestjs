@@ -5,7 +5,10 @@ import { BaseTemplateMapper } from "./base-template-mapper";
 
 export class BookingStatusMapper extends BaseTemplateMapper {
   canHandle(type: NotificationType): boolean {
-    return type === NotificationType.BOOKING_STATUS_CHANGE;
+    return (
+      type === NotificationType.BOOKING_STATUS_CHANGE ||
+      type === NotificationType.CHAUFFEUR_ASSIGNED
+    );
   }
 
   getTemplateKey(type: NotificationType, _recipientType: string): Template | null {

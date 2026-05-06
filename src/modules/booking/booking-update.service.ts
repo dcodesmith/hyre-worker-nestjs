@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
 import {
   BookingChauffeurNotFoundException,
@@ -52,6 +53,7 @@ export class BookingUpdateService {
   constructor(
     private readonly bookingValidationService: BookingValidationService,
     private readonly databaseService: DatabaseService,
+    private readonly notificationOutboxService: NotificationOutboxService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingUpdateService.name);
@@ -80,7 +82,7 @@ export class BookingUpdateService {
 
   async assignChauffeur(bookingId: string, ownerId: string, chauffeurId: string) {
     try {
-      return await this.databaseService.$transaction(async (tx) => {
+      const booking = await this.databaseService.$transaction(async (tx) => {
         const booking = await tx.booking.findFirst({
           where: {
             id: bookingId,
@@ -130,6 +132,7 @@ export class BookingUpdateService {
             id: booking.id,
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            chauffeurId: booking.chauffeurId,
             car: { ownerId },
           },
           data: { chauffeurId: chauffeur.id },
@@ -141,11 +144,22 @@ export class BookingUpdateService {
           );
         }
 
-        return tx.booking.findUniqueOrThrow({
+        const updatedBooking = await tx.booking.findUniqueOrThrow({
           where: { id: booking.id },
           include: this.bookingDetailsInclude,
         });
+        if (booking.chauffeurId !== chauffeur.id) {
+          await this.notificationOutboxService.createChauffeurAssignedEvent(
+            tx,
+            updatedBooking,
+            chauffeur.id,
+          );
+        }
+
+        return updatedBooking;
       });
+
+      return booking;
     } catch (error) {
       if (error instanceof BookingException) {
         throw error;

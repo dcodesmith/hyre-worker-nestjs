@@ -12,6 +12,8 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationProcessor } from "./notification.processor";
+import { PushService } from "./push.service";
+import { PushTokenService } from "./push-token.service";
 import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
@@ -23,6 +25,8 @@ describe("NotificationProcessor", () => {
   let processor: NotificationProcessor;
   let emailService: EmailService;
   let whatsAppService: WhatsAppService;
+  let pushService: PushService;
+  let pushTokenService: PushTokenService;
 
   const createJob = (
     id: string,
@@ -70,6 +74,18 @@ describe("NotificationProcessor", () => {
             sendMessage: vi.fn(),
           },
         },
+        {
+          provide: PushService,
+          useValue: {
+            sendPushNotifications: vi.fn(),
+          },
+        },
+        {
+          provide: PushTokenService,
+          useValue: {
+            revokeTokens: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -78,6 +94,8 @@ describe("NotificationProcessor", () => {
     processor = module.get<NotificationProcessor>(NotificationProcessor);
     emailService = module.get<EmailService>(EmailService);
     whatsAppService = module.get<WhatsAppService>(WhatsAppService);
+    pushService = module.get<PushService>(PushService);
+    pushTokenService = module.get<PushTokenService>(PushTokenService);
   });
 
   it("should process notification job with EMAIL channel successfully", async () => {
@@ -498,6 +516,218 @@ describe("NotificationProcessor", () => {
         success: true,
         messageId: "whatsapp-sent",
       },
+    ]);
+  });
+
+  it("should process PUSH channel and treat invalid tokens as non-retryable", async () => {
+    const job = createJob("job-11", {
+      id: "notification-11",
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-111",
+      pushPayload: {
+        title: "Your chauffeur has been assigned",
+        body: "Your chauffeur for a trip has been assigned.",
+        data: { bookingId: "booking-111", type: NotificationType.CHAUFFEUR_ASSIGNED },
+      },
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          pushTokens: ["ExponentPushToken[a]", "ExponentPushToken[b]"],
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        id: "booking-111",
+        bookingReference: "BR-111",
+        customerName: "John Doe",
+        ownerName: "Owner Name",
+        chauffeurName: "Chauffeur Name",
+        chauffeurPhoneNumber: "1234567890",
+        carName: "Car Name",
+        pickupLocation: "Pickup Location",
+        returnLocation: "Return Location",
+        startDate: "2024-01-01",
+        endDate: "2024-01-02",
+        totalAmount: "10000",
+        title: "been assigned a chauffeur",
+        status: "chauffeur assigned",
+        cancellationReason: "",
+        subject: "Your chauffeur has been assigned",
+        oldStatus: "confirmed",
+        newStatus: "chauffeur_assigned",
+      },
+    });
+
+    vi.mocked(pushService.sendPushNotifications).mockResolvedValueOnce({
+      sent: 1,
+      failed: 0,
+      invalidTokens: ["ExponentPushToken[b]"],
+    });
+
+    await expect(processor.process(job)).resolves.toEqual([
+      {
+        channel: NotificationChannel.PUSH,
+        success: true,
+        messageId: "push-sent",
+      },
+    ]);
+
+    expect(pushService.sendPushNotifications).toHaveBeenCalledWith({
+      tokens: ["ExponentPushToken[a]", "ExponentPushToken[b]"],
+      title: "Your chauffeur has been assigned",
+      body: "Your chauffeur for a trip has been assigned.",
+      data: { bookingId: "booking-111", type: NotificationType.CHAUFFEUR_ASSIGNED },
+    });
+    expect(pushTokenService.revokeTokens).toHaveBeenCalledWith(["ExponentPushToken[b]"]);
+  });
+
+  it("should fail PUSH channel when retryable push errors exist", async () => {
+    const job = createJob("job-12", {
+      id: "notification-12",
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-112",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          pushTokens: ["ExponentPushToken[c]"],
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        id: "booking-112",
+        bookingReference: "BR-112",
+        customerName: "John Doe",
+        ownerName: "Owner Name",
+        chauffeurName: "Chauffeur Name",
+        chauffeurPhoneNumber: "1234567890",
+        carName: "Car Name",
+        pickupLocation: "Pickup Location",
+        returnLocation: "Return Location",
+        startDate: "2024-01-01",
+        endDate: "2024-01-02",
+        totalAmount: "10000",
+        title: "been assigned a chauffeur",
+        status: "chauffeur assigned",
+        cancellationReason: "",
+        subject: "Your chauffeur has been assigned",
+        oldStatus: "confirmed",
+        newStatus: "chauffeur_assigned",
+      },
+    });
+
+    vi.mocked(pushService.sendPushNotifications).mockResolvedValueOnce({
+      sent: 0,
+      failed: 1,
+      invalidTokens: [],
+      errors: [{ code: "MessageRateExceeded", retryable: true }],
+    });
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Notification channel delivery failed for notification notification-12: push",
+    );
+  });
+
+  it("should fail PUSH channel without retries for non-retryable errors", async () => {
+    const job = createJob("job-12b", {
+      id: "notification-12b",
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-112b",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          pushTokens: ["ExponentPushToken[d]"],
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        id: "booking-112b",
+        bookingReference: "BR-112b",
+        customerName: "John Doe",
+        ownerName: "Owner Name",
+        chauffeurName: "Chauffeur Name",
+        chauffeurPhoneNumber: "1234567890",
+        carName: "Car Name",
+        pickupLocation: "Pickup Location",
+        returnLocation: "Return Location",
+        startDate: "2024-01-01",
+        endDate: "2024-01-02",
+        totalAmount: "10000",
+        title: "been assigned a chauffeur",
+        status: "chauffeur assigned",
+        cancellationReason: "",
+        subject: "Your chauffeur has been assigned",
+        oldStatus: "confirmed",
+        newStatus: "chauffeur_assigned",
+      },
+    });
+
+    vi.mocked(pushService.sendPushNotifications).mockResolvedValueOnce({
+      sent: 0,
+      failed: 1,
+      invalidTokens: [],
+      errors: [{ code: "InvalidCredentials", retryable: false }],
+    });
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Notification channel delivery failed for notification notification-12b: push",
+    );
+  });
+
+  it("should succeed PUSH channel and revoke when ALL push tokens are invalid", async () => {
+    const job = createJob("job-13", {
+      id: "notification-13",
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-113",
+      pushPayload: {
+        title: "t",
+        body: "b",
+        data: { bookingId: "booking-113", type: NotificationType.CHAUFFEUR_ASSIGNED },
+      },
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          pushTokens: ["ExponentPushToken[x]", "ExponentPushToken[y]"],
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        id: "booking-113",
+        bookingReference: "BR-113",
+        customerName: "John Doe",
+        ownerName: "Owner",
+        chauffeurName: "Chauffeur",
+        chauffeurPhoneNumber: "1234567890",
+        carName: "Car",
+        pickupLocation: "p",
+        returnLocation: "r",
+        startDate: "2024-01-01",
+        endDate: "2024-01-02",
+        totalAmount: "10000",
+        title: "been assigned a chauffeur",
+        status: "chauffeur assigned",
+        cancellationReason: "",
+        subject: "Your chauffeur has been assigned",
+        oldStatus: "confirmed",
+        newStatus: "chauffeur_assigned",
+      },
+    });
+
+    vi.mocked(pushService.sendPushNotifications).mockResolvedValueOnce({
+      sent: 0,
+      failed: 0,
+      invalidTokens: ["ExponentPushToken[x]", "ExponentPushToken[y]"],
+    });
+
+    await expect(processor.process(job)).resolves.toEqual([
+      {
+        channel: NotificationChannel.PUSH,
+        success: true,
+        messageId: undefined,
+      },
+    ]);
+    expect(pushTokenService.revokeTokens).toHaveBeenCalledWith([
+      "ExponentPushToken[x]",
+      "ExponentPushToken[y]",
     ]);
   });
 });
