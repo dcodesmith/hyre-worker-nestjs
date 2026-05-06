@@ -17,6 +17,8 @@ import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import type { EnvConfig } from "./config/env.config";
+import { AuthService } from "./modules/auth/auth.service";
+import { isOriginAllowed } from "./modules/auth/origin-pattern";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -46,11 +48,21 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService<EnvConfig>);
 
-    // Configure CORS for auth endpoints (if TRUSTED_ORIGINS is set)
-    const trustedOrigins = configService.get("TRUSTED_ORIGINS", { infer: true });
-    if (trustedOrigins) {
+    // Configure CORS for auth endpoints using AuthService's effective allow-list
+    // so CORS and Better Auth always evaluate the same origin patterns.
+    const authService = app.get(AuthService);
+    const allowedOriginPatterns = authService.getTrustedOriginPatterns();
+
+    if (allowedOriginPatterns.length > 0) {
       app.enableCors({
-        origin: trustedOrigins,
+        origin: (origin, callback) => {
+          // Non-browser callers (mobile, server-to-server, curl) don't always
+          // send Origin; let those through and rely on auth/CSRF for safety.
+          if (!origin) {
+            return callback(null, true);
+          }
+          callback(null, isOriginAllowed(origin, allowedOriginPatterns));
+        },
         credentials: true,
         allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
         exposedHeaders: ["Set-Cookie"],

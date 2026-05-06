@@ -3,6 +3,7 @@ import { RecipientType, TemplateData } from "./template-data.interface";
 export enum NotificationChannel {
   EMAIL = "email",
   WHATSAPP = "whatsapp",
+  PUSH = "push",
 }
 
 export enum NotificationType {
@@ -10,6 +11,7 @@ export enum NotificationType {
   BOOKING_REMINDER_START = "booking-reminder-start",
   BOOKING_REMINDER_END = "booking-reminder-end",
   BOOKING_CONFIRMED = "booking-confirmed",
+  CHAUFFEUR_ASSIGNED = "chauffeur-assigned",
   BOOKING_CANCELLED = "booking-cancelled",
   BOOKING_EXTENSION_CONFIRMED = "booking-extension-confirmed",
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
@@ -33,12 +35,18 @@ export interface NotificationJobData {
   type: NotificationType;
   channels: NotificationChannel[];
   bookingId: string;
+  pushPayload?: {
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  };
   recipients: Partial<
     Record<
       RecipientType,
       {
         email?: string;
         phoneNumber?: string;
+        pushTokens?: string[];
       }
     >
   >;
@@ -49,18 +57,38 @@ export interface NotificationJobData {
 export interface NotificationResult {
   channel: NotificationChannel;
   success: boolean;
+  /**
+   * Whether channel failure should be retried by queue retry policy.
+   * Undefined defaults to retryable for backward compatibility.
+   */
+  retryable?: boolean;
   messageId?: string;
   error?: string;
   perRecipientResults?: NotificationRecipientResult[];
 }
 
-export interface NotificationRecipientResult {
+interface NotificationRecipientResultBase {
   recipient: RecipientType;
-  email: string;
+  channel: NotificationChannel;
   success: boolean;
   messageId?: string;
   error?: string;
 }
+
+export type NotificationRecipientResult =
+  | (NotificationRecipientResultBase & {
+      channel: NotificationChannel.EMAIL;
+      email: string;
+    })
+  | (NotificationRecipientResultBase & {
+      channel: NotificationChannel.PUSH;
+      pushToken: string;
+      pushResponse?: {
+        code: string;
+        retryable: boolean;
+        message?: string;
+      };
+    });
 
 export interface QueueReviewReceivedNotificationParams {
   bookingId: string;

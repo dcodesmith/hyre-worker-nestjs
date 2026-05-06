@@ -25,6 +25,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationService } from "./notification.service";
+import { PushTokenService } from "./push-token.service";
 import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
@@ -33,8 +34,14 @@ import {
 describe("NotificationService", () => {
   let service: NotificationService;
   let mockQueue: Partial<Queue<NotificationJobData>>;
+  const pushTokenServiceMock = {
+    getActiveTokensForUser: vi.fn().mockResolvedValue([]),
+  };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    pushTokenServiceMock.getActiveTokensForUser.mockResolvedValue([]);
+
     mockQueue = {
       add: vi.fn().mockResolvedValue({ id: "job-123" }),
     };
@@ -45,6 +52,10 @@ describe("NotificationService", () => {
         {
           provide: getQueueToken(NOTIFICATIONS_QUEUE),
           useValue: mockQueue,
+        },
+        {
+          provide: PushTokenService,
+          useValue: pushTokenServiceMock,
         },
       ],
     })
@@ -246,6 +257,111 @@ describe("NotificationService", () => {
         }),
         undefined,
       );
+    });
+  });
+
+  describe("queueChauffeurAssignedNotifications", () => {
+    it("should queue chauffeur assignment notification to customer", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+
+      await service.queueChauffeurAssignedNotifications(booking);
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          type: NotificationType.CHAUFFEUR_ASSIGNED,
+          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+          bookingId: booking.id,
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              email: "john@example.com",
+              phoneNumber: "1234567890",
+            }),
+          }),
+          templateData: expect.objectContaining({
+            templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+            title: "been assigned a chauffeur",
+            status: "chauffeur assigned",
+            subject: "Your chauffeur has been assigned",
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should include PUSH channel when active push tokens exist", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      pushTokenServiceMock.getActiveTokensForUser.mockResolvedValueOnce([
+        "ExponentPushToken[abc123]",
+      ]);
+
+      await service.queueChauffeurAssignedNotifications(booking);
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          type: NotificationType.CHAUFFEUR_ASSIGNED,
+          channels: [
+            NotificationChannel.EMAIL,
+            NotificationChannel.WHATSAPP,
+            NotificationChannel.PUSH,
+          ],
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              pushTokens: ["ExponentPushToken[abc123]"],
+            }),
+          }),
+          pushPayload: expect.objectContaining({
+            title: "Your chauffeur has been assigned",
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
+
+    it("should skip chauffeur assignment notification with no customer channel", async () => {
+      const recordSkippedSpy = vi.spyOn(
+        service as unknown as {
+          recordNotificationSkippedNoChannel: (input: {
+            bookingId: string;
+            oldStatus: string;
+            newStatus: string;
+          }) => void;
+        },
+        "recordNotificationSkippedNoChannel",
+      );
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: null,
+        guestUser: {
+          name: "No Contact Guest",
+          email: null,
+          phoneNumber: null,
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+      });
+
+      await service.queueChauffeurAssignedNotifications(booking);
+
+      expect(mockQueue.add).not.toHaveBeenCalled();
+      expect(recordSkippedSpy).toHaveBeenCalledWith({
+        bookingId: booking.id,
+        oldStatus: booking.status,
+        newStatus: "CHAUFFEUR_ASSIGNED",
+      });
     });
   });
 });

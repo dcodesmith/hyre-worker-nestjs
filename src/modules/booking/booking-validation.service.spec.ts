@@ -387,7 +387,7 @@ describe("BookingValidationService", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("should throw CarNotAvailableException when car status is BOOKED", async () => {
+    it("should allow BOOKED status when there are no overlapping paid active bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -395,16 +395,55 @@ describe("BookingValidationService", () => {
           approvalStatus: CarApprovalStatus.APPROVED,
         }),
       );
+      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([]);
 
       await expect(
         service.checkCarAvailability({
           carId: "car-123",
-          startDate: new Date(),
-          endDate: new Date(),
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
+        }),
+      ).resolves.toBeUndefined();
+      expect(databaseService.booking.findMany).toHaveBeenCalled();
+    });
+
+    it("should block BOOKED status when an overlapping REFUND_PROCESSING active booking exists", async () => {
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
+        createCar({
+          id: "car-123",
+          status: Status.BOOKED,
+          approvalStatus: CarApprovalStatus.APPROVED,
+        }),
+      );
+      vi.mocked(databaseService.booking.findMany).mockResolvedValueOnce([
+        createBooking({
+          id: "existing-booking-refund-processing",
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
+          bookingReference: "BK-REFUND-PROCESSING",
+          status: BookingStatus.ACTIVE,
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
+        }),
+      ]);
+
+      await expect(
+        service.checkCarAvailability({
+          carId: "car-123",
+          startDate: new Date("2026-05-05T06:00:00Z"),
+          endDate: new Date("2026-05-05T18:00:00Z"),
         }),
       ).rejects.toThrow(CarNotAvailableException);
-
-      expect(databaseService.booking.findMany).not.toHaveBeenCalled();
+      expect(databaseService.booking.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            carId: "car-123",
+            paymentStatus: { in: expect.arrayContaining([PaymentStatus.REFUND_PROCESSING]) },
+            status: { in: expect.arrayContaining([BookingStatus.ACTIVE]) },
+            startDate: expect.objectContaining({ lt: expect.any(Date) }),
+            endDate: expect.objectContaining({ gt: expect.any(Date) }),
+          }),
+        }),
+      );
     });
 
     it("should throw CarNotAvailableException when car status is IN_SERVICE", async () => {
@@ -532,7 +571,7 @@ describe("BookingValidationService", () => {
       );
     });
 
-    it("should only check bookings with CONFIRMED/ACTIVE status and PAID payment", async () => {
+    it("should only check bookings with CONFIRMED/ACTIVE status and paid-like payment states", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -551,7 +590,9 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            paymentStatus: PaymentStatus.PAID,
+            paymentStatus: {
+              in: expect.arrayContaining([PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING]),
+            },
             status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
           }),
         }),

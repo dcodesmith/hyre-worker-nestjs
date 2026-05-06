@@ -186,7 +186,7 @@ export class BookingValidationService {
    *
    * A car is unavailable if there are overlapping bookings with:
    * - Status: CONFIRMED or ACTIVE
-   * - PaymentStatus: PAID
+   * - PaymentStatus: PAID or REFUND_PROCESSING
    *
    * A 2-hour buffer is applied between bookings for car preparation.
    *
@@ -219,8 +219,9 @@ export class BookingValidationService {
       throw new CarNotAvailableException(carId, "This vehicle is not available for booking");
     }
 
-    // Check car status - only available cars can be booked
-    if (car.status !== Status.AVAILABLE) {
+    // Check hard-unavailable statuses first. BOOKED is handled by overlap checks
+    // below so cars can become bookable immediately after buffer windows.
+    if (car.status === Status.HOLD || car.status === Status.IN_SERVICE) {
       this.logger.info(
         {
           carId,
@@ -228,9 +229,7 @@ export class BookingValidationService {
         },
         "Attempt to book unavailable car",
       );
-
-      const statusMessages: Record<Exclude<Status, "AVAILABLE">, string> = {
-        [Status.BOOKED]: "This vehicle is currently booked",
+      const statusMessages: Record<"HOLD" | "IN_SERVICE", string> = {
         [Status.HOLD]: "This vehicle is temporarily unavailable",
         [Status.IN_SERVICE]: "This vehicle is currently under maintenance",
       };
@@ -248,7 +247,7 @@ export class BookingValidationService {
     const conflictingBookings = await this.databaseService.booking.findMany({
       where: {
         carId,
-        paymentStatus: PaymentStatus.PAID,
+        paymentStatus: { in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING] },
         status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
         // Exclude current booking if this is an update
         ...(excludeBookingId && { id: { not: excludeBookingId } }),

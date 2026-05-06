@@ -21,6 +21,7 @@ import {
 } from "./auth.error";
 import type { RoleName, ValidateRoleForClientParams } from "./auth.interface";
 import { AuthEmailService } from "./auth-email.service";
+import { getDevLanOriginPatterns, isOriginAllowed } from "./origin-pattern";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -39,11 +40,17 @@ export class AuthService implements OnModuleInit {
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
-    const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
-
-    const trustedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
+    const trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
     this.trustedOrigins = trustedOrigins;
+
+    if (nodeEnv === "development") {
+      const devOrigins = getDevLanOriginPatterns(nodeEnv);
+      this.logger.info(
+        { devOrigins },
+        "Trusting LAN origins for local development (NODE_ENV=development)",
+      );
+    }
 
     this._auth = createAuth({
       prisma: this.databaseService,
@@ -62,6 +69,19 @@ export class AuthService implements OnModuleInit {
     });
 
     this.logger.info("Auth service initialized successfully");
+  }
+
+  /**
+   * Returns the effective set of trusted origin patterns (env-configured
+   * origins plus any dev-only LAN wildcards). Used by the HTTP layer to keep
+   * CORS in sync with Better Auth's origin check.
+   */
+  getTrustedOriginPatterns(): readonly string[] {
+    if (this.trustedOrigins.length === 0) {
+      const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
+      this.trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
+    }
+    return this.trustedOrigins;
   }
 
   /**
@@ -89,6 +109,14 @@ export class AuthService implements OnModuleInit {
     }
 
     return [...trustedOrigins, authOrigin];
+  }
+
+  private buildTrustedOrigins(authBaseUrl: string): string[] {
+    const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
+    const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
+    const mergedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
+    const devOrigins = getDevLanOriginPatterns(nodeEnv);
+    return [...mergedOrigins, ...devOrigins];
   }
 
   get auth(): Auth {
@@ -202,28 +230,16 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Validates that the provided origin is in the trusted origins list.
-   * Compares the full origin (protocol://host:port) for security.
+   * Supports exact origins (protocol://host:port) and wildcard patterns
+   * (e.g. `http://192.168.*.*:*` for LAN dev). Wildcard semantics match
+   * Better Auth's `matchesOriginPattern` so this validator stays consistent
+   * with the framework-level origin check.
    *
    * @param origin - The origin header value to validate
    * @returns true if the origin is trusted, false otherwise
    */
   private isTrustedOrigin(origin: string): boolean {
-    try {
-      const originUrl = new URL(origin);
-      const originBase = originUrl.origin; // Gets protocol://host:port
-
-      return this.trustedOrigins.some((trusted) => {
-        try {
-          const trustedUrl = new URL(trusted);
-          return trustedUrl.origin === originBase;
-        } catch {
-          return false;
-        }
-      });
-    } catch {
-      // Invalid origin URL
-      return false;
-    }
+    return isOriginAllowed(origin, this.trustedOrigins);
   }
 
   /**

@@ -3,9 +3,15 @@ import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
+import { AuthModule } from "../auth/auth.module";
 import { EmailModule } from "../email/email.module";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
+import { NotificationOutboxScheduler } from "./notification-outbox.scheduler";
+import { NotificationOutboxService } from "./notification-outbox.service";
+import { PushService } from "./push.service";
+import { PushTokenController } from "./push-token.controller";
+import { PushTokenService } from "./push-token.service";
 import { WhatsAppService } from "./whatsapp.service";
 
 @Module({
@@ -26,9 +32,25 @@ import { WhatsAppService } from "./whatsapp.service";
       name: NOTIFICATIONS_QUEUE,
       adapter: BullMQAdapter,
     }),
+    AuthModule,
     EmailModule,
   ],
-  providers: [NotificationService, NotificationProcessor, WhatsAppService],
-  exports: [NotificationService, WhatsAppService, BullModule],
+  controllers: [PushTokenController],
+  providers: [
+    NotificationService,
+    NotificationProcessor,
+    NotificationOutboxService,
+    NotificationOutboxScheduler,
+    WhatsAppService,
+    PushService,
+    PushTokenService,
+  ],
+  exports: [
+    NotificationService,
+    NotificationOutboxService,
+    WhatsAppService,
+    PushTokenService,
+    BullModule,
+  ],
 })
 export class NotificationModule {}

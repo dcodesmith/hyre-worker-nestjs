@@ -25,6 +25,7 @@ import {
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
 import { deriveNotificationChannels } from "./notification-channel.helper";
+import { PushTokenService } from "./push-token.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
@@ -42,6 +43,7 @@ export class NotificationService {
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
+    private readonly pushTokenService: PushTokenService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(NotificationService.name);
@@ -80,6 +82,88 @@ export class NotificationService {
     await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
 
     this.logStatusChangeNotification(booking.id, oldStatus, newStatus, jobData.channels);
+  }
+
+  /**
+   * Queue a notification when a chauffeur is assigned to a booking.
+   */
+  async queueChauffeurAssignedNotifications(booking: BookingWithRelations): Promise<void> {
+    const jobData = await this.buildChauffeurAssignedJobData(booking);
+    if (!jobData) {
+      this.logger.warn(
+        { bookingId: booking.id },
+        "No customer delivery channel available for chauffeur assignment",
+      );
+      this.recordNotificationSkippedNoChannel({
+        bookingId: booking.id,
+        oldStatus: booking.status,
+        newStatus: "CHAUFFEUR_ASSIGNED",
+      });
+      return;
+    }
+
+    await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
+    this.logger.info(
+      { bookingId: booking.id, channels: jobData.channels },
+      "Queued chauffeur assignment notification",
+    );
+  }
+
+  async enqueuePreparedNotification(
+    jobData: NotificationJobData,
+    options?: JobsOptions,
+  ): Promise<Job<NotificationJobData, NotificationResult[] | null, string>> {
+    return this.addJobToQueue(jobData, options);
+  }
+
+  async buildChauffeurAssignedJobData(
+    booking: BookingWithRelations,
+    input?: { pushTokens?: string[] },
+  ): Promise<NotificationJobData | null> {
+    const bookingDetails = normaliseBookingDetails(booking);
+    const channels = deriveNotificationChannels(bookingDetails);
+    const userId = booking.userId ?? booking.user?.id;
+    const pushTokens =
+      input?.pushTokens ??
+      (userId ? await this.pushTokenService.getActiveTokensForUser(userId) : []);
+    if (pushTokens.length > 0) {
+      channels.push(NotificationChannel.PUSH);
+    }
+
+    if (channels.length === 0) {
+      return null;
+    }
+
+    return {
+      id: `chauffeur-assigned-${bookingDetails.id}-${Date.now()}`,
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      channels,
+      bookingId: bookingDetails.id,
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          email: bookingDetails.customerEmail,
+          phoneNumber: bookingDetails.customerPhone,
+          pushTokens,
+        },
+      },
+      pushPayload: {
+        title: "Your chauffeur has been assigned",
+        body: `Your chauffeur for ${bookingDetails.carName} has been assigned.`,
+        data: {
+          bookingId: bookingDetails.id,
+          type: NotificationType.CHAUFFEUR_ASSIGNED,
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        ...bookingDetails,
+        title: "been assigned a chauffeur",
+        status: "chauffeur assigned",
+        oldStatus: booking.status.toLowerCase(),
+        newStatus: "chauffeur_assigned",
+        subject: "Your chauffeur has been assigned",
+      },
+    };
   }
 
   /**
