@@ -604,7 +604,7 @@ describe("NotificationProcessor", () => {
     expect(pushTokenService.revokeTokens).toHaveBeenCalledWith(["ExponentPushToken[b]"]);
   });
 
-  it("should keep PUSH channel successful when only retryable push errors exist", async () => {
+  it("should fail PUSH channel with retryable error when only retryable push errors exist", async () => {
     const job = createJob("job-12", {
       id: "notification-12",
       type: NotificationType.CHAUFFEUR_ASSIGNED,
@@ -645,23 +645,9 @@ describe("NotificationProcessor", () => {
       errors: [{ code: "MessageRateExceeded", retryable: true }],
     });
 
-    await expect(processor.process(job)).resolves.toEqual([
-      {
-        channel: NotificationChannel.PUSH,
-        success: true,
-        retryable: true,
-        messageId: undefined,
-        perRecipientResults: [
-          {
-            recipient: CLIENT_RECIPIENT_TYPE,
-            channel: NotificationChannel.PUSH,
-            pushToken: "ExponentPushToken[c]",
-            success: true,
-            messageId: "push-sent",
-          },
-        ],
-      },
-    ]);
+    await expect(processor.process(job)).rejects.toThrow(
+      "Notification channel delivery failed for notification notification-12: push",
+    );
   });
 
   it("should fail PUSH channel without retries for non-retryable errors", async () => {

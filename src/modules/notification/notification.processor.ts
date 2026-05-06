@@ -665,24 +665,21 @@ export class NotificationProcessor extends WorkerHost {
       },
     );
 
-    const blockingErrors = deliveryErrors.filter(
-      (error) => !error.retryable && error.code !== "DeviceNotRegistered",
-    );
-    const hasDeliveryErrors = deliveryErrors.length > 0;
-    const retryable = hasDeliveryErrors
-      ? deliveryErrors.some((error) => error.retryable)
+    const actionableErrors = deliveryErrors.filter((error) => error.code !== "DeviceNotRegistered");
+    const hasActionableErrors = actionableErrors.length > 0;
+    const retryable = hasActionableErrors
+      ? actionableErrors.some((error) => error.retryable)
       : undefined;
-    const blockingErrorCodes = [...new Set(blockingErrors.map((error) => error.code))];
+    const actionableErrorCodes = [...new Set(actionableErrors.map((error) => error.code))];
 
     return {
       channel: NotificationChannel.PUSH,
-      success: blockingErrors.length === 0,
+      success: !hasActionableErrors,
       retryable,
       messageId: result.sent > 0 ? "push-sent" : undefined,
-      error:
-        blockingErrors.length > 0
-          ? `One or more push notifications failed (${blockingErrorCodes.join(", ") || "unknown"})`
-          : undefined,
+      error: hasActionableErrors
+        ? `One or more push notifications failed (${actionableErrorCodes.join(", ") || "unknown"})`
+        : undefined,
       perRecipientResults,
     };
   }
