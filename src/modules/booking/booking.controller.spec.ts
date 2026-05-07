@@ -14,6 +14,7 @@ import {
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
+import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
 import { BookingUpdateService } from "./booking-update.service";
 import {
@@ -39,6 +40,7 @@ describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
   let bookingExtensionService: BookingExtensionService;
+  let bookingPricingPreviewService: BookingPricingPreviewService;
   let bookingReadService: BookingReadService;
   let bookingUpdateService: BookingUpdateService;
   let bookingCancellationService: BookingCancellationService;
@@ -51,6 +53,27 @@ describe("BookingController", () => {
     extensionId: "extension-123",
     paymentIntentId: "tx-ext-123",
     checkoutUrl: "https://checkout.flutterwave.com/pay/ext123",
+  };
+  const mockPricingPreviewResponse = {
+    currency: "NGN" as const,
+    numberOfLegs: 3,
+    discountCoverage: "PARTIAL",
+    segments: [],
+    baseTotal: 140000,
+    compareAtBaseTotal: 150000,
+    securityDetailCost: 0,
+    fuelUpgradeCost: 0,
+    platformFeeRatePercent: 5,
+    platformFeeAmount: 7000,
+    compareAtPlatformFeeAmount: 7500,
+    subtotalBeforeDiscounts: 147000,
+    compareAtSubtotalBeforeDiscounts: 157500,
+    vatRatePercent: 7.5,
+    vatAmount: 11025,
+    compareAtVatAmount: 11812.5,
+    totalAmount: 158025,
+    compareAtTotalAmount: 169312.5,
+    savingsAmount: 11287.5,
   };
   const mockBookingsByStatus = {
     CONFIRMED: [{ id: "booking-1", status: "CONFIRMED" }],
@@ -101,6 +124,9 @@ describe("BookingController", () => {
     const mockBookingExtensionService = {
       createExtension: vi.fn().mockResolvedValue(mockCreateExtensionResponse),
     };
+    const mockBookingPricingPreviewService = {
+      preview: vi.fn().mockResolvedValue(mockPricingPreviewResponse),
+    };
     const mockBookingReadService = {
       getBookingsByStatus: vi.fn().mockResolvedValue(mockBookingsByStatus),
       getBookingById: vi.fn().mockResolvedValue(mockBookingDetail),
@@ -127,6 +153,7 @@ describe("BookingController", () => {
       providers: [
         { provide: BookingCreationService, useValue: mockBookingCreationService },
         { provide: BookingExtensionService, useValue: mockBookingExtensionService },
+        { provide: BookingPricingPreviewService, useValue: mockBookingPricingPreviewService },
         { provide: BookingReadService, useValue: mockBookingReadService },
         { provide: BookingUpdateService, useValue: mockBookingUpdateService },
         { provide: BookingCancellationService, useValue: mockBookingCancellationService },
@@ -140,6 +167,9 @@ describe("BookingController", () => {
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
     bookingExtensionService = module.get<BookingExtensionService>(BookingExtensionService);
+    bookingPricingPreviewService = module.get<BookingPricingPreviewService>(
+      BookingPricingPreviewService,
+    );
     bookingReadService = module.get<BookingReadService>(BookingReadService);
     bookingUpdateService = module.get<BookingUpdateService>(BookingUpdateService);
     bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
@@ -346,6 +376,25 @@ describe("BookingController", () => {
         },
         mockSessionUser,
       );
+    });
+  });
+
+  describe("getPricingPreview", () => {
+    it("returns pricing preview for the requested booking window", async () => {
+      const body = {
+        carId: "car-123",
+        bookingType: "DAY" as const,
+        startDate: new Date("2025-02-01T00:00:00.000Z"),
+        endDate: new Date("2025-02-03T00:00:00.000Z"),
+        pickupTime: "9:00 AM",
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      };
+
+      const result = await controller.getPricingPreview(body);
+
+      expect(result).toEqual(mockPricingPreviewResponse);
+      expect(bookingPricingPreviewService.preview).toHaveBeenCalledWith(body);
     });
   });
 

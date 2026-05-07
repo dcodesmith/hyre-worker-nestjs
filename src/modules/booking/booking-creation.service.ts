@@ -26,13 +26,13 @@ import type {
   CustomerDetails,
   FlightDataForBooking,
   GeneratedLeg,
-  LegGenerationInput,
   ReferralEligibility,
 } from "./booking.interface";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
+import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingValidationService } from "./booking-validation.service";
@@ -142,7 +142,16 @@ export class BookingCreationService {
 
     const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
 
-    const legs = this.generateBookingLegs(normalizedBooking, flightData);
+    const legs = this.legService.generateLegs(
+      buildLegGenerationInput({
+        bookingType: normalizedBooking.bookingType,
+        startDate: normalizedBooking.startDate,
+        endDate: normalizedBooking.endDate,
+        pickupTime: normalizedBooking.pickupTime,
+        flightArrivalTime: flightData?.arrivalTime,
+        driveTimeMinutes: flightData?.driveTimeMinutes,
+      }),
+    );
 
     // Preliminary eligibility check for price calculation
     // For authenticated users: check session data for preliminary eligibility
@@ -247,63 +256,6 @@ export class BookingCreationService {
       destinationCity: flight.destinationCity,
       driveTimeMinutes,
     };
-  }
-
-  /**
-   * Generate booking legs based on booking type.
-   */
-  private generateBookingLegs(
-    booking: CreateBookingInput,
-    flightData: FlightDataForBooking | null,
-  ): GeneratedLeg[] {
-    const { bookingType, startDate, endDate } = booking;
-
-    let legInput: LegGenerationInput;
-
-    switch (bookingType) {
-      case "DAY":
-        legInput = {
-          bookingType: "DAY",
-          startDate,
-          endDate,
-          pickupTime: booking.pickupTime,
-        };
-        break;
-
-      case "NIGHT":
-        legInput = {
-          bookingType: "NIGHT",
-          startDate,
-          endDate,
-        };
-        break;
-
-      case "FULL_DAY":
-        legInput = {
-          bookingType: "FULL_DAY",
-          startDate,
-          endDate,
-          pickupTime: booking.pickupTime,
-        };
-        break;
-
-      case "AIRPORT_PICKUP":
-        legInput = {
-          bookingType: "AIRPORT_PICKUP",
-          startDate,
-          endDate,
-          flightArrivalTime: flightData?.arrivalTime,
-          driveTimeMinutes: flightData?.driveTimeMinutes,
-        };
-        break;
-
-      default: {
-        const exhaustiveCheck: never = bookingType;
-        throw new Error(`Unknown booking type: ${exhaustiveCheck}`);
-      }
-    }
-
-    return this.legService.generateLegs(legInput);
   }
 
   /**

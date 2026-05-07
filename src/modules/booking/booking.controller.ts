@@ -17,6 +17,7 @@ import type { CreateBookingResponse, CreateExtensionResponse } from "./booking.i
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
+import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { ValidatedBookingBody } from "./decorators/validated-booking-body.decorator";
@@ -31,6 +32,7 @@ import {
   type BookingPaymentStatusQueryDto,
   bookingPaymentStatusQuerySchema,
 } from "./dto/get-booking-payment-status.dto";
+import { type PricingPreviewBodyDto, pricingPreviewBodySchema } from "./dto/pricing-preview.dto";
 import { type UpdateBookingBodyDto, updateBookingBodySchema } from "./dto/update-booking.dto";
 
 /**
@@ -45,6 +47,7 @@ export class BookingController {
   constructor(
     private readonly bookingCreationService: BookingCreationService,
     private readonly bookingExtensionService: BookingExtensionService,
+    private readonly bookingPricingPreviewService: BookingPricingPreviewService,
     private readonly bookingReadService: BookingReadService,
     private readonly bookingUpdateService: BookingUpdateService,
     private readonly bookingCancellationService: BookingCancellationService,
@@ -87,6 +90,12 @@ export class BookingController {
       throw new UnauthorizedException("Invalid or expired session");
     }
     return this.bookingExtensionService.createExtension(bookingId, body, sessionUser);
+  }
+
+  @Post("pricing-preview")
+  @HttpCode(HttpStatus.OK)
+  async getPricingPreview(@ZodBody(pricingPreviewBodySchema) body: PricingPreviewBodyDto) {
+    return this.bookingPricingPreviewService.preview(body);
   }
 
   @Get()

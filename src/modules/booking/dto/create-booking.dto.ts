@@ -1,17 +1,12 @@
 import { z } from "zod";
 import { callbackUrlSchema } from "../../../common/validation/callback-url";
+import { pickupTimeRegex } from "./pickup-time.regex";
 
 /**
  * Booking type enum values matching Prisma schema
  */
 export const BOOKING_TYPES = ["DAY", "NIGHT", "FULL_DAY", "AIRPORT_PICKUP"] as const;
 export type BookingType = (typeof BOOKING_TYPES)[number];
-
-/**
- * Pickup time format validation
- * Accepts: "9 AM", "9:00 AM", "11 PM", "2:30 PM"
- */
-const pickupTimeRegex = /^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i;
 
 /**
  * Core booking fields shared between logged-in and guest bookings
@@ -25,7 +20,7 @@ const coreBookingFields = z.object({
   bookingType: z.enum(BOOKING_TYPES, {
     message: "Booking type must be DAY, NIGHT, FULL_DAY, or AIRPORT_PICKUP",
   }),
-  pickupTime: z.string().optional(),
+  pickupTime: z.string().min(1, "Pickup time is required"),
   flightNumber: z.string().optional(),
   includeSecurityDetail: z.boolean().default(false),
   requiresFullTank: z.boolean().default(false),
@@ -95,15 +90,8 @@ const guestUserBookingSchema = z.discriminatedUnion("sameLocation", [
 /**
  * Pickup time validation refinement
  */
-function validatePickupTime(data: { bookingType: BookingType; pickupTime?: string }): boolean {
-  if (data.bookingType === "DAY" || data.bookingType === "FULL_DAY") {
-    return (
-      typeof data.pickupTime === "string" &&
-      data.pickupTime.trim() !== "" &&
-      pickupTimeRegex.test(data.pickupTime.trim())
-    );
-  }
-  return true;
+function validatePickupTime(data: { pickupTime: string }): boolean {
+  return pickupTimeRegex.test(data.pickupTime.trim());
 }
 
 /**
@@ -137,7 +125,7 @@ function validateAirportPickupRequiresDifferentLocation(data: {
 function withBookingRefinements<
   T extends z.ZodType<{
     bookingType: BookingType;
-    pickupTime?: string;
+    pickupTime: string;
     flightNumber?: string;
     startDate: Date;
     endDate: Date;
@@ -146,7 +134,7 @@ function withBookingRefinements<
 >(schema: T) {
   return schema
     .refine(validatePickupTime, {
-      message: "Pickup time is required for DAY and FULL_DAY bookings (format: H:MM AM/PM)",
+      message: "Pickup time is required for all bookings (format: H[:MM] AM/PM)",
       path: ["pickupTime"],
     })
     .refine(validateFlightNumber, {
