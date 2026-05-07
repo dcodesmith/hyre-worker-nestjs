@@ -1,17 +1,12 @@
 import { z } from "zod";
 import { callbackUrlSchema } from "../../../common/validation/callback-url";
+import { pickupTimeRegex } from "./pickup-time.regex";
 
 /**
  * Booking type enum values matching Prisma schema
  */
 export const BOOKING_TYPES = ["DAY", "NIGHT", "FULL_DAY", "AIRPORT_PICKUP"] as const;
 export type BookingType = (typeof BOOKING_TYPES)[number];
-
-/**
- * Pickup time format validation
- * Accepts: "9 AM", "9:00 AM", "11 PM", "2:30 PM"
- */
-const pickupTimeRegex = /^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i;
 
 /**
  * Core booking fields shared between logged-in and guest bookings
@@ -139,7 +134,7 @@ function withBookingRefinements<
 >(schema: T) {
   return schema
     .refine(validatePickupTime, {
-      message: "Pickup time is required for all bookings (format: H:MM AM/PM)",
+      message: "Pickup time is required for all bookings (format: H[:MM] AM/PM)",
       path: ["pickupTime"],
     })
     .refine(validateFlightNumber, {

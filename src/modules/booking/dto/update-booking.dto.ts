@@ -1,6 +1,5 @@
 import { z } from "zod";
-
-const pickupTimeRegex = /^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i;
+import { pickupTimeRegex } from "./pickup-time.regex";
 
 export const updateBookingBodySchema = z
   .object({
