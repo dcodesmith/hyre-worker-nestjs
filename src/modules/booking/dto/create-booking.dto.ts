@@ -25,7 +25,7 @@ const coreBookingFields = z.object({
   bookingType: z.enum(BOOKING_TYPES, {
     message: "Booking type must be DAY, NIGHT, FULL_DAY, or AIRPORT_PICKUP",
   }),
-  pickupTime: z.string().optional(),
+  pickupTime: z.string().min(1, "Pickup time is required"),
   flightNumber: z.string().optional(),
   includeSecurityDetail: z.boolean().default(false),
   requiresFullTank: z.boolean().default(false),
@@ -95,15 +95,8 @@ const guestUserBookingSchema = z.discriminatedUnion("sameLocation", [
 /**
  * Pickup time validation refinement
  */
-function validatePickupTime(data: { bookingType: BookingType; pickupTime?: string }): boolean {
-  if (data.bookingType === "DAY" || data.bookingType === "FULL_DAY") {
-    return (
-      typeof data.pickupTime === "string" &&
-      data.pickupTime.trim() !== "" &&
-      pickupTimeRegex.test(data.pickupTime.trim())
-    );
-  }
-  return true;
+function validatePickupTime(data: { pickupTime: string }): boolean {
+  return pickupTimeRegex.test(data.pickupTime.trim());
 }
 
 /**
@@ -137,7 +130,7 @@ function validateAirportPickupRequiresDifferentLocation(data: {
 function withBookingRefinements<
   T extends z.ZodType<{
     bookingType: BookingType;
-    pickupTime?: string;
+    pickupTime: string;
     flightNumber?: string;
     startDate: Date;
     endDate: Date;
@@ -146,7 +139,7 @@ function withBookingRefinements<
 >(schema: T) {
   return schema
     .refine(validatePickupTime, {
-      message: "Pickup time is required for DAY and FULL_DAY bookings (format: H:MM AM/PM)",
+      message: "Pickup time is required for all bookings (format: H:MM AM/PM)",
       path: ["pickupTime"],
     })
     .refine(validateFlightNumber, {

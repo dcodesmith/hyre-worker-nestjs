@@ -21,7 +21,7 @@ describe("CreateBookingSchema", () => {
         ...validBaseBooking,
         bookingType: "AIRPORT_PICKUP" as const,
         flightNumber: "BA74",
-        pickupTime: undefined,
+        pickupTime: "9 AM",
         sameLocation: true as const,
       };
 
@@ -42,7 +42,7 @@ describe("CreateBookingSchema", () => {
         ...validBaseBooking,
         bookingType: "AIRPORT_PICKUP" as const,
         flightNumber: "BA74",
-        pickupTime: undefined,
+        pickupTime: "9 AM",
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
       };
@@ -169,7 +169,7 @@ describe("CreateGuestBookingSchema", () => {
         ...validGuestBooking,
         bookingType: "AIRPORT_PICKUP" as const,
         flightNumber: "BA74",
-        pickupTime: undefined,
+        pickupTime: "9 AM",
         sameLocation: true as const,
       };
 
@@ -190,7 +190,7 @@ describe("CreateGuestBookingSchema", () => {
         ...validGuestBooking,
         bookingType: "AIRPORT_PICKUP" as const,
         flightNumber: "BA74",
-        pickupTime: undefined,
+        pickupTime: "9 AM",
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
       };

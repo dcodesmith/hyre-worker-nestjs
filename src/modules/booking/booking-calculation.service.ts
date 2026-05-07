@@ -253,6 +253,8 @@ export class BookingCalculationService {
           id: legPromotion.id,
           name: legPromotion.name,
           discountValue: new Decimal(legPromotion.discountValue.toString()),
+          startDate: legPromotion.startDate,
+          endDate: legPromotion.endDate,
         },
       };
     });

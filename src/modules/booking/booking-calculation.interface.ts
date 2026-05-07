@@ -12,6 +12,8 @@ export interface LegPricePromotion {
   id: string;
   name: string | null;
   discountValue: Decimal;
+  startDate?: Date;
+  endDate?: Date;
 }
 
 /**
