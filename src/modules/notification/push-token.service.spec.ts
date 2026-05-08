@@ -9,16 +9,24 @@ describe("PushTokenService", () => {
   let service: PushTokenService;
 
   const databaseServiceMock = {
+    $transaction: vi.fn(),
     userPushToken: {
       upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       updateMany: vi.fn(),
+      $executeRaw: vi.fn(),
     },
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$transaction.mockImplementation(async (callback) =>
+      callback({
+        $executeRaw: databaseServiceMock.userPushToken.$executeRaw,
+        userPushToken: databaseServiceMock.userPushToken,
+      }),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -41,6 +49,8 @@ describe("PushTokenService", () => {
 
     await service.registerToken("user-1", "ExponentPushToken[abc123]", "ios");
 
+    expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(databaseServiceMock.userPushToken.$executeRaw).toHaveBeenCalledTimes(1);
     expect(databaseServiceMock.userPushToken.findUnique).toHaveBeenCalledWith({
       where: { token: "ExponentPushToken[abc123]" },
       select: { userId: true, revokedAt: true },

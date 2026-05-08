@@ -15,34 +15,39 @@ export class PushTokenService {
 
   async registerToken(userId: string, token: string, platform: "ios" | "android"): Promise<void> {
     const pushPlatform = this.toPushPlatform(platform);
-    const existing = await this.databaseService.userPushToken.findUnique({
-      where: { token },
-      select: { userId: true, revokedAt: true },
-    });
+    await this.databaseService.$transaction(async (tx) => {
+      // Serialize concurrent registrations for the same token to avoid ownership races.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${token}))`;
 
-    if (existing && existing.userId !== userId && existing.revokedAt === null) {
-      this.logger.warn(
-        {
-          requestingUserId: userId,
-          ownerUserId: existing.userId,
+      const existing = await tx.userPushToken.findUnique({
+        where: { token },
+        select: { userId: true, revokedAt: true },
+      });
+
+      if (existing && existing.userId !== userId && existing.revokedAt === null) {
+        this.logger.warn(
+          {
+            requestingUserId: userId,
+            ownerUserId: existing.userId,
+          },
+          "Rejected push token registration owned by a different active user",
+        );
+        throw new PushTokenOwnershipConflictException();
+      }
+
+      await tx.userPushToken.upsert({
+        where: { token },
+        create: {
+          userId,
+          token,
+          platform: pushPlatform,
         },
-        "Rejected push token registration owned by a different active user",
-      );
-      throw new PushTokenOwnershipConflictException();
-    }
-
-    await this.databaseService.userPushToken.upsert({
-      where: { token },
-      create: {
-        userId,
-        token,
-        platform: pushPlatform,
-      },
-      update: {
-        userId,
-        platform: pushPlatform,
-        revokedAt: null,
-      },
+        update: {
+          userId,
+          platform: pushPlatform,
+          revokedAt: null,
+        },
+      });
     });
   }
 
