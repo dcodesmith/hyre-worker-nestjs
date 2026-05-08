@@ -1,5 +1,4 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -12,17 +11,21 @@ describe("PushTokenService", () => {
   const databaseServiceMock = {
     $transaction: vi.fn(),
     userPushToken: {
-      create: vi.fn(),
-      updateMany: vi.fn(),
+      upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      updateMany: vi.fn(),
+      $executeRaw: vi.fn(),
     },
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
     databaseServiceMock.$transaction.mockImplementation(async (callback) =>
-      callback(databaseServiceMock),
+      callback({
+        $executeRaw: databaseServiceMock.userPushToken.$executeRaw,
+        userPushToken: databaseServiceMock.userPushToken,
+      }),
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -40,52 +43,68 @@ describe("PushTokenService", () => {
     service = module.get<PushTokenService>(PushTokenService);
   });
 
-  it("registers token by creating a new ownership record when token does not exist", async () => {
-    databaseServiceMock.userPushToken.create.mockResolvedValueOnce(undefined);
+  it("registers token by creating or updating through idempotent upsert", async () => {
+    databaseServiceMock.userPushToken.findUnique.mockResolvedValueOnce(null);
+    databaseServiceMock.userPushToken.upsert.mockResolvedValueOnce(undefined);
 
     await service.registerToken("user-1", "ExponentPushToken[abc123]", "ios");
 
-    expect(databaseServiceMock.userPushToken.create).toHaveBeenCalledWith(
+    expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(databaseServiceMock.userPushToken.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(databaseServiceMock.userPushToken.findUnique).toHaveBeenCalledWith({
+      where: { token: "ExponentPushToken[abc123]" },
+      select: { userId: true, revokedAt: true },
+    });
+    expect(databaseServiceMock.userPushToken.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        where: { token: "ExponentPushToken[abc123]" },
+        create: expect.objectContaining({
           userId: "user-1",
           token: "ExponentPushToken[abc123]",
           platform: "IOS",
         }),
+        update: expect.objectContaining({
+          userId: "user-1",
+          platform: "IOS",
+          revokedAt: null,
+        }),
       }),
     );
-    expect(databaseServiceMock.userPushToken.updateMany).not.toHaveBeenCalled();
-    expect(databaseServiceMock.userPushToken.findUnique).not.toHaveBeenCalled();
   });
 
-  it("re-activates token when same owner re-registers a previously revoked token", async () => {
-    databaseServiceMock.userPushToken.create.mockRejectedValueOnce(createUniqueConstraintError());
-    databaseServiceMock.userPushToken.updateMany.mockResolvedValueOnce({ count: 1 });
+  it("re-activates token for same owner with upsert", async () => {
+    databaseServiceMock.userPushToken.findUnique.mockResolvedValueOnce({
+      userId: "user-1",
+      revokedAt: new Date("2025-01-01T00:00:00.000Z"),
+    });
+    databaseServiceMock.userPushToken.upsert.mockResolvedValueOnce(undefined);
 
     await service.registerToken("user-1", "ExponentPushToken[abc123]", "ios");
 
-    expect(databaseServiceMock.userPushToken.updateMany).toHaveBeenCalledWith(
+    expect(databaseServiceMock.userPushToken.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          token: "ExponentPushToken[abc123]",
-          OR: [{ userId: "user-1" }, { revokedAt: { not: null } }],
-        },
+        update: expect.objectContaining({
+          userId: "user-1",
+          platform: "IOS",
+          revokedAt: null,
+        }),
       }),
     );
   });
 
   it("allows re-registering a token previously revoked by another user", async () => {
-    databaseServiceMock.userPushToken.create.mockRejectedValueOnce(createUniqueConstraintError());
-    databaseServiceMock.userPushToken.updateMany.mockResolvedValueOnce({ count: 1 });
+    databaseServiceMock.userPushToken.findUnique.mockResolvedValueOnce({
+      userId: "user-2",
+      revokedAt: new Date("2025-01-01T00:00:00.000Z"),
+    });
+    databaseServiceMock.userPushToken.upsert.mockResolvedValueOnce(undefined);
 
     await service.registerToken("user-1", "ExponentPushToken[abc123]", "ios");
 
-    expect(databaseServiceMock.userPushToken.updateMany).toHaveBeenCalled();
+    expect(databaseServiceMock.userPushToken.upsert).toHaveBeenCalled();
   });
 
-  it("rejects ownership transfer when token becomes active for another user during concurrent registration", async () => {
-    databaseServiceMock.userPushToken.create.mockRejectedValueOnce(createUniqueConstraintError());
-    databaseServiceMock.userPushToken.updateMany.mockResolvedValueOnce({ count: 0 });
+  it("rejects ownership transfer when token is actively owned by another user", async () => {
     databaseServiceMock.userPushToken.findUnique.mockResolvedValueOnce({
       userId: "user-2",
       revokedAt: null,
@@ -94,19 +113,7 @@ describe("PushTokenService", () => {
     await expect(
       service.registerToken("user-1", "ExponentPushToken[abc123]", "ios"),
     ).rejects.toBeInstanceOf(PushTokenOwnershipConflictException);
-    expect(databaseServiceMock.userPushToken.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          token: "ExponentPushToken[abc123]",
-          OR: [{ userId: "user-1" }, { revokedAt: { not: null } }],
-        },
-        data: {
-          userId: "user-1",
-          platform: "IOS",
-          revokedAt: null,
-        },
-      }),
-    );
+    expect(databaseServiceMock.userPushToken.upsert).not.toHaveBeenCalled();
   });
 
   it("revokes token for the current user", async () => {
@@ -159,9 +166,3 @@ describe("PushTokenService", () => {
     });
   });
 });
-
-function createUniqueConstraintError() {
-  return Object.assign(Object.create(Prisma.PrismaClientKnownRequestError.prototype), {
-    code: "P2002",
-  });
-}

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, PushPlatform } from "@prisma/client";
+import { PushPlatform } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { PushTokenOwnershipConflictException } from "./notification.error";
@@ -14,39 +14,10 @@ export class PushTokenService {
   }
 
   async registerToken(userId: string, token: string, platform: "ios" | "android"): Promise<void> {
+    const pushPlatform = this.toPushPlatform(platform);
     await this.databaseService.$transaction(async (tx) => {
-      const pushPlatform = this.toPushPlatform(platform);
-
-      try {
-        await tx.userPushToken.create({
-          data: {
-            userId,
-            token,
-            platform: pushPlatform,
-          },
-        });
-        return;
-      } catch (error) {
-        if (!this.isUniqueConstraintError(error)) {
-          throw error;
-        }
-      }
-
-      const updateResult = await tx.userPushToken.updateMany({
-        where: {
-          token,
-          OR: [{ userId }, { revokedAt: { not: null } }],
-        },
-        data: {
-          userId,
-          platform: pushPlatform,
-          revokedAt: null,
-        },
-      });
-
-      if (updateResult.count > 0) {
-        return;
-      }
+      // Serialize concurrent registrations for the same token to avoid ownership races.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${token}))`;
 
       const existing = await tx.userPushToken.findUnique({
         where: { token },
@@ -64,12 +35,17 @@ export class PushTokenService {
         throw new PushTokenOwnershipConflictException();
       }
 
-      // Defensive retry for transient row disappearance between write attempts.
-      await tx.userPushToken.create({
-        data: {
+      await tx.userPushToken.upsert({
+        where: { token },
+        create: {
           userId,
           token,
           platform: pushPlatform,
+        },
+        update: {
+          userId,
+          platform: pushPlatform,
+          revokedAt: null,
         },
       });
     });
@@ -123,9 +99,5 @@ export class PushTokenService {
 
   private toPushPlatform(platform: "ios" | "android"): PushPlatform {
     return platform === "ios" ? PushPlatform.IOS : PushPlatform.ANDROID;
-  }
-
-  private isUniqueConstraintError(error: unknown): boolean {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
   }
 }
