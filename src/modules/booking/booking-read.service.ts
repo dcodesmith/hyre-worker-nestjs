@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { FLEET_OWNER, USER } from "../auth/auth.const";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -89,10 +90,25 @@ export class BookingReadService {
     }
   }
 
-  async getBookingById(bookingId: string, userId: string) {
+  async getBookingById(bookingId: string, sessionUser: AuthSession["user"]) {
     try {
+      const canAccessAsBooker = sessionUser.roles.includes(USER);
+      const canAccessAsFleetOwner = sessionUser.roles.includes(FLEET_OWNER);
+
+      if (!canAccessAsBooker && !canAccessAsFleetOwner) {
+        throw new BookingNotFoundException();
+      }
+
+      const ownershipFilters = [
+        ...(canAccessAsBooker ? [{ userId: sessionUser.id }] : []),
+        ...(canAccessAsFleetOwner ? [{ car: { ownerId: sessionUser.id } }] : []),
+      ];
+
       const booking = await this.databaseService.booking.findFirst({
-        where: { id: bookingId, userId },
+        where: {
+          id: bookingId,
+          OR: ownershipFilters,
+        },
         include: this.bookingDetailsInclude,
       });
 
@@ -109,7 +125,7 @@ export class BookingReadService {
       this.logger.error(
         {
           bookingId,
-          userId,
+          userId: sessionUser.id,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         },

@@ -119,7 +119,7 @@ export class BookingController {
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {
-    return this.bookingReadService.getBookingById(bookingId, sessionUser.id);
+    return this.bookingReadService.getBookingById(bookingId, sessionUser);
   }
 
   @Patch(":bookingId")

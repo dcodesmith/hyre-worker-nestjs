@@ -7,6 +7,36 @@ import { BookingReadService } from "./booking-read.service";
 
 describe("BookingReadService", () => {
   let service: BookingReadService;
+  const customerSessionUser = {
+    id: "user-1",
+    email: "user@example.com",
+    name: "User One",
+    emailVerified: true,
+    image: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    roles: ["user" as const],
+  };
+  const fleetOwnerSessionUser = {
+    id: "owner-1",
+    email: "owner@example.com",
+    name: "Owner One",
+    emailVerified: true,
+    image: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    roles: ["fleetOwner" as const],
+  };
+  const adminSessionUser = {
+    id: "admin-1",
+    email: "admin@example.com",
+    name: "Admin One",
+    emailVerified: true,
+    image: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    roles: ["admin" as const],
+  };
   const databaseServiceMock = {
     booking: {
       findMany: vi.fn(),
@@ -69,7 +99,7 @@ describe("BookingReadService", () => {
       ],
     });
 
-    const result = await service.getBookingById("booking-123", "user-1");
+    const result = await service.getBookingById("booking-123", customerSessionUser);
 
     expect(result).toEqual({
       id: "booking-123",
@@ -80,12 +110,51 @@ describe("BookingReadService", () => {
     });
   });
 
-  it("throws BookingNotFoundException when booking does not exist for user", async () => {
+  it("returns booking details for the fleet owner that owns the booked car", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-123",
+      userId: "user-2",
+      status: "CONFIRMED",
+      totalAmount: { toNumber: () => 12000 },
+      car: {
+        ownerId: "owner-1",
+      },
+    });
+
+    const result = await service.getBookingById("booking-123", fleetOwnerSessionUser);
+
+    expect(result).toEqual({
+      id: "booking-123",
+      userId: "user-2",
+      status: "CONFIRMED",
+      totalAmount: 12000,
+      car: {
+        ownerId: "owner-1",
+      },
+    });
+    expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "booking-123",
+          OR: [{ car: { ownerId: "owner-1" } }],
+        },
+      }),
+    );
+  });
+
+  it("throws BookingNotFoundException when booking does not exist for customer", async () => {
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce(null);
 
-    await expect(service.getBookingById("missing-booking", "user-1")).rejects.toBeInstanceOf(
+    await expect(
+      service.getBookingById("missing-booking", customerSessionUser),
+    ).rejects.toBeInstanceOf(BookingNotFoundException);
+  });
+
+  it("throws BookingNotFoundException when user has no supported booking access role", async () => {
+    await expect(service.getBookingById("booking-123", adminSessionUser)).rejects.toBeInstanceOf(
       BookingNotFoundException,
     );
+    expect(databaseServiceMock.booking.findFirst).not.toHaveBeenCalled();
   });
 
   it("throws BookingFetchFailedException when list query fails unexpectedly", async () => {
@@ -99,7 +168,7 @@ describe("BookingReadService", () => {
   it("throws BookingFetchFailedException when detail query fails unexpectedly", async () => {
     databaseServiceMock.booking.findFirst.mockRejectedValueOnce(new Error("DB down"));
 
-    await expect(service.getBookingById("booking-123", "user-1")).rejects.toBeInstanceOf(
+    await expect(service.getBookingById("booking-123", customerSessionUser)).rejects.toBeInstanceOf(
       BookingFetchFailedException,
     );
   });

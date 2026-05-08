@@ -422,7 +422,25 @@ describe("BookingController", () => {
       const result = await controller.getBookingById("booking-123", mockSessionUser);
 
       expect(result).toEqual(mockBookingDetail);
-      expect(bookingReadService.getBookingById).toHaveBeenCalledWith("booking-123", "user-123");
+      expect(bookingReadService.getBookingById).toHaveBeenCalledWith(
+        "booking-123",
+        mockSessionUser,
+      );
+    });
+
+    it("forwards fleet owner session user to booking read service", async () => {
+      const fleetOwnerSessionUser = {
+        ...mockSessionUser,
+        id: "owner-123",
+        roles: ["fleetOwner" as const],
+      };
+
+      await controller.getBookingById("booking-123", fleetOwnerSessionUser);
+
+      expect(bookingReadService.getBookingById).toHaveBeenCalledWith(
+        "booking-123",
+        fleetOwnerSessionUser,
+      );
     });
 
     it("propagates BookingNotFoundException when booking does not exist", async () => {
