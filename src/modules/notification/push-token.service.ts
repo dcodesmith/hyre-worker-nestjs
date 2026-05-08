@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, PushPlatform } from "@prisma/client";
+import { PushPlatform } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { PushTokenOwnershipConflictException } from "./notification.error";
@@ -14,64 +14,35 @@ export class PushTokenService {
   }
 
   async registerToken(userId: string, token: string, platform: "ios" | "android"): Promise<void> {
-    await this.databaseService.$transaction(async (tx) => {
-      const pushPlatform = this.toPushPlatform(platform);
+    const pushPlatform = this.toPushPlatform(platform);
+    const existing = await this.databaseService.userPushToken.findUnique({
+      where: { token },
+      select: { userId: true, revokedAt: true },
+    });
 
-      try {
-        await tx.userPushToken.create({
-          data: {
-            userId,
-            token,
-            platform: pushPlatform,
-          },
-        });
-        return;
-      } catch (error) {
-        if (!this.isUniqueConstraintError(error)) {
-          throw error;
-        }
-      }
-
-      const updateResult = await tx.userPushToken.updateMany({
-        where: {
-          token,
-          OR: [{ userId }, { revokedAt: { not: null } }],
+    if (existing && existing.userId !== userId && existing.revokedAt === null) {
+      this.logger.warn(
+        {
+          requestingUserId: userId,
+          ownerUserId: existing.userId,
         },
-        data: {
-          userId,
-          platform: pushPlatform,
-          revokedAt: null,
-        },
-      });
+        "Rejected push token registration owned by a different active user",
+      );
+      throw new PushTokenOwnershipConflictException();
+    }
 
-      if (updateResult.count > 0) {
-        return;
-      }
-
-      const existing = await tx.userPushToken.findUnique({
-        where: { token },
-        select: { userId: true, revokedAt: true },
-      });
-
-      if (existing && existing.userId !== userId && existing.revokedAt === null) {
-        this.logger.warn(
-          {
-            requestingUserId: userId,
-            ownerUserId: existing.userId,
-          },
-          "Rejected push token registration owned by a different active user",
-        );
-        throw new PushTokenOwnershipConflictException();
-      }
-
-      // Defensive retry for transient row disappearance between write attempts.
-      await tx.userPushToken.create({
-        data: {
-          userId,
-          token,
-          platform: pushPlatform,
-        },
-      });
+    await this.databaseService.userPushToken.upsert({
+      where: { token },
+      create: {
+        userId,
+        token,
+        platform: pushPlatform,
+      },
+      update: {
+        userId,
+        platform: pushPlatform,
+        revokedAt: null,
+      },
     });
   }
 
@@ -123,9 +94,5 @@ export class PushTokenService {
 
   private toPushPlatform(platform: "ios" | "android"): PushPlatform {
     return platform === "ios" ? PushPlatform.IOS : PushPlatform.ANDROID;
-  }
-
-  private isUniqueConstraintError(error: unknown): boolean {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
   }
 }
