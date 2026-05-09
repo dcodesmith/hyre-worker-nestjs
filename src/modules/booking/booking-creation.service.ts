@@ -324,12 +324,10 @@ export class BookingCreationService {
       preliminaryReferralEligibility,
     } = params;
 
-    const preferredNotificationChannel: "WHATSAPP_ONLY" | "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" =
-      context?.guestContactSource === "WHATSAPP_AGENT"
-        ? "WHATSAPP_ONLY"
-        : customerDetails.phoneNumber
-          ? "EMAIL_AND_WHATSAPP"
-          : "EMAIL_ONLY";
+    const preferredNotificationChannel = this.resolvePreferredNotificationChannel(
+      context,
+      customerDetails.phoneNumber,
+    );
 
     // Build guest user JSON from customerDetails (if guest booking)
     const guestUser = sessionUser
@@ -450,34 +448,12 @@ export class BookingCreationService {
       throw new BookingCreationFailedException();
     }
 
-    let checkoutUrl: string;
-
-    try {
-      const paymentResult = await this.paymentService.createPaymentIntent(
-        createdBooking,
-        finalizedFinancials,
-        customerDetails,
-        booking.callbackUrl,
-      );
-      checkoutUrl = paymentResult.checkoutUrl;
-      await this.syncPaymentIntentWithBooking(createdBooking.id, paymentResult.paymentIntentId);
-    } catch (error) {
-      if (error instanceof BookingPaymentSyncFailedException) {
-        throw error;
-      }
-
-      if (error instanceof BookingCreationFailedException) {
-        throw error;
-      }
-
-      await this.handlePaymentFailureCompensation(createdBooking, error);
-
-      // Re-throw payment exception
-      if (error instanceof PaymentIntentFailedException) {
-        throw error;
-      }
-      throw new PaymentIntentFailedException();
-    }
+    const checkoutUrl = await this.createPaymentAndSync(
+      createdBooking,
+      finalizedFinancials,
+      customerDetails,
+      booking.callbackUrl,
+    );
 
     await this.queueFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
 
@@ -485,6 +461,51 @@ export class BookingCreationService {
       bookingId: createdBooking.id,
       checkoutUrl,
     };
+  }
+
+  private resolvePreferredNotificationChannel(
+    context: BookingCreationContext | undefined,
+    phoneNumber: string | null | undefined,
+  ): "WHATSAPP_ONLY" | "EMAIL_AND_WHATSAPP" | "EMAIL_ONLY" {
+    if (context?.guestContactSource === "WHATSAPP_AGENT") {
+      return "WHATSAPP_ONLY";
+    }
+    if (phoneNumber) {
+      return "EMAIL_AND_WHATSAPP";
+    }
+    return "EMAIL_ONLY";
+  }
+
+  private async createPaymentAndSync(
+    createdBooking: Booking,
+    finalizedFinancials: BookingFinancials,
+    customerDetails: CustomerDetails,
+    callbackUrl: string,
+  ): Promise<string> {
+    try {
+      const paymentResult = await this.paymentService.createPaymentIntent(
+        createdBooking,
+        finalizedFinancials,
+        customerDetails,
+        callbackUrl,
+      );
+      await this.syncPaymentIntentWithBooking(createdBooking.id, paymentResult.paymentIntentId);
+      return paymentResult.checkoutUrl;
+    } catch (error) {
+      if (
+        error instanceof BookingPaymentSyncFailedException ||
+        error instanceof BookingCreationFailedException
+      ) {
+        throw error;
+      }
+
+      await this.handlePaymentFailureCompensation(createdBooking, error);
+
+      if (error instanceof PaymentIntentFailedException) {
+        throw error;
+      }
+      throw new PaymentIntentFailedException();
+    }
   }
 
   private async handlePaymentFailureCompensation(booking: Booking, originalError: unknown) {

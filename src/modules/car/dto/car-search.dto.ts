@@ -146,6 +146,33 @@ export interface MappedQueryFilters {
   remainingQuery?: string;
 }
 
+function findExactEnumMatch<T extends string>(
+  normalizedQuery: string,
+  labels: Record<T, string>,
+): T | undefined {
+  for (const [value, label] of Object.entries(labels) as Array<[T, string]>) {
+    if (normalizedQuery === label.toLowerCase() || normalizedQuery === value.toLowerCase()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function findPartialEnumMatch<T extends string>(
+  normalizedQuery: string,
+  labels: Record<T, string>,
+): { value: T; label: string } | undefined {
+  for (const [value, label] of Object.entries(labels) as Array<[T, string]>) {
+    if (
+      normalizedQuery.includes(label.toLowerCase()) ||
+      label.toLowerCase().includes(normalizedQuery)
+    ) {
+      return { value, label };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Maps a free-text query to vehicle type or service tier if possible.
  * Returns the matched enum values and the remaining query text for make/model search.
@@ -159,17 +186,14 @@ export function mapQueryToFilters(query: string): MappedQueryFilters {
   const normalizedQuery = query.trim().toLowerCase();
   let remainingQuery = query.trim();
 
-  // Prioritize exact matches first
-  for (const [type, label] of Object.entries(VEHICLE_TYPE_LABELS)) {
-    if (normalizedQuery === label.toLowerCase() || normalizedQuery === type.toLowerCase()) {
-      return { vehicleType: type as VehicleType };
-    }
+  const exactVehicleType = findExactEnumMatch(normalizedQuery, VEHICLE_TYPE_LABELS);
+  if (exactVehicleType) {
+    return { vehicleType: exactVehicleType };
   }
 
-  for (const [tier, label] of Object.entries(SERVICE_TIER_LABELS)) {
-    if (normalizedQuery === label.toLowerCase() || normalizedQuery === tier.toLowerCase()) {
-      return { serviceTier: tier as ServiceTier };
-    }
+  const exactServiceTier = findExactEnumMatch(normalizedQuery, SERVICE_TIER_LABELS);
+  if (exactServiceTier) {
+    return { serviceTier: exactServiceTier };
   }
 
   // Then try partial matches (only for queries with 3+ characters)
@@ -177,35 +201,11 @@ export function mapQueryToFilters(query: string): MappedQueryFilters {
     return { remainingQuery };
   }
 
-  // Track matched terms to extract them from the query
-  let matchedVehicleType: VehicleType | undefined;
-  let matchedServiceTier: ServiceTier | undefined;
-  let matchedLabel: string | undefined;
-
-  for (const [type, label] of Object.entries(VEHICLE_TYPE_LABELS)) {
-    if (
-      normalizedQuery.includes(label.toLowerCase()) ||
-      label.toLowerCase().includes(normalizedQuery)
-    ) {
-      matchedVehicleType = type as VehicleType;
-      matchedLabel = label;
-      break;
-    }
-  }
-
-  // Try to match service tiers (only if no vehicle type was matched)
-  if (!matchedVehicleType) {
-    for (const [tier, label] of Object.entries(SERVICE_TIER_LABELS)) {
-      if (
-        normalizedQuery.includes(label.toLowerCase()) ||
-        label.toLowerCase().includes(normalizedQuery)
-      ) {
-        matchedServiceTier = tier as ServiceTier;
-        matchedLabel = label;
-        break;
-      }
-    }
-  }
+  const vehicleMatch = findPartialEnumMatch(normalizedQuery, VEHICLE_TYPE_LABELS);
+  const serviceTierMatch = vehicleMatch
+    ? undefined
+    : findPartialEnumMatch(normalizedQuery, SERVICE_TIER_LABELS);
+  const matchedLabel = vehicleMatch?.label ?? serviceTierMatch?.label;
 
   // Extract matched term from query to get remaining text for make/model search
   if (matchedLabel) {
@@ -213,8 +213,8 @@ export function mapQueryToFilters(query: string): MappedQueryFilters {
   }
 
   return {
-    vehicleType: matchedVehicleType,
-    serviceTier: matchedServiceTier,
+    vehicleType: vehicleMatch?.value,
+    serviceTier: serviceTierMatch?.value,
     remainingQuery: remainingQuery || undefined,
   };
 }

@@ -221,53 +221,41 @@ export class NotificationProcessor extends WorkerHost {
     recipients: NotificationJobData["recipients"],
     templateData: TemplateData,
   ): Promise<NotificationResult | null> {
-    const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
-    const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
-    const fleetOwnerRecipient = recipients[FLEET_OWNER_RECIPIENT_TYPE];
-    const clientEmail = clientRecipient?.email;
-    const chauffeurEmail = chauffeurRecipient?.email;
-    const fleetOwnerEmail = fleetOwnerRecipient?.email;
+    const recipientEmails: Array<{ recipient: RecipientType; email?: string }> = [
+      {
+        recipient: CLIENT_RECIPIENT_TYPE,
+        email: recipients[CLIENT_RECIPIENT_TYPE]?.email,
+      },
+      {
+        recipient: CHAUFFEUR_RECIPIENT_TYPE,
+        email: recipients[CHAUFFEUR_RECIPIENT_TYPE]?.email,
+      },
+      {
+        recipient: FLEET_OWNER_RECIPIENT_TYPE,
+        email: recipients[FLEET_OWNER_RECIPIENT_TYPE]?.email,
+      },
+    ];
 
-    if (!clientEmail && !chauffeurEmail && !fleetOwnerEmail) {
+    if (!recipientEmails.some(({ email }) => Boolean(email))) {
       return null;
     }
 
     try {
       const subject = templateData.subject;
-      const recipientEmails: Array<{ recipient: RecipientType; email?: string }> = [
-        { recipient: CLIENT_RECIPIENT_TYPE, email: clientEmail },
-        { recipient: CHAUFFEUR_RECIPIENT_TYPE, email: chauffeurEmail },
-        { recipient: FLEET_OWNER_RECIPIENT_TYPE, email: fleetOwnerEmail },
-      ];
       const perRecipientResults: NotificationRecipientResult[] = [];
 
       for (const { recipient, email } of recipientEmails) {
-        if (!email) continue;
-
-        try {
-          const html = await this.buildEmailHtml(type, templateData, recipient);
-          const sendResult = await this.emailService.sendEmail({
-            to: email,
-            subject,
-            html,
-          });
-
-          perRecipientResults.push({
-            recipient,
-            channel: NotificationChannel.EMAIL,
-            email,
-            success: true,
-            messageId: sendResult.data?.id,
-          });
-        } catch (error) {
-          perRecipientResults.push({
-            recipient,
-            channel: NotificationChannel.EMAIL,
-            email,
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
+        if (!email) {
+          continue;
         }
+        const recipientResult = await this.sendEmailToRecipient(
+          type,
+          templateData,
+          recipient,
+          email,
+          subject,
+        );
+        perRecipientResults.push(recipientResult);
       }
 
       const success = perRecipientResults.every((result) => result.success);
@@ -286,6 +274,39 @@ export class NotificationProcessor extends WorkerHost {
 
       return {
         channel: NotificationChannel.EMAIL,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async sendEmailToRecipient(
+    type: NotificationType,
+    templateData: TemplateData,
+    recipient: RecipientType,
+    email: string,
+    subject: string,
+  ): Promise<NotificationRecipientResult> {
+    try {
+      const html = await this.buildEmailHtml(type, templateData, recipient);
+      const sendResult = await this.emailService.sendEmail({
+        to: email,
+        subject,
+        html,
+      });
+
+      return {
+        recipient,
+        channel: NotificationChannel.EMAIL,
+        email,
+        success: true,
+        messageId: sendResult.data?.id,
+      };
+    } catch (error) {
+      return {
+        recipient,
+        channel: NotificationChannel.EMAIL,
+        email,
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
@@ -435,69 +456,31 @@ export class NotificationProcessor extends WorkerHost {
     recipients: NotificationJobData["recipients"],
     templateData: TemplateData,
   ): Promise<NotificationResult | null> {
-    const clientRecipient = recipients[CLIENT_RECIPIENT_TYPE];
-    const chauffeurRecipient = recipients[CHAUFFEUR_RECIPIENT_TYPE];
-    const fleetOwnerRecipient = recipients[FLEET_OWNER_RECIPIENT_TYPE];
-    const clientPhone = clientRecipient?.phoneNumber;
-    const chauffeurPhone = chauffeurRecipient?.phoneNumber;
-    const fleetOwnerPhone = fleetOwnerRecipient?.phoneNumber;
+    const recipientPhones: Array<{ recipient: RecipientType; phone?: string }> = [
+      {
+        recipient: CLIENT_RECIPIENT_TYPE,
+        phone: recipients[CLIENT_RECIPIENT_TYPE]?.phoneNumber,
+      },
+      {
+        recipient: CHAUFFEUR_RECIPIENT_TYPE,
+        phone: recipients[CHAUFFEUR_RECIPIENT_TYPE]?.phoneNumber,
+      },
+      {
+        recipient: FLEET_OWNER_RECIPIENT_TYPE,
+        phone: recipients[FLEET_OWNER_RECIPIENT_TYPE]?.phoneNumber,
+      },
+    ];
 
-    if (!clientPhone && !chauffeurPhone && !fleetOwnerPhone) {
+    if (!recipientPhones.some(({ phone }) => Boolean(phone))) {
       return null;
     }
 
     try {
-      // Variables will be built per recipient type below
-
-      // Send to customer if available
-      if (clientPhone) {
-        const clientTemplateKey = this.getWhatsAppTemplateKey(type, CLIENT_RECIPIENT_TYPE);
-        if (clientTemplateKey) {
-          const clientVariables = this.buildWhatsAppVariables(
-            templateData,
-            type,
-            CLIENT_RECIPIENT_TYPE,
-          );
-          await this.whatsAppService.sendMessage({
-            to: clientPhone,
-            variables: clientVariables,
-            templateKey: clientTemplateKey,
-          });
+      for (const { recipient, phone } of recipientPhones) {
+        if (!phone) {
+          continue;
         }
-      }
-
-      // Send to chauffeur if available
-      if (chauffeurPhone) {
-        const chauffeurTemplateKey = this.getWhatsAppTemplateKey(type, CHAUFFEUR_RECIPIENT_TYPE);
-        if (chauffeurTemplateKey) {
-          const chauffeurVariables = this.buildWhatsAppVariables(
-            templateData,
-            type,
-            CHAUFFEUR_RECIPIENT_TYPE,
-          );
-          await this.whatsAppService.sendMessage({
-            to: chauffeurPhone,
-            variables: chauffeurVariables,
-            templateKey: chauffeurTemplateKey,
-          });
-        }
-      }
-
-      // Send to fleet owner if available
-      if (fleetOwnerPhone) {
-        const fleetOwnerTemplateKey = this.getWhatsAppTemplateKey(type, FLEET_OWNER_RECIPIENT_TYPE);
-        if (fleetOwnerTemplateKey) {
-          const fleetOwnerVariables = this.buildWhatsAppVariables(
-            templateData,
-            type,
-            FLEET_OWNER_RECIPIENT_TYPE,
-          );
-          await this.whatsAppService.sendMessage({
-            to: fleetOwnerPhone,
-            variables: fleetOwnerVariables,
-            templateKey: fleetOwnerTemplateKey,
-          });
-        }
+        await this.sendWhatsAppToRecipient(type, templateData, recipient, phone);
       }
 
       return {
@@ -517,6 +500,25 @@ export class NotificationProcessor extends WorkerHost {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private async sendWhatsAppToRecipient(
+    type: NotificationType,
+    templateData: TemplateData,
+    recipient: RecipientType,
+    phone: string,
+  ): Promise<void> {
+    const templateKey = this.getWhatsAppTemplateKey(type, recipient);
+    if (!templateKey) {
+      return;
+    }
+
+    const variables = this.buildWhatsAppVariables(templateData, type, recipient);
+    await this.whatsAppService.sendMessage({
+      to: phone,
+      variables,
+      templateKey,
+    });
   }
 
   private async sendPushNotification(
