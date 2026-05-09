@@ -17,6 +17,7 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
+import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
@@ -33,6 +34,7 @@ export class ReminderService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly bookingReminderHandler: BookingReminderHandler,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ReminderService.name);
@@ -268,7 +270,10 @@ export class ReminderService {
     return this.queueReminderNotification(
       leg.id,
       async () => {
-        await this.notificationOutboxService.createBookingReminderEventsForLeg(leg, type);
+        await this.notificationOutboxService.create(this.bookingReminderHandler, {
+          bookingLeg: leg,
+          type,
+        });
       },
       REMINDER_LABEL_BY_TYPE[type],
     );

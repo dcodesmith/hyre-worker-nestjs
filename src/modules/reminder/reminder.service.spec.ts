@@ -13,6 +13,7 @@ import {
   createUser,
 } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
+import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { ReminderService } from "./reminder.service";
@@ -37,7 +38,14 @@ describe("ReminderService", () => {
         {
           provide: NotificationOutboxService,
           useValue: {
-            createBookingReminderEventsForLeg: vi.fn().mockResolvedValue(1),
+            create: vi.fn().mockResolvedValue(1),
+          },
+        },
+        {
+          provide: BookingReminderHandler,
+          useValue: {
+            eventType: "BOOKING_REMINDER",
+            buildEvents: vi.fn(),
           },
         },
       ],
@@ -62,7 +70,7 @@ describe("ReminderService", () => {
       const result = await service.sendBookingStartReminders();
 
       expect(result).toBe("No relevant booking legs today, so no start reminders to send.");
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
     });
 
     it("should queue notifications for matching legs", async () => {
@@ -91,9 +99,9 @@ describe("ReminderService", () => {
 
       const result = await service.sendBookingStartReminders();
 
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).toHaveBeenCalledWith(
-        leg,
-        NotificationType.BOOKING_REMINDER_START,
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "BOOKING_REMINDER" }),
+        { bookingLeg: leg, type: NotificationType.BOOKING_REMINDER_START },
       );
       expect(result).toContain("Processed and queued start reminders for 1 legs.");
     });
@@ -121,9 +129,7 @@ describe("ReminderService", () => {
       };
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
-      vi.mocked(notificationOutboxService.createBookingReminderEventsForLeg).mockRejectedValueOnce(
-        new Error("Queue error"),
-      );
+      vi.mocked(notificationOutboxService.create).mockRejectedValueOnce(new Error("Queue error"));
 
       const result = await service.sendBookingStartReminders();
 
@@ -151,7 +157,7 @@ describe("ReminderService", () => {
       const result = await service.sendBookingEndReminders();
 
       expect(result).toBe("No relevant booking legs today, so no end reminders to send.");
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
     });
 
     it("should queue notifications for legs with effective end time in reminder window", async () => {
@@ -180,9 +186,9 @@ describe("ReminderService", () => {
 
       const result = await service.sendBookingEndReminders();
 
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).toHaveBeenCalledWith(
-        leg,
-        NotificationType.BOOKING_REMINDER_END,
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "BOOKING_REMINDER" }),
+        { bookingLeg: leg, type: NotificationType.BOOKING_REMINDER_END },
       );
       expect(result).toContain("Processed and queued end reminders for 1 legs.");
     });
@@ -212,7 +218,7 @@ describe("ReminderService", () => {
 
       const result = await service.sendBookingEndReminders();
 
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
       expect(result).toContain("Processed and queued end reminders for 0 legs.");
     });
 
@@ -265,7 +271,7 @@ describe("ReminderService", () => {
 
       const result = await service.sendBookingEndReminders();
 
-      expect(notificationOutboxService.createBookingReminderEventsForLeg).toHaveBeenCalled();
+      expect(notificationOutboxService.create).toHaveBeenCalled();
       expect(result).toContain("Processed and queued end reminders for 1 legs.");
     });
 

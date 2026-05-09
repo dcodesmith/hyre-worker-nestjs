@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   BookingCancellationFailedException,
   BookingException,
@@ -15,7 +15,8 @@ import {
 export class BookingCancellationService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly notificationService: NotificationService,
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly bookingCancellationHandler: BookingCancellationHandler,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCancellationService.name);
@@ -70,10 +71,17 @@ export class BookingCancellationService {
           data: { status: Status.AVAILABLE },
         });
 
+        // Cancellation notifications go through the outbox in the same tx
+        // as the status flip — they commit atomically with the cancellation
+        // (architectural review, Issue 4A).
+        await this.notificationOutboxService.create(
+          this.bookingCancellationHandler,
+          { booking: updatedBooking },
+          tx,
+        );
+
         return updatedBooking;
       });
-
-      await this.queueCancellationNotification(updatedBooking);
 
       return updatedBooking;
     } catch (error) {
@@ -91,20 +99,6 @@ export class BookingCancellationService {
         "Failed to cancel booking",
       );
       throw new BookingCancellationFailedException();
-    }
-  }
-
-  private async queueCancellationNotification(booking: BookingWithRelations): Promise<void> {
-    try {
-      await this.notificationService.queueBookingCancellationNotifications(booking);
-    } catch (error) {
-      this.logger.error(
-        {
-          bookingId: booking.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue cancellation notification",
-      );
     }
   }
 }

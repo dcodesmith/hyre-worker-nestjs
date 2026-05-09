@@ -1,63 +1,31 @@
 import { Injectable } from "@nestjs/common";
-import {
-  NotificationInboxType,
-  NotificationOutboxEventType,
-  NotificationOutboxStatus,
-  Prisma,
-} from "@prisma/client";
+import { NotificationOutboxStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { z } from "zod";
-import { normaliseBookingLegDetails } from "../../shared/helper";
-import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
-import {
-  CHAUFFEUR_RECIPIENT_TYPE,
-  CLIENT_RECIPIENT_TYPE,
-  HIGH_PRIORITY_JOB_OPTIONS,
-} from "./notification.const";
-import { NotificationJobData, NotificationType } from "./notification.interface";
-import { notificationJobDataSchema } from "./notification.schema";
+import type { HandlerEvent, OutboxEventHandler } from "./handlers/outbox-event-handler.interface";
+import { HIGH_PRIORITY_JOB_OPTIONS } from "./notification.const";
+import { NotificationJobData } from "./notification.interface";
+import { outboxPayloadSchema } from "./notification.schema";
 import { NotificationService } from "./notification.service";
 
 export type NotificationOutboxTransactionClient = {
   notificationInbox: Pick<Prisma.TransactionClient["notificationInbox"], "create">;
   notificationOutboxEvent: Pick<Prisma.TransactionClient["notificationOutboxEvent"], "create">;
-  userPushToken: Pick<Prisma.TransactionClient["userPushToken"], "findMany">;
 };
 
-type NotificationOutboxWriter = Pick<
-  NotificationOutboxTransactionClient,
-  "notificationInbox" | "notificationOutboxEvent"
->;
-
-const BOOKING_STATUS_CHANGED_SUBTYPE = "BOOKING_STATUS_CHANGED";
-const BOOKING_REMINDER_START_SUBTYPE = "BOOKING_REMINDER_START";
-const BOOKING_REMINDER_END_SUBTYPE = "BOOKING_REMINDER_END";
-const CHAUFFEUR_ASSIGNED_SUBTYPE = "CHAUFFEUR_ASSIGNED";
-
 /**
- * Structural validator for outbox payloads. The (eventType, subtype) pair is
- * the discriminator — adding a versioning envelope is deferred until we
- * actually need to evolve through a backwards-incompatible change.
+ * Single durability boundary for booking-lifecycle notifications.
+ *
+ * Domain services don't write notifications directly — they hand a typed
+ * `OutboxEventHandler` and its input to `create()`, which fans out into one
+ * notification-inbox row + one outbox row per `HandlerEvent`. The `processPendingEvents`
+ * scheduler then drains the outbox into BullMQ.
+ *
+ * Adding a new notification event is purely additive: implement
+ * `OutboxEventHandler<TInput>` in `./handlers/`, register it as a provider,
+ * inject it where the domain change happens, and call `create(handler, input, tx)`.
+ * No edits to this file are required (architectural review, Issue 1A + 2A).
  */
-const outboxPayloadSchema = z.discriminatedUnion("eventType", [
-  z.object({
-    eventType: z.literal(NotificationOutboxEventType.BOOKING_ASSIGNMENT),
-    subtype: z.literal(CHAUFFEUR_ASSIGNED_SUBTYPE),
-    notificationJobData: notificationJobDataSchema,
-  }),
-  z.object({
-    eventType: z.literal(NotificationOutboxEventType.BOOKING_LIFECYCLE),
-    subtype: z.literal(BOOKING_STATUS_CHANGED_SUBTYPE),
-    notificationJobData: notificationJobDataSchema,
-  }),
-  z.object({
-    eventType: z.literal(NotificationOutboxEventType.BOOKING_REMINDER),
-    subtype: z.enum([BOOKING_REMINDER_START_SUBTYPE, BOOKING_REMINDER_END_SUBTYPE]),
-    notificationJobData: notificationJobDataSchema,
-  }),
-]);
-
 @Injectable()
 export class NotificationOutboxService {
   private readonly maxAttempts = 8;
@@ -78,199 +46,50 @@ export class NotificationOutboxService {
     this.logger.setContext(NotificationOutboxService.name);
   }
 
-  async createChauffeurAssignedEvent(
-    tx: NotificationOutboxTransactionClient,
-    booking: BookingWithRelations,
-    chauffeurId: string,
-  ): Promise<void> {
-    const dedupeKey = `chauffeur-assigned:${booking.id}:${chauffeurId}:${booking.updatedAt.toISOString()}`;
-    const inboxPayload = {
-      bookingId: booking.id,
-      chauffeurId,
-    } as const;
-    const pushTokens = booking.userId
-      ? (
-          await tx.userPushToken.findMany({
-            where: {
-              userId: booking.userId,
-              revokedAt: null,
-            },
-            select: {
-              token: true,
-            },
-          })
-        ).map((record) => record.token)
-      : [];
-    const notificationJobData = await this.notificationService.buildChauffeurAssignedJobData(
-      booking,
-      {
-        pushTokens,
-      },
-    );
-
-    if (booking.userId) {
-      await tx.notificationInbox.create({
-        data: {
-          userId: booking.userId,
-          type: NotificationInboxType.BOOKING_ASSIGNMENT,
-          title: "Your chauffeur has been assigned",
-          body: `Your chauffeur for ${booking.car.make} ${booking.car.model} (${booking.car.year}) has been assigned.`,
-          payload: this.toPrismaInputJsonValue(inboxPayload),
-        },
-      });
-    }
-
-    if (!notificationJobData) {
-      return;
-    }
-
-    await this.createPreparedNotificationEvent(
-      {
-        userId: booking.userId ?? null,
-        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
-        subtype: CHAUFFEUR_ASSIGNED_SUBTYPE,
-        dedupeKey,
-        bookingId: booking.id,
-        notificationJobData,
-      },
-      tx,
-    );
-  }
-
-  async createBookingStatusChangedEvent(
-    tx: NotificationOutboxTransactionClient,
-    booking: BookingWithRelations,
-    oldStatus: string,
-    newStatus: string,
-    showReviewRequest = false,
-  ): Promise<void> {
-    const notificationJobData = await this.notificationService.buildBookingStatusChangeJobData({
-      booking,
-      oldStatus,
-      newStatus,
-      showReviewRequest,
-    });
-    if (!notificationJobData) {
-      return;
-    }
-
-    if (booking.userId) {
-      await tx.notificationInbox.create({
-        data: {
-          userId: booking.userId,
-          type: NotificationInboxType.BOOKING_LIFECYCLE,
-          title: "Booking status updated",
-          body: `Your booking has moved from ${oldStatus.toLowerCase()} to ${newStatus.toLowerCase()}.`,
-          payload: this.toPrismaInputJsonValue({
-            bookingId: booking.id,
-            oldStatus,
-            newStatus,
-          }),
-        },
-      });
-    }
-
-    await this.createPreparedNotificationEvent(
-      {
-        userId: booking.userId ?? null,
-        eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
-        subtype: BOOKING_STATUS_CHANGED_SUBTYPE,
-        dedupeKey: `booking-status:${booking.id}:${oldStatus}:${newStatus}:${booking.updatedAt.toISOString()}`,
-        bookingId: booking.id,
-        notificationJobData,
-      },
-      tx,
-    );
-  }
-
-  async createBookingReminderEventsForLeg(
-    bookingLeg: Parameters<typeof normaliseBookingLegDetails>[0],
-    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  /**
+   * Run a handler for a domain change and persist its `HandlerEvent`s
+   * (inbox row(s) + outbox row(s)) durably.
+   *
+   * - When `tx` is supplied, all writes participate in the caller's
+   *   transaction. This is the right call for transactional domain mutations
+   *   (status flip, cancellation, chauffeur assignment) — the booking change
+   *   and the notification commit atomically.
+   * - When `tx` is omitted, each handler-event is written in its own short
+   *   transaction. Suitable for non-transactional fan-out (e.g. the reminder
+   *   cron iterating across many legs).
+   */
+  async create<TInput>(
+    handler: OutboxEventHandler<TInput>,
+    input: TInput,
+    tx?: NotificationOutboxTransactionClient,
   ): Promise<number> {
-    const reminderJobs = await this.notificationService.buildBookingReminderJobData(
-      normaliseBookingLegDetails(bookingLeg),
-      type,
-      {
-        customerUserId: bookingLeg.booking.userId ?? undefined,
-        chauffeurUserId: bookingLeg.booking.chauffeurId ?? undefined,
-      },
-    );
-    const eventType = NotificationOutboxEventType.BOOKING_REMINDER;
-    const subtype =
-      type === NotificationType.BOOKING_REMINDER_START
-        ? BOOKING_REMINDER_START_SUBTYPE
-        : BOOKING_REMINDER_END_SUBTYPE;
-    const inboxTitle =
-      type === NotificationType.BOOKING_REMINDER_START
-        ? "Booking starts in 1 hour"
-        : "Booking ends in 1 hour";
-    const inboxBody =
-      type === NotificationType.BOOKING_REMINDER_START
-        ? "Your booking is starting soon."
-        : "Your booking is ending soon.";
-
-    let writtenCount = 0;
-    // Run per-recipient writes sequentially so each recipient's inbox + outbox
-    // commit atomically. Reminder fan-out is at most customer + chauffeur, so
-    // serialising is a non-issue and avoids parallel transactions on the pool.
-    for (const notificationJobData of reminderJobs) {
-      const recipientType = Object.keys(notificationJobData.recipients)[0];
-      let userId: string | null = null;
-      if (recipientType === CLIENT_RECIPIENT_TYPE) {
-        userId = bookingLeg.booking.userId;
-      } else if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
-        userId = bookingLeg.booking.chauffeurId;
-      }
-
-      await this.databaseService.$transaction(async (tx) => {
-        if (userId) {
-          await tx.notificationInbox.create({
-            data: {
-              userId,
-              type: NotificationInboxType.BOOKING_REMINDER,
-              title: inboxTitle,
-              body: inboxBody,
-              payload: this.toPrismaInputJsonValue({
-                bookingId: bookingLeg.booking.id,
-                bookingLegId: bookingLeg.id,
-                type,
-                recipientType,
-              }),
-            },
-          });
-        }
-
-        await this.createPreparedNotificationEvent(
-          {
-            userId: userId ?? null,
-            eventType,
-            subtype,
-            dedupeKey: `booking-reminder:${bookingLeg.id}:${recipientType}:${type}:${bookingLeg.updatedAt.toISOString()}`,
-            bookingId: bookingLeg.booking.id,
-            notificationJobData,
-          },
-          tx,
-        );
-      });
-      writtenCount += 1;
+    const events = await handler.buildEvents(input);
+    if (events.length === 0) {
+      return 0;
     }
 
-    return writtenCount;
+    if (tx) {
+      for (const event of events) {
+        await this.writeEvent(handler, event, tx);
+      }
+      return events.length;
+    }
+
+    for (const event of events) {
+      await this.databaseService.$transaction(async (innerTx) => {
+        await this.writeEvent(handler, event, innerTx);
+      });
+    }
+    return events.length;
   }
 
   async processPendingEvents(limit = 25): Promise<number> {
     const now = new Date();
     const staleProcessingCutoff = new Date(now.getTime() - this.processingStaleAfterMs);
+    // No eventType filter: the dispatcher is event-type-agnostic. New event
+    // types added through new handlers are picked up automatically (Issue 2A).
     const candidates = await this.databaseService.notificationOutboxEvent.findMany({
       where: {
-        eventType: {
-          in: [
-            NotificationOutboxEventType.BOOKING_ASSIGNMENT,
-            NotificationOutboxEventType.BOOKING_LIFECYCLE,
-            NotificationOutboxEventType.BOOKING_REMINDER,
-            NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
-          ],
-        },
         OR: [
           {
             status: { in: [NotificationOutboxStatus.PENDING, NotificationOutboxStatus.FAILED] },
@@ -295,6 +114,41 @@ export class NotificationOutboxService {
     }
 
     return processedCount;
+  }
+
+  private async writeEvent<TInput>(
+    handler: OutboxEventHandler<TInput>,
+    event: HandlerEvent,
+    writer: NotificationOutboxTransactionClient,
+  ): Promise<void> {
+    if (event.inbox) {
+      await writer.notificationInbox.create({
+        data: {
+          userId: event.inbox.userId,
+          type: event.inbox.type,
+          title: event.inbox.title,
+          body: event.inbox.body,
+          payload: this.toPrismaInputJsonValue(event.inbox.payload),
+        },
+      });
+    }
+
+    if (event.jobData) {
+      await writer.notificationOutboxEvent.create({
+        data: {
+          userId: event.userId,
+          eventType: handler.eventType,
+          status: NotificationOutboxStatus.PENDING,
+          dedupeKey: event.dedupeKey,
+          bookingId: event.jobData.bookingId,
+          payload: this.toPrismaInputJsonValue({
+            eventType: handler.eventType,
+            subtype: event.subtype,
+            notificationJobData: event.jobData,
+          }),
+        },
+      });
+    }
   }
 
   private computeNextAttemptAt(attempt: number): Date {
@@ -423,45 +277,6 @@ export class NotificationOutboxService {
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-  }
-
-  private async createPreparedNotificationEvent(
-    input: {
-      userId: string | null;
-      eventType: NotificationOutboxEventType;
-      subtype:
-        | typeof CHAUFFEUR_ASSIGNED_SUBTYPE
-        | typeof BOOKING_STATUS_CHANGED_SUBTYPE
-        | typeof BOOKING_REMINDER_START_SUBTYPE
-        | typeof BOOKING_REMINDER_END_SUBTYPE;
-      dedupeKey: string;
-      bookingId: string;
-      notificationJobData: NotificationJobData;
-    },
-    tx?: NotificationOutboxTransactionClient,
-  ): Promise<void> {
-    const writer = this.getOutboxWriter(tx);
-    await writer.notificationOutboxEvent.create({
-      data: {
-        userId: input.userId,
-        eventType: input.eventType,
-        status: NotificationOutboxStatus.PENDING,
-        dedupeKey: input.dedupeKey,
-        bookingId: input.bookingId,
-        payload: this.toPrismaInputJsonValue({
-          eventType: input.eventType,
-          subtype: input.subtype,
-          notificationJobData: input.notificationJobData,
-        }),
-      },
-    });
-  }
-
-  private getOutboxWriter(tx?: NotificationOutboxTransactionClient): NotificationOutboxWriter {
-    if (tx) {
-      return tx;
-    }
-    return this.databaseService;
   }
 
   private chunkArray<T>(items: T[], size: number): T[][] {

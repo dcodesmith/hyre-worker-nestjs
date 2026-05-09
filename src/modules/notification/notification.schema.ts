@@ -1,3 +1,4 @@
+import { NotificationOutboxEventType } from "@prisma/client";
 import { z } from "zod";
 import { NotificationChannel, NotificationType } from "./notification.interface";
 
@@ -8,6 +9,10 @@ const notificationTypeValues = Object.values(NotificationType) as [
 const notificationChannelValues = Object.values(NotificationChannel) as [
   NotificationChannel,
   ...NotificationChannel[],
+];
+const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
+  NotificationOutboxEventType,
+  ...NotificationOutboxEventType[],
 ];
 
 /**
@@ -41,4 +46,18 @@ export const notificationJobDataSchema = z.object({
   ),
   templateData: z.record(z.string(), z.unknown()),
   priority: z.number().optional(),
+});
+
+/**
+ * Outer payload validator for the `NotificationOutboxEvent.payload` JSON
+ * column. `subtype` is opaque to the dispatcher — handlers own their subtypes
+ * for observability/dedupe; the dispatcher only cares that the envelope is
+ * structurally valid and contains a parseable `notificationJobData`.
+ *
+ * Adding a new event type requires no edits here.
+ */
+export const outboxPayloadSchema = z.object({
+  eventType: z.enum(outboxEventTypeValues),
+  subtype: z.string().min(1),
+  notificationJobData: notificationJobDataSchema,
 });

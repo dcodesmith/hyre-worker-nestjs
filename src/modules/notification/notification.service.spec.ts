@@ -14,11 +14,7 @@ import {
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
-import {
-  CHAUFFEUR_RECIPIENT_TYPE,
-  CLIENT_RECIPIENT_TYPE,
-  SEND_NOTIFICATION_JOB_NAME,
-} from "./notification.const";
+import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -90,8 +86,8 @@ describe("NotificationService", () => {
 
     service = module.get<NotificationService>(NotificationService);
   });
-  describe("queueBookingStatusNotifications", () => {
-    it("should queue status change notification", async () => {
+  describe("buildBookingStatusChangeJobData", () => {
+    it("returns email + whatsapp channels for a registered user", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         car: createCar({ owner: createOwner() }),
@@ -99,33 +95,29 @@ describe("NotificationService", () => {
         user: createUser(),
       });
 
-      await service.queueBookingStatusNotifications(
+      const jobData = await service.buildBookingStatusChangeJobData({
         booking,
-        BookingStatus.CONFIRMED,
-        BookingStatus.ACTIVE,
-      );
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+      });
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.BOOKING_STATUS_CHANGE,
-          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
-          bookingId: booking.id,
-          templateData: expect.objectContaining({
-            templateKind: BOOKING_STATUS_TEMPLATE_KIND,
-          }),
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              email: "john@example.com",
-              phoneNumber: "1234567890",
-            }),
+      expect(jobData).toMatchObject({
+        type: NotificationType.BOOKING_STATUS_CHANGE,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        bookingId: booking.id,
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        }),
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            email: "john@example.com",
+            phoneNumber: "1234567890",
           }),
         }),
-        { priority: 1 },
-      );
+      });
     });
 
-    it("should queue WhatsApp-only status notification for WhatsApp-agent guest", async () => {
+    it("returns whatsapp-only for a WhatsApp-agent guest", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         car: createCar({ owner: createOwner() }),
@@ -140,30 +132,24 @@ describe("NotificationService", () => {
         },
       });
 
-      await service.queueBookingStatusNotifications(
+      const jobData = await service.buildBookingStatusChangeJobData({
         booking,
-        BookingStatus.CONFIRMED,
-        BookingStatus.ACTIVE,
-      );
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+      });
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.BOOKING_STATUS_CHANGE,
-          channels: [NotificationChannel.WHATSAPP],
-          bookingId: booking.id,
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              email: undefined,
-              phoneNumber: "+2348012345678",
-            }),
+      expect(jobData).toMatchObject({
+        channels: [NotificationChannel.WHATSAPP],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            email: undefined,
+            phoneNumber: "+2348012345678",
           }),
         }),
-        { priority: 1 },
-      );
+      });
     });
 
-    it("should queue email-only status notification when guest prefers email", async () => {
+    it("returns email-only when the guest prefers email", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         car: createCar({ owner: createOwner() }),
@@ -178,30 +164,24 @@ describe("NotificationService", () => {
         },
       });
 
-      await service.queueBookingStatusNotifications(
+      const jobData = await service.buildBookingStatusChangeJobData({
         booking,
-        BookingStatus.CONFIRMED,
-        BookingStatus.ACTIVE,
-      );
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+      });
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.BOOKING_STATUS_CHANGE,
-          channels: [NotificationChannel.EMAIL],
-          bookingId: booking.id,
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              email: "guest@example.com",
-              phoneNumber: undefined,
-            }),
+      expect(jobData).toMatchObject({
+        channels: [NotificationChannel.EMAIL],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            email: "guest@example.com",
+            phoneNumber: undefined,
           }),
         }),
-        { priority: 1 },
-      );
+      });
     });
 
-    it("should skip status notification when customer has no deliverable channels", async () => {
+    it("returns null when the customer has no deliverable channels", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         car: createCar({ owner: createOwner() }),
@@ -216,16 +196,16 @@ describe("NotificationService", () => {
         },
       });
 
-      await service.queueBookingStatusNotifications(
+      const jobData = await service.buildBookingStatusChangeJobData({
         booking,
-        BookingStatus.CONFIRMED,
-        BookingStatus.ACTIVE,
-      );
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+      });
 
-      expect(mockQueue.add).not.toHaveBeenCalled();
+      expect(jobData).toBeNull();
     });
 
-    it("should include PUSH channel for status notifications when user has active tokens", async () => {
+    it("includes PUSH when the user has active tokens", async () => {
       const booking = createBooking({
         status: BookingStatus.ACTIVE,
         car: createCar({ owner: createOwner() }),
@@ -235,33 +215,29 @@ describe("NotificationService", () => {
       });
       pushTokensByUserId.set("status-user-1", ["ExponentPushToken[status]"]);
 
-      await service.queueBookingStatusNotifications(
+      const jobData = await service.buildBookingStatusChangeJobData({
         booking,
-        BookingStatus.CONFIRMED,
-        BookingStatus.ACTIVE,
-      );
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+      });
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          channels: [
-            NotificationChannel.EMAIL,
-            NotificationChannel.WHATSAPP,
-            NotificationChannel.PUSH,
-          ],
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              pushTokens: ["ExponentPushToken[status]"],
-            }),
+      expect(jobData).toMatchObject({
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[status]"],
           }),
         }),
-        { priority: 1 },
-      );
+      });
     });
   });
 
-  describe("queueBookingReminderNotifications", () => {
-    it("should queue reminder notifications for both customer and chauffeur", async () => {
+  describe("buildBookingReminderJobData", () => {
+    it("builds one job per recipient (customer + chauffeur)", async () => {
       const booking = createBooking({
         car: createCar({ owner: createOwner() }),
         chauffeur: createChauffeur(),
@@ -269,7 +245,7 @@ describe("NotificationService", () => {
       });
       const bookingLeg = { ...createBookingLeg(), booking };
 
-      await service.queueBookingReminderNotifications(
+      const jobs = await service.buildBookingReminderJobData(
         normaliseBookingLegDetails(bookingLeg),
         NotificationType.BOOKING_REMINDER_START,
         {
@@ -278,52 +254,39 @@ describe("NotificationService", () => {
         },
       );
 
-      expect(mockQueue.add).toHaveBeenCalledTimes(2);
-      expect(mockQueue.add).toHaveBeenNthCalledWith(
-        1,
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.BOOKING_REMINDER_START,
-          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
-          bookingId: booking.id,
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              email: "john@example.com",
-              phoneNumber: "1234567890",
-            }),
-          }),
-          templateData: expect.objectContaining({
-            templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
-            recipientType: CLIENT_RECIPIENT_TYPE,
-            subject: "Booking Reminder - Your service starts in approximately 1 hour",
+      expect(jobs).toHaveLength(2);
+      expect(jobs[0]).toMatchObject({
+        type: NotificationType.BOOKING_REMINDER_START,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        bookingId: booking.id,
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            email: "john@example.com",
+            phoneNumber: "1234567890",
           }),
         }),
-        undefined,
-      );
-      expect(mockQueue.add).toHaveBeenNthCalledWith(
-        2,
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.BOOKING_REMINDER_START,
-          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
-          bookingId: booking.id,
-          recipients: expect.objectContaining({
-            [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
-              email: "chauffeur@example.com",
-              phoneNumber: "0987654321",
-            }),
-          }),
-          templateData: expect.objectContaining({
-            templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
-            recipientType: CHAUFFEUR_RECIPIENT_TYPE,
-            subject: "Booking Reminder - You have a service starting in approximately 1 hour",
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
+          recipientType: CLIENT_RECIPIENT_TYPE,
+          subject: "Booking Reminder - Your service starts in approximately 1 hour",
+        }),
+      });
+      expect(jobs[1]).toMatchObject({
+        type: NotificationType.BOOKING_REMINDER_START,
+        recipients: expect.objectContaining({
+          [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
+            email: "chauffeur@example.com",
+            phoneNumber: "0987654321",
           }),
         }),
-        undefined,
-      );
+        templateData: expect.objectContaining({
+          recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+          subject: "Booking Reminder - You have a service starting in approximately 1 hour",
+        }),
+      });
     });
 
-    it("should include PUSH channel for reminder notifications when users have active tokens", async () => {
+    it("includes PUSH channel when both recipients have active tokens", async () => {
       const booking = createBooking({
         car: createCar({ owner: createOwner() }),
         chauffeur: createChauffeur({ id: "chauffeur-22" }),
@@ -335,7 +298,7 @@ describe("NotificationService", () => {
       pushTokensByUserId.set("chauffeur-22", ["ExponentPushToken[chauffeur]"]);
       const bookingLeg = { ...createBookingLeg(), booking };
 
-      await service.queueBookingReminderNotifications(
+      const jobs = await service.buildBookingReminderJobData(
         normaliseBookingLegDetails(bookingLeg),
         NotificationType.BOOKING_REMINDER_START,
         {
@@ -344,45 +307,35 @@ describe("NotificationService", () => {
         },
       );
 
-      expect(mockQueue.add).toHaveBeenNthCalledWith(
-        1,
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          channels: [
-            NotificationChannel.EMAIL,
-            NotificationChannel.WHATSAPP,
-            NotificationChannel.PUSH,
-          ],
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              pushTokens: ["ExponentPushToken[client]"],
-            }),
+      expect(jobs[0]).toMatchObject({
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[client]"],
           }),
         }),
-        undefined,
-      );
-      expect(mockQueue.add).toHaveBeenNthCalledWith(
-        2,
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          channels: [
-            NotificationChannel.EMAIL,
-            NotificationChannel.WHATSAPP,
-            NotificationChannel.PUSH,
-          ],
-          recipients: expect.objectContaining({
-            [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
-              pushTokens: ["ExponentPushToken[chauffeur]"],
-            }),
+      });
+      expect(jobs[1]).toMatchObject({
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[chauffeur]"],
           }),
         }),
-        undefined,
-      );
+      });
     });
   });
 
-  describe("queueChauffeurAssignedNotifications", () => {
-    it("should queue chauffeur assignment notification to customer", async () => {
+  describe("buildChauffeurAssignedJobData", () => {
+    it("builds the chauffeur-assigned job for the customer", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -390,32 +343,28 @@ describe("NotificationService", () => {
         user: createUser(),
       });
 
-      await service.queueChauffeurAssignedNotifications(booking);
+      const jobData = await service.buildChauffeurAssignedJobData(booking);
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.CHAUFFEUR_ASSIGNED,
-          channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
-          bookingId: booking.id,
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              email: "john@example.com",
-              phoneNumber: "1234567890",
-            }),
-          }),
-          templateData: expect.objectContaining({
-            templateKind: BOOKING_STATUS_TEMPLATE_KIND,
-            title: "been assigned a chauffeur",
-            status: "chauffeur assigned",
-            subject: "Your chauffeur has been assigned",
+      expect(jobData).toMatchObject({
+        type: NotificationType.CHAUFFEUR_ASSIGNED,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        bookingId: booking.id,
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            email: "john@example.com",
+            phoneNumber: "1234567890",
           }),
         }),
-        { priority: 1 },
-      );
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+          title: "been assigned a chauffeur",
+          status: "chauffeur assigned",
+          subject: "Your chauffeur has been assigned",
+        }),
+      });
     });
 
-    it("should include PUSH channel when active push tokens exist", async () => {
+    it("includes PUSH channel when active push tokens exist", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -424,41 +373,27 @@ describe("NotificationService", () => {
       });
       pushTokensByUserId.set(booking.userId ?? "", ["ExponentPushToken[abc123]"]);
 
-      await service.queueChauffeurAssignedNotifications(booking);
+      const jobData = await service.buildChauffeurAssignedJobData(booking);
 
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        SEND_NOTIFICATION_JOB_NAME,
-        expect.objectContaining({
-          type: NotificationType.CHAUFFEUR_ASSIGNED,
-          channels: [
-            NotificationChannel.EMAIL,
-            NotificationChannel.WHATSAPP,
-            NotificationChannel.PUSH,
-          ],
-          recipients: expect.objectContaining({
-            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
-              pushTokens: ["ExponentPushToken[abc123]"],
-            }),
-          }),
-          pushPayload: expect.objectContaining({
-            title: "Your chauffeur has been assigned",
+      expect(jobData).toMatchObject({
+        type: NotificationType.CHAUFFEUR_ASSIGNED,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[abc123]"],
           }),
         }),
-        { priority: 1 },
-      );
+        pushPayload: expect.objectContaining({
+          title: "Your chauffeur has been assigned",
+        }),
+      });
     });
 
-    it("should skip chauffeur assignment notification with no customer channel", async () => {
-      const recordSkippedSpy = vi.spyOn(
-        service as unknown as {
-          recordNotificationSkippedNoChannel: (input: {
-            bookingId: string;
-            oldStatus: string;
-            newStatus: string;
-          }) => void;
-        },
-        "recordNotificationSkippedNoChannel",
-      );
+    it("returns null when the customer has no deliverable channels", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -473,14 +408,72 @@ describe("NotificationService", () => {
         },
       });
 
-      await service.queueChauffeurAssignedNotifications(booking);
+      const jobData = await service.buildChauffeurAssignedJobData(booking);
 
-      expect(mockQueue.add).not.toHaveBeenCalled();
-      expect(recordSkippedSpy).toHaveBeenCalledWith({
-        bookingId: booking.id,
-        oldStatus: booking.status,
-        newStatus: "CHAUFFEUR_ASSIGNED",
+      expect(jobData).toBeNull();
+    });
+  });
+
+  describe("buildBookingCancellationJobData", () => {
+    it("builds customer + owner jobs when both recipients have channels", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
       });
+
+      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+
+      expect(customer).toMatchObject({
+        type: NotificationType.BOOKING_CANCELLED,
+        bookingId: booking.id,
+        templateData: expect.objectContaining({
+          subject: "Your booking has been cancelled",
+        }),
+      });
+      expect(owner).toMatchObject({
+        type: NotificationType.BOOKING_CANCELLED,
+        bookingId: booking.id,
+        templateData: expect.objectContaining({
+          subject: "A booking for your vehicle has been cancelled",
+        }),
+      });
+    });
+
+    it("returns null customer when the customer has no channels", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: null,
+        guestUser: {
+          name: "No Contact Guest",
+          email: null,
+          phoneNumber: null,
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+      });
+
+      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+
+      expect(customer).toBeNull();
+      expect(owner).not.toBeNull();
+    });
+
+    it("returns null owner when the fleet owner has no email or phone", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner({ email: null, phoneNumber: null }) }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+
+      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+
+      expect(customer).not.toBeNull();
+      expect(owner).toBeNull();
     });
   });
 });

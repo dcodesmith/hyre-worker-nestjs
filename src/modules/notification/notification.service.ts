@@ -10,7 +10,6 @@ import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
-  HIGH_PRIORITY_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB_NAME,
 } from "./notification.const";
 import {
@@ -57,39 +56,6 @@ export class NotificationService {
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(NotificationService.name);
-  }
-
-  /**
-   * Queue a notification for a change in a booking's status.
-   */
-  async queueBookingStatusNotifications(
-    booking: BookingWithRelations,
-    oldStatus: string,
-    newStatus: string,
-    showReviewRequest = false,
-  ): Promise<void> {
-    const jobData = await this.buildBookingStatusChangeJobData({
-      booking,
-      oldStatus,
-      newStatus,
-      showReviewRequest,
-    });
-    if (!jobData) {
-      this.logger.warn(
-        { bookingId: booking.id, oldStatus, newStatus },
-        "No customer delivery channel available for booking status notification",
-      );
-      this.recordNotificationSkippedNoChannel({
-        bookingId: booking.id,
-        oldStatus,
-        newStatus,
-      });
-      return;
-    }
-
-    await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
-
-    this.logStatusChangeNotification(booking.id, oldStatus, newStatus, jobData.channels);
   }
 
   async buildBookingStatusChangeJobData({
@@ -145,31 +111,6 @@ export class NotificationService {
     };
   }
 
-  /**
-   * Queue a notification when a chauffeur is assigned to a booking.
-   */
-  async queueChauffeurAssignedNotifications(booking: BookingWithRelations): Promise<void> {
-    const jobData = await this.buildChauffeurAssignedJobData(booking);
-    if (!jobData) {
-      this.logger.warn(
-        { bookingId: booking.id },
-        "No customer delivery channel available for chauffeur assignment",
-      );
-      this.recordNotificationSkippedNoChannel({
-        bookingId: booking.id,
-        oldStatus: booking.status,
-        newStatus: "CHAUFFEUR_ASSIGNED",
-      });
-      return;
-    }
-
-    await this.addJobToQueue(jobData, HIGH_PRIORITY_JOB_OPTIONS);
-    this.logger.info(
-      { bookingId: booking.id, channels: jobData.channels },
-      "Queued chauffeur assignment notification",
-    );
-  }
-
   async enqueuePreparedNotification(
     jobData: NotificationJobData,
     options?: JobsOptions,
@@ -179,14 +120,12 @@ export class NotificationService {
 
   async buildChauffeurAssignedJobData(
     booking: BookingWithRelations,
-    input?: { pushTokens?: string[] },
   ): Promise<NotificationJobData | null> {
     const bookingDetails = normaliseBookingDetails(booking);
     const customerChannels = await this.recipientChannelResolver.resolve({
       email: bookingDetails.customerEmail,
       phoneNumber: bookingDetails.customerPhone,
       userId: booking.userId ?? booking.user?.id ?? undefined,
-      pushTokens: input?.pushTokens,
     });
 
     if (customerChannels.channels.length === 0) {
@@ -226,68 +165,72 @@ export class NotificationService {
   }
 
   /**
-   * Queue cancellation notifications for both the customer and the fleet owner.
+   * Build the cancellation NotificationJobData payloads for the customer and
+   * (optionally) the fleet owner. Returns one entry per recipient with delivery
+   * channels available; recipients without channels are omitted.
+   *
+   * Used by the BookingCancellationHandler — direct dispatch via the queue is
+   * intentionally not exposed because cancellation must always go through the
+   * outbox to stay durable across worker crashes (architectural review,
+   * Issue 4A).
    */
-  async queueBookingCancellationNotifications(booking: BookingWithRelations): Promise<void> {
+  buildBookingCancellationJobData(booking: BookingWithRelations): {
+    customer: NotificationJobData | null;
+    owner: NotificationJobData | null;
+  } {
     const bookingDetails = normaliseBookingDetails(booking);
-
-    const templateData = {
+    const baseTemplateData = {
       templateKind: BOOKING_CANCELLED_TEMPLATE_KIND,
       ...bookingDetails,
       subject: "Your booking has been cancelled",
     } as const;
 
-    const customerJobData: NotificationJobData = {
-      id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
-      type: NotificationType.BOOKING_CANCELLED,
-      channels: deriveNotificationChannels(bookingDetails),
-      bookingId: bookingDetails.id,
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          email: bookingDetails.customerEmail,
-          phoneNumber: bookingDetails.customerPhone,
-        },
-      },
-      templateData,
-    };
+    const customerChannels = deriveNotificationChannels(bookingDetails);
+    const customer: NotificationJobData | null =
+      customerChannels.length > 0
+        ? {
+            id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
+            type: NotificationType.BOOKING_CANCELLED,
+            channels: customerChannels,
+            bookingId: bookingDetails.id,
+            recipients: {
+              [CLIENT_RECIPIENT_TYPE]: {
+                email: bookingDetails.customerEmail,
+                phoneNumber: bookingDetails.customerPhone,
+              },
+            },
+            templateData: baseTemplateData,
+          }
+        : null;
 
-    const jobs: Promise<unknown>[] = [];
-    if (customerJobData.channels.length > 0) {
-      jobs.push(this.addJobToQueue(customerJobData, HIGH_PRIORITY_JOB_OPTIONS));
-    } else {
-      this.logger.warn(
-        { bookingId: bookingDetails.id },
-        "No customer delivery channel available for booking cancellation",
-      );
-    }
+    const ownerEmail = booking.car?.owner?.email ?? undefined;
+    const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
+    const ownerChannels =
+      ownerEmail || ownerPhone
+        ? deriveNotificationChannels({ email: ownerEmail, phoneNumber: ownerPhone })
+        : [];
 
-    const ownerEmail = booking.car?.owner?.email;
-    const ownerPhone = booking.car?.owner?.phoneNumber;
+    const owner: NotificationJobData | null =
+      ownerChannels.length > 0
+        ? {
+            id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
+            type: NotificationType.BOOKING_CANCELLED,
+            channels: ownerChannels,
+            bookingId: bookingDetails.id,
+            recipients: {
+              [FLEET_OWNER_RECIPIENT_TYPE]: {
+                email: ownerEmail,
+                phoneNumber: ownerPhone,
+              },
+            },
+            templateData: {
+              ...baseTemplateData,
+              subject: "A booking for your vehicle has been cancelled",
+            },
+          }
+        : null;
 
-    if (ownerEmail || ownerPhone) {
-      const ownerJobData: NotificationJobData = {
-        id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
-        type: NotificationType.BOOKING_CANCELLED,
-        channels: deriveNotificationChannels({
-          email: ownerEmail ?? undefined,
-          phoneNumber: ownerPhone ?? undefined,
-        }),
-        bookingId: bookingDetails.id,
-        recipients: {
-          [FLEET_OWNER_RECIPIENT_TYPE]: {
-            email: ownerEmail ?? undefined,
-            phoneNumber: ownerPhone ?? undefined,
-          },
-        },
-        templateData: {
-          ...templateData,
-          subject: "A booking for your vehicle has been cancelled",
-        },
-      };
-      jobs.push(this.addJobToQueue(ownerJobData, HIGH_PRIORITY_JOB_OPTIONS));
-    }
-
-    if (jobs.length === 0) {
+    if (!customer && !owner) {
       this.logger.warn(
         { bookingId: bookingDetails.id },
         "No delivery channels available for booking cancellation notifications",
@@ -297,29 +240,9 @@ export class NotificationService {
         oldStatus: booking.status,
         newStatus: "CANCELLED",
       });
-      return;
     }
 
-    await Promise.all(jobs);
-
-    this.logger.info(
-      { bookingId: bookingDetails.id, notifiedOwner: !!(ownerEmail || ownerPhone) },
-      "Queued booking cancellation notifications",
-    );
-  }
-
-  /**
-   * Queue reminder notifications for a specific booking leg (for both customer and chauffeur).
-   */
-  async queueBookingReminderNotifications(
-    bookingLegDetails: NormalisedBookingLegDetails,
-    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
-    context: ReminderRecipientContext,
-  ): Promise<void> {
-    const reminderJobs = await this.buildBookingReminderJobData(bookingLegDetails, type, context);
-    await Promise.all(reminderJobs.map((jobData) => this.addJobToQueue(jobData)));
-
-    this.logReminderNotifications(bookingLegDetails, type);
+    return { customer, owner };
   }
 
   async buildBookingReminderJobData(
@@ -482,41 +405,6 @@ export class NotificationService {
     options?: JobsOptions,
   ): Promise<Job<NotificationJobData, NotificationResult[] | null, string>> {
     return this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, options);
-  }
-
-  private logStatusChangeNotification(
-    bookingId: string,
-    oldStatus: string,
-    newStatus: string,
-    channels: NotificationChannel[],
-  ): void {
-    this.logger.info(
-      { bookingId, oldStatus, newStatus, channels },
-      "Queued booking status notification",
-    );
-  }
-
-  private logReminderNotifications(
-    bookingLegDetails: NormalisedBookingLegDetails,
-    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
-  ): void {
-    const { chauffeurEmail, chauffeurPhone, customerEmail, customerPhone } = bookingLegDetails;
-
-    this.logger.info(
-      {
-        bookingLegId: bookingLegDetails.bookingLegId,
-        type,
-        customerChannels: deriveNotificationChannels({
-          email: customerEmail,
-          phoneNumber: customerPhone,
-        }),
-        chauffeurChannels: deriveNotificationChannels({
-          email: chauffeurEmail,
-          phoneNumber: chauffeurPhone,
-        }),
-      },
-      "Queued booking reminder notifications",
-    );
   }
 
   private getStatusChangeSubject(status: string): string {
