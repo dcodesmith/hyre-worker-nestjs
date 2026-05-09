@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
 import {
@@ -16,7 +16,7 @@ import { StatusChangeService } from "./status-change.service";
 describe("StatusChangeService", () => {
   let service: StatusChangeService;
   let mockDatabaseService: DatabaseService;
-  let mockNotificationService: NotificationService;
+  let mockNotificationOutboxService: NotificationOutboxService;
   let mockPaymentService: PaymentService;
   let mockReferralService: ReferralService;
 
@@ -44,9 +44,9 @@ describe("StatusChangeService", () => {
           },
         },
         {
-          provide: NotificationService,
+          provide: NotificationOutboxService,
           useValue: {
-            queueBookingStatusNotifications: vi.fn(),
+            createBookingStatusChangedEvent: vi.fn(),
           },
         },
         {
@@ -68,7 +68,8 @@ describe("StatusChangeService", () => {
 
     service = module.get<StatusChangeService>(StatusChangeService);
     mockDatabaseService = module.get<DatabaseService>(DatabaseService);
-    mockNotificationService = module.get<NotificationService>(NotificationService);
+    mockNotificationOutboxService =
+      module.get<NotificationOutboxService>(NotificationOutboxService);
     mockPaymentService = module.get<PaymentService>(PaymentService);
     mockReferralService = module.get<ReferralService>(ReferralService);
   });
@@ -120,7 +121,10 @@ describe("StatusChangeService", () => {
     const result = await service.updateBookingsFromConfirmedToActive();
 
     expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
+    expect(
+      mockNotificationOutboxService.createBookingStatusChangedEvent,
+    ).toHaveBeenCalledExactlyOnceWith(
+      mockDatabaseService,
       expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
       BookingStatus.CONFIRMED,
       BookingStatus.ACTIVE,
@@ -145,7 +149,7 @@ describe("StatusChangeService", () => {
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
         callback(mockDatabaseService),
     );
-    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+    vi.mocked(mockNotificationOutboxService.createBookingStatusChangedEvent).mockRejectedValueOnce(
       new Error("Notification error"),
     );
 
@@ -226,7 +230,10 @@ describe("StatusChangeService", () => {
     expect(reviewFindUniqueMock).toHaveBeenCalledWith({
       where: { bookingId: "2" },
     });
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
+    expect(
+      mockNotificationOutboxService.createBookingStatusChangedEvent,
+    ).toHaveBeenCalledExactlyOnceWith(
+      mockDatabaseService,
       expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
       BookingStatus.ACTIVE,
       BookingStatus.COMPLETED,
@@ -265,7 +272,7 @@ describe("StatusChangeService", () => {
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
         callback(mockDatabaseService),
     );
-    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+    vi.mocked(mockNotificationOutboxService.createBookingStatusChangedEvent).mockRejectedValueOnce(
       new Error("Notification error"),
     );
 

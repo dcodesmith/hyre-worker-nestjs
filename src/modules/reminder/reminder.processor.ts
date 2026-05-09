@@ -27,10 +27,10 @@ export class ReminderProcessor extends WorkerHost {
       let result: string | undefined;
 
       if (job.name === BOOKING_LEG_START_REMINDER) {
-        result = await this.reminderService.sendBookingStartReminderEmails();
+        result = await this.reminderService.sendBookingStartReminders();
         this.logger.info({ result }, "Booking start reminders processed");
       } else if (job.name === BOOKING_LEG_END_REMINDER) {
-        result = await this.reminderService.sendBookingEndReminderEmails();
+        result = await this.reminderService.sendBookingEndReminders();
         this.logger.info({ result }, "Booking end reminders processed");
       } else {
         throw new Error(`Unknown reminder job type: ${job.name}`);

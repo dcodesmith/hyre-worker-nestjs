@@ -18,7 +18,7 @@ import { PinoLogger } from "nestjs-pino";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { NotificationType } from "../notification/notification.interface";
-import { NotificationService } from "../notification/notification.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
 const REMINDER_LABEL_BY_TYPE = {
   [NotificationType.BOOKING_REMINDER_START]: "start",
@@ -32,13 +32,13 @@ const REMINDER_LABEL_BY_TYPE = {
 export class ReminderService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly notificationService: NotificationService,
+    private readonly notificationOutboxService: NotificationOutboxService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ReminderService.name);
   }
 
-  async sendBookingStartReminderEmails() {
+  async sendBookingStartReminders() {
     try {
       const now = new Date();
       this.logger.info(
@@ -111,13 +111,13 @@ export class ReminderService {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
-        "Error in sendBookingStartReminderEmails",
+        "Error in sendBookingStartReminders",
       );
       throw error;
     }
   }
 
-  async sendBookingEndReminderEmails() {
+  async sendBookingEndReminders() {
     try {
       const now = new Date();
 
@@ -222,7 +222,7 @@ export class ReminderService {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
-        "Error in sendBookingEndReminderEmails",
+        "Error in sendBookingEndReminders",
       );
       throw error;
     }
@@ -267,11 +267,9 @@ export class ReminderService {
   ): Promise<boolean> {
     return this.queueReminderNotification(
       leg.id,
-      () =>
-        this.notificationService.queueBookingReminderNotifications(
-          normaliseBookingLegDetails(leg),
-          type,
-        ),
+      async () => {
+        await this.notificationOutboxService.createBookingReminderEventsForLeg(leg, type);
+      },
       REMINDER_LABEL_BY_TYPE[type],
     );
   }

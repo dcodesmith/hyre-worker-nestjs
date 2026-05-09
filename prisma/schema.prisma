@@ -303,6 +303,8 @@ model Booking {
   @@index([paymentIntent])
   @@index([overallPayoutStatus])
   @@index([startDate, endDate, status])
+  @@index([status, paymentStatus, startDate])
+  @@index([status, paymentStatus, endDate])
   @@index([chauffeurId, status, startDate, endDate])
   @@index([carId, paymentStatus, status, startDate, endDate])
   @@index([type, endDate])
@@ -336,6 +338,8 @@ model BookingLeg {
   @@unique([bookingId, legDate])
   @@index([bookingId])
   @@index([legDate])
+  @@index([legDate, legStartTime])
+  @@index([legDate, legEndTime])
 }
 
 model Extension {
@@ -1008,10 +1012,16 @@ enum PushPlatform {
 }
 
 enum NotificationInboxType {
+  BOOKING_ASSIGNMENT
+  BOOKING_LIFECYCLE
+  BOOKING_REMINDER
   CHAUFFEUR_ASSIGNED
 }
 
 enum NotificationOutboxEventType {
+  BOOKING_ASSIGNMENT
+  BOOKING_LIFECYCLE
+  BOOKING_REMINDER
   CHAUFFEUR_ASSIGNED
 }
 

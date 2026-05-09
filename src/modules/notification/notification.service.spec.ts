@@ -25,7 +25,7 @@ import {
   NotificationType,
 } from "./notification.interface";
 import { NotificationService } from "./notification.service";
-import { PushTokenService } from "./push-token.service";
+import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
@@ -34,13 +34,39 @@ import {
 describe("NotificationService", () => {
   let service: NotificationService;
   let mockQueue: Partial<Queue<NotificationJobData>>;
-  const pushTokenServiceMock = {
-    getActiveTokensForUser: vi.fn().mockResolvedValue([]),
+  const pushTokensByUserId = new Map<string, string[]>();
+  const recipientChannelResolverMock = {
+    resolve: vi.fn(),
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    pushTokenServiceMock.getActiveTokensForUser.mockResolvedValue([]);
+    pushTokensByUserId.clear();
+    recipientChannelResolverMock.resolve.mockImplementation(
+      async (input: {
+        email?: string;
+        phoneNumber?: string;
+        userId?: string;
+        pushTokens?: string[];
+      }) => {
+        const channels: NotificationChannel[] = [];
+        if (input.email) {
+          channels.push(NotificationChannel.EMAIL);
+        }
+        if (input.phoneNumber) {
+          channels.push(NotificationChannel.WHATSAPP);
+        }
+        const resolvedPushTokens =
+          input.pushTokens ?? (input.userId ? (pushTokensByUserId.get(input.userId) ?? []) : []);
+        if (resolvedPushTokens.length > 0) {
+          channels.push(NotificationChannel.PUSH);
+        }
+        return {
+          channels,
+          pushTokens: resolvedPushTokens,
+        };
+      },
+    );
 
     mockQueue = {
       add: vi.fn().mockResolvedValue({ id: "job-123" }),
@@ -54,8 +80,8 @@ describe("NotificationService", () => {
           useValue: mockQueue,
         },
         {
-          provide: PushTokenService,
-          useValue: pushTokenServiceMock,
+          provide: RecipientChannelResolverService,
+          useValue: recipientChannelResolverMock,
         },
       ],
     })
@@ -198,6 +224,40 @@ describe("NotificationService", () => {
 
       expect(mockQueue.add).not.toHaveBeenCalled();
     });
+
+    it("should include PUSH channel for status notifications when user has active tokens", async () => {
+      const booking = createBooking({
+        status: BookingStatus.ACTIVE,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser({ id: "status-user-1" }),
+        userId: "status-user-1",
+      });
+      pushTokensByUserId.set("status-user-1", ["ExponentPushToken[status]"]);
+
+      await service.queueBookingStatusNotifications(
+        booking,
+        BookingStatus.CONFIRMED,
+        BookingStatus.ACTIVE,
+      );
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          channels: [
+            NotificationChannel.EMAIL,
+            NotificationChannel.WHATSAPP,
+            NotificationChannel.PUSH,
+          ],
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              pushTokens: ["ExponentPushToken[status]"],
+            }),
+          }),
+        }),
+        { priority: 1 },
+      );
+    });
   });
 
   describe("queueBookingReminderNotifications", () => {
@@ -212,6 +272,10 @@ describe("NotificationService", () => {
       await service.queueBookingReminderNotifications(
         normaliseBookingLegDetails(bookingLeg),
         NotificationType.BOOKING_REMINDER_START,
+        {
+          customerUserId: "client-11",
+          chauffeurUserId: "chauffeur-22",
+        },
       );
 
       expect(mockQueue.add).toHaveBeenCalledTimes(2);
@@ -253,6 +317,63 @@ describe("NotificationService", () => {
             templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
             recipientType: CHAUFFEUR_RECIPIENT_TYPE,
             subject: "Booking Reminder - You have a service starting in approximately 1 hour",
+          }),
+        }),
+        undefined,
+      );
+    });
+
+    it("should include PUSH channel for reminder notifications when users have active tokens", async () => {
+      const booking = createBooking({
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur({ id: "chauffeur-22" }),
+        chauffeurId: "chauffeur-22",
+        user: createUser({ id: "client-11" }),
+        userId: "client-11",
+      });
+      pushTokensByUserId.set("client-11", ["ExponentPushToken[client]"]);
+      pushTokensByUserId.set("chauffeur-22", ["ExponentPushToken[chauffeur]"]);
+      const bookingLeg = { ...createBookingLeg(), booking };
+
+      await service.queueBookingReminderNotifications(
+        normaliseBookingLegDetails(bookingLeg),
+        NotificationType.BOOKING_REMINDER_START,
+        {
+          customerUserId: "client-11",
+          chauffeurUserId: "chauffeur-22",
+        },
+      );
+
+      expect(mockQueue.add).toHaveBeenNthCalledWith(
+        1,
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          channels: [
+            NotificationChannel.EMAIL,
+            NotificationChannel.WHATSAPP,
+            NotificationChannel.PUSH,
+          ],
+          recipients: expect.objectContaining({
+            [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+              pushTokens: ["ExponentPushToken[client]"],
+            }),
+          }),
+        }),
+        undefined,
+      );
+      expect(mockQueue.add).toHaveBeenNthCalledWith(
+        2,
+        SEND_NOTIFICATION_JOB_NAME,
+        expect.objectContaining({
+          channels: [
+            NotificationChannel.EMAIL,
+            NotificationChannel.WHATSAPP,
+            NotificationChannel.PUSH,
+          ],
+          recipients: expect.objectContaining({
+            [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
+              pushTokens: ["ExponentPushToken[chauffeur]"],
+            }),
           }),
         }),
         undefined,
@@ -301,9 +422,7 @@ describe("NotificationService", () => {
         chauffeur: createChauffeur(),
         user: createUser(),
       });
-      pushTokenServiceMock.getActiveTokensForUser.mockResolvedValueOnce([
-        "ExponentPushToken[abc123]",
-      ]);
+      pushTokensByUserId.set(booking.userId ?? "", ["ExponentPushToken[abc123]"]);
 
       await service.queueChauffeurAssignedNotifications(booking);
 

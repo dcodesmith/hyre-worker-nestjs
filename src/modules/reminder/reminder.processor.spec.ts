@@ -23,8 +23,8 @@ describe("ReminderProcessor", () => {
         {
           provide: ReminderService,
           useValue: {
-            sendBookingStartReminderEmails: vi.fn(),
-            sendBookingEndReminderEmails: vi.fn(),
+            sendBookingStartReminders: vi.fn(),
+            sendBookingEndReminders: vi.fn(),
           },
         },
       ],
@@ -36,54 +36,54 @@ describe("ReminderProcessor", () => {
     reminderService = module.get<ReminderService>(ReminderService);
   });
 
-  it("should process BOOKING_LEG_START_REMINDER job and call sendBookingStartReminderEmails", async () => {
+  it("should process BOOKING_LEG_START_REMINDER job and call sendBookingStartReminders", async () => {
     const job = {
       id: "job-1",
       name: BOOKING_LEG_START_REMINDER,
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
-    vi.mocked(reminderService.sendBookingStartReminderEmails).mockResolvedValueOnce(
+    vi.mocked(reminderService.sendBookingStartReminders).mockResolvedValueOnce(
       "Queued 10 start reminder notifications.",
     );
 
     const result = await processor.process(job);
 
-    expect(reminderService.sendBookingStartReminderEmails).toHaveBeenCalledExactlyOnceWith();
+    expect(reminderService.sendBookingStartReminders).toHaveBeenCalledExactlyOnceWith();
     expect(result).toEqual({
       success: true,
       result: "Queued 10 start reminder notifications.",
     });
   });
 
-  it("should process BOOKING_LEG_END_REMINDER job and call sendBookingEndReminderEmails", async () => {
+  it("should process BOOKING_LEG_END_REMINDER job and call sendBookingEndReminders", async () => {
     const job = {
       id: "job-2",
       name: BOOKING_LEG_END_REMINDER,
       data: { type: TRIP_END, timestamp: new Date().toISOString() },
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
-    vi.mocked(reminderService.sendBookingEndReminderEmails).mockResolvedValueOnce(
+    vi.mocked(reminderService.sendBookingEndReminders).mockResolvedValueOnce(
       "Queued 5 end reminder notifications.",
     );
 
     const result = await processor.process(job);
 
-    expect(reminderService.sendBookingEndReminderEmails).toHaveBeenCalledExactlyOnceWith();
+    expect(reminderService.sendBookingEndReminders).toHaveBeenCalledExactlyOnceWith();
     expect(result).toEqual({
       success: true,
       result: "Queued 5 end reminder notifications.",
     });
   });
 
-  it("should handle empty result from sendBookingStartReminderEmails", async () => {
+  it("should handle empty result from sendBookingStartReminders", async () => {
     const job = {
       id: "job-3",
       name: BOOKING_LEG_START_REMINDER,
       data: { type: TRIP_START, timestamp: new Date().toISOString() },
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
-    vi.mocked(reminderService.sendBookingStartReminderEmails).mockResolvedValueOnce(
+    vi.mocked(reminderService.sendBookingStartReminders).mockResolvedValueOnce(
       "No relevant booking legs today, so no start reminders to send.",
     );
 
@@ -95,14 +95,14 @@ describe("ReminderProcessor", () => {
     });
   });
 
-  it("should handle empty result from sendBookingEndReminderEmails", async () => {
+  it("should handle empty result from sendBookingEndReminders", async () => {
     const job = {
       id: "job-4",
       name: BOOKING_LEG_END_REMINDER,
       data: { type: TRIP_END, timestamp: new Date().toISOString() },
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
-    vi.mocked(reminderService.sendBookingEndReminderEmails).mockResolvedValueOnce(
+    vi.mocked(reminderService.sendBookingEndReminders).mockResolvedValueOnce(
       "No relevant booking legs today, so no end reminders to send.",
     );
 
@@ -126,7 +126,7 @@ describe("ReminderProcessor", () => {
     );
   });
 
-  it("should throw error when sendBookingStartReminderEmails fails", async () => {
+  it("should throw error when sendBookingStartReminders fails", async () => {
     const job = {
       id: "job-6",
       name: BOOKING_LEG_START_REMINDER,
@@ -134,13 +134,13 @@ describe("ReminderProcessor", () => {
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     const serviceError = new Error("Notification service unavailable");
-    vi.mocked(reminderService.sendBookingStartReminderEmails).mockRejectedValueOnce(serviceError);
+    vi.mocked(reminderService.sendBookingStartReminders).mockRejectedValueOnce(serviceError);
 
     await expect(processor.process(job)).rejects.toThrow("Notification service unavailable");
-    expect(reminderService.sendBookingStartReminderEmails).toHaveBeenCalled();
+    expect(reminderService.sendBookingStartReminders).toHaveBeenCalled();
   });
 
-  it("should throw error when sendBookingEndReminderEmails fails", async () => {
+  it("should throw error when sendBookingEndReminders fails", async () => {
     const job = {
       id: "job-7",
       name: BOOKING_LEG_END_REMINDER,
@@ -148,9 +148,9 @@ describe("ReminderProcessor", () => {
     } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
 
     const serviceError = new Error("Database connection failed");
-    vi.mocked(reminderService.sendBookingEndReminderEmails).mockRejectedValueOnce(serviceError);
+    vi.mocked(reminderService.sendBookingEndReminders).mockRejectedValueOnce(serviceError);
 
     await expect(processor.process(job)).rejects.toThrow("Database connection failed");
-    expect(reminderService.sendBookingEndReminderEmails).toHaveBeenCalled();
+    expect(reminderService.sendBookingEndReminders).toHaveBeenCalled();
   });
 });

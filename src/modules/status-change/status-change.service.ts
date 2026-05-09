@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { BookingStatus, BookingType, PaymentStatus, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
 import {
@@ -16,7 +16,7 @@ import {
 export class StatusChangeService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly notificationService: NotificationService,
+    private readonly notificationOutboxService: NotificationOutboxService,
     private readonly paymentService: PaymentService,
     private readonly referralService: ReferralService,
     private readonly logger: PinoLogger,
@@ -102,6 +102,8 @@ export class StatusChangeService {
             updatedBooking,
             oldStatus,
             BookingStatus.ACTIVE,
+            false,
+            tx,
           );
         }
       });
@@ -304,6 +306,7 @@ export class StatusChangeService {
         oldStatus,
         BookingStatus.COMPLETED,
         showReviewRequest,
+        tx,
       );
     });
   }
@@ -341,13 +344,15 @@ export class StatusChangeService {
 
   private async queueStatusNotification(
     bookingId: string,
-    booking: Parameters<NotificationService["queueBookingStatusNotifications"]>[0],
+    booking: Parameters<NotificationOutboxService["createBookingStatusChangedEvent"]>[1],
     oldStatus: string,
     newStatus: string,
     showReviewRequest = false,
+    tx?: Parameters<NotificationOutboxService["createBookingStatusChangedEvent"]>[0],
   ): Promise<void> {
     try {
-      await this.notificationService.queueBookingStatusNotifications(
+      await this.notificationOutboxService.createBookingStatusChangedEvent(
+        tx ?? this.databaseService,
         booking,
         oldStatus,
         newStatus,

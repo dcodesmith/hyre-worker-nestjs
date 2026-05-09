@@ -4,13 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   createBooking,
+  createBookingLeg,
   createCar,
   createChauffeur,
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
-import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
+import { NotificationType } from "./notification.interface";
 import { NotificationService } from "./notification.service";
 import {
   NotificationOutboxService,
@@ -20,21 +21,35 @@ import {
 describe("NotificationOutboxService", () => {
   let service: NotificationOutboxService;
 
+  // The reminder writer routes inbox + outbox creates through `$transaction`.
+  // The mock just invokes the callback with the same client so we can assert on
+  // `notificationInbox.create`/`notificationOutboxEvent.create` directly.
   const databaseServiceMock = {
+    notificationInbox: {
+      create: vi.fn(),
+    },
     notificationOutboxEvent: {
+      create: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
       update: vi.fn(),
     },
+    $transaction: vi.fn(),
   };
 
   const notificationServiceMock = {
     buildChauffeurAssignedJobData: vi.fn(),
+    buildBookingStatusChangeJobData: vi.fn(),
+    buildBookingReminderJobData: vi.fn(),
     enqueuePreparedNotification: vi.fn(),
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$transaction.mockImplementation(
+      async (callback: (tx: typeof databaseServiceMock) => Promise<unknown>) =>
+        callback(databaseServiceMock),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -121,11 +136,12 @@ describe("NotificationOutboxService", () => {
     expect(tx.notificationOutboxEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+          eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
           bookingId: "booking-1",
           status: NotificationOutboxStatus.PENDING,
           payload: expect.objectContaining({
-            schemaVersion: 1,
+            schemaVersion: 2,
+            subtype: "CHAUFFEUR_ASSIGNED",
           }),
         }),
       }),
@@ -137,7 +153,7 @@ describe("NotificationOutboxService", () => {
       {
         id: "evt-1",
         bookingId: "booking-1",
-        eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
         status: NotificationOutboxStatus.PENDING,
         attempts: 0,
         nextAttemptAt: new Date(Date.now() - 1000),
@@ -205,7 +221,7 @@ describe("NotificationOutboxService", () => {
       {
         id: "evt-2",
         bookingId: "booking-2",
-        eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
         status: NotificationOutboxStatus.PROCESSING,
         attempts: 1,
         nextAttemptAt: new Date(Date.now() - 1000),
@@ -273,7 +289,7 @@ describe("NotificationOutboxService", () => {
       {
         id: "evt-3",
         bookingId: "booking-3",
-        eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
         status: NotificationOutboxStatus.PENDING,
         attempts: 0,
         nextAttemptAt: new Date(Date.now() - 1000),
@@ -355,5 +371,298 @@ describe("NotificationOutboxService", () => {
         }),
       }),
     );
+  });
+
+  describe("createBookingStatusChangedEvent", () => {
+    const buildBooking = (overrides: Parameters<typeof createBooking>[0] = {}) =>
+      createBooking({
+        id: "booking-status-1",
+        userId: "user-1",
+        chauffeurId: "chauffeur-1",
+        updatedAt: new Date("2026-05-09T10:00:00.000Z"),
+        user: createUser(),
+        chauffeur: createChauffeur(),
+        car: createCar({ owner: createOwner() }),
+        legs: [],
+        ...overrides,
+      });
+
+    const buildJobData = (bookingId: string) => ({
+      id: `status-${bookingId}-1`,
+      type: "booking-status-change",
+      channels: ["email", "push"],
+      bookingId,
+      recipients: { client: { email: "client@example.com", pushTokens: ["tok"] } },
+      templateData: { templateKind: "bookingStatusChange" },
+    });
+
+    it("writes inbox + outbox in the provided tx and short-circuits when no job data", async () => {
+      const tx = {
+        notificationInbox: { create: vi.fn().mockResolvedValue(undefined) },
+        notificationOutboxEvent: { create: vi.fn().mockResolvedValue(undefined) },
+        userPushToken: { findMany: vi.fn() },
+      } satisfies NotificationOutboxTransactionClient;
+      const booking = buildBooking();
+      notificationServiceMock.buildBookingStatusChangeJobData.mockResolvedValueOnce(
+        buildJobData(booking.id),
+      );
+
+      await service.createBookingStatusChangedEvent(tx, booking, "CONFIRMED", "ACTIVE");
+
+      expect(notificationServiceMock.buildBookingStatusChangeJobData).toHaveBeenCalledWith({
+        booking,
+        oldStatus: "CONFIRMED",
+        newStatus: "ACTIVE",
+        showReviewRequest: false,
+      });
+      expect(tx.notificationInbox.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: "user-1",
+            type: "BOOKING_LIFECYCLE",
+            payload: expect.objectContaining({
+              bookingId: booking.id,
+              oldStatus: "CONFIRMED",
+              newStatus: "ACTIVE",
+            }),
+          }),
+        }),
+      );
+      expect(tx.notificationOutboxEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: "user-1",
+            eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
+            status: NotificationOutboxStatus.PENDING,
+            bookingId: booking.id,
+            dedupeKey: `booking-status:${booking.id}:CONFIRMED:ACTIVE:${booking.updatedAt.toISOString()}`,
+            payload: expect.objectContaining({
+              schemaVersion: 2,
+              eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
+              subtype: "BOOKING_STATUS_CHANGED",
+            }),
+          }),
+        }),
+      );
+      // Database-service writers must not be touched when a tx is supplied.
+      expect(databaseServiceMock.notificationInbox.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("skips both writes when buildBookingStatusChangeJobData returns null", async () => {
+      const tx = {
+        notificationInbox: { create: vi.fn() },
+        notificationOutboxEvent: { create: vi.fn() },
+        userPushToken: { findMany: vi.fn() },
+      } satisfies NotificationOutboxTransactionClient;
+      notificationServiceMock.buildBookingStatusChangeJobData.mockResolvedValueOnce(null);
+
+      await service.createBookingStatusChangedEvent(
+        tx,
+        buildBooking(),
+        "CONFIRMED",
+        "ACTIVE",
+        true,
+      );
+
+      expect(tx.notificationInbox.create).not.toHaveBeenCalled();
+      expect(tx.notificationOutboxEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("omits the inbox write when the booking has no userId", async () => {
+      const tx = {
+        notificationInbox: { create: vi.fn().mockResolvedValue(undefined) },
+        notificationOutboxEvent: { create: vi.fn().mockResolvedValue(undefined) },
+        userPushToken: { findMany: vi.fn() },
+      } satisfies NotificationOutboxTransactionClient;
+      const guestBooking = buildBooking({ userId: null, user: null });
+      notificationServiceMock.buildBookingStatusChangeJobData.mockResolvedValueOnce(
+        buildJobData(guestBooking.id),
+      );
+
+      await service.createBookingStatusChangedEvent(tx, guestBooking, "ACTIVE", "COMPLETED");
+
+      expect(tx.notificationInbox.create).not.toHaveBeenCalled();
+      expect(tx.notificationOutboxEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: null,
+            eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("createBookingReminderEventsForLeg", () => {
+    const buildLeg = (overrides: Parameters<typeof createBooking>[0] = {}) => {
+      const booking = createBooking({
+        id: "booking-reminder-1",
+        userId: "user-1",
+        chauffeurId: "chauffeur-1",
+        updatedAt: new Date("2026-05-09T10:00:00.000Z"),
+        user: createUser(),
+        chauffeur: createChauffeur(),
+        car: createCar({ owner: createOwner() }),
+        ...overrides,
+      });
+      const leg = createBookingLeg({
+        id: "leg-reminder-1",
+        bookingId: booking.id,
+        updatedAt: new Date("2026-05-09T10:00:00.000Z"),
+      });
+      // BookingLegWithRelations expects a populated `booking` field.
+      return Object.assign(leg, { booking });
+    };
+
+    it("writes inbox + outbox per recipient inside a single transaction", async () => {
+      const leg = buildLeg();
+      notificationServiceMock.buildBookingReminderJobData.mockResolvedValueOnce([
+        {
+          id: "reminder-client-1",
+          type: NotificationType.BOOKING_REMINDER_START,
+          channels: ["email", "push"],
+          bookingId: leg.booking.id,
+          recipients: { client: { email: "client@example.com", pushTokens: ["tok"] } },
+          templateData: { templateKind: "bookingReminder" },
+        },
+        {
+          id: "reminder-chauffeur-1",
+          type: NotificationType.BOOKING_REMINDER_START,
+          channels: ["email"],
+          bookingId: leg.booking.id,
+          recipients: { chauffeur: { email: "chauffeur@example.com" } },
+          templateData: { templateKind: "bookingReminder" },
+        },
+      ]);
+
+      const written = await service.createBookingReminderEventsForLeg(
+        leg,
+        NotificationType.BOOKING_REMINDER_START,
+      );
+
+      expect(written).toBe(2);
+      expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(2);
+      // Reminder context is forwarded so push delivery isn't silently dropped.
+      expect(notificationServiceMock.buildBookingReminderJobData).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: leg.booking.id }),
+        NotificationType.BOOKING_REMINDER_START,
+        { customerUserId: "user-1", chauffeurUserId: "chauffeur-1" },
+      );
+
+      const inboxCalls = databaseServiceMock.notificationInbox.create.mock.calls.map(
+        ([arg]) => arg.data,
+      );
+      expect(inboxCalls).toHaveLength(2);
+      expect(inboxCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: "user-1",
+            type: "BOOKING_REMINDER",
+            title: "Booking starts in 1 hour",
+            payload: expect.objectContaining({ recipientType: "client" }),
+          }),
+          expect.objectContaining({
+            userId: "chauffeur-1",
+            type: "BOOKING_REMINDER",
+            payload: expect.objectContaining({ recipientType: "chauffeur" }),
+          }),
+        ]),
+      );
+
+      const outboxCalls = databaseServiceMock.notificationOutboxEvent.create.mock.calls.map(
+        ([arg]) => arg.data,
+      );
+      expect(outboxCalls).toHaveLength(2);
+      for (const data of outboxCalls) {
+        expect(data).toMatchObject({
+          eventType: NotificationOutboxEventType.BOOKING_REMINDER,
+          status: NotificationOutboxStatus.PENDING,
+          bookingId: leg.booking.id,
+          payload: expect.objectContaining({
+            schemaVersion: 2,
+            subtype: "BOOKING_REMINDER_START",
+          }),
+        });
+      }
+      expect(outboxCalls.map((d) => d.dedupeKey)).toEqual(
+        expect.arrayContaining([
+          `booking-reminder:${leg.id}:client:${NotificationType.BOOKING_REMINDER_START}:${leg.updatedAt.toISOString()}`,
+          `booking-reminder:${leg.id}:chauffeur:${NotificationType.BOOKING_REMINDER_START}:${leg.updatedAt.toISOString()}`,
+        ]),
+      );
+    });
+
+    it("uses BOOKING_REMINDER_END subtype and chauffeur-only path when customer is missing", async () => {
+      const leg = buildLeg({ userId: null, user: null });
+      notificationServiceMock.buildBookingReminderJobData.mockResolvedValueOnce([
+        {
+          id: "reminder-chauffeur-2",
+          type: NotificationType.BOOKING_REMINDER_END,
+          channels: ["email", "push"],
+          bookingId: leg.booking.id,
+          recipients: { chauffeur: { email: "chauffeur@example.com", pushTokens: ["tok"] } },
+          templateData: { templateKind: "bookingReminder" },
+        },
+      ]);
+
+      const written = await service.createBookingReminderEventsForLeg(
+        leg,
+        NotificationType.BOOKING_REMINDER_END,
+      );
+
+      expect(written).toBe(1);
+      expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(1);
+      expect(notificationServiceMock.buildBookingReminderJobData).toHaveBeenCalledWith(
+        expect.anything(),
+        NotificationType.BOOKING_REMINDER_END,
+        { customerUserId: undefined, chauffeurUserId: "chauffeur-1" },
+      );
+      expect(databaseServiceMock.notificationInbox.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: "chauffeur-1",
+            title: "Booking ends in 1 hour",
+            body: "Your booking is ending soon.",
+          }),
+        }),
+      );
+      expect(databaseServiceMock.notificationOutboxEvent.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: "chauffeur-1",
+            payload: expect.objectContaining({ subtype: "BOOKING_REMINDER_END" }),
+          }),
+        }),
+      );
+    });
+
+    it("omits inbox write when no userId can be resolved for the recipient", async () => {
+      const leg = buildLeg();
+      // Recipient that doesn't map to customer/chauffeur (e.g. fleet owner) — defensive case.
+      notificationServiceMock.buildBookingReminderJobData.mockResolvedValueOnce([
+        {
+          id: "reminder-other-1",
+          type: NotificationType.BOOKING_REMINDER_START,
+          channels: ["email"],
+          bookingId: leg.booking.id,
+          recipients: { fleetOwner: { email: "owner@example.com" } },
+          templateData: { templateKind: "bookingReminder" },
+        },
+      ]);
+
+      const written = await service.createBookingReminderEventsForLeg(
+        leg,
+        NotificationType.BOOKING_REMINDER_START,
+      );
+
+      expect(written).toBe(1);
+      expect(databaseServiceMock.notificationInbox.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationOutboxEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: null }),
+        }),
+      );
+    });
   });
 });

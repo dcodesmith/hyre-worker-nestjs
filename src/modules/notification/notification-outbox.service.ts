@@ -6,10 +6,20 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { z } from "zod";
+import { normaliseBookingLegDetails } from "../../shared/helper";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
-import { HIGH_PRIORITY_JOB_OPTIONS } from "./notification.const";
-import { NotificationJobData } from "./notification.interface";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  HIGH_PRIORITY_JOB_OPTIONS,
+} from "./notification.const";
+import {
+  NotificationChannel,
+  NotificationJobData,
+  NotificationType,
+} from "./notification.interface";
 import { NotificationService } from "./notification.service";
 
 export type NotificationOutboxTransactionClient = {
@@ -18,10 +28,80 @@ export type NotificationOutboxTransactionClient = {
   userPushToken: Pick<Prisma.TransactionClient["userPushToken"], "findMany">;
 };
 
+type NotificationOutboxWriter = Pick<
+  NotificationOutboxTransactionClient,
+  "notificationInbox" | "notificationOutboxEvent"
+>;
+
+const OUTBOX_SCHEMA_VERSION = 2;
+const BOOKING_STATUS_CHANGED_SUBTYPE = "BOOKING_STATUS_CHANGED";
+const BOOKING_REMINDER_START_SUBTYPE = "BOOKING_REMINDER_START";
+const BOOKING_REMINDER_END_SUBTYPE = "BOOKING_REMINDER_END";
+const CHAUFFEUR_ASSIGNED_SUBTYPE = "CHAUFFEUR_ASSIGNED";
+const notificationTypeValues = Object.values(NotificationType) as [
+  NotificationType,
+  ...NotificationType[],
+];
+const notificationChannelValues = Object.values(NotificationChannel) as [
+  NotificationChannel,
+  ...NotificationChannel[],
+];
+
+const notificationJobDataSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(notificationTypeValues),
+  channels: z.array(z.enum(notificationChannelValues)),
+  bookingId: z.string().min(1),
+  pushPayload: z
+    .object({
+      title: z.string(),
+      body: z.string(),
+      data: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
+  recipients: z.record(
+    z.string(),
+    z.object({
+      email: z.string().optional(),
+      phoneNumber: z.string().optional(),
+      pushTokens: z.array(z.string()).optional(),
+    }),
+  ),
+  templateData: z.record(z.string(), z.unknown()),
+  priority: z.number().optional(),
+});
+
+const legacyOutboxPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  notificationJobData: notificationJobDataSchema,
+});
+
+const outboxPayloadSchema = z.discriminatedUnion("eventType", [
+  z.object({
+    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
+    eventType: z.literal(NotificationOutboxEventType.BOOKING_ASSIGNMENT),
+    subtype: z.literal(CHAUFFEUR_ASSIGNED_SUBTYPE),
+    notificationJobData: notificationJobDataSchema,
+  }),
+  z.object({
+    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
+    eventType: z.literal(NotificationOutboxEventType.BOOKING_LIFECYCLE),
+    subtype: z.literal(BOOKING_STATUS_CHANGED_SUBTYPE),
+    notificationJobData: notificationJobDataSchema,
+  }),
+  z.object({
+    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
+    eventType: z.literal(NotificationOutboxEventType.BOOKING_REMINDER),
+    subtype: z.enum([BOOKING_REMINDER_START_SUBTYPE, BOOKING_REMINDER_END_SUBTYPE]),
+    notificationJobData: notificationJobDataSchema,
+  }),
+]);
+
 @Injectable()
 export class NotificationOutboxService {
   private readonly maxAttempts = 8;
   private readonly processingStaleAfterMs = 2 * 60 * 1000;
+  private readonly processingBatchSize = 5;
   /**
    * Retain dispatched outbox-driven jobs in BullMQ for 24h so jobId-based
    * dedup keeps protecting us if a stale PROCESSING row is reclaimed and
@@ -71,7 +151,7 @@ export class NotificationOutboxService {
       await tx.notificationInbox.create({
         data: {
           userId: booking.userId,
-          type: NotificationInboxType.CHAUFFEUR_ASSIGNED,
+          type: NotificationInboxType.BOOKING_ASSIGNMENT,
           title: "Your chauffeur has been assigned",
           body: `Your chauffeur for ${booking.car.make} ${booking.car.model} (${booking.car.year}) has been assigned.`,
           payload: this.toPrismaInputJsonValue(inboxPayload),
@@ -83,19 +163,138 @@ export class NotificationOutboxService {
       return;
     }
 
-    await tx.notificationOutboxEvent.create({
-      data: {
+    await this.createPreparedNotificationEvent(
+      {
         userId: booking.userId ?? null,
-        eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
-        status: NotificationOutboxStatus.PENDING,
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+        subtype: CHAUFFEUR_ASSIGNED_SUBTYPE,
         dedupeKey,
         bookingId: booking.id,
-        payload: this.toPrismaInputJsonValue({
-          schemaVersion: 1,
-          notificationJobData,
-        }),
+        notificationJobData,
       },
+      tx,
+    );
+  }
+
+  async createBookingStatusChangedEvent(
+    tx: NotificationOutboxTransactionClient,
+    booking: BookingWithRelations,
+    oldStatus: string,
+    newStatus: string,
+    showReviewRequest = false,
+  ): Promise<void> {
+    const notificationJobData = await this.notificationService.buildBookingStatusChangeJobData({
+      booking,
+      oldStatus,
+      newStatus,
+      showReviewRequest,
     });
+    if (!notificationJobData) {
+      return;
+    }
+
+    if (booking.userId) {
+      await tx.notificationInbox.create({
+        data: {
+          userId: booking.userId,
+          type: NotificationInboxType.BOOKING_LIFECYCLE,
+          title: "Booking status updated",
+          body: `Your booking has moved from ${oldStatus.toLowerCase()} to ${newStatus.toLowerCase()}.`,
+          payload: this.toPrismaInputJsonValue({
+            bookingId: booking.id,
+            oldStatus,
+            newStatus,
+          }),
+        },
+      });
+    }
+
+    await this.createPreparedNotificationEvent(
+      {
+        userId: booking.userId ?? null,
+        eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
+        subtype: BOOKING_STATUS_CHANGED_SUBTYPE,
+        dedupeKey: `booking-status:${booking.id}:${oldStatus}:${newStatus}:${booking.updatedAt.toISOString()}`,
+        bookingId: booking.id,
+        notificationJobData,
+      },
+      tx,
+    );
+  }
+
+  async createBookingReminderEventsForLeg(
+    bookingLeg: Parameters<typeof normaliseBookingLegDetails>[0],
+    type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+  ): Promise<number> {
+    const reminderJobs = await this.notificationService.buildBookingReminderJobData(
+      normaliseBookingLegDetails(bookingLeg),
+      type,
+      {
+        customerUserId: bookingLeg.booking.userId ?? undefined,
+        chauffeurUserId: bookingLeg.booking.chauffeurId ?? undefined,
+      },
+    );
+    const eventType = NotificationOutboxEventType.BOOKING_REMINDER;
+    const subtype =
+      type === NotificationType.BOOKING_REMINDER_START
+        ? BOOKING_REMINDER_START_SUBTYPE
+        : BOOKING_REMINDER_END_SUBTYPE;
+    const inboxTitle =
+      type === NotificationType.BOOKING_REMINDER_START
+        ? "Booking starts in 1 hour"
+        : "Booking ends in 1 hour";
+    const inboxBody =
+      type === NotificationType.BOOKING_REMINDER_START
+        ? "Your booking is starting soon."
+        : "Your booking is ending soon.";
+
+    let writtenCount = 0;
+    // Run per-recipient writes sequentially so each recipient's inbox + outbox
+    // commit atomically. Reminder fan-out is at most customer + chauffeur, so
+    // serialising is a non-issue and avoids parallel transactions on the pool.
+    for (const notificationJobData of reminderJobs) {
+      const recipientType = Object.keys(notificationJobData.recipients)[0];
+      let userId: string | null = null;
+      if (recipientType === CLIENT_RECIPIENT_TYPE) {
+        userId = bookingLeg.booking.userId;
+      } else if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
+        userId = bookingLeg.booking.chauffeurId;
+      }
+
+      await this.databaseService.$transaction(async (tx) => {
+        if (userId) {
+          await tx.notificationInbox.create({
+            data: {
+              userId,
+              type: NotificationInboxType.BOOKING_REMINDER,
+              title: inboxTitle,
+              body: inboxBody,
+              payload: this.toPrismaInputJsonValue({
+                bookingId: bookingLeg.booking.id,
+                bookingLegId: bookingLeg.id,
+                type,
+                recipientType,
+              }),
+            },
+          });
+        }
+
+        await this.createPreparedNotificationEvent(
+          {
+            userId: userId ?? null,
+            eventType,
+            subtype,
+            dedupeKey: `booking-reminder:${bookingLeg.id}:${recipientType}:${type}:${bookingLeg.updatedAt.toISOString()}`,
+            bookingId: bookingLeg.booking.id,
+            notificationJobData,
+          },
+          tx,
+        );
+      });
+      writtenCount += 1;
+    }
+
+    return writtenCount;
   }
 
   async processPendingEvents(limit = 25): Promise<number> {
@@ -103,7 +302,14 @@ export class NotificationOutboxService {
     const staleProcessingCutoff = new Date(now.getTime() - this.processingStaleAfterMs);
     const candidates = await this.databaseService.notificationOutboxEvent.findMany({
       where: {
-        eventType: NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+        eventType: {
+          in: [
+            NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+            NotificationOutboxEventType.BOOKING_LIFECYCLE,
+            NotificationOutboxEventType.BOOKING_REMINDER,
+            NotificationOutboxEventType.CHAUFFEUR_ASSIGNED,
+          ],
+        },
         OR: [
           {
             status: { in: [NotificationOutboxStatus.PENDING, NotificationOutboxStatus.FAILED] },
@@ -120,95 +326,11 @@ export class NotificationOutboxService {
     });
 
     let processedCount = 0;
-    for (const event of candidates) {
-      const isStaleReclaim = event.status === NotificationOutboxStatus.PROCESSING;
-      const claimed = isStaleReclaim
-        ? await this.databaseService.notificationOutboxEvent.updateMany({
-            where: {
-              id: event.id,
-              status: NotificationOutboxStatus.PROCESSING,
-              updatedAt: { lte: staleProcessingCutoff },
-            },
-            data: {
-              status: NotificationOutboxStatus.PROCESSING,
-            },
-          })
-        : await this.databaseService.notificationOutboxEvent.updateMany({
-            where: {
-              id: event.id,
-              status: { in: [NotificationOutboxStatus.PENDING, NotificationOutboxStatus.FAILED] },
-              nextAttemptAt: { lte: now },
-            },
-            data: {
-              status: NotificationOutboxStatus.PROCESSING,
-              attempts: { increment: 1 },
-            },
-          });
-      if (claimed.count === 0) {
-        continue;
-      }
-
-      const currentAttempt = isStaleReclaim ? event.attempts : event.attempts + 1;
-      try {
-        const notificationJobData = this.parseNotificationJobData(event.payload);
-        if (!notificationJobData) {
-          await this.databaseService.notificationOutboxEvent.update({
-            where: { id: event.id },
-            data: {
-              status: NotificationOutboxStatus.DEAD_LETTER,
-              lastError: "Invalid notification outbox payload",
-              processedAt: new Date(),
-            },
-          });
-          processedCount += 1;
-          continue;
-        }
-
-        await this.notificationService.enqueuePreparedNotification(notificationJobData, {
-          ...HIGH_PRIORITY_JOB_OPTIONS,
-          jobId: `notification-outbox-${event.id}`,
-          // Long retention so jobId-dedup keeps protecting us if a stale
-          // PROCESSING outbox row is reclaimed and re-enqueued.
-          removeOnComplete: { age: this.dispatchedJobRetentionSeconds },
-          removeOnFail: { age: this.dispatchedJobRetentionSeconds },
-        });
-
-        await this.databaseService.notificationOutboxEvent.update({
-          where: { id: event.id },
-          data: {
-            status: NotificationOutboxStatus.DISPATCHED,
-            processedAt: new Date(),
-            lastError: null,
-          },
-        });
-        processedCount += 1;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const nextAttemptAt = this.computeNextAttemptAt(currentAttempt);
-
-        await this.databaseService.notificationOutboxEvent.update({
-          where: { id: event.id },
-          data: {
-            status: this.resolveFailureStatus(currentAttempt),
-            nextAttemptAt,
-            lastError: errorMessage.slice(0, 500),
-            processedAt:
-              this.resolveFailureStatus(currentAttempt) === NotificationOutboxStatus.DEAD_LETTER
-                ? new Date()
-                : null,
-          },
-        });
-
-        this.logger.error(
-          {
-            outboxEventId: event.id,
-            bookingId: event.bookingId,
-            attempt: currentAttempt,
-            error: errorMessage,
-          },
-          "Failed processing notification outbox event",
-        );
-      }
+    for (const batch of this.chunkArray(candidates, this.processingBatchSize)) {
+      const batchResults = await Promise.all(
+        batch.map((event) => this.processEvent(event, staleProcessingCutoff, now)),
+      );
+      processedCount += batchResults.reduce((sum, count) => sum + count, 0);
     }
 
     return processedCount;
@@ -225,41 +347,182 @@ export class NotificationOutboxService {
       : NotificationOutboxStatus.FAILED;
   }
 
+  private async processEvent(
+    event: {
+      id: string;
+      bookingId: string;
+      status: NotificationOutboxStatus;
+      attempts: number;
+      payload: Prisma.JsonValue | null;
+      updatedAt: Date;
+    },
+    staleProcessingCutoff: Date,
+    now: Date,
+  ): Promise<number> {
+    const isStaleReclaim = event.status === NotificationOutboxStatus.PROCESSING;
+    const claimed = isStaleReclaim
+      ? await this.databaseService.notificationOutboxEvent.updateMany({
+          where: {
+            id: event.id,
+            status: NotificationOutboxStatus.PROCESSING,
+            updatedAt: { lte: staleProcessingCutoff },
+          },
+          data: {
+            status: NotificationOutboxStatus.PROCESSING,
+          },
+        })
+      : await this.databaseService.notificationOutboxEvent.updateMany({
+          where: {
+            id: event.id,
+            status: { in: [NotificationOutboxStatus.PENDING, NotificationOutboxStatus.FAILED] },
+            nextAttemptAt: { lte: now },
+          },
+          data: {
+            status: NotificationOutboxStatus.PROCESSING,
+            attempts: { increment: 1 },
+          },
+        });
+    if (claimed.count === 0) {
+      return 0;
+    }
+
+    const currentAttempt = isStaleReclaim ? event.attempts : event.attempts + 1;
+    try {
+      const notificationJobData = this.parseNotificationJobData(event.payload);
+      if (!notificationJobData) {
+        await this.databaseService.notificationOutboxEvent.update({
+          where: { id: event.id },
+          data: {
+            status: NotificationOutboxStatus.DEAD_LETTER,
+            lastError: "Invalid notification outbox payload",
+            processedAt: new Date(),
+          },
+        });
+        return 1;
+      }
+
+      await this.notificationService.enqueuePreparedNotification(notificationJobData, {
+        ...HIGH_PRIORITY_JOB_OPTIONS,
+        jobId: `notification-outbox-${event.id}`,
+        // Long retention so jobId-dedup keeps protecting us if a stale
+        // PROCESSING outbox row is reclaimed and re-enqueued.
+        removeOnComplete: { age: this.dispatchedJobRetentionSeconds },
+        removeOnFail: { age: this.dispatchedJobRetentionSeconds },
+      });
+
+      await this.databaseService.notificationOutboxEvent.update({
+        where: { id: event.id },
+        data: {
+          status: NotificationOutboxStatus.DISPATCHED,
+          processedAt: new Date(),
+          lastError: null,
+        },
+      });
+      return 1;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const nextAttemptAt = this.computeNextAttemptAt(currentAttempt);
+
+      await this.databaseService.notificationOutboxEvent.update({
+        where: { id: event.id },
+        data: {
+          status: this.resolveFailureStatus(currentAttempt),
+          nextAttemptAt,
+          lastError: errorMessage.slice(0, 500),
+          processedAt:
+            this.resolveFailureStatus(currentAttempt) === NotificationOutboxStatus.DEAD_LETTER
+              ? new Date()
+              : null,
+        },
+      });
+
+      this.logger.error(
+        {
+          outboxEventId: event.id,
+          bookingId: event.bookingId,
+          attempt: currentAttempt,
+          error: errorMessage,
+        },
+        "Failed processing notification outbox event",
+      );
+      return 0;
+    }
+  }
+
   private parseNotificationJobData(payload: Prisma.JsonValue | null): NotificationJobData | null {
     if (!this.isPlainObject(payload)) {
       return null;
     }
-
-    if (payload.schemaVersion !== 1) {
-      return null;
-    }
-    if (!this.isNotificationJobData(payload.notificationJobData)) {
-      return null;
+    const parsedV2 = outboxPayloadSchema.safeParse(payload);
+    if (parsedV2.success) {
+      return parsedV2.data.notificationJobData as unknown as NotificationJobData;
     }
 
-    return payload.notificationJobData;
+    const parsedV1 = legacyOutboxPayloadSchema.safeParse(payload);
+    if (parsedV1.success) {
+      return parsedV1.data.notificationJobData as unknown as NotificationJobData;
+    }
+
+    return null;
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-  private isNotificationJobData(value: unknown): value is NotificationJobData {
-    if (!this.isPlainObject(value)) {
-      return false;
+  private async createPreparedNotificationEvent(
+    input: {
+      userId: string | null;
+      eventType: NotificationOutboxEventType;
+      subtype:
+        | typeof CHAUFFEUR_ASSIGNED_SUBTYPE
+        | typeof BOOKING_STATUS_CHANGED_SUBTYPE
+        | typeof BOOKING_REMINDER_START_SUBTYPE
+        | typeof BOOKING_REMINDER_END_SUBTYPE;
+      dedupeKey: string;
+      bookingId: string;
+      notificationJobData: NotificationJobData;
+    },
+    tx?: NotificationOutboxTransactionClient,
+  ): Promise<void> {
+    const writer = this.getOutboxWriter(tx);
+    await writer.notificationOutboxEvent.create({
+      data: {
+        userId: input.userId,
+        eventType: input.eventType,
+        status: NotificationOutboxStatus.PENDING,
+        dedupeKey: input.dedupeKey,
+        bookingId: input.bookingId,
+        payload: this.toPrismaInputJsonValue({
+          schemaVersion: OUTBOX_SCHEMA_VERSION,
+          eventType: input.eventType,
+          subtype: input.subtype,
+          notificationJobData: input.notificationJobData,
+        }),
+      },
+    });
+  }
+
+  private getOutboxWriter(tx?: NotificationOutboxTransactionClient): NotificationOutboxWriter {
+    if (tx) {
+      return tx;
+    }
+    return this.databaseService;
+  }
+
+  private chunkArray<T>(items: T[], size: number): T[][] {
+    if (items.length === 0) {
+      return [];
     }
 
-    return (
-      typeof value.id === "string" &&
-      typeof value.type === "string" &&
-      typeof value.bookingId === "string" &&
-      Array.isArray(value.channels) &&
-      this.isPlainObject(value.recipients) &&
-      this.isPlainObject(value.templateData)
-    );
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
   }
 
   private toPrismaInputJsonValue(value: unknown): Prisma.InputJsonValue {
-    return JSON.parse(JSON.stringify(value));
+    return structuredClone(value) as Prisma.InputJsonValue;
   }
 }

@@ -12,6 +12,7 @@ import { NotificationOutboxService } from "./notification-outbox.service";
 import { PushService } from "./push.service";
 import { PushTokenController } from "./push-token.controller";
 import { PushTokenService } from "./push-token.service";
+import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import { WhatsAppService } from "./whatsapp.service";
 
 @Module({
@@ -44,6 +45,7 @@ import { WhatsAppService } from "./whatsapp.service";
     WhatsAppService,
     PushService,
     PushTokenService,
+    RecipientChannelResolverService,
   ],
   exports: [
     NotificationService,

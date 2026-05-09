@@ -97,6 +97,32 @@ export class PushTokenService {
     return records.map((record) => record.token);
   }
 
+  async getActiveTokensForUsers(userIds: string[]): Promise<Record<string, string[]>> {
+    const uniqueUserIds = [...new Set(userIds.filter((userId) => userId.trim().length > 0))];
+    if (uniqueUserIds.length === 0) {
+      return {};
+    }
+
+    const records = await this.databaseService.userPushToken.findMany({
+      where: {
+        userId: { in: uniqueUserIds },
+        revokedAt: null,
+      },
+      select: {
+        userId: true,
+        token: true,
+      },
+    });
+
+    return records.reduce<Record<string, string[]>>((acc, record) => {
+      if (!acc[record.userId]) {
+        acc[record.userId] = [];
+      }
+      acc[record.userId].push(record.token);
+      return acc;
+    }, {});
+  }
+
   private toPushPlatform(platform: "ios" | "android"): PushPlatform {
     return platform === "ios" ? PushPlatform.IOS : PushPlatform.ANDROID;
   }
