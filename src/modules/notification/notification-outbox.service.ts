@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { NotificationOutboxStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import pLimit from "p-limit";
 import { DatabaseService } from "../database/database.service";
 import type { HandlerEvent, OutboxEventHandler } from "./handlers/outbox-event-handler.interface";
 import { HIGH_PRIORITY_JOB_OPTIONS } from "./notification.const";
@@ -30,7 +31,13 @@ export type NotificationOutboxTransactionClient = {
 export class NotificationOutboxService {
   private readonly maxAttempts = 8;
   private readonly processingStaleAfterMs = 2 * 60 * 1000;
-  private readonly processingBatchSize = 5;
+  /**
+   * Cap on concurrent in-flight `processEvent` calls per `processPendingEvents`
+   * tick. Each event does 2–3 DB writes, so capping at 5 keeps peak connection
+   * usage well below typical pool size while still draining bursts faster than
+   * sequential processing.
+   */
+  private readonly processingConcurrency = 5;
   /**
    * Retain dispatched outbox-driven jobs in BullMQ for 24h so jobId-based
    * dedup keeps protecting us if a stale PROCESSING row is reclaimed and
@@ -105,15 +112,13 @@ export class NotificationOutboxService {
       take: limit,
     });
 
-    let processedCount = 0;
-    for (const batch of this.chunkArray(candidates, this.processingBatchSize)) {
-      const batchResults = await Promise.all(
-        batch.map((event) => this.processEvent(event, staleProcessingCutoff, now)),
-      );
-      processedCount += batchResults.reduce((sum, count) => sum + count, 0);
-    }
-
-    return processedCount;
+    const concurrencyLimit = pLimit(this.processingConcurrency);
+    const results = await Promise.all(
+      candidates.map((event) =>
+        concurrencyLimit(() => this.processEvent(event, staleProcessingCutoff, now)),
+      ),
+    );
+    return results.reduce((sum, count) => sum + count, 0);
   }
 
   private async writeEvent<TInput>(
@@ -277,18 +282,6 @@ export class NotificationOutboxService {
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-  }
-
-  private chunkArray<T>(items: T[], size: number): T[][] {
-    if (items.length === 0) {
-      return [];
-    }
-
-    const chunks: T[][] = [];
-    for (let index = 0; index < items.length; index += size) {
-      chunks.push(items.slice(index, index + size));
-    }
-    return chunks;
   }
 
   private toPrismaInputJsonValue(value: unknown): Prisma.InputJsonValue {

@@ -237,8 +237,8 @@ export class NotificationService {
       );
       this.recordNotificationSkippedNoChannel({
         bookingId: bookingDetails.id,
-        oldStatus: booking.status,
-        newStatus: "CANCELLED",
+        event: NotificationType.BOOKING_CANCELLED,
+        reason: "no_channel",
       });
     }
 
@@ -436,25 +436,30 @@ export class NotificationService {
       : "Booking Reminder - Your assigned booking for today ends in approximately 1 hour";
   }
 
+  /**
+   * Record an event-shaped "delivery skipped — no channel available" signal
+   * for the recipient(s) of `event` on `bookingId`. Event-shaped (not status-
+   * shaped) so non-status flows like CHAUFFEUR_ASSIGNED, BOOKING_REMINDER_*,
+   * and BOOKING_CANCELLED don't have to fabricate {oldStatus, newStatus} pairs
+   * (Issue 8A).
+   */
   private recordNotificationSkippedNoChannel(input: {
     bookingId: string;
-    oldStatus: string;
-    newStatus: string;
+    event: NotificationType;
+    reason: "no_channel";
   }): void {
     this.logger.debug(
       {
         bookingId: input.bookingId,
-        oldStatus: input.oldStatus,
-        newStatus: input.newStatus,
-        reason: "no_channel",
+        event: input.event,
+        reason: input.reason,
       },
       "Incrementing notification_skipped_no_channel counter",
     );
 
     this.notificationSkippedNoChannelCounter.add(1, {
-      oldStatus: input.oldStatus,
-      newStatus: input.newStatus,
-      reason: "no_channel",
+      event: input.event,
+      reason: input.reason,
     });
   }
 }
