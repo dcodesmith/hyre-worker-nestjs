@@ -15,11 +15,8 @@ import {
   CLIENT_RECIPIENT_TYPE,
   HIGH_PRIORITY_JOB_OPTIONS,
 } from "./notification.const";
-import {
-  NotificationChannel,
-  NotificationJobData,
-  NotificationType,
-} from "./notification.interface";
+import { NotificationJobData, NotificationType } from "./notification.interface";
+import { notificationJobDataSchema } from "./notification.schema";
 import { NotificationService } from "./notification.service";
 
 export type NotificationOutboxTransactionClient = {
@@ -33,64 +30,28 @@ type NotificationOutboxWriter = Pick<
   "notificationInbox" | "notificationOutboxEvent"
 >;
 
-const OUTBOX_SCHEMA_VERSION = 2;
 const BOOKING_STATUS_CHANGED_SUBTYPE = "BOOKING_STATUS_CHANGED";
 const BOOKING_REMINDER_START_SUBTYPE = "BOOKING_REMINDER_START";
 const BOOKING_REMINDER_END_SUBTYPE = "BOOKING_REMINDER_END";
 const CHAUFFEUR_ASSIGNED_SUBTYPE = "CHAUFFEUR_ASSIGNED";
-const notificationTypeValues = Object.values(NotificationType) as [
-  NotificationType,
-  ...NotificationType[],
-];
-const notificationChannelValues = Object.values(NotificationChannel) as [
-  NotificationChannel,
-  ...NotificationChannel[],
-];
 
-const notificationJobDataSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(notificationTypeValues),
-  channels: z.array(z.enum(notificationChannelValues)),
-  bookingId: z.string().min(1),
-  pushPayload: z
-    .object({
-      title: z.string(),
-      body: z.string(),
-      data: z.record(z.string(), z.string()).optional(),
-    })
-    .optional(),
-  recipients: z.record(
-    z.string(),
-    z.object({
-      email: z.string().optional(),
-      phoneNumber: z.string().optional(),
-      pushTokens: z.array(z.string()).optional(),
-    }),
-  ),
-  templateData: z.record(z.string(), z.unknown()),
-  priority: z.number().optional(),
-});
-
-const legacyOutboxPayloadSchema = z.object({
-  schemaVersion: z.literal(1),
-  notificationJobData: notificationJobDataSchema,
-});
-
+/**
+ * Structural validator for outbox payloads. The (eventType, subtype) pair is
+ * the discriminator — adding a versioning envelope is deferred until we
+ * actually need to evolve through a backwards-incompatible change.
+ */
 const outboxPayloadSchema = z.discriminatedUnion("eventType", [
   z.object({
-    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
     eventType: z.literal(NotificationOutboxEventType.BOOKING_ASSIGNMENT),
     subtype: z.literal(CHAUFFEUR_ASSIGNED_SUBTYPE),
     notificationJobData: notificationJobDataSchema,
   }),
   z.object({
-    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
     eventType: z.literal(NotificationOutboxEventType.BOOKING_LIFECYCLE),
     subtype: z.literal(BOOKING_STATUS_CHANGED_SUBTYPE),
     notificationJobData: notificationJobDataSchema,
   }),
   z.object({
-    schemaVersion: z.literal(OUTBOX_SCHEMA_VERSION),
     eventType: z.literal(NotificationOutboxEventType.BOOKING_REMINDER),
     subtype: z.enum([BOOKING_REMINDER_START_SUBTYPE, BOOKING_REMINDER_END_SUBTYPE]),
     notificationJobData: notificationJobDataSchema,
@@ -453,17 +414,11 @@ export class NotificationOutboxService {
     if (!this.isPlainObject(payload)) {
       return null;
     }
-    const parsedV2 = outboxPayloadSchema.safeParse(payload);
-    if (parsedV2.success) {
-      return parsedV2.data.notificationJobData as unknown as NotificationJobData;
+    const parsed = outboxPayloadSchema.safeParse(payload);
+    if (!parsed.success) {
+      return null;
     }
-
-    const parsedV1 = legacyOutboxPayloadSchema.safeParse(payload);
-    if (parsedV1.success) {
-      return parsedV1.data.notificationJobData as unknown as NotificationJobData;
-    }
-
-    return null;
+    return parsed.data.notificationJobData as unknown as NotificationJobData;
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -494,7 +449,6 @@ export class NotificationOutboxService {
         dedupeKey: input.dedupeKey,
         bookingId: input.bookingId,
         payload: this.toPrismaInputJsonValue({
-          schemaVersion: OUTBOX_SCHEMA_VERSION,
           eventType: input.eventType,
           subtype: input.subtype,
           notificationJobData: input.notificationJobData,

@@ -140,7 +140,6 @@ describe("NotificationOutboxService", () => {
           bookingId: "booking-1",
           status: NotificationOutboxStatus.PENDING,
           payload: expect.objectContaining({
-            schemaVersion: 2,
             subtype: "CHAUFFEUR_ASSIGNED",
           }),
         }),
@@ -158,7 +157,8 @@ describe("NotificationOutboxService", () => {
         attempts: 0,
         nextAttemptAt: new Date(Date.now() - 1000),
         payload: {
-          schemaVersion: 1,
+          eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+          subtype: "CHAUFFEUR_ASSIGNED",
           notificationJobData: {
             id: "chauffeur-assigned-booking-1-1",
             type: "chauffeur-assigned",
@@ -227,7 +227,8 @@ describe("NotificationOutboxService", () => {
         nextAttemptAt: new Date(Date.now() - 1000),
         updatedAt: new Date(Date.now() - 5 * 60 * 1000),
         payload: {
-          schemaVersion: 1,
+          eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+          subtype: "CHAUFFEUR_ASSIGNED",
           notificationJobData: {
             id: "chauffeur-assigned-booking-2-1",
             type: "chauffeur-assigned",
@@ -294,7 +295,8 @@ describe("NotificationOutboxService", () => {
         attempts: 0,
         nextAttemptAt: new Date(Date.now() - 1000),
         payload: {
-          schemaVersion: 1,
+          eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+          subtype: "CHAUFFEUR_ASSIGNED",
           notificationJobData: {
             id: "chauffeur-assigned-booking-3-1",
             type: "chauffeur-assigned",
@@ -354,7 +356,7 @@ describe("NotificationOutboxService", () => {
         status: NotificationOutboxStatus.PENDING,
         attempts: 0,
         nextAttemptAt: new Date(Date.now() - 1000),
-        payload: { schemaVersion: 1 },
+        payload: {},
       },
     ]);
     databaseServiceMock.notificationOutboxEvent.updateMany.mockResolvedValueOnce({ count: 1 });
@@ -437,7 +439,6 @@ describe("NotificationOutboxService", () => {
             bookingId: booking.id,
             dedupeKey: `booking-status:${booking.id}:CONFIRMED:ACTIVE:${booking.updatedAt.toISOString()}`,
             payload: expect.objectContaining({
-              schemaVersion: 2,
               eventType: NotificationOutboxEventType.BOOKING_LIFECYCLE,
               subtype: "BOOKING_STATUS_CHANGED",
             }),
@@ -580,7 +581,6 @@ describe("NotificationOutboxService", () => {
           status: NotificationOutboxStatus.PENDING,
           bookingId: leg.booking.id,
           payload: expect.objectContaining({
-            schemaVersion: 2,
             subtype: "BOOKING_REMINDER_START",
           }),
         });
