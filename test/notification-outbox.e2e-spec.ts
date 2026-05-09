@@ -1,0 +1,140 @@
+import { getQueueToken } from "@nestjs/bullmq";
+import type { INestApplication } from "@nestjs/common";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { NotificationOutboxEventType, NotificationOutboxStatus, type Prisma } from "@prisma/client";
+import type { Queue } from "bullmq";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { AppModule } from "../src/app.module";
+import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
+import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { DatabaseService } from "../src/modules/database/database.service";
+import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
+import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
+import { TestDataFactory, uniqueEmail } from "./helpers";
+
+/**
+ * Outbox round-trip e2e (Issue 9A). Exercises the boundary that every unit
+ * spec stops short of: domain-tx -> outbox row -> dispatcher claim -> BullMQ
+ * enqueue -> DISPATCHED finalisation. If Prisma transaction semantics, the
+ * BullMQ jobId-dedup contract, or the optimistic-claim filter ever break
+ * subtly, this test fails — the unit specs would not.
+ */
+describe("Notification outbox round-trip (e2e)", () => {
+  let app: INestApplication;
+  let databaseService: DatabaseService;
+  let outboxService: NotificationOutboxService;
+  let statusChangedHandler: BookingStatusChangedHandler;
+  let notificationsQueue: Queue;
+  let factory: TestDataFactory;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(AuthEmailService)
+      .useValue({ sendOTPEmail: vi.fn().mockResolvedValue(undefined) })
+      .compile();
+
+    app = moduleFixture.createNestApplication({ logger: false });
+
+    databaseService = app.get(DatabaseService);
+    outboxService = app.get(NotificationOutboxService);
+    statusChangedHandler = app.get(BookingStatusChangedHandler);
+    notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
+    factory = new TestDataFactory(databaseService, app);
+
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await notificationsQueue.obliterate({ force: true }).catch(() => {});
+    await app.close();
+  });
+
+  it("writes inbox + outbox in the domain tx, then drains via processPendingEvents to DISPATCHED + a BullMQ job", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("outbox-customer"),
+      name: "Outbox Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+
+    // Refetch with all relations the handler/normaliser need.
+    const bookingWithRelations = await databaseService.booking.findUniqueOrThrow({
+      where: { id: booking.id },
+      include: {
+        user: true,
+        chauffeur: true,
+        car: { include: { owner: true } },
+      },
+    });
+
+    // Step 1 — domain transaction commits the booking change AND the outbox
+    // event atomically. This is the contract callers must follow.
+    let writtenCount = 0;
+    await databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: { status: "ACTIVE" },
+      });
+      writtenCount = await outboxService.create(
+        statusChangedHandler,
+        {
+          booking: bookingWithRelations,
+          oldStatus: "CONFIRMED",
+          newStatus: "ACTIVE",
+        },
+        tx,
+      );
+    });
+    expect(writtenCount).toBe(1);
+
+    // Step 2 — both rows landed in the same tx as the booking flip.
+    const pendingOutboxRows = await databaseService.notificationOutboxEvent.findMany({
+      where: { bookingId: booking.id },
+    });
+    expect(pendingOutboxRows).toHaveLength(1);
+    const outboxRow = pendingOutboxRows[0];
+    expect(outboxRow.eventType).toBe(NotificationOutboxEventType.BOOKING_LIFECYCLE);
+    expect(outboxRow.status).toBe(NotificationOutboxStatus.PENDING);
+    expect(outboxRow.userId).toBe(customer.id);
+    expect(outboxRow.dedupeKey).toMatch(/^booking-status:.+:CONFIRMED:ACTIVE:.+$/);
+
+    const inboxRows = await databaseService.notificationInbox.findMany({
+      where: { userId: customer.id, type: "BOOKING_LIFECYCLE" },
+    });
+    expect(inboxRows).toHaveLength(1);
+    expect(inboxRows[0].title).toBe("Booking status updated");
+
+    // Step 3 — the dispatcher loop runs. We invoke directly instead of waiting
+    // for the cron so the test stays deterministic.
+    const processedCount = await outboxService.processPendingEvents();
+    expect(processedCount).toBe(1);
+
+    // Step 4 — the row finalised to DISPATCHED with processedAt set, no error.
+    const finalRow = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
+      where: { id: outboxRow.id },
+    });
+    expect(finalRow.status).toBe(NotificationOutboxStatus.DISPATCHED);
+    expect(finalRow.processedAt).not.toBeNull();
+    expect(finalRow.lastError).toBeNull();
+
+    // Step 5 — BullMQ has a job with the deterministic jobId-dedup token.
+    const job = await notificationsQueue.getJob(`notification-outbox-${outboxRow.id}`);
+    expect(job).toBeDefined();
+    expect(job?.data).toMatchObject({
+      bookingId: booking.id,
+      type: "booking-status-change",
+    });
+
+    // Step 6 — re-running the dispatcher is a no-op. DISPATCHED rows are not
+    // re-claimed; this guards against accidental double-delivery if a future
+    // refactor changes the candidate filter.
+    const reprocessed = await outboxService.processPendingEvents();
+    expect(reprocessed).toBe(0);
+  });
+});

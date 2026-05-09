@@ -10,6 +10,41 @@ import {
   type NotificationOutboxTransactionClient,
 } from "./notification-outbox.service";
 
+// Shared by both `processPendingEvents` and `concurrent claim contention` —
+// the latter needs a parseable v2 outbox payload to walk the success path.
+const buildJobPayload = (bookingId: string) => ({
+  eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+  subtype: "CHAUFFEUR_ASSIGNED",
+  notificationJobData: {
+    id: `chauffeur-assigned-${bookingId}-1`,
+    type: "chauffeur-assigned",
+    channels: ["email"],
+    bookingId,
+    recipients: { client: { email: "john@example.com" } },
+    templateData: {
+      templateKind: "bookingStatusChange",
+      id: bookingId,
+      bookingReference: "REF",
+      customerName: "John Doe",
+      ownerName: "Owner Name",
+      chauffeurName: "Chauffeur Name",
+      chauffeurPhoneNumber: "1234567890",
+      carName: "Car Name",
+      pickupLocation: "Pickup",
+      returnLocation: "Return",
+      startDate: "2024-01-01",
+      endDate: "2024-01-02",
+      totalAmount: "10000",
+      title: "been assigned a chauffeur",
+      status: "chauffeur assigned",
+      cancellationReason: "",
+      oldStatus: "confirmed",
+      newStatus: "chauffeur_assigned",
+      subject: "Your chauffeur has been assigned",
+    },
+  },
+});
+
 describe("NotificationOutboxService", () => {
   let service: NotificationOutboxService;
 
@@ -197,39 +232,6 @@ describe("NotificationOutboxService", () => {
   });
 
   describe("processPendingEvents()", () => {
-    const buildJobPayload = (bookingId: string) => ({
-      eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
-      subtype: "CHAUFFEUR_ASSIGNED",
-      notificationJobData: {
-        id: `chauffeur-assigned-${bookingId}-1`,
-        type: "chauffeur-assigned",
-        channels: ["email"],
-        bookingId,
-        recipients: { client: { email: "john@example.com" } },
-        templateData: {
-          templateKind: "bookingStatusChange",
-          id: bookingId,
-          bookingReference: "REF",
-          customerName: "John Doe",
-          ownerName: "Owner Name",
-          chauffeurName: "Chauffeur Name",
-          chauffeurPhoneNumber: "1234567890",
-          carName: "Car Name",
-          pickupLocation: "Pickup",
-          returnLocation: "Return",
-          startDate: "2024-01-01",
-          endDate: "2024-01-02",
-          totalAmount: "10000",
-          title: "been assigned a chauffeur",
-          status: "chauffeur assigned",
-          cancellationReason: "",
-          oldStatus: "confirmed",
-          newStatus: "chauffeur_assigned",
-          subject: "Your chauffeur has been assigned",
-        },
-      },
-    });
-
     it("dispatches a pending event and marks it dispatched", async () => {
       databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
         {
@@ -364,6 +366,161 @@ describe("NotificationOutboxService", () => {
         expect.objectContaining({
           // The findMany where-clause must NOT contain an eventType filter.
           where: expect.not.objectContaining({ eventType: expect.anything() }),
+        }),
+      );
+    });
+  });
+
+  // Backoff schedule + DEAD_LETTER cutoff (Issue 10A). Pins the retry contract
+  // so a typo in the exponent, the cap, or the maxAttempts threshold fails
+  // visibly instead of silently changing user-visible delivery latency.
+  describe("backoff schedule on enqueue failure", () => {
+    const expectedBackoffSeconds: ReadonlyArray<readonly [attempt: number, seconds: number]> = [
+      [1, 10],
+      [2, 20],
+      [3, 40],
+      [4, 80],
+      [5, 160],
+      [6, 320],
+      [7, 640],
+      [8, 900], // 10 * 2^7 = 1280, capped at 15 * 60 = 900.
+    ];
+
+    const buildPendingEvent = (attempts: number) => ({
+      id: `evt-attempt-${attempts}`,
+      bookingId: `booking-attempt-${attempts}`,
+      eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+      status: NotificationOutboxStatus.PENDING,
+      attempts,
+      nextAttemptAt: new Date(Date.now() - 1000),
+      payload: {
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+        subtype: "CHAUFFEUR_ASSIGNED",
+        notificationJobData: {
+          id: `job-${attempts}`,
+          type: "chauffeur-assigned",
+          channels: ["email"],
+          bookingId: `booking-attempt-${attempts}`,
+          recipients: { client: { email: "x@example.com" } },
+          templateData: {},
+        },
+      },
+    });
+
+    it.each(expectedBackoffSeconds)(
+      "schedules attempt %i's next retry exactly %i seconds out",
+      async (currentAttempt, expectedSeconds) => {
+        const fixedNow = new Date("2026-05-09T20:00:00.000Z");
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // event.attempts is the count BEFORE this run. After the claim
+        // increments by 1, currentAttempt is event.attempts + 1.
+        databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
+          buildPendingEvent(currentAttempt - 1),
+        ]);
+        databaseServiceMock.notificationOutboxEvent.updateMany.mockResolvedValueOnce({ count: 1 });
+        notificationServiceMock.enqueuePreparedNotification.mockRejectedValueOnce(
+          new Error("BullMQ down"),
+        );
+
+        await service.processPendingEvents();
+
+        const updateCall = vi
+          .mocked(databaseServiceMock.notificationOutboxEvent.update)
+          .mock.calls.at(-1);
+        expect(updateCall).toBeDefined();
+        const data = updateCall?.[0].data as { nextAttemptAt: Date };
+        expect(data.nextAttemptAt.getTime() - fixedNow.getTime()).toBe(expectedSeconds * 1000);
+
+        vi.useRealTimers();
+      },
+    );
+
+    it("transitions to DEAD_LETTER (with processedAt) at attempt 8", async () => {
+      databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
+        buildPendingEvent(7), // currentAttempt becomes 8 after claim.
+      ]);
+      databaseServiceMock.notificationOutboxEvent.updateMany.mockResolvedValueOnce({ count: 1 });
+      notificationServiceMock.enqueuePreparedNotification.mockRejectedValueOnce(
+        new Error("Queue still down"),
+      );
+
+      await service.processPendingEvents();
+
+      expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "evt-attempt-7" },
+          data: expect.objectContaining({
+            status: NotificationOutboxStatus.DEAD_LETTER,
+            processedAt: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it("stays in FAILED (no processedAt) at attempt 7", async () => {
+      databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
+        buildPendingEvent(6), // currentAttempt becomes 7 after claim — under maxAttempts.
+      ]);
+      databaseServiceMock.notificationOutboxEvent.updateMany.mockResolvedValueOnce({ count: 1 });
+      notificationServiceMock.enqueuePreparedNotification.mockRejectedValueOnce(
+        new Error("Transient"),
+      );
+
+      await service.processPendingEvents();
+
+      const updateCall = vi
+        .mocked(databaseServiceMock.notificationOutboxEvent.update)
+        .mock.calls.at(-1);
+      const data = updateCall?.[0].data as {
+        status: NotificationOutboxStatus;
+        processedAt: Date | null;
+      };
+      expect(data.status).toBe(NotificationOutboxStatus.FAILED);
+      expect(data.processedAt).toBeNull();
+    });
+  });
+
+  // Concurrent-claim race (Issue 11A). Two scheduler instances pull the same
+  // candidate row on overlapping ticks. The optimistic `updateMany` claim
+  // must let exactly one win; the loser exits early without enqueueing.
+  describe("concurrent claim contention", () => {
+    it("enqueues exactly once when two pollers race for the same row", async () => {
+      const candidate = {
+        id: "evt-race",
+        bookingId: "booking-race",
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+        status: NotificationOutboxStatus.PENDING,
+        attempts: 0,
+        nextAttemptAt: new Date(Date.now() - 1000),
+        updatedAt: new Date(),
+        payload: buildJobPayload("booking-race"),
+      };
+
+      // Both pollers see the same candidate.
+      databaseServiceMock.notificationOutboxEvent.findMany
+        .mockResolvedValueOnce([candidate])
+        .mockResolvedValueOnce([candidate]);
+      // Only the first claim wins.
+      databaseServiceMock.notificationOutboxEvent.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      notificationServiceMock.enqueuePreparedNotification.mockResolvedValueOnce(undefined);
+
+      const [first, second] = await Promise.all([
+        service.processPendingEvents(),
+        service.processPendingEvents(),
+      ]);
+
+      expect(first + second).toBe(1);
+      expect(notificationServiceMock.enqueuePreparedNotification).toHaveBeenCalledTimes(1);
+      // The losing poller must not finalise the row to DISPATCHED.
+      expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledTimes(1);
+      expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "evt-race" },
+          data: expect.objectContaining({ status: NotificationOutboxStatus.DISPATCHED }),
         }),
       );
     });
