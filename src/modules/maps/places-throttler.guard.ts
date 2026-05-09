@@ -58,8 +58,8 @@ export class PlacesThrottlerGuard implements CanActivate {
         ? (routePath
             .split("/")
             .map((segment) => segment.trim())
-            .filter(Boolean)
-            .at(-1) ?? "")
+            .reverse()
+            .find(Boolean) ?? "")
         : "";
 
     if (normalizedPath === "autocomplete") {

@@ -220,98 +220,7 @@ export class StatusChangeService {
       }
 
       for (const booking of bookingsToUpdate) {
-        const oldStatus = booking.status;
-
-        // Perform all operations in a transaction for atomicity
-        await this.databaseService.$transaction(async (tx) => {
-          const updatedBooking = await tx.booking.update({
-            where: { id: booking.id },
-            data: { status: BookingStatus.COMPLETED },
-            include: {
-              car: { include: { owner: { include: { bankDetails: true } } } },
-              user: true,
-              chauffeur: true,
-              legs: { include: { extensions: true } },
-            },
-          });
-
-          // Check if there are any upcoming bookings for this car that should keep it booked
-          // Look for CONFIRMED or ACTIVE bookings that start after this booking ends
-          const hasUpcomingBooking = await tx.booking.findFirst({
-            where: {
-              carId: booking.carId,
-              status: BookingStatus.CONFIRMED,
-              paymentStatus: PaymentStatus.PAID,
-              id: { not: booking.id },
-              startDate: {
-                gte: booking.endDate, // Follow-up booking should start after this one ends
-              },
-            },
-          });
-
-          // Only update car status if there's no upcoming booking
-          // If hasUpcomingBooking is true, the car should already be BOOKED, so no update needed
-          if (hasUpcomingBooking) {
-            this.logger.info(
-              {
-                carId: booking.carId,
-                upcomingBookingId: hasUpcomingBooking.id,
-                upcomingBookingStatus: hasUpcomingBooking.status,
-              },
-              "Car remains BOOKED due to upcoming booking",
-            );
-          } else {
-            await tx.car.update({
-              where: { id: booking.carId },
-              data: { status: Status.AVAILABLE },
-            });
-          }
-
-          // Check if a review already exists for this booking
-          const existingReview = await tx.review.findUnique({
-            where: { bookingId: booking.id },
-          });
-
-          // Show review request only if no review exists and booking is completed
-          const showReviewRequest = !existingReview;
-
-          await this.queueStatusNotification(
-            booking.id,
-            updatedBooking,
-            oldStatus,
-            BookingStatus.COMPLETED,
-            showReviewRequest,
-          );
-        });
-
-        try {
-          // Queue referral processing OUTSIDE the transaction for better isolation
-          // This ensures booking status update is not blocked by referral processing
-          await this.referralService.queueReferralProcessing(booking.id);
-        } catch (error) {
-          this.logger.error(
-            {
-              bookingId: booking.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            "Failed to queue referral processing",
-          );
-          // Continue without failing the entire operation
-        }
-
-        try {
-          // Queue payout processing OUTSIDE the transaction for better isolation
-          await this.paymentService.queuePayoutForBooking(booking.id);
-        } catch (error) {
-          this.logger.error(
-            {
-              bookingId: booking.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            "Failed to queue payout processing",
-          );
-          // Do not throw so that other bookings can continue processing
-        }
+        await this.completeActiveBooking(booking);
       }
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;
@@ -323,6 +232,110 @@ export class StatusChangeService {
           : new ActiveToCompletedUpdateFailedException(reason);
       this.logger.error({ error: wrappedError.message }, "Active to completed update failed");
       throw wrappedError;
+    }
+  }
+
+  private async completeActiveBooking(booking: {
+    id: string;
+    status: BookingStatus;
+    carId: string;
+    endDate: Date;
+  }): Promise<void> {
+    await this.completeBookingTransaction(booking);
+    await this.queuePostCompletionTasks(booking.id);
+  }
+
+  private async completeBookingTransaction(booking: {
+    id: string;
+    status: BookingStatus;
+    carId: string;
+    endDate: Date;
+  }): Promise<void> {
+    const oldStatus = booking.status;
+
+    await this.databaseService.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
+        where: { id: booking.id },
+        data: { status: BookingStatus.COMPLETED },
+        include: {
+          car: { include: { owner: { include: { bankDetails: true } } } },
+          user: true,
+          chauffeur: true,
+          legs: { include: { extensions: true } },
+        },
+      });
+
+      const hasUpcomingBooking = await tx.booking.findFirst({
+        where: {
+          carId: booking.carId,
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          id: { not: booking.id },
+          startDate: {
+            gte: booking.endDate,
+          },
+        },
+      });
+
+      if (hasUpcomingBooking) {
+        this.logger.info(
+          {
+            carId: booking.carId,
+            upcomingBookingId: hasUpcomingBooking.id,
+            upcomingBookingStatus: hasUpcomingBooking.status,
+          },
+          "Car remains BOOKED due to upcoming booking",
+        );
+      } else {
+        await tx.car.update({
+          where: { id: booking.carId },
+          data: { status: Status.AVAILABLE },
+        });
+      }
+
+      const existingReview = await tx.review.findUnique({
+        where: { bookingId: booking.id },
+      });
+      const showReviewRequest = !existingReview;
+
+      await this.queueStatusNotification(
+        booking.id,
+        updatedBooking,
+        oldStatus,
+        BookingStatus.COMPLETED,
+        showReviewRequest,
+      );
+    });
+  }
+
+  private async queuePostCompletionTasks(bookingId: string): Promise<void> {
+    await this.runNonBlockingPostCompletionTask(
+      bookingId,
+      "Failed to queue referral processing",
+      () => this.referralService.queueReferralProcessing(bookingId),
+    );
+    await this.runNonBlockingPostCompletionTask(
+      bookingId,
+      "Failed to queue payout processing",
+      () => this.paymentService.queuePayoutForBooking(bookingId),
+    );
+  }
+
+  private async runNonBlockingPostCompletionTask(
+    bookingId: string,
+    errorMessage: string,
+    operation: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await operation();
+    } catch (error) {
+      this.logger.error(
+        {
+          bookingId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        errorMessage,
+      );
     }
   }
 
