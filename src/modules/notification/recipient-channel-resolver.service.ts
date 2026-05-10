@@ -20,14 +20,14 @@ export class RecipientChannelResolverService {
   constructor(private readonly pushTokenService: PushTokenService) {}
 
   async resolve(input: ResolveRecipientChannelsInput): Promise<ResolvedRecipientChannels> {
-    const channels = deriveNotificationChannels({
-      email: input.email,
-      phoneNumber: input.phoneNumber,
-    });
+    const { email, phoneNumber, userId, pushTokens: tokensFromCaller } = input;
+    const channels = deriveNotificationChannels({ email, phoneNumber });
 
-    const pushTokens =
-      input.pushTokens ??
-      (input.userId ? await this.pushTokenService.getActiveTokensForUser(input.userId) : []);
+    const tokensBeforeDedupe =
+      tokensFromCaller ??
+      (userId ? await this.pushTokenService.getActiveTokensForUser(userId) : []);
+
+    const pushTokens = [...new Set(tokensBeforeDedupe)];
 
     if (pushTokens.length > 0) {
       channels.push(NotificationChannel.PUSH);

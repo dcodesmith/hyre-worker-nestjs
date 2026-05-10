@@ -6,10 +6,12 @@ const notificationTypeValues = Object.values(NotificationType) as [
   NotificationType,
   ...NotificationType[],
 ];
+
 const notificationChannelValues = Object.values(NotificationChannel) as [
   NotificationChannel,
   ...NotificationChannel[],
 ];
+
 const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
   NotificationOutboxEventType,
   ...NotificationOutboxEventType[],
@@ -27,7 +29,7 @@ const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
 export const notificationJobDataSchema = z.object({
   id: z.string().min(1),
   type: z.enum(notificationTypeValues),
-  channels: z.array(z.enum(notificationChannelValues)),
+  channels: z.array(z.enum(notificationChannelValues)).min(1),
   bookingId: z.string().min(1),
   pushPayload: z
     .object({

@@ -1,6 +1,5 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
-import { metrics } from "@opentelemetry/api";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
@@ -44,10 +43,6 @@ export type ReminderRecipientContext = {
 
 @Injectable()
 export class NotificationService {
-  private readonly notificationSkippedNoChannelCounter = metrics
-    .getMeter("notification-service")
-    .createCounter("notification_skipped_no_channel");
-
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
@@ -195,6 +190,7 @@ export class NotificationService {
       phoneNumber: bookingDetails.customerPhone,
       userId: booking.userId ?? booking.user?.id ?? undefined,
     });
+
     const customer: NotificationJobData | null =
       customerChannels.channels.length > 0
         ? {
@@ -263,11 +259,6 @@ export class NotificationService {
         { bookingId: bookingDetails.id },
         "No delivery channels available for booking cancellation notifications",
       );
-      this.recordNotificationSkippedNoChannel({
-        bookingId: bookingDetails.id,
-        event: NotificationType.BOOKING_CANCELLED,
-        reason: "no_channel",
-      });
     }
 
     return { customer, owner };
@@ -279,6 +270,7 @@ export class NotificationService {
     context: ReminderRecipientContext,
   ): Promise<NotificationJobData[]> {
     const jobs: NotificationJobData[] = [];
+
     const customerReminder = await this.createReminderJobData({
       bookingLegDetails,
       recipientType: CLIENT_RECIPIENT_TYPE,
@@ -288,6 +280,7 @@ export class NotificationService {
       pushTokens: context.customerPushTokens,
       type,
     });
+
     if (customerReminder) {
       jobs.push(customerReminder);
     }
@@ -462,32 +455,5 @@ export class NotificationService {
     return type === NotificationType.BOOKING_REMINDER_START
       ? "Booking Reminder - You have a service starting in approximately 1 hour"
       : "Booking Reminder - Your assigned booking for today ends in approximately 1 hour";
-  }
-
-  /**
-   * Record an event-shaped "delivery skipped — no channel available" signal
-   * for the recipient(s) of `event` on `bookingId`. Event-shaped (not status-
-   * shaped) so non-status flows like CHAUFFEUR_ASSIGNED, BOOKING_REMINDER_*,
-   * and BOOKING_CANCELLED don't have to fabricate {oldStatus, newStatus} pairs
-   * (Issue 8A).
-   */
-  private recordNotificationSkippedNoChannel(input: {
-    bookingId: string;
-    event: NotificationType;
-    reason: "no_channel";
-  }): void {
-    this.logger.debug(
-      {
-        bookingId: input.bookingId,
-        event: input.event,
-        reason: input.reason,
-      },
-      "Incrementing notification_skipped_no_channel counter",
-    );
-
-    this.notificationSkippedNoChannelCounter.add(1, {
-      event: input.event,
-      reason: input.reason,
-    });
   }
 }

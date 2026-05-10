@@ -113,11 +113,11 @@ describe("Notification outbox round-trip (e2e)", () => {
     // Step 3 — the dispatcher loop runs. We invoke directly instead of waiting
     // for the cron so the test stays deterministic.
     //
-    // Do not assert on the global processed count: Vitest pools share one
-    // `e2e_w{n}` Postgres schema per worker; other e2e files may leave PENDING
-    // NotificationOutboxEvent rows. One tick can therefore process several rows.
-    const processedCount = await outboxService.processPendingEvents();
-    expect(processedCount).toBeGreaterThanOrEqual(1);
+    // Do not assert on processPendingEvents()'s return value: Vitest pools share
+    // one `e2e_w{n}` Postgres schema per worker; a tick may process zero rows
+    // (claim races) or many unrelated rows. We only care that this test's row
+    // reaches DISPATCHED (Step 4 + drain loop below).
+    await outboxService.processPendingEvents();
 
     // Our row may not have been in the first batch if many older rows exist —
     // keep draining until this test's row is DISPATCHED (cap iterations).
