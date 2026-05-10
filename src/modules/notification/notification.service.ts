@@ -19,7 +19,6 @@ import {
   NotificationType,
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
-import { deriveNotificationChannels } from "./notification-channel.helper";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
@@ -173,11 +172,17 @@ export class NotificationService {
    * intentionally not exposed because cancellation must always go through the
    * outbox to stay durable across worker crashes (architectural review,
    * Issue 4A).
+   *
+   * Channel resolution mirrors the other builders (status / chauffeur-assigned
+   * / reminder) — both customer and fleet-owner paths go through
+   * `recipientChannelResolver.resolve`, which also adds the PUSH channel when
+   * active push tokens exist. Keeping all builders on the same resolver is the
+   * DRY invariant that prevents the "cancellation never produces PUSH" bug.
    */
-  buildBookingCancellationJobData(booking: BookingWithRelations): {
+  async buildBookingCancellationJobData(booking: BookingWithRelations): Promise<{
     customer: NotificationJobData | null;
     owner: NotificationJobData | null;
-  } {
+  }> {
     const bookingDetails = normaliseBookingDetails(booking);
     const baseTemplateData = {
       templateKind: BOOKING_CANCELLED_TEMPLATE_KIND,
@@ -185,18 +190,31 @@ export class NotificationService {
       subject: "Your booking has been cancelled",
     } as const;
 
-    const customerChannels = deriveNotificationChannels(bookingDetails);
+    const customerChannels = await this.recipientChannelResolver.resolve({
+      email: bookingDetails.customerEmail,
+      phoneNumber: bookingDetails.customerPhone,
+      userId: booking.userId ?? booking.user?.id ?? undefined,
+    });
     const customer: NotificationJobData | null =
-      customerChannels.length > 0
+      customerChannels.channels.length > 0
         ? {
             id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
             type: NotificationType.BOOKING_CANCELLED,
-            channels: customerChannels,
+            channels: customerChannels.channels,
             bookingId: bookingDetails.id,
             recipients: {
               [CLIENT_RECIPIENT_TYPE]: {
                 email: bookingDetails.customerEmail,
                 phoneNumber: bookingDetails.customerPhone,
+                pushTokens: customerChannels.pushTokens,
+              },
+            },
+            pushPayload: {
+              title: "Your booking has been cancelled",
+              body: "Your booking has been cancelled. A refund is being processed.",
+              data: {
+                bookingId: bookingDetails.id,
+                type: NotificationType.BOOKING_CANCELLED,
               },
             },
             templateData: baseTemplateData,
@@ -205,22 +223,32 @@ export class NotificationService {
 
     const ownerEmail = booking.car?.owner?.email ?? undefined;
     const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
-    const ownerChannels =
-      ownerEmail || ownerPhone
-        ? deriveNotificationChannels({ email: ownerEmail, phoneNumber: ownerPhone })
-        : [];
+    const ownerChannels = await this.recipientChannelResolver.resolve({
+      email: ownerEmail,
+      phoneNumber: ownerPhone,
+      userId: booking.car?.owner?.id ?? undefined,
+    });
 
     const owner: NotificationJobData | null =
-      ownerChannels.length > 0
+      ownerChannels.channels.length > 0
         ? {
             id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
             type: NotificationType.BOOKING_CANCELLED,
-            channels: ownerChannels,
+            channels: ownerChannels.channels,
             bookingId: bookingDetails.id,
             recipients: {
               [FLEET_OWNER_RECIPIENT_TYPE]: {
                 email: ownerEmail,
                 phoneNumber: ownerPhone,
+                pushTokens: ownerChannels.pushTokens,
+              },
+            },
+            pushPayload: {
+              title: "A booking for your vehicle has been cancelled",
+              body: `A booking for ${bookingDetails.carName} has been cancelled.`,
+              data: {
+                bookingId: bookingDetails.id,
+                type: NotificationType.BOOKING_CANCELLED,
               },
             },
             templateData: {

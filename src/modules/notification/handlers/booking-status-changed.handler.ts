@@ -54,6 +54,7 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
     if (!event.inbox && !event.jobData) {
       return [];
     }
+
     return [event];
   }
 }

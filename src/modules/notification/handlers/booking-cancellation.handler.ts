@@ -23,7 +23,8 @@ export class BookingCancellationHandler implements OutboxEventHandler<BookingCan
   constructor(private readonly notificationService: NotificationService) {}
 
   async buildEvents({ booking }: BookingCancellationInput): Promise<HandlerEvent[]> {
-    const { customer, owner } = this.notificationService.buildBookingCancellationJobData(booking);
+    const { customer, owner } =
+      await this.notificationService.buildBookingCancellationJobData(booking);
     // Cancellation timestamp is the canonical dedupe anchor — it's set in the
     // same tx that flips the booking, so it changes only with new cancellations.
     const cancelAnchor = booking.cancelledAt?.toISOString() ?? booking.updatedAt.toISOString();
@@ -36,6 +37,7 @@ export class BookingCancellationHandler implements OutboxEventHandler<BookingCan
       userId: booking.userId ?? null,
       subtype: CUSTOMER_SUBTYPE,
     };
+
     if (booking.userId) {
       customerEvent.inbox = {
         userId: booking.userId,
@@ -45,6 +47,7 @@ export class BookingCancellationHandler implements OutboxEventHandler<BookingCan
         payload: { bookingId: booking.id, status: "CANCELLED" },
       };
     }
+
     if (customerEvent.inbox || customerEvent.jobData) {
       events.push(customerEvent);
     }

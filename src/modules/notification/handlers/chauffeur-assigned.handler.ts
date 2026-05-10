@@ -42,6 +42,7 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
     if (!event.inbox && !event.jobData) {
       return [];
     }
+
     return [event];
   }
 }

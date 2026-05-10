@@ -14,7 +14,11 @@ import {
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
-import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "./notification.const";
+import {
+  CHAUFFEUR_RECIPIENT_TYPE,
+  CLIENT_RECIPIENT_TYPE,
+  FLEET_OWNER_RECIPIENT_TYPE,
+} from "./notification.const";
 import {
   NotificationChannel,
   NotificationJobData,
@@ -415,7 +419,7 @@ describe("NotificationService", () => {
   });
 
   describe("buildBookingCancellationJobData", () => {
-    it("builds customer + owner jobs when both recipients have channels", () => {
+    it("builds customer + owner jobs when both recipients have channels", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -423,10 +427,11 @@ describe("NotificationService", () => {
         user: createUser(),
       });
 
-      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+      const { customer, owner } = await service.buildBookingCancellationJobData(booking);
 
       expect(customer).toMatchObject({
         type: NotificationType.BOOKING_CANCELLED,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
         bookingId: booking.id,
         templateData: expect.objectContaining({
           subject: "Your booking has been cancelled",
@@ -434,6 +439,7 @@ describe("NotificationService", () => {
       });
       expect(owner).toMatchObject({
         type: NotificationType.BOOKING_CANCELLED,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
         bookingId: booking.id,
         templateData: expect.objectContaining({
           subject: "A booking for your vehicle has been cancelled",
@@ -441,7 +447,7 @@ describe("NotificationService", () => {
       });
     });
 
-    it("returns null customer when the customer has no channels", () => {
+    it("returns null customer when the customer has no channels", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner() }),
@@ -456,13 +462,13 @@ describe("NotificationService", () => {
         },
       });
 
-      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+      const { customer, owner } = await service.buildBookingCancellationJobData(booking);
 
       expect(customer).toBeNull();
       expect(owner).not.toBeNull();
     });
 
-    it("returns null owner when the fleet owner has no email or phone", () => {
+    it("returns null owner when the fleet owner has no email, phone, or push tokens", async () => {
       const booking = createBooking({
         status: BookingStatus.CONFIRMED,
         car: createCar({ owner: createOwner({ email: null, phoneNumber: null }) }),
@@ -470,10 +476,114 @@ describe("NotificationService", () => {
         user: createUser(),
       });
 
-      const { customer, owner } = service.buildBookingCancellationJobData(booking);
+      const { customer, owner } = await service.buildBookingCancellationJobData(booking);
 
       expect(customer).not.toBeNull();
       expect(owner).toBeNull();
+    });
+
+    it("includes PUSH channel for the customer when they have active push tokens", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser({ id: "cancel-user-1" }),
+        userId: "cancel-user-1",
+      });
+      pushTokensByUserId.set("cancel-user-1", ["ExponentPushToken[cancel-cust]"]);
+
+      const { customer } = await service.buildBookingCancellationJobData(booking);
+
+      expect(customer).toMatchObject({
+        type: NotificationType.BOOKING_CANCELLED,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[cancel-cust]"],
+          }),
+        }),
+        pushPayload: expect.objectContaining({
+          title: "Your booking has been cancelled",
+        }),
+      });
+    });
+
+    it("delivers PUSH-only to a customer with no email or phone but active tokens", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser({ id: "cancel-user-2", email: "", phoneNumber: null }),
+        userId: "cancel-user-2",
+      });
+      pushTokensByUserId.set("cancel-user-2", ["ExponentPushToken[push-only]"]);
+
+      const { customer } = await service.buildBookingCancellationJobData(booking);
+
+      expect(customer).toMatchObject({
+        channels: [NotificationChannel.PUSH],
+        recipients: expect.objectContaining({
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[push-only]"],
+          }),
+        }),
+      });
+    });
+
+    it("includes PUSH channel for the fleet owner when they have active push tokens", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner({ id: "cancel-owner-1" }) }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      pushTokensByUserId.set("cancel-owner-1", ["ExponentPushToken[cancel-owner]"]);
+
+      const { owner } = await service.buildBookingCancellationJobData(booking);
+
+      expect(owner).toMatchObject({
+        type: NotificationType.BOOKING_CANCELLED,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          [FLEET_OWNER_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[cancel-owner]"],
+          }),
+        }),
+        pushPayload: expect.objectContaining({
+          title: "A booking for your vehicle has been cancelled",
+        }),
+      });
+    });
+
+    it("delivers PUSH-only to a fleet owner with no email or phone but active tokens", async () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({
+          owner: createOwner({ id: "cancel-owner-2", email: null, phoneNumber: null }),
+        }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      pushTokensByUserId.set("cancel-owner-2", ["ExponentPushToken[owner-push-only]"]);
+
+      const { owner } = await service.buildBookingCancellationJobData(booking);
+
+      expect(owner).toMatchObject({
+        channels: [NotificationChannel.PUSH],
+        recipients: expect.objectContaining({
+          [FLEET_OWNER_RECIPIENT_TYPE]: expect.objectContaining({
+            pushTokens: ["ExponentPushToken[owner-push-only]"],
+          }),
+        }),
+      });
     });
   });
 });
