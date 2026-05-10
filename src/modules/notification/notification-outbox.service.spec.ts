@@ -229,6 +229,63 @@ describe("NotificationOutboxService", () => {
       expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
       expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
     });
+
+    it("serializes outbox payload without nested undefined (JSON-safe for Prisma)", async () => {
+      const jobWithOptionals = {
+        id: "job-1",
+        type: "booking-reminder-start" as const,
+        channels: ["push" as const],
+        bookingId: "b-1",
+        pushPayload: undefined,
+        priority: undefined,
+        recipients: {
+          client: {
+            email: undefined,
+            phoneNumber: undefined,
+            pushTokens: ["t1"],
+          },
+        },
+        templateData: { templateKind: "bookingStatusChange" } as Record<string, unknown>,
+      };
+
+      const handler = buildHandler(
+        [
+          {
+            jobData: jobWithOptionals as never,
+            dedupeKey: "k",
+            userId: "u-1",
+            subtype: "BOOKING_REMINDER_START",
+          },
+        ],
+        NotificationOutboxEventType.BOOKING_REMINDER,
+      );
+
+      await service.create(handler, {});
+
+      const call = databaseServiceMock.notificationOutboxEvent.create.mock.calls[0]?.[0];
+      expect(call).toBeDefined();
+      const payload = call?.data.payload as Record<string, unknown>;
+      const hasUndefined = (v: unknown): boolean => {
+        if (v === undefined) {
+          return true;
+        }
+        if (v === null || typeof v !== "object") {
+          return false;
+        }
+        if (Array.isArray(v)) {
+          return v.some(hasUndefined);
+        }
+        return Object.values(v).some(hasUndefined);
+      };
+      expect(hasUndefined(payload)).toBe(false);
+
+      const nested = payload.notificationJobData as Record<string, unknown>;
+      expect(nested.pushPayload).toBeUndefined();
+      expect(Object.hasOwn(nested, "pushPayload")).toBe(false);
+      const client = (nested.recipients as Record<string, Record<string, unknown>>).client;
+      expect(Object.hasOwn(client, "email")).toBe(false);
+      expect(client.pushTokens).toEqual(["t1"]);
+    });
   });
 
   describe("processPendingEvents()", () => {
@@ -343,7 +400,7 @@ describe("NotificationOutboxService", () => {
 
       const processed = await service.processPendingEvents();
 
-      expect(processed).toBe(1);
+      expect(processed).toBe(0);
       expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "evt-4" },

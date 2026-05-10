@@ -185,11 +185,21 @@ export class NotificationService {
       subject: "Your booking has been cancelled",
     } as const;
 
-    const customerChannels = await this.recipientChannelResolver.resolve({
-      email: bookingDetails.customerEmail,
-      phoneNumber: bookingDetails.customerPhone,
-      userId: booking.userId ?? booking.user?.id ?? undefined,
-    });
+    const ownerEmail = booking.car?.owner?.email ?? undefined;
+    const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
+
+    const [customerChannels, ownerChannels] = await Promise.all([
+      this.recipientChannelResolver.resolve({
+        email: bookingDetails.customerEmail,
+        phoneNumber: bookingDetails.customerPhone,
+        userId: booking.userId ?? booking.user?.id ?? undefined,
+      }),
+      this.recipientChannelResolver.resolve({
+        email: ownerEmail,
+        phoneNumber: ownerPhone,
+        userId: booking.car?.owner?.id ?? undefined,
+      }),
+    ]);
 
     const customer: NotificationJobData | null =
       customerChannels.channels.length > 0
@@ -216,14 +226,6 @@ export class NotificationService {
             templateData: baseTemplateData,
           }
         : null;
-
-    const ownerEmail = booking.car?.owner?.email ?? undefined;
-    const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
-    const ownerChannels = await this.recipientChannelResolver.resolve({
-      email: ownerEmail,
-      phoneNumber: ownerPhone,
-      userId: booking.car?.owner?.id ?? undefined,
-    });
 
     const owner: NotificationJobData | null =
       ownerChannels.channels.length > 0
@@ -271,29 +273,30 @@ export class NotificationService {
   ): Promise<NotificationJobData[]> {
     const jobs: NotificationJobData[] = [];
 
-    const customerReminder = await this.createReminderJobData({
-      bookingLegDetails,
-      recipientType: CLIENT_RECIPIENT_TYPE,
-      email: bookingLegDetails.customerEmail,
-      phoneNumber: bookingLegDetails.customerPhone,
-      userId: context.customerUserId,
-      pushTokens: context.customerPushTokens,
-      type,
-    });
+    const [customerReminder, chauffeurReminder] = await Promise.all([
+      this.createReminderJobData({
+        bookingLegDetails,
+        recipientType: CLIENT_RECIPIENT_TYPE,
+        email: bookingLegDetails.customerEmail,
+        phoneNumber: bookingLegDetails.customerPhone,
+        userId: context.customerUserId,
+        pushTokens: context.customerPushTokens,
+        type,
+      }),
+      this.createReminderJobData({
+        bookingLegDetails,
+        recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+        email: bookingLegDetails.chauffeurEmail,
+        phoneNumber: bookingLegDetails.chauffeurPhone,
+        userId: context.chauffeurUserId,
+        pushTokens: context.chauffeurPushTokens,
+        type,
+      }),
+    ]);
 
     if (customerReminder) {
       jobs.push(customerReminder);
     }
-
-    const chauffeurReminder = await this.createReminderJobData({
-      bookingLegDetails,
-      recipientType: CHAUFFEUR_RECIPIENT_TYPE,
-      email: bookingLegDetails.chauffeurEmail,
-      phoneNumber: bookingLegDetails.chauffeurPhone,
-      userId: context.chauffeurUserId,
-      pushTokens: context.chauffeurPushTokens,
-      type,
-    });
     if (chauffeurReminder) {
       jobs.push(chauffeurReminder);
     }

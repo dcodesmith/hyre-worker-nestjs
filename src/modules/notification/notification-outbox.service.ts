@@ -218,7 +218,9 @@ export class NotificationOutboxService {
             processedAt: new Date(),
           },
         });
-        return 1;
+        // Terminal scrub — not “progress toward dispatch”; count as 0 so the
+        // scheduler does not burn re-ticks on rows already removed from work.
+        return 0;
       }
 
       await this.notificationService.enqueuePreparedNotification(notificationJobData, {
@@ -285,6 +287,6 @@ export class NotificationOutboxService {
   }
 
   private toPrismaInputJsonValue(value: unknown): Prisma.InputJsonValue {
-    return structuredClone(value) as Prisma.InputJsonValue;
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; // NOSONAR S7784 — JSON round-trip omits undefined & normalizes Dates for Prisma Json; structuredClone is wrong here
   }
 }
