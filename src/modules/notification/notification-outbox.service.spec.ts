@@ -53,7 +53,7 @@ describe("NotificationOutboxService", () => {
       createMany: vi.fn(),
     },
     notificationOutboxEvent: {
-      create: vi.fn(),
+      createMany: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
       update: vi.fn(),
@@ -109,7 +109,7 @@ describe("NotificationOutboxService", () => {
     it("writes inbox + outbox inside the supplied transaction", async () => {
       const tx = {
         notificationInbox: { createMany: vi.fn().mockResolvedValue(undefined) },
-        notificationOutboxEvent: { create: vi.fn().mockResolvedValue(undefined) },
+        notificationOutboxEvent: { createMany: vi.fn().mockResolvedValue(undefined) },
       } satisfies NotificationOutboxTransactionClient;
       const handler = buildHandler([
         {
@@ -143,20 +143,23 @@ describe("NotificationOutboxService", () => {
           skipDuplicates: true,
         }),
       );
-      expect(tx.notificationOutboxEvent.create).toHaveBeenCalledWith(
+      expect(tx.notificationOutboxEvent.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            userId: "user-1",
-            eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
-            status: NotificationOutboxStatus.PENDING,
-            dedupeKey: "chauffeur-assigned:booking-1:chauffeur-1:t",
-            payload: expect.objectContaining({ subtype: "CHAUFFEUR_ASSIGNED" }),
-          }),
+          data: [
+            expect.objectContaining({
+              userId: "user-1",
+              eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+              status: NotificationOutboxStatus.PENDING,
+              dedupeKey: "chauffeur-assigned:booking-1:chauffeur-1:t",
+              payload: expect.objectContaining({ subtype: "CHAUFFEUR_ASSIGNED" }),
+            }),
+          ],
+          skipDuplicates: true,
         }),
       );
       // Database-level writers must not be touched when a tx is supplied.
       expect(databaseServiceMock.notificationInbox.createMany).not.toHaveBeenCalled();
-      expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).not.toHaveBeenCalled();
     });
 
     it("opens its own transaction per event when no tx is supplied", async () => {
@@ -180,7 +183,64 @@ describe("NotificationOutboxService", () => {
       expect(written).toBe(2);
       // Two events → two short-lived transactions.
       expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(2);
-      expect(databaseServiceMock.notificationOutboxEvent.create).toHaveBeenCalledTimes(2);
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).toHaveBeenCalledTimes(2);
+    });
+
+    // Regression: outbox writes must be idempotent on `dedupeKey`.
+    //
+    // Scenario (reminder cron path, no tx supplied to `create()`):
+    //   Tick 1 — handler emits two events (customer + chauffeur). The customer
+    //   write commits in its own tx; the chauffeur write's tx fails for a
+    //   transient reason. The for-loop throws and the chauffeur row is missing.
+    //   Tick 2 — handler rebuilds the same two events with the SAME dedupe
+    //   keys (anchor unchanged). The customer row is already in the DB.
+    //
+    // Pre-fix (`outbox.create`): Postgres rejects the customer rewrite with
+    // P2002, the loop aborts, and the chauffeur event is permanently stranded.
+    //
+    // Post-fix (`outbox.createMany({ skipDuplicates: true })`): the customer
+    // re-insert is a silent no-op (`INSERT ... ON CONFLICT DO NOTHING`), the
+    // loop continues, and the chauffeur row commits.
+    it("recovers the missing event on retry after a partial failure mid-fanout", async () => {
+      const handler = buildHandler([
+        {
+          jobData: buildSampleJobData("b-1") as never,
+          dedupeKey: "booking-reminder:leg-1:client:anchor",
+          userId: "u-customer",
+          subtype: "BOOKING_REMINDER_START",
+        },
+        {
+          jobData: buildSampleJobData("b-1") as never,
+          dedupeKey: "booking-reminder:leg-1:chauffeur:anchor",
+          userId: "u-chauffeur",
+          subtype: "BOOKING_REMINDER_START",
+        },
+      ]);
+
+      // Tick 1: customer commits, chauffeur fails transiently. The thrown
+      // error must propagate so the caller can mark the leg as still pending.
+      databaseServiceMock.notificationOutboxEvent.createMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockRejectedValueOnce(new Error("connection terminated"));
+
+      await expect(service.create(handler, {})).rejects.toThrow("connection terminated");
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).toHaveBeenCalledTimes(2);
+
+      // Tick 2: anchor unchanged ⇒ same dedupe keys. Customer becomes a
+      // duplicate (count: 0), chauffeur commits (count: 1). Returned count
+      // is the number of events processed (2), not rows inserted.
+      databaseServiceMock.notificationOutboxEvent.createMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+
+      const writtenOnRetry = await service.create(handler, {});
+
+      expect(writtenOnRetry).toBe(2);
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).toHaveBeenCalledTimes(4);
+      // Every outbox write — including retries — must use the idempotent shape.
+      for (const [call] of databaseServiceMock.notificationOutboxEvent.createMany.mock.calls) {
+        expect(call).toEqual(expect.objectContaining({ skipDuplicates: true }));
+      }
     });
 
     it("writes the inbox row even when there is no jobData (Issue 5A)", async () => {
@@ -209,7 +269,7 @@ describe("NotificationOutboxService", () => {
           skipDuplicates: true,
         }),
       );
-      expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).not.toHaveBeenCalled();
     });
 
     it("writes the outbox row even when there is no inbox (guest booking)", async () => {
@@ -226,9 +286,10 @@ describe("NotificationOutboxService", () => {
 
       expect(written).toBe(1);
       expect(databaseServiceMock.notificationInbox.createMany).not.toHaveBeenCalled();
-      expect(databaseServiceMock.notificationOutboxEvent.create).toHaveBeenCalledWith(
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ userId: null }),
+          data: [expect.objectContaining({ userId: null })],
+          skipDuplicates: true,
         }),
       );
     });
@@ -240,7 +301,7 @@ describe("NotificationOutboxService", () => {
 
       expect(written).toBe(0);
       expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
-      expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationOutboxEvent.createMany).not.toHaveBeenCalled();
     });
 
     it("serializes outbox payload without nested undefined (JSON-safe for Prisma)", async () => {
@@ -275,9 +336,9 @@ describe("NotificationOutboxService", () => {
 
       await service.create(handler, {});
 
-      const call = databaseServiceMock.notificationOutboxEvent.create.mock.calls[0]?.[0];
+      const call = databaseServiceMock.notificationOutboxEvent.createMany.mock.calls[0]?.[0];
       expect(call).toBeDefined();
-      const payload = call?.data.payload as Record<string, unknown>;
+      const payload = call?.data[0]?.payload as Record<string, unknown>;
       const hasUndefined = (v: unknown): boolean => {
         if (v === undefined) {
           return true;

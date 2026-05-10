@@ -11,7 +11,7 @@ import { NotificationService } from "./notification.service";
 
 export type NotificationOutboxTransactionClient = {
   notificationInbox: Pick<Prisma.TransactionClient["notificationInbox"], "createMany">;
-  notificationOutboxEvent: Pick<Prisma.TransactionClient["notificationOutboxEvent"], "create">;
+  notificationOutboxEvent: Pick<Prisma.TransactionClient["notificationOutboxEvent"], "createMany">;
 };
 
 /**
@@ -147,19 +147,27 @@ export class NotificationOutboxService {
     }
 
     if (event.jobData) {
-      await writer.notificationOutboxEvent.create({
-        data: {
-          userId: event.userId,
-          eventType: handler.eventType,
-          status: NotificationOutboxStatus.PENDING,
-          dedupeKey: event.dedupeKey,
-          bookingId: event.jobData.bookingId,
-          payload: this.toPrismaInputJsonValue({
+      // `createMany` + `skipDuplicates` mirrors the inbox path above. Without
+      // it, a partial failure inside `create()`'s no-tx loop (event #1 commits,
+      // event #2 fails) would surface as P2002 on the next cron tick when
+      // event #1 is rewritten with the same `dedupeKey`, aborting the loop and
+      // permanently stranding event #2 until the dedupe anchor moves.
+      await writer.notificationOutboxEvent.createMany({
+        data: [
+          {
+            userId: event.userId,
             eventType: handler.eventType,
-            subtype: event.subtype,
-            notificationJobData: event.jobData,
-          }),
-        },
+            status: NotificationOutboxStatus.PENDING,
+            dedupeKey: event.dedupeKey,
+            bookingId: event.jobData.bookingId,
+            payload: this.toPrismaInputJsonValue({
+              eventType: handler.eventType,
+              subtype: event.subtype,
+              notificationJobData: event.jobData,
+            }),
+          },
+        ],
+        skipDuplicates: true,
       });
     }
   }
