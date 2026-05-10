@@ -47,8 +47,11 @@ describe("Notification outbox round-trip (e2e)", () => {
   });
 
   afterAll(async () => {
-    await notificationsQueue.obliterate({ force: true }).catch(() => {});
+    // Close the Nest app first so BullMQ workers/processors shut down before we
+    // wipe Redis queue keys — obliterate while workers are active can race and
+    // surface BullMQ "Missing key" errors.
     await app.close();
+    await notificationsQueue.obliterate({ force: true }).catch(() => {});
   });
 
   it("writes inbox + outbox in the domain tx, then drains via processPendingEvents to DISPATCHED + a BullMQ job", async () => {
