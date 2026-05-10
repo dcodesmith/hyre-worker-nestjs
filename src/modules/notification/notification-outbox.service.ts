@@ -113,12 +113,35 @@ export class NotificationOutboxService {
     });
 
     const concurrencyLimit = pLimit(this.processingConcurrency);
-    const results = await Promise.all(
+    // `Promise.allSettled` (not `Promise.all`) so a single sibling rejection
+    // — e.g. a transient Prisma error inside `processEvent`'s claim, which
+    // sits outside its inner try-catch — does not discard the resolved counts
+    // of the other concurrent events nor short-circuit the scheduler's
+    // multi-tick drain loop. Per-event rejections are logged here with the
+    // owning `event.id`; happy-path infra errors thrown after the claim are
+    // already handled inside `processEvent`'s try-catch.
+    const results = await Promise.allSettled(
       candidates.map((event) =>
         concurrencyLimit(() => this.processEvent(event, staleProcessingCutoff, now)),
       ),
     );
-    return results.reduce((sum, count) => sum + count, 0);
+    let processed = 0;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "fulfilled") {
+        processed += result.value;
+        continue;
+      }
+      const reason = result.reason;
+      this.logger.error(
+        {
+          outboxEventId: candidates[index]?.id,
+          bookingId: candidates[index]?.bookingId,
+          error: reason instanceof Error ? reason.message : String(reason),
+        },
+        "Failed to claim or process notification outbox event",
+      );
+    }
+    return processed;
   }
 
   private async writeEvent<TInput>(

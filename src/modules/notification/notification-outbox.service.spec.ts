@@ -486,6 +486,57 @@ describe("NotificationOutboxService", () => {
       );
     });
 
+    // Regression: a single transient claim error must not poison the count
+    // of sibling events that successfully dispatched in the same tick. The
+    // claim (`updateMany`) lives outside `processEvent`'s try-catch, so an
+    // infra error there rejects the per-event promise. Pre-fix: `Promise.all`
+    // discarded all sibling resolved values and rethrew, breaking the
+    // scheduler's multi-tick drain loop. Post-fix: `Promise.allSettled` sums
+    // fulfilled counts and logs rejections per-event without rethrowing.
+    it("isolates a per-event claim rejection so siblings still contribute to the count", async () => {
+      const buildCandidate = (id: string) => ({
+        id,
+        bookingId: `booking-${id}`,
+        eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+        status: NotificationOutboxStatus.PENDING,
+        attempts: 0,
+        nextAttemptAt: new Date(Date.now() - 1000),
+        updatedAt: new Date(),
+        payload: buildJobPayload(`booking-${id}`),
+      });
+      databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
+        buildCandidate("evt-ok-1"),
+        buildCandidate("evt-claim-fail"),
+        buildCandidate("evt-ok-2"),
+      ]);
+      // Claims execute in candidate order under p-limit (concurrency: 5),
+      // so the second `updateMany` is the failing one.
+      databaseServiceMock.notificationOutboxEvent.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockRejectedValueOnce(new Error("connection terminated"))
+        .mockResolvedValueOnce({ count: 1 });
+      notificationServiceMock.enqueuePreparedNotification.mockResolvedValue(undefined);
+
+      const processed = await service.processPendingEvents();
+
+      // Two healthy events processed; the rejected claim contributes 0
+      // instead of poisoning the whole batch's return value.
+      expect(processed).toBe(2);
+      expect(notificationServiceMock.enqueuePreparedNotification).toHaveBeenCalledTimes(2);
+      // Both successful events were finalised to DISPATCHED.
+      const updateCalls = databaseServiceMock.notificationOutboxEvent.update.mock.calls;
+      const dispatchedIds = updateCalls
+        .filter(
+          ([arg]) =>
+            (arg as { data: { status: NotificationOutboxStatus } }).data.status ===
+            NotificationOutboxStatus.DISPATCHED,
+        )
+        .map(([arg]) => (arg as { where: { id: string } }).where.id);
+      expect(dispatchedIds).toEqual(expect.arrayContaining(["evt-ok-1", "evt-ok-2"]));
+      // The failing claim must never reach the success-path `update` call.
+      expect(dispatchedIds).not.toContain("evt-claim-fail");
+    });
+
     it("does not filter by eventType — handler-driven event types are auto-discovered", async () => {
       // A future event type, registered only by adding a handler. The
       // dispatcher must still pick it up without a code change here (Issue 2A).
