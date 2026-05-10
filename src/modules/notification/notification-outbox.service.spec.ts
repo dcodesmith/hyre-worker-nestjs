@@ -50,7 +50,7 @@ describe("NotificationOutboxService", () => {
 
   const databaseServiceMock = {
     notificationInbox: {
-      create: vi.fn(),
+      createMany: vi.fn(),
     },
     notificationOutboxEvent: {
       create: vi.fn(),
@@ -108,7 +108,7 @@ describe("NotificationOutboxService", () => {
 
     it("writes inbox + outbox inside the supplied transaction", async () => {
       const tx = {
-        notificationInbox: { create: vi.fn().mockResolvedValue(undefined) },
+        notificationInbox: { createMany: vi.fn().mockResolvedValue(undefined) },
         notificationOutboxEvent: { create: vi.fn().mockResolvedValue(undefined) },
       } satisfies NotificationOutboxTransactionClient;
       const handler = buildHandler([
@@ -131,9 +131,16 @@ describe("NotificationOutboxService", () => {
 
       expect(written).toBe(1);
       expect(handler.buildEvents).toHaveBeenCalledWith({ booking: "booking-1" });
-      expect(tx.notificationInbox.create).toHaveBeenCalledWith(
+      expect(tx.notificationInbox.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ userId: "user-1", type: "BOOKING_ASSIGNMENT" }),
+          data: [
+            expect.objectContaining({
+              userId: "user-1",
+              type: "BOOKING_ASSIGNMENT",
+              dedupeKey: "chauffeur-assigned:booking-1:chauffeur-1:t",
+            }),
+          ],
+          skipDuplicates: true,
         }),
       );
       expect(tx.notificationOutboxEvent.create).toHaveBeenCalledWith(
@@ -148,7 +155,7 @@ describe("NotificationOutboxService", () => {
         }),
       );
       // Database-level writers must not be touched when a tx is supplied.
-      expect(databaseServiceMock.notificationInbox.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationInbox.createMany).not.toHaveBeenCalled();
       expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
     });
 
@@ -195,7 +202,13 @@ describe("NotificationOutboxService", () => {
       const written = await service.create(handler, {});
 
       expect(written).toBe(1);
-      expect(databaseServiceMock.notificationInbox.create).toHaveBeenCalledTimes(1);
+      expect(databaseServiceMock.notificationInbox.createMany).toHaveBeenCalledTimes(1);
+      expect(databaseServiceMock.notificationInbox.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [expect.objectContaining({ dedupeKey: "k-noop" })],
+          skipDuplicates: true,
+        }),
+      );
       expect(databaseServiceMock.notificationOutboxEvent.create).not.toHaveBeenCalled();
     });
 
@@ -212,7 +225,7 @@ describe("NotificationOutboxService", () => {
       const written = await service.create(handler, {});
 
       expect(written).toBe(1);
-      expect(databaseServiceMock.notificationInbox.create).not.toHaveBeenCalled();
+      expect(databaseServiceMock.notificationInbox.createMany).not.toHaveBeenCalled();
       expect(databaseServiceMock.notificationOutboxEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ userId: null }),

@@ -112,6 +112,7 @@ describe("Notification outbox round-trip (e2e)", () => {
     });
     expect(inboxRows).toHaveLength(1);
     expect(inboxRows[0].title).toBe("Booking status updated");
+    expect(inboxRows[0].dedupeKey).toBe(outboxRow.dedupeKey);
 
     // Step 3 — the dispatcher loop runs. We invoke directly instead of waiting
     // for the cron so the test stays deterministic.

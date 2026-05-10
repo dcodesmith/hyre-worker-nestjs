@@ -129,6 +129,9 @@ model NotificationInbox {
   title     String
   body      String
   payload   Json?
+  /// Same key as the sibling outbox row (when present). Uniqueness gives
+  /// idempotent inbox writes for inbox-only events (no jobData / no outbox row).
+  dedupeKey String?              @unique
   readAt    DateTime?
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt

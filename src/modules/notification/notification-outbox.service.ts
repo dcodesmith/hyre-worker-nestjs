@@ -10,7 +10,7 @@ import { outboxPayloadSchema } from "./notification.schema";
 import { NotificationService } from "./notification.service";
 
 export type NotificationOutboxTransactionClient = {
-  notificationInbox: Pick<Prisma.TransactionClient["notificationInbox"], "create">;
+  notificationInbox: Pick<Prisma.TransactionClient["notificationInbox"], "createMany">;
   notificationOutboxEvent: Pick<Prisma.TransactionClient["notificationOutboxEvent"], "create">;
 };
 
@@ -127,14 +127,22 @@ export class NotificationOutboxService {
     writer: NotificationOutboxTransactionClient,
   ): Promise<void> {
     if (event.inbox) {
-      await writer.notificationInbox.create({
-        data: {
-          userId: event.inbox.userId,
-          type: event.inbox.type,
-          title: event.inbox.title,
-          body: event.inbox.body,
-          payload: this.toPrismaInputJsonValue(event.inbox.payload),
-        },
+      // `skipDuplicates` + unique `dedupeKey`: inbox-only events (no jobData)
+      // still dedupe on the cron path when the handler runs twice before the
+      // domain anchor (e.g. leg `updatedAt`) moves — there is no outbox row to
+      // provide Postgres uniqueness otherwise.
+      await writer.notificationInbox.createMany({
+        data: [
+          {
+            userId: event.inbox.userId,
+            type: event.inbox.type,
+            title: event.inbox.title,
+            body: event.inbox.body,
+            payload: this.toPrismaInputJsonValue(event.inbox.payload),
+            dedupeKey: event.dedupeKey,
+          },
+        ],
+        skipDuplicates: true,
       });
     }
 

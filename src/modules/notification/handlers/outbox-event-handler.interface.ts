@@ -14,9 +14,9 @@ import type { NotificationJobData } from "../notification.interface";
  *   the app, but no email/whatsapp/push attempt is made.
  *
  * `dedupeKey` must be deterministic per (booking-state-snapshot, recipient).
- * Two calls with the same key produce the same Postgres uniqueness violation
- * via the `NotificationOutboxEvent.dedupeKey` index, giving us at-most-once
- * write semantics across retries.
+ * It is stored on `NotificationOutboxEvent` when `jobData` is present, and on
+ * `NotificationInbox` when an inbox row is written — so inbox-only fan-out is
+ * also deduplicated (same key as the outbox path when both are emitted).
  */
 export type HandlerEvent = {
   jobData?: NotificationJobData;
