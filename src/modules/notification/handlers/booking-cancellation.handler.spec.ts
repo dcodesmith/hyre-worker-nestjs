@@ -44,7 +44,7 @@ describe("BookingCancellationHandler", () => {
   });
 
   it("emits a customer event (inbox + outbox) and an owner event (outbox only)", async () => {
-    notificationService.buildBookingCancellationJobData.mockReturnValueOnce({
+    notificationService.buildBookingCancellationJobData.mockResolvedValueOnce({
       customer: customerJobData,
       owner: ownerJobData,
     });
@@ -87,7 +87,7 @@ describe("BookingCancellationHandler", () => {
 
   // Issue 5A: customer inbox must persist even with no delivery channels.
   it("emits the customer inbox row even when no customer jobData", async () => {
-    notificationService.buildBookingCancellationJobData.mockReturnValueOnce({
+    notificationService.buildBookingCancellationJobData.mockResolvedValueOnce({
       customer: null,
       owner: ownerJobData,
     });
@@ -109,7 +109,7 @@ describe("BookingCancellationHandler", () => {
   });
 
   it("falls back to booking.updatedAt when cancelledAt is missing", async () => {
-    notificationService.buildBookingCancellationJobData.mockReturnValueOnce({
+    notificationService.buildBookingCancellationJobData.mockResolvedValueOnce({
       customer: customerJobData,
       owner: null,
     });
@@ -131,7 +131,7 @@ describe("BookingCancellationHandler", () => {
   });
 
   it("skips the customer event entirely for a guest booking with no customer jobData", async () => {
-    notificationService.buildBookingCancellationJobData.mockReturnValueOnce({
+    notificationService.buildBookingCancellationJobData.mockResolvedValueOnce({
       customer: null,
       owner: ownerJobData,
     });
@@ -149,7 +149,7 @@ describe("BookingCancellationHandler", () => {
   });
 
   it("skips the owner event when there is no owner jobData", async () => {
-    notificationService.buildBookingCancellationJobData.mockReturnValueOnce({
+    notificationService.buildBookingCancellationJobData.mockResolvedValueOnce({
       customer: customerJobData,
       owner: null,
     });

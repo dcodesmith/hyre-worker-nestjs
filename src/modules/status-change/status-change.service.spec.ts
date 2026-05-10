@@ -367,6 +367,16 @@ describe("StatusChangeService", () => {
         legs: { include: { extensions: true } },
       },
     });
+    expect(mockNotificationOutboxService.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
+      expect.objectContaining({
+        booking: expect.objectContaining({ id: "airport-1", status: BookingStatus.ACTIVE }),
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+        showReviewRequest: false,
+      }),
+      undefined,
+    );
     expect(result).toBe("Activated airport booking airport-1");
   });
 
