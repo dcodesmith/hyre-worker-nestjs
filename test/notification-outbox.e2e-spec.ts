@@ -112,8 +112,24 @@ describe("Notification outbox round-trip (e2e)", () => {
 
     // Step 3 — the dispatcher loop runs. We invoke directly instead of waiting
     // for the cron so the test stays deterministic.
+    //
+    // Do not assert on the global processed count: Vitest pools share one
+    // `e2e_w{n}` Postgres schema per worker; other e2e files may leave PENDING
+    // NotificationOutboxEvent rows. One tick can therefore process several rows.
     const processedCount = await outboxService.processPendingEvents();
-    expect(processedCount).toBe(1);
+    expect(processedCount).toBeGreaterThanOrEqual(1);
+
+    // Our row may not have been in the first batch if many older rows exist —
+    // keep draining until this test's row is DISPATCHED (cap iterations).
+    for (let i = 0; i < 10; i++) {
+      const row = await databaseService.notificationOutboxEvent.findUnique({
+        where: { id: outboxRow.id },
+      });
+      if (row?.status === NotificationOutboxStatus.DISPATCHED) {
+        break;
+      }
+      await outboxService.processPendingEvents();
+    }
 
     // Step 4 — the row finalised to DISPATCHED with processedAt set, no error.
     const finalRow = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
@@ -131,10 +147,14 @@ describe("Notification outbox round-trip (e2e)", () => {
       type: "booking-status-change",
     });
 
-    // Step 6 — re-running the dispatcher is a no-op. DISPATCHED rows are not
-    // re-claimed; this guards against accidental double-delivery if a future
-    // refactor changes the candidate filter.
-    const reprocessed = await outboxService.processPendingEvents();
-    expect(reprocessed).toBe(0);
+    // Step 6 — our DISPATCHED row must not be re-claimed when the dispatcher
+    // runs again. Global `reprocessed` may be > 0 if other suites added rows.
+    const processedAtSnapshot = finalRow.processedAt;
+    await outboxService.processPendingEvents();
+    const still = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
+      where: { id: outboxRow.id },
+    });
+    expect(still.status).toBe(NotificationOutboxStatus.DISPATCHED);
+    expect(still.processedAt?.toISOString()).toBe(processedAtSnapshot?.toISOString());
   });
 });
