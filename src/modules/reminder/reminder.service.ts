@@ -15,10 +15,13 @@ import {
   subMilliseconds,
 } from "date-fns";
 import { PinoLogger } from "nestjs-pino";
+import pLimit from "p-limit";
 import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
+import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
-import { NotificationService } from "../notification/notification.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { PushTokenService } from "../notification/push-token.service";
 
 const REMINDER_LABEL_BY_TYPE = {
   [NotificationType.BOOKING_REMINDER_START]: "start",
@@ -28,17 +31,29 @@ const REMINDER_LABEL_BY_TYPE = {
   "start" | "end"
 >;
 
+/**
+ * Cap on concurrent leg-fan-out within a single reminder cron tick. Each leg
+ * does up to 2 outbox writes (customer + chauffeur), so 8 concurrent legs ≈
+ * 16 in-flight DB writes — well below pool size while reducing burst latency
+ * versus sequential processing (Issue 14A).
+ */
+const REMINDER_CONCURRENCY = 8;
+
+type ReminderLeg = Parameters<typeof normaliseBookingLegDetails>[0];
+
 @Injectable()
 export class ReminderService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly notificationService: NotificationService,
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly bookingReminderHandler: BookingReminderHandler,
+    private readonly pushTokenService: PushTokenService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ReminderService.name);
   }
 
-  async sendBookingStartReminderEmails() {
+  async sendBookingStartReminders() {
     try {
       const now = new Date();
       this.logger.info(
@@ -92,18 +107,24 @@ export class ReminderService {
         return "No relevant booking legs today, so no start reminders to send.";
       }
 
-      let queuedCount = 0;
-      for (const leg of legs) {
-        this.logger.info(
-          { legId: leg.id, legStartTime: leg.legStartTime.toISOString() },
-          "Processing booking leg start reminder",
-        );
-
-        const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_START);
-        if (queued) {
-          queuedCount++;
-        }
-      }
+      const tokensByUserId = await this.prefetchPushTokensForLegs(legs);
+      const limit = pLimit(REMINDER_CONCURRENCY);
+      const results = await Promise.all(
+        legs.map((leg) =>
+          limit(() => {
+            this.logger.info(
+              { legId: leg.id, legStartTime: leg.legStartTime.toISOString() },
+              "Processing booking leg start reminder",
+            );
+            return this.queueReminderForLeg(
+              leg,
+              NotificationType.BOOKING_REMINDER_START,
+              tokensByUserId,
+            );
+          }),
+        ),
+      );
+      const queuedCount = results.filter(Boolean).length;
 
       this.logger.info({ queuedCount }, "Booking start reminder queue processing complete");
       return `Processed and queued start reminders for ${queuedCount} legs.`;
@@ -111,13 +132,13 @@ export class ReminderService {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
-        "Error in sendBookingStartReminderEmails",
+        "Error in sendBookingStartReminders",
       );
       throw error;
     }
   }
 
-  async sendBookingEndReminderEmails() {
+  async sendBookingEndReminders() {
     try {
       const now = new Date();
 
@@ -199,30 +220,37 @@ export class ReminderService {
         "Processing legs ending today for end reminders",
       );
 
-      let queuedCount = 0;
-      for (const leg of legsEndingToday) {
+      const dueLegs = legsEndingToday.filter((leg) => {
         const effectiveEndTime = this.calculateEffectiveEndTime(leg);
-        if (!effectiveEndTime || !isWithinInterval(effectiveEndTime, reminderInterval)) {
-          continue;
-        }
+        return effectiveEndTime !== null && isWithinInterval(effectiveEndTime, reminderInterval);
+      });
 
-        this.logger.info(
-          { legId: leg.id, effectiveEndTime: effectiveEndTime.toISOString() },
-          "Processing booking leg end reminder",
-        );
-
-        const queued = await this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_END);
-        if (queued) {
-          queuedCount++;
-        }
+      if (dueLegs.length === 0) {
+        return "Processed and queued end reminders for 0 legs.";
       }
+
+      const tokensByUserId = await this.prefetchPushTokensForLegs(dueLegs);
+      const limit = pLimit(REMINDER_CONCURRENCY);
+      const results = await Promise.all(
+        dueLegs.map((leg) =>
+          limit(() => {
+            this.logger.info({ legId: leg.id }, "Processing booking leg end reminder");
+            return this.queueReminderForLeg(
+              leg,
+              NotificationType.BOOKING_REMINDER_END,
+              tokensByUserId,
+            );
+          }),
+        ),
+      );
+      const queuedCount = results.filter(Boolean).length;
 
       return `Processed and queued end reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
-        "Error in sendBookingEndReminderEmails",
+        "Error in sendBookingEndReminders",
       );
       throw error;
     }
@@ -261,17 +289,50 @@ export class ReminderService {
     return effectiveEndTime;
   }
 
+  /**
+   * Batch-fetch active push tokens for every customer + chauffeur across the
+   * given legs in a single round-trip. Replaces N+1 per-recipient lookups
+   * inside `RecipientChannelResolverService.resolve()` (Issue 13A).
+   */
+  private async prefetchPushTokensForLegs(legs: ReminderLeg[]): Promise<Record<string, string[]>> {
+    const userIds = new Set<string>();
+    for (const leg of legs) {
+      if (leg.booking.userId) {
+        userIds.add(leg.booking.userId);
+      }
+      if (leg.booking.chauffeurId) {
+        userIds.add(leg.booking.chauffeurId);
+      }
+    }
+
+    if (userIds.size === 0) {
+      return {};
+    }
+
+    return this.pushTokenService.getActiveTokensForUsers([...userIds]);
+  }
+
   private async queueReminderForLeg(
-    leg: Parameters<typeof normaliseBookingLegDetails>[0],
+    leg: ReminderLeg,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
+    tokensByUserId: Record<string, string[]>,
   ): Promise<boolean> {
     return this.queueReminderNotification(
       leg.id,
-      () =>
-        this.notificationService.queueBookingReminderNotifications(
-          normaliseBookingLegDetails(leg),
+      async () => {
+        await this.notificationOutboxService.create(this.bookingReminderHandler, {
+          bookingLeg: leg,
           type,
-        ),
+          context: {
+            customerPushTokens: leg.booking.userId
+              ? (tokensByUserId[leg.booking.userId] ?? [])
+              : undefined,
+            chauffeurPushTokens: leg.booking.chauffeurId
+              ? (tokensByUserId[leg.booking.chauffeurId] ?? [])
+              : undefined,
+          },
+        });
+      },
       REMINDER_LABEL_BY_TYPE[type],
     );
   }

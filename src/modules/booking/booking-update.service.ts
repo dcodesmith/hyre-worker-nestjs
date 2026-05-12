@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
+import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
 import {
@@ -54,6 +55,7 @@ export class BookingUpdateService {
     private readonly bookingValidationService: BookingValidationService,
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly chauffeurAssignedHandler: ChauffeurAssignedHandler,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingUpdateService.name);
@@ -149,10 +151,10 @@ export class BookingUpdateService {
           include: this.bookingDetailsInclude,
         });
         if (booking.chauffeurId !== chauffeur.id) {
-          await this.notificationOutboxService.createChauffeurAssignedEvent(
+          await this.notificationOutboxService.create(
+            this.chauffeurAssignedHandler,
+            { booking: updatedBooking, chauffeurId: chauffeur.id },
             tx,
-            updatedBooking,
-            chauffeur.id,
           );
         }
 

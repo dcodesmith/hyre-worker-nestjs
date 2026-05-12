@@ -3,7 +3,8 @@ import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   BookingCancellationFailedException,
   BookingNotCancellableException,
@@ -27,8 +28,12 @@ describe("BookingCancellationService", () => {
   const databaseServiceMock = {
     $transaction: vi.fn(),
   };
-  const notificationServiceMock = {
-    queueBookingCancellationNotifications: vi.fn(),
+  const notificationOutboxServiceMock = {
+    create: vi.fn(),
+  };
+  const bookingCancellationHandlerMock = {
+    eventType: "BOOKING_LIFECYCLE" as const,
+    buildEvents: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -41,7 +46,8 @@ describe("BookingCancellationService", () => {
       providers: [
         BookingCancellationService,
         { provide: DatabaseService, useValue: databaseServiceMock },
-        { provide: NotificationService, useValue: notificationServiceMock },
+        { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
+        { provide: BookingCancellationHandler, useValue: bookingCancellationHandlerMock },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -92,8 +98,10 @@ describe("BookingCancellationService", () => {
       where: { id: "car-1" },
       data: { status: "AVAILABLE" },
     });
-    expect(notificationServiceMock.queueBookingCancellationNotifications).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }),
+    expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
+      bookingCancellationHandlerMock,
+      { booking: expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }) },
+      txMock,
     );
   });
 

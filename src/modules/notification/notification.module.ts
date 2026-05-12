@@ -5,6 +5,10 @@ import { Module } from "@nestjs/common";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { AuthModule } from "../auth/auth.module";
 import { EmailModule } from "../email/email.module";
+import { BookingCancellationHandler } from "./handlers/booking-cancellation.handler";
+import { BookingReminderHandler } from "./handlers/booking-reminder.handler";
+import { BookingStatusChangedHandler } from "./handlers/booking-status-changed.handler";
+import { ChauffeurAssignedHandler } from "./handlers/chauffeur-assigned.handler";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
 import { NotificationOutboxScheduler } from "./notification-outbox.scheduler";
@@ -12,6 +16,7 @@ import { NotificationOutboxService } from "./notification-outbox.service";
 import { PushService } from "./push.service";
 import { PushTokenController } from "./push-token.controller";
 import { PushTokenService } from "./push-token.service";
+import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import { WhatsAppService } from "./whatsapp.service";
 
 @Module({
@@ -44,12 +49,21 @@ import { WhatsAppService } from "./whatsapp.service";
     WhatsAppService,
     PushService,
     PushTokenService,
+    RecipientChannelResolverService,
+    ChauffeurAssignedHandler,
+    BookingStatusChangedHandler,
+    BookingReminderHandler,
+    BookingCancellationHandler,
   ],
   exports: [
     NotificationService,
     NotificationOutboxService,
     WhatsAppService,
     PushTokenService,
+    ChauffeurAssignedHandler,
+    BookingStatusChangedHandler,
+    BookingReminderHandler,
+    BookingCancellationHandler,
     BullModule,
   ],
 })

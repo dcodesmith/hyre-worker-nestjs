@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { BookingStatusChangedHandler } from "../notification/handlers/booking-status-changed.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralService } from "../referral/referral.service";
 import {
@@ -16,7 +17,7 @@ import { StatusChangeService } from "./status-change.service";
 describe("StatusChangeService", () => {
   let service: StatusChangeService;
   let mockDatabaseService: DatabaseService;
-  let mockNotificationService: NotificationService;
+  let mockNotificationOutboxService: NotificationOutboxService;
   let mockPaymentService: PaymentService;
   let mockReferralService: ReferralService;
 
@@ -44,9 +45,16 @@ describe("StatusChangeService", () => {
           },
         },
         {
-          provide: NotificationService,
+          provide: NotificationOutboxService,
           useValue: {
-            queueBookingStatusNotifications: vi.fn(),
+            create: vi.fn(),
+          },
+        },
+        {
+          provide: BookingStatusChangedHandler,
+          useValue: {
+            eventType: "BOOKING_LIFECYCLE",
+            buildEvents: vi.fn(),
           },
         },
         {
@@ -68,7 +76,8 @@ describe("StatusChangeService", () => {
 
     service = module.get<StatusChangeService>(StatusChangeService);
     mockDatabaseService = module.get<DatabaseService>(DatabaseService);
-    mockNotificationService = module.get<NotificationService>(NotificationService);
+    mockNotificationOutboxService =
+      module.get<NotificationOutboxService>(NotificationOutboxService);
     mockPaymentService = module.get<PaymentService>(PaymentService);
     mockReferralService = module.get<ReferralService>(ReferralService);
   });
@@ -120,11 +129,15 @@ describe("StatusChangeService", () => {
     const result = await service.updateBookingsFromConfirmedToActive();
 
     expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
-      BookingStatus.CONFIRMED,
-      BookingStatus.ACTIVE,
-      false,
+    expect(mockNotificationOutboxService.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
+      expect.objectContaining({
+        booking: expect.objectContaining({ id: "1", status: BookingStatus.ACTIVE }),
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+        showReviewRequest: false,
+      }),
+      mockDatabaseService,
     );
     expect(result).toBe("Updated 1 bookings from confirmed to active");
   });
@@ -145,7 +158,7 @@ describe("StatusChangeService", () => {
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
         callback(mockDatabaseService),
     );
-    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+    vi.mocked(mockNotificationOutboxService.create).mockRejectedValueOnce(
       new Error("Notification error"),
     );
 
@@ -226,11 +239,15 @@ describe("StatusChangeService", () => {
     expect(reviewFindUniqueMock).toHaveBeenCalledWith({
       where: { bookingId: "2" },
     });
-    expect(mockNotificationService.queueBookingStatusNotifications).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
-      BookingStatus.ACTIVE,
-      BookingStatus.COMPLETED,
-      true, // showReviewRequest should be true when no review exists
+    expect(mockNotificationOutboxService.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
+      expect.objectContaining({
+        booking: expect.objectContaining({ id: "2", status: BookingStatus.COMPLETED }),
+        oldStatus: BookingStatus.ACTIVE,
+        newStatus: BookingStatus.COMPLETED,
+        showReviewRequest: true, // showReviewRequest should be true when no review exists
+      }),
+      mockDatabaseService,
     );
     expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
     expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("2");
@@ -265,7 +282,7 @@ describe("StatusChangeService", () => {
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
         callback(mockDatabaseService),
     );
-    vi.mocked(mockNotificationService.queueBookingStatusNotifications).mockRejectedValueOnce(
+    vi.mocked(mockNotificationOutboxService.create).mockRejectedValueOnce(
       new Error("Notification error"),
     );
 
@@ -350,6 +367,16 @@ describe("StatusChangeService", () => {
         legs: { include: { extensions: true } },
       },
     });
+    expect(mockNotificationOutboxService.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
+      expect.objectContaining({
+        booking: expect.objectContaining({ id: "airport-1", status: BookingStatus.ACTIVE }),
+        oldStatus: BookingStatus.CONFIRMED,
+        newStatus: BookingStatus.ACTIVE,
+        showReviewRequest: false,
+      }),
+      undefined,
+    );
     expect(result).toBe("Activated airport booking airport-1");
   });
 

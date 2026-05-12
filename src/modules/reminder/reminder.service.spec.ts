@@ -4,7 +4,6 @@ import { addHours } from "date-fns";
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { normaliseBookingLegDetails } from "../../shared/helper";
 import {
   createBooking,
   createBookingLeg,
@@ -14,14 +13,17 @@ import {
   createUser,
 } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
+import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
-import { NotificationService } from "../notification/notification.service";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { PushTokenService } from "../notification/push-token.service";
 import { ReminderService } from "./reminder.service";
 
 describe("ReminderService", () => {
   let service: ReminderService;
   let databaseService: DatabaseService;
-  let notificationService: NotificationService;
+  let notificationOutboxService: NotificationOutboxService;
+  let pushTokenService: PushTokenService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -36,9 +38,22 @@ describe("ReminderService", () => {
           },
         },
         {
-          provide: NotificationService,
+          provide: NotificationOutboxService,
           useValue: {
-            queueBookingReminderNotifications: vi.fn().mockResolvedValue(undefined),
+            create: vi.fn().mockResolvedValue(1),
+          },
+        },
+        {
+          provide: BookingReminderHandler,
+          useValue: {
+            eventType: "BOOKING_REMINDER",
+            buildEvents: vi.fn(),
+          },
+        },
+        {
+          provide: PushTokenService,
+          useValue: {
+            getActiveTokensForUsers: vi.fn().mockResolvedValue({}),
           },
         },
       ],
@@ -48,9 +63,10 @@ describe("ReminderService", () => {
 
     service = module.get<ReminderService>(ReminderService);
     databaseService = module.get<DatabaseService>(DatabaseService);
-    notificationService = module.get<NotificationService>(NotificationService);
+    notificationOutboxService = module.get<NotificationOutboxService>(NotificationOutboxService);
+    pushTokenService = module.get<PushTokenService>(PushTokenService);
   });
-  describe("sendBookingStartReminderEmails", () => {
+  describe("sendBookingStartReminders", () => {
     // Use fake timers for time-sensitive tests to avoid flakiness
     // caused by time drift between test setup and service execution
     afterEach(() => {
@@ -60,10 +76,10 @@ describe("ReminderService", () => {
     it("should return message when no legs found", async () => {
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([]);
 
-      const result = await service.sendBookingStartReminderEmails();
+      const result = await service.sendBookingStartReminders();
 
       expect(result).toBe("No relevant booking legs today, so no start reminders to send.");
-      expect(notificationService.queueBookingReminderNotifications).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
     });
 
     it("should queue notifications for matching legs", async () => {
@@ -90,11 +106,18 @@ describe("ReminderService", () => {
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
 
-      const result = await service.sendBookingStartReminderEmails();
+      const result = await service.sendBookingStartReminders();
 
-      expect(notificationService.queueBookingReminderNotifications).toHaveBeenCalledWith(
-        normaliseBookingLegDetails(leg),
-        NotificationType.BOOKING_REMINDER_START,
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "BOOKING_REMINDER" }),
+        expect.objectContaining({
+          bookingLeg: leg,
+          type: NotificationType.BOOKING_REMINDER_START,
+          context: expect.objectContaining({
+            customerPushTokens: expect.any(Array),
+            chauffeurPushTokens: expect.any(Array),
+          }),
+        }),
       );
       expect(result).toContain("Processed and queued start reminders for 1 legs.");
     });
@@ -122,11 +145,9 @@ describe("ReminderService", () => {
       };
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
-      vi.mocked(notificationService.queueBookingReminderNotifications).mockRejectedValueOnce(
-        new Error("Queue error"),
-      );
+      vi.mocked(notificationOutboxService.create).mockRejectedValueOnce(new Error("Queue error"));
 
-      const result = await service.sendBookingStartReminderEmails();
+      const result = await service.sendBookingStartReminders();
 
       expect(result).toContain("Processed and queued start reminders for 0 legs.");
     });
@@ -135,11 +156,75 @@ describe("ReminderService", () => {
       const error = new Error("Database error");
       vi.mocked(databaseService.bookingLeg.findMany).mockRejectedValueOnce(error);
 
-      await expect(service.sendBookingStartReminderEmails()).rejects.toThrow(error);
+      await expect(service.sendBookingStartReminders()).rejects.toThrow(error);
+    });
+
+    it("prefetches push tokens for all recipients in a single call (Issue 13A)", async () => {
+      const fixedNow = new Date("2026-01-24T10:30:30.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(fixedNow);
+
+      const legStartTime = addHours(fixedNow, 0.5);
+      const customerA = createUser({ id: "user-customer-a" });
+      const customerB = createUser({ id: "user-customer-b" });
+      const chauffeurA = createChauffeur({ id: "chauffeur-a" });
+      const chauffeurB = createChauffeur({ id: "chauffeur-b" });
+
+      const buildLeg = (
+        customer: ReturnType<typeof createUser>,
+        chauffeur: ReturnType<typeof createChauffeur>,
+      ) => ({
+        ...createBookingLeg({ legDate: fixedNow, legStartTime }),
+        booking: createBooking({
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          chauffeur,
+          chauffeurId: chauffeur.id,
+          car: createCar({ status: Status.BOOKED, owner: createOwner() }),
+          user: customer,
+          userId: customer.id,
+        }),
+      });
+
+      const legs = [buildLeg(customerA, chauffeurA), buildLeg(customerB, chauffeurB)];
+      vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce(legs);
+      vi.mocked(pushTokenService.getActiveTokensForUsers).mockResolvedValueOnce({
+        [customerA.id]: ["token-customer-a"],
+        [customerB.id]: ["token-customer-b"],
+        [chauffeurA.id]: ["token-chauffeur-a"],
+        [chauffeurB.id]: ["token-chauffeur-b"],
+      });
+
+      await service.sendBookingStartReminders();
+
+      expect(pushTokenService.getActiveTokensForUsers).toHaveBeenCalledTimes(1);
+      expect(pushTokenService.getActiveTokensForUsers).toHaveBeenCalledWith(
+        expect.arrayContaining([customerA.id, customerB.id, chauffeurA.id, chauffeurB.id]),
+      );
+      expect(notificationOutboxService.create).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({
+          context: {
+            customerPushTokens: ["token-customer-a"],
+            chauffeurPushTokens: ["token-chauffeur-a"],
+          },
+        }),
+      );
+      expect(notificationOutboxService.create).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({
+          context: {
+            customerPushTokens: ["token-customer-b"],
+            chauffeurPushTokens: ["token-chauffeur-b"],
+          },
+        }),
+      );
     });
   });
 
-  describe("sendBookingEndReminderEmails", () => {
+  describe("sendBookingEndReminders", () => {
     // Use fake timers for time-sensitive tests to avoid flakiness
     // caused by time drift between test setup and service execution
     afterEach(() => {
@@ -149,10 +234,10 @@ describe("ReminderService", () => {
     it("should return message when no legs found", async () => {
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([]);
 
-      const result = await service.sendBookingEndReminderEmails();
+      const result = await service.sendBookingEndReminders();
 
       expect(result).toBe("No relevant booking legs today, so no end reminders to send.");
-      expect(notificationService.queueBookingReminderNotifications).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
     });
 
     it("should queue notifications for legs with effective end time in reminder window", async () => {
@@ -179,11 +264,18 @@ describe("ReminderService", () => {
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
 
-      const result = await service.sendBookingEndReminderEmails();
+      const result = await service.sendBookingEndReminders();
 
-      expect(notificationService.queueBookingReminderNotifications).toHaveBeenCalledWith(
-        normaliseBookingLegDetails(leg),
-        NotificationType.BOOKING_REMINDER_END,
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "BOOKING_REMINDER" }),
+        expect.objectContaining({
+          bookingLeg: leg,
+          type: NotificationType.BOOKING_REMINDER_END,
+          context: expect.objectContaining({
+            customerPushTokens: expect.any(Array),
+            chauffeurPushTokens: expect.any(Array),
+          }),
+        }),
       );
       expect(result).toContain("Processed and queued end reminders for 1 legs.");
     });
@@ -211,9 +303,9 @@ describe("ReminderService", () => {
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
 
-      const result = await service.sendBookingEndReminderEmails();
+      const result = await service.sendBookingEndReminders();
 
-      expect(notificationService.queueBookingReminderNotifications).not.toHaveBeenCalled();
+      expect(notificationOutboxService.create).not.toHaveBeenCalled();
       expect(result).toContain("Processed and queued end reminders for 0 legs.");
     });
 
@@ -264,9 +356,9 @@ describe("ReminderService", () => {
 
       vi.mocked(databaseService.bookingLeg.findMany).mockResolvedValueOnce([leg]);
 
-      const result = await service.sendBookingEndReminderEmails();
+      const result = await service.sendBookingEndReminders();
 
-      expect(notificationService.queueBookingReminderNotifications).toHaveBeenCalled();
+      expect(notificationOutboxService.create).toHaveBeenCalled();
       expect(result).toContain("Processed and queued end reminders for 1 legs.");
     });
 
@@ -274,7 +366,7 @@ describe("ReminderService", () => {
       const error = new Error("Database error");
       vi.mocked(databaseService.bookingLeg.findMany).mockRejectedValueOnce(error);
 
-      await expect(service.sendBookingEndReminderEmails()).rejects.toThrow(error);
+      await expect(service.sendBookingEndReminders()).rejects.toThrow(error);
     });
   });
 });

@@ -122,6 +122,9 @@ model UserPushToken {
   @@index([revokedAt])
 }
 
+/// In-app notification feed. If row count grows past ~500k, add new indexes with
+/// `CREATE INDEX CONCURRENTLY` in a dedicated single-statement migration (plain
+/// `CREATE INDEX` blocks writes for the duration of the build on hot tables).
 model NotificationInbox {
   id        String               @id @default(cuid())
   userId    String
@@ -129,6 +132,9 @@ model NotificationInbox {
   title     String
   body      String
   payload   Json?
+  /// Same key as the sibling outbox row (when present). Uniqueness gives
+  /// idempotent inbox writes for inbox-only events (no jobData / no outbox row).
+  dedupeKey String?              @unique
   readAt    DateTime?
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
@@ -303,6 +309,8 @@ model Booking {
   @@index([paymentIntent])
   @@index([overallPayoutStatus])
   @@index([startDate, endDate, status])
+  @@index([status, paymentStatus, startDate])
+  @@index([status, paymentStatus, endDate])
   @@index([chauffeurId, status, startDate, endDate])
   @@index([carId, paymentStatus, status, startDate, endDate])
   @@index([type, endDate])
@@ -336,6 +344,8 @@ model BookingLeg {
   @@unique([bookingId, legDate])
   @@index([bookingId])
   @@index([legDate])
+  @@index([legDate, legStartTime])
+  @@index([legDate, legEndTime])
 }
 
 model Extension {
@@ -1008,10 +1018,16 @@ enum PushPlatform {
 }
 
 enum NotificationInboxType {
+  BOOKING_ASSIGNMENT
+  BOOKING_LIFECYCLE
+  BOOKING_REMINDER
   CHAUFFEUR_ASSIGNED
 }
 
 enum NotificationOutboxEventType {
+  BOOKING_ASSIGNMENT
+  BOOKING_LIFECYCLE
+  BOOKING_REMINDER
   CHAUFFEUR_ASSIGNED
 }
 

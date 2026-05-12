@@ -3,6 +3,7 @@ import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus } from "@prisma/c
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
+import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   BookingChauffeurNotFoundException,
@@ -35,7 +36,12 @@ describe("BookingUpdateService", () => {
   };
 
   const notificationOutboxServiceMock = {
-    createChauffeurAssignedEvent: vi.fn(),
+    create: vi.fn(),
+  };
+
+  const chauffeurAssignedHandlerMock = {
+    eventType: "BOOKING_ASSIGNMENT" as const,
+    buildEvents: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -47,6 +53,7 @@ describe("BookingUpdateService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
+        { provide: ChauffeurAssignedHandler, useValue: chauffeurAssignedHandlerMock },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -262,10 +269,10 @@ describe("BookingUpdateService", () => {
           where: { id: "booking-1" },
         }),
       );
-      expect(notificationOutboxServiceMock.createChauffeurAssignedEvent).toHaveBeenCalledWith(
+      expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
+        chauffeurAssignedHandlerMock,
+        { booking: result, chauffeurId: "chauffeur-1" },
         tx,
-        result,
-        "chauffeur-1",
       );
     });
 
@@ -314,7 +321,7 @@ describe("BookingUpdateService", () => {
           where: { id: "booking-1" },
         }),
       );
-      expect(notificationOutboxServiceMock.createChauffeurAssignedEvent).not.toHaveBeenCalled();
+      expect(notificationOutboxServiceMock.create).not.toHaveBeenCalled();
     });
 
     it("throws when guarded write fails due to concurrent booking change", async () => {
