@@ -25,7 +25,11 @@ describe("BookingEligibilityService", () => {
       .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
-    const result = await service.checkPreliminaryReferralEligibility(null);
+    const result = await service.checkReferralEligibilityForPricing(
+      null,
+      new Decimal(50000),
+      "DAY",
+    );
 
     expect(result).toEqual({
       eligible: false,
@@ -43,6 +47,7 @@ describe("BookingEligibilityService", () => {
             createUser({ referredByUserId: "referrer-1", referralDiscountUsed: false }),
           ),
       },
+      booking: { findFirst: vi.fn().mockResolvedValue(null) },
       referralProgramConfig: {
         findMany: vi.fn().mockResolvedValue([
           { key: "REFERRAL_ENABLED", value: true },
@@ -61,9 +66,11 @@ describe("BookingEligibilityService", () => {
       .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
-    const result = await service.checkPreliminaryReferralEligibility({
-      id: "user-1",
-    } as never);
+    const result = await service.checkReferralEligibilityForPricing(
+      { id: "user-1" } as never,
+      new Decimal(25000),
+      "DAY",
+    );
 
     expect(result).toEqual({
       eligible: true,
@@ -137,7 +144,11 @@ describe("BookingEligibilityService", () => {
       .compile();
 
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
-    const result = await service.checkPreliminaryReferralEligibility({ id: "user-1" } as never);
+    const result = await service.checkReferralEligibilityForPricing(
+      { id: "user-1" } as never,
+      new Decimal(25000),
+      "DAY",
+    );
 
     expect(result).toEqual({
       eligible: false,

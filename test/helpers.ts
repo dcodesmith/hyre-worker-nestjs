@@ -46,10 +46,6 @@ export interface TestUser {
   referralSignupAt: Date | null;
 }
 
-export interface AuthenticatedTestUser extends TestUser {
-  referralCode: string;
-}
-
 /**
  * Maps auth roles to their corresponding web client referer paths.
  */
@@ -153,10 +149,17 @@ export class TestDataFactory {
     const authHeaders = this.getAuthHeaders(clientType, role);
 
     // Send OTP
-    await request(this.app.getHttpServer())
+    const sendOtpResponse = await request(this.app.getHttpServer())
       .post("/api/auth/email-otp/send-verification-otp")
       .set(authHeaders)
       .send({ email, type: "sign-in", role, referralCode: options.referralCode });
+
+    if (sendOtpResponse.status < 200 || sendOtpResponse.status >= 300) {
+      const bodyPreview = JSON.stringify(sendOtpResponse.body);
+      throw new Error(
+        `send-verification-otp failed for ${email}: status ${sendOtpResponse.status}, body: ${bodyPreview}`,
+      );
+    }
 
     // Get OTP from database
     const verification = await this.prisma.verification.findFirst({
@@ -175,6 +178,13 @@ export class TestDataFactory {
       .post("/api/auth/sign-in/email-otp")
       .set(authHeaders)
       .send({ email, otp, role, referralCode: options.referralCode });
+
+    if (verifyResponse.status < 200 || verifyResponse.status >= 300) {
+      const bodyPreview = JSON.stringify(verifyResponse.body);
+      throw new Error(
+        `sign-in/email-otp failed for ${email}: status ${verifyResponse.status}, body: ${bodyPreview}`,
+      );
+    }
 
     const cookies = verifyResponse.headers["set-cookie"];
 
@@ -212,17 +222,13 @@ export class TestDataFactory {
     role: AuthRole = "user",
     clientType: ClientTypeOption = "mobile",
     options: AuthenticateOptions = {},
-  ): Promise<{ cookie: string; user: AuthenticatedTestUser }> {
+  ): Promise<{ cookie: string; user: TestUser }> {
     const cookie = await this.authenticateAndGetCookie(email, role, clientType, options);
     const user = await this.getUserByEmail(email);
     if (!user) {
       throw new Error(`User not found after authentication: ${email}`);
     }
-    const referralCode = user.referralCode;
-    if (!referralCode) {
-      throw new Error(`User did not receive a referral code after authentication: ${email}`);
-    }
-    return { cookie, user: { ...user, referralCode } };
+    return { cookie, user };
   }
 
   /**
@@ -232,7 +238,7 @@ export class TestDataFactory {
    */
   async createAuthenticatedAdmin(email: string): Promise<{
     cookie: string;
-    user: AuthenticatedTestUser;
+    user: TestUser;
   }> {
     const { cookie, user } = await this.authenticateAndGetUser(email, "user");
     await this.assignRole(user.id, "admin");

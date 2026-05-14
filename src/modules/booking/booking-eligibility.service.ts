@@ -26,28 +26,6 @@ export class BookingEligibilityService {
     return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
   }
 
-  async checkPreliminaryReferralEligibility(
-    sessionUser: AuthSession["user"] | null,
-  ): Promise<ReferralEligibility> {
-    if (!sessionUser) {
-      return this.getIneligibleReferralEligibility();
-    }
-
-    const user = await this.databaseService.user.findUnique({
-      where: { id: sessionUser.id },
-      select: {
-        referredByUserId: true,
-        referralDiscountUsed: true,
-      },
-    });
-
-    if (!user?.referredByUserId || user.referralDiscountUsed) {
-      return this.getIneligibleReferralEligibility();
-    }
-
-    return this.getReferralConfig(user.referredByUserId);
-  }
-
   async checkReferralEligibilityForPricing(
     sessionUser: AuthSession["user"] | null,
     bookingAmount: Decimal,
@@ -219,29 +197,6 @@ export class BookingEligibilityService {
       },
       "Created pending referral reward",
     );
-  }
-
-  private async getReferralConfig(referrerUserId: string): Promise<ReferralEligibility> {
-    const configMap = await this.getReferralConfigMap(this.databaseService.referralProgramConfig, [
-      "REFERRAL_ENABLED",
-      "REFERRAL_DISCOUNT_AMOUNT",
-    ]);
-
-    const isEnabled = this.parseEnabledConfig(configMap.REFERRAL_ENABLED);
-    const discountAmount = this.parseDecimalConfig(
-      configMap.REFERRAL_DISCOUNT_AMOUNT,
-      "REFERRAL_DISCOUNT_AMOUNT",
-    );
-
-    if (!isEnabled || discountAmount.lte(0)) {
-      return this.getIneligibleReferralEligibility();
-    }
-
-    return {
-      eligible: true,
-      referrerUserId,
-      discountAmount,
-    };
   }
 
   private async getReferralPricingConfig(): Promise<{

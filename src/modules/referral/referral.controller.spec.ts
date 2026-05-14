@@ -147,6 +147,8 @@ describe("ReferralController", () => {
     const result = await controller.getCurrentUserReferralInfo(createMockAuthUser(), request);
 
     expect(result.referralCode).toBe("ABCDEFGH");
+    expect(result.programEnabled).toBe(true);
+    expect(result.discountAmount).toBe(10000);
     expect(referralService.getCurrentUserReferralInfo).toHaveBeenCalledWith("user-1", request);
   });
 });
