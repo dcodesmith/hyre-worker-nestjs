@@ -146,6 +146,91 @@ describe("BookingEligibilityService", () => {
     });
   });
 
+  it("returns pricing eligibility when referred user meets amount and booking type rules", async () => {
+    const databaseService = {
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue(
+            createUser({ referredByUserId: "referrer-1", referralDiscountUsed: false }),
+          ),
+      },
+      booking: { findFirst: vi.fn().mockResolvedValue(null) },
+      referralProgramConfig: {
+        findMany: vi.fn().mockResolvedValue([
+          { key: "REFERRAL_ENABLED", value: true },
+          { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000" },
+          { key: "REFERRAL_MIN_BOOKING_AMOUNT", value: "20000" },
+          { key: "REFERRAL_ELIGIBLE_TYPES", value: ["DAY", "FULL_DAY"] },
+          { key: "REFERRAL_EXPIRY_DAYS", value: 30 },
+        ]),
+      },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingEligibilityService,
+        { provide: DatabaseService, useValue: databaseService },
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    const service = module.get<BookingEligibilityService>(BookingEligibilityService);
+    const result = await service.checkReferralEligibilityForPricing(
+      { id: "user-1" } as never,
+      new Decimal(52500),
+      "DAY",
+    );
+
+    expect(result).toEqual({
+      eligible: true,
+      referrerUserId: "referrer-1",
+      discountAmount: new Decimal(5000),
+    });
+  });
+
+  it("returns ineligible for pricing when another active booking reserved the discount", async () => {
+    const databaseService = {
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue(
+            createUser({ referredByUserId: "referrer-1", referralDiscountUsed: false }),
+          ),
+      },
+      booking: { findFirst: vi.fn().mockResolvedValue({ id: "booking-1" }) },
+      referralProgramConfig: {
+        findMany: vi.fn().mockResolvedValue([
+          { key: "REFERRAL_ENABLED", value: true },
+          { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000" },
+        ]),
+      },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingEligibilityService,
+        { provide: DatabaseService, useValue: databaseService },
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    const service = module.get<BookingEligibilityService>(BookingEligibilityService);
+    const result = await service.checkReferralEligibilityForPricing(
+      { id: "user-1" } as never,
+      new Decimal(52500),
+      "DAY",
+    );
+
+    expect(result).toEqual({
+      eligible: false,
+      referrerUserId: null,
+      discountAmount: new Decimal(0),
+    });
+  });
+
   it("increments totalReferrals when creating referral reward stats", async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [

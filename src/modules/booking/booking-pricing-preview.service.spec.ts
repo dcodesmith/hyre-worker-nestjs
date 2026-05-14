@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
@@ -14,6 +15,7 @@ describe("BookingPricingPreviewService", () => {
   let bookingPersistenceService: BookingPersistenceService;
   let bookingLegService: BookingLegService;
   let bookingCalculationService: BookingCalculationService;
+  let bookingEligibilityService: BookingEligibilityService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -37,6 +39,12 @@ describe("BookingPricingPreviewService", () => {
             calculateBookingCost: vi.fn(),
           },
         },
+        {
+          provide: BookingEligibilityService,
+          useValue: {
+            checkReferralEligibilityForPricing: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -46,6 +54,12 @@ describe("BookingPricingPreviewService", () => {
     bookingPersistenceService = module.get<BookingPersistenceService>(BookingPersistenceService);
     bookingLegService = module.get<BookingLegService>(BookingLegService);
     bookingCalculationService = module.get<BookingCalculationService>(BookingCalculationService);
+    bookingEligibilityService = module.get<BookingEligibilityService>(BookingEligibilityService);
+    vi.mocked(bookingEligibilityService.checkReferralEligibilityForPricing).mockResolvedValue({
+      eligible: false,
+      referrerUserId: null,
+      discountAmount: new Decimal(0),
+    });
   });
 
   it("returns PARTIAL coverage and promo/standard segments", async () => {
@@ -159,6 +173,9 @@ describe("BookingPricingPreviewService", () => {
     });
     expect(result.compareAtBaseTotal).toBe(150000);
     expect(result.baseTotal).toBe(140000);
+    expect(result.referralDiscountAmount).toBe(0);
+    expect(result.creditsUsed).toBe(0);
+    expect(result.subtotalAfterDiscounts).toBe(147000);
     expect(result.savingsAmount).toBeGreaterThan(0);
   });
 
@@ -237,5 +254,109 @@ describe("BookingPricingPreviewService", () => {
       unitPrice: 60000,
       total: 60000,
     });
+  });
+
+  it("applies authenticated user's referral discount to the preview total", async () => {
+    vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
+      id: "car-1",
+      ownerId: "owner-1",
+      dayRate: 50000,
+      nightRate: 45000,
+      fullDayRate: 80000,
+      airportPickupRate: 60000,
+      fuelUpgradeRate: 0,
+      pricingIncludesFuel: false,
+    });
+    vi.mocked(bookingLegService.generateLegs).mockReturnValue([
+      {
+        legDate: new Date("2026-05-01T00:00:00.000Z"),
+        legStartTime: new Date("2026-05-01T09:00:00.000Z"),
+        legEndTime: new Date("2026-05-01T21:00:00.000Z"),
+      },
+    ]);
+
+    const baseFinancials: BookingFinancials = {
+      legPrices: [
+        {
+          legDate: new Date("2026-05-01T00:00:00.000Z"),
+          price: new Decimal(50000),
+          basePrice: new Decimal(50000),
+          promotion: null,
+        },
+      ],
+      numberOfLegs: 1,
+      netTotal: new Decimal(50000),
+      compareAtNetTotal: new Decimal(50000),
+      appliedPromotion: null,
+      securityDetailCost: new Decimal(0),
+      fuelUpgradeCost: new Decimal(0),
+      netTotalWithAddons: new Decimal(50000),
+      platformFeeBase: new Decimal(50000),
+      platformCustomerServiceFeeRatePercent: new Decimal(5),
+      platformCustomerServiceFeeAmount: new Decimal(2500),
+      subtotalBeforeDiscounts: new Decimal(52500),
+      referralDiscountAmount: new Decimal(0),
+      creditsUsed: new Decimal(0),
+      subtotalAfterDiscounts: new Decimal(52500),
+      vatRatePercent: new Decimal(7.5),
+      vatAmount: new Decimal(3937.5),
+      totalAmount: new Decimal(56437.5),
+      platformFleetOwnerCommissionRatePercent: new Decimal(5),
+      platformFleetOwnerCommissionAmount: new Decimal(2500),
+      fleetOwnerPayoutAmountNet: new Decimal(47500),
+    };
+    const discountedFinancials: BookingFinancials = {
+      ...baseFinancials,
+      referralDiscountAmount: new Decimal(5000),
+      subtotalAfterDiscounts: new Decimal(47500),
+      vatAmount: new Decimal(3562.5),
+      totalAmount: new Decimal(51062.5),
+    };
+    vi.mocked(bookingCalculationService.calculateBookingCost)
+      .mockResolvedValueOnce(baseFinancials)
+      .mockResolvedValueOnce(discountedFinancials);
+    vi.mocked(bookingEligibilityService.checkReferralEligibilityForPricing).mockResolvedValue({
+      eligible: true,
+      referrerUserId: "referrer-1",
+      discountAmount: new Decimal(5000),
+    });
+
+    const sessionUser = {
+      id: "user-1",
+      email: "user@example.com",
+      name: "User",
+      emailVerified: true,
+      image: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      roles: ["user" as const],
+    };
+
+    const result = await service.preview(
+      {
+        carId: "car-1",
+        bookingType: BookingType.DAY,
+        startDate: new Date("2026-05-01T00:00:00.000Z"),
+        endDate: new Date("2026-05-01T23:59:00.000Z"),
+        pickupTime: "9:00 AM",
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      },
+      sessionUser,
+    );
+
+    expect(bookingEligibilityService.checkReferralEligibilityForPricing).toHaveBeenCalledWith(
+      sessionUser,
+      new Decimal(52500),
+      BookingType.DAY,
+    );
+    expect(bookingCalculationService.calculateBookingCost).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        referralDiscountAmount: new Decimal(5000),
+      }),
+    );
+    expect(result.referralDiscountAmount).toBe(5000);
+    expect(result.subtotalAfterDiscounts).toBe(47500);
+    expect(result.totalAmount).toBe(51062.5);
   });
 });

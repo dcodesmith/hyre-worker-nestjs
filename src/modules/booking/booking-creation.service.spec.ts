@@ -105,7 +105,7 @@ describe("BookingCreationService", () => {
           useValue: {
             car: { findUnique: vi.fn() },
             user: { findUnique: vi.fn(), update: vi.fn() },
-            booking: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+            booking: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
             flight: { upsert: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn() },

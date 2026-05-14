@@ -153,13 +153,7 @@ export class BookingCreationService {
       }),
     );
 
-    // Preliminary eligibility check for price calculation
-    // For authenticated users: check session data for preliminary eligibility
-    // Actual eligibility is verified inside the transaction with fresh DB query to prevent race conditions
-    const preliminaryReferralEligibility =
-      await this.eligibilityService.checkPreliminaryReferralEligibility(sessionUser);
-
-    const financials = await this.calculationService.calculateBookingCost({
+    const baseFinancials = await this.calculationService.calculateBookingCost({
       bookingType: normalizedBooking.bookingType,
       legs,
       car,
@@ -170,8 +164,32 @@ export class BookingCreationService {
       creditsToUse: normalizedBooking.useCredits
         ? new Decimal(normalizedBooking.useCredits)
         : undefined,
-      referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
+      referralDiscountAmount: new Decimal(0),
     });
+
+    // Preliminary eligibility check for price calculation.
+    // Actual eligibility is verified inside the transaction with fresh DB query to prevent races.
+    const preliminaryReferralEligibility =
+      await this.eligibilityService.checkReferralEligibilityForPricing(
+        sessionUser,
+        baseFinancials.subtotalBeforeDiscounts,
+        normalizedBooking.bookingType,
+      );
+
+    const financials = preliminaryReferralEligibility.discountAmount.gt(0)
+      ? await this.calculationService.calculateBookingCost({
+          bookingType: normalizedBooking.bookingType,
+          legs,
+          car,
+          includeSecurityDetail: normalizedBooking.includeSecurityDetail,
+          requiresFullTank: normalizedBooking.requiresFullTank,
+          userCreditsBalance: undefined,
+          creditsToUse: normalizedBooking.useCredits
+            ? new Decimal(normalizedBooking.useCredits)
+            : undefined,
+          referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
+        })
+      : baseFinancials;
 
     this.validationService.validatePriceMatch(
       normalizedBooking.clientTotalAmount,
