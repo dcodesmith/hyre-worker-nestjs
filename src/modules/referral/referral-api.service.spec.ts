@@ -147,6 +147,8 @@ describe("ReferralApiService", () => {
 
     expect(result.referralCode).toBe("ABCDEFGH");
     expect(result.shareLink).toBe("http://localhost:3000/auth?ref=ABCDEFGH");
+    expect(result.programEnabled).toBe(true);
+    expect(result.discountAmount).toBe(10000);
     expect(result.stats.totalRewardsGranted).toBe(2500);
     expect(result.stats.totalEarned).toBe(2500);
     expect(result.stats.totalUsed).toBe(500);

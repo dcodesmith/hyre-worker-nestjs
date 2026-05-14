@@ -119,6 +119,8 @@ describe("ReferralController", () => {
     vi.mocked(referralService.getCurrentUserReferralInfo).mockResolvedValue({
       referralCode: "ABCDEFGH",
       shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
+      programEnabled: true,
+      discountAmount: 10000,
       hasUsedDiscount: false,
       referredBy: null,
       signupDate: null,

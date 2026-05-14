@@ -184,6 +184,8 @@ export class ReferralApiService {
     return {
       referralCode: referralInfo.referralCode,
       shareLink,
+      programEnabled: config.REFERRAL_ENABLED,
+      discountAmount: config.REFERRAL_DISCOUNT_AMOUNT,
       hasUsedDiscount: referralInfo.referralDiscountUsed,
       referredBy: referralInfo.referredByUserId,
       signupDate: referralInfo.referralSignupAt,

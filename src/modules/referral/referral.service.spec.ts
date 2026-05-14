@@ -130,6 +130,8 @@ describe("ReferralService", () => {
     vi.mocked(referralApiService.getUserReferralSummary).mockResolvedValue({
       referralCode: "ABCDEFGH",
       shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
+      programEnabled: true,
+      discountAmount: 10000,
       hasUsedDiscount: false,
       referredBy: null,
       signupDate: null,
@@ -163,6 +165,8 @@ describe("ReferralService", () => {
       .mockResolvedValueOnce({
         referralCode: "FIRST",
         shareLink: "http://localhost:3000/auth?ref=FIRST",
+        programEnabled: true,
+        discountAmount: 10000,
         hasUsedDiscount: false,
         referredBy: null,
         signupDate: null,
@@ -182,6 +186,8 @@ describe("ReferralService", () => {
       .mockResolvedValueOnce({
         referralCode: "SECOND",
         shareLink: "http://localhost:3000/auth?ref=SECOND",
+        programEnabled: true,
+        discountAmount: 10000,
         hasUsedDiscount: false,
         referredBy: null,
         signupDate: null,
@@ -217,6 +223,8 @@ describe("ReferralService", () => {
     vi.mocked(referralApiService.getUserReferralSummary).mockImplementation(async (userId) => ({
       referralCode: userId,
       shareLink: `http://localhost:3000/auth?ref=${userId}`,
+      programEnabled: true,
+      discountAmount: 10000,
       hasUsedDiscount: false,
       referredBy: null,
       signupDate: null,
