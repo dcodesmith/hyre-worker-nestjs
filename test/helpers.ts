@@ -1,6 +1,8 @@
 import type { INestApplication } from "@nestjs/common";
-import type { PayoutTransactionStatus, Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient, ReferralAttributionSource } from "@prisma/client";
 import request from "supertest";
+
+const ONE_DAY_MS = 86400000;
 
 // ============================================================================
 // Test Data Factory Types (using Prisma UncheckedCreateInput for direct FK usage)
@@ -24,9 +26,29 @@ export type CreatePayoutTransactionOptions = Partial<Prisma.PayoutTransactionUnc
 
 export type CreateReviewOptions = Partial<Prisma.ReviewUncheckedCreateInput>;
 
+export type CreatePromotionOptions = Partial<Prisma.PromotionUncheckedCreateInput>;
+
 export type AuthRole = "user" | "fleetOwner" | "admin";
 
 export type ClientTypeOption = "mobile" | "web";
+
+export interface AuthenticateOptions {
+  referralCode?: string;
+}
+
+export interface TestUser {
+  id: string;
+  email: string;
+  name: string | null;
+  referralCode: string | null;
+  referredByUserId: string | null;
+  referralAttributionSource: ReferralAttributionSource | null;
+  referralSignupAt: Date | null;
+}
+
+export interface AuthenticatedTestUser extends TestUser {
+  referralCode: string;
+}
 
 /**
  * Maps auth roles to their corresponding web client referer paths.
@@ -119,6 +141,7 @@ export class TestDataFactory {
     email: string,
     role: AuthRole = "user",
     clientType: ClientTypeOption = "mobile",
+    options: AuthenticateOptions = {},
   ): Promise<string> {
     if (!this.app) {
       throw new Error("TestDataFactory requires app instance for authentication methods");
@@ -133,7 +156,7 @@ export class TestDataFactory {
     await request(this.app.getHttpServer())
       .post("/api/auth/email-otp/send-verification-otp")
       .set(authHeaders)
-      .send({ email, type: "sign-in", role });
+      .send({ email, type: "sign-in", role, referralCode: options.referralCode });
 
     // Get OTP from database
     const verification = await this.prisma.verification.findFirst({
@@ -151,7 +174,7 @@ export class TestDataFactory {
     const verifyResponse = await request(this.app.getHttpServer())
       .post("/api/auth/sign-in/email-otp")
       .set(authHeaders)
-      .send({ email, otp, role });
+      .send({ email, otp, role, referralCode: options.referralCode });
 
     const cookies = verifyResponse.headers["set-cookie"];
 
@@ -165,12 +188,18 @@ export class TestDataFactory {
   /**
    * Get user by email.
    */
-  async getUserByEmail(
-    email: string,
-  ): Promise<{ id: string; email: string; name: string | null } | null> {
+  async getUserByEmail(email: string): Promise<TestUser | null> {
     return this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, name: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        referralCode: true,
+        referredByUserId: true,
+        referralAttributionSource: true,
+        referralSignupAt: true,
+      },
     });
   }
 
@@ -182,13 +211,18 @@ export class TestDataFactory {
     email: string,
     role: AuthRole = "user",
     clientType: ClientTypeOption = "mobile",
-  ): Promise<{ cookie: string; user: { id: string; email: string; name: string | null } }> {
-    const cookie = await this.authenticateAndGetCookie(email, role, clientType);
+    options: AuthenticateOptions = {},
+  ): Promise<{ cookie: string; user: AuthenticatedTestUser }> {
+    const cookie = await this.authenticateAndGetCookie(email, role, clientType, options);
     const user = await this.getUserByEmail(email);
     if (!user) {
       throw new Error(`User not found after authentication: ${email}`);
     }
-    return { cookie, user };
+    const referralCode = user.referralCode;
+    if (!referralCode) {
+      throw new Error(`User did not receive a referral code after authentication: ${email}`);
+    }
+    return { cookie, user: { ...user, referralCode } };
   }
 
   /**
@@ -198,7 +232,7 @@ export class TestDataFactory {
    */
   async createAuthenticatedAdmin(email: string): Promise<{
     cookie: string;
-    user: { id: string; email: string; name: string | null };
+    user: AuthenticatedTestUser;
   }> {
     const { cookie, user } = await this.authenticateAndGetUser(email, "user");
     await this.assignRole(user.id, "admin");
@@ -447,7 +481,7 @@ export class TestDataFactory {
         carRating: options.carRating ?? 5,
         chauffeurRating: options.chauffeurRating ?? 5,
         serviceRating: options.serviceRating ?? 5,
-        comment: options.comment === undefined ? "Great experience" : options.comment,
+        comment: options.comment ?? "Great experience",
         isVisible: options.isVisible ?? true,
         moderatedAt: options.moderatedAt,
         moderatedBy: options.moderatedBy,
@@ -524,7 +558,7 @@ export class TestDataFactory {
         extensionId: options.extensionId,
         amountToPay: options.amountToPay ?? 45000,
         currency: options.currency ?? "NGN",
-        status: (options.status ?? "PROCESSING") as PayoutTransactionStatus,
+        status: options.status ?? "PROCESSING",
         payoutProviderReference:
           options.payoutProviderReference ??
           `payout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -634,6 +668,65 @@ export class TestDataFactory {
           },
         ],
         skipDuplicates: true,
+      }),
+    ]);
+  }
+
+  /**
+   * Create a promotion for a fleet owner (optionally scoped to a single car).
+   * Defaults to a 20% discount active in a wide window around "now" so it
+   * overlaps booking windows created by tests without ceremony.
+   */
+  async createPromotion(
+    ownerId: string,
+    options: Omit<CreatePromotionOptions, "ownerId"> = {},
+  ): Promise<{ id: string }> {
+    const promotion = await this.prisma.promotion.create({
+      data: {
+        ownerId,
+        carId: options.carId ?? null,
+        name: options.name ?? "Test Promotion",
+        discountValue: options.discountValue ?? 20,
+        startDate: options.startDate ?? new Date(Date.now() - ONE_DAY_MS),
+        endDate: options.endDate ?? new Date(Date.now() + 30 * ONE_DAY_MS),
+        isActive: options.isActive ?? true,
+      },
+      select: { id: true },
+    });
+    return promotion;
+  }
+
+  /**
+   * Enable the referral program with deterministic config for E2E tests.
+   * Idempotent via upsert — safe to call multiple times.
+   * Sets: enabled, 10000 discount, 20000 min booking, DAY/NIGHT/FULL_DAY eligible, 30 day expiry.
+   */
+  async enableReferralProgram(): Promise<void> {
+    await Promise.all([
+      this.prisma.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_ENABLED" },
+        create: { key: "REFERRAL_ENABLED", value: true },
+        update: { value: true },
+      }),
+      this.prisma.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_DISCOUNT_AMOUNT" },
+        create: { key: "REFERRAL_DISCOUNT_AMOUNT", value: 10000 },
+        update: { value: 10000 },
+      }),
+      this.prisma.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_MIN_BOOKING_AMOUNT" },
+        create: { key: "REFERRAL_MIN_BOOKING_AMOUNT", value: 20000 },
+        update: { value: 20000 },
+      }),
+      this.prisma.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_ELIGIBLE_TYPES" },
+        create: { key: "REFERRAL_ELIGIBLE_TYPES", value: ["DAY", "NIGHT", "FULL_DAY"] },
+        update: { value: ["DAY", "NIGHT", "FULL_DAY"] },
+      }),
+      this.prisma.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_EXPIRY_DAYS" },
+        create: { key: "REFERRAL_EXPIRY_DAYS", value: 30 },
+        update: { value: 30 },
       }),
     ]);
   }
