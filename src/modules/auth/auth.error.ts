@@ -8,6 +8,7 @@ export const AuthErrorCode = {
   AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED: "AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED",
   AUTH_INVALID_ROLE: "AUTH_INVALID_ROLE",
   AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT: "AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT",
+  AUTH_REFERRAL_CODE_GENERATION_FAILED: "AUTH_REFERRAL_CODE_GENERATION_FAILED",
   AUTH_ROLE_REQUIREMENT_FAILED: "AUTH_ROLE_REQUIREMENT_FAILED",
   AUTH_SESSION_NOT_FOUND: "AUTH_SESSION_NOT_FOUND",
   AUTH_INSUFFICIENT_ROLE: "AUTH_INSUFFICIENT_ROLE",
@@ -38,5 +39,11 @@ export class AuthForbiddenException extends AuthException {
 export class AuthNotFoundException extends AuthException {
   constructor(errorCode: AuthErrorCodeValue, detail: string, title: string) {
     super(errorCode, detail, HttpStatus.NOT_FOUND, { title });
+  }
+}
+
+export class AuthInternalServerException extends AuthException {
+  constructor(errorCode: AuthErrorCodeValue, detail: string, title: string) {
+    super(errorCode, detail, HttpStatus.INTERNAL_SERVER_ERROR, { title });
   }
 }

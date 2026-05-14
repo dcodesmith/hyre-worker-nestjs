@@ -1,5 +1,7 @@
+import { randomInt } from "node:crypto";
 import { Injectable, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma, ReferralAttributionSource } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
@@ -15,6 +17,7 @@ import {
 } from "./auth.const";
 import {
   AuthErrorCode,
+  AuthInternalServerException,
   AuthNotFoundException,
   AuthServiceUnavailableException,
   AuthUnauthorizedException,
@@ -22,6 +25,10 @@ import {
 import type { RoleName, ValidateRoleForClientParams } from "./auth.interface";
 import { AuthEmailService } from "./auth-email.service";
 import { getDevLanOriginPatterns, isOriginAllowed } from "./origin-pattern";
+
+const REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const REFERRAL_CODE_LENGTH = 8;
+const REFERRAL_CODE_GENERATION_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -64,6 +71,9 @@ export class AuthService implements OnModuleInit {
         validateRoleForClient: this.validateRoleForClient.bind(this),
         validateExistingUserRole: this.validateExistingUserRole.bind(this),
         assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
+        assignReferralCodeToNewUser: this.assignReferralCodeToNewUser.bind(this),
+        validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
+        assignReferralToNewUser: this.assignReferralToNewUser.bind(this),
         getUserRoles: this.getUserRoles.bind(this),
       },
     });
@@ -294,6 +304,111 @@ export class AuthService implements OnModuleInit {
         "Invalid Role",
       );
     }
+  }
+
+  async assignReferralCodeToNewUser(userId: string): Promise<string> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { referralCode: true },
+    });
+
+    if (!user) {
+      this.logger.warn({ userId }, "Cannot assign referral code: user not found");
+      throw new AuthNotFoundException(
+        AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
+        "User not found for referral code assignment",
+        "User Not Found For Referral Code Assignment",
+      );
+    }
+
+    if (user.referralCode) {
+      return user.referralCode;
+    }
+
+    for (let attempt = 0; attempt < REFERRAL_CODE_GENERATION_ATTEMPTS; attempt += 1) {
+      const referralCode = this.generateReferralCode();
+
+      try {
+        await this.databaseService.user.update({
+          where: { id: userId },
+          data: { referralCode },
+        });
+        return referralCode;
+      } catch (error) {
+        if (!this.isUniqueConstraintError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    throw new AuthInternalServerException(
+      AuthErrorCode.AUTH_REFERRAL_CODE_GENERATION_FAILED,
+      "Failed to generate a unique referral code. Please try again.",
+      "Referral Code Generation Failed",
+    );
+  }
+
+  private generateReferralCode(): string {
+    return Array.from({ length: REFERRAL_CODE_LENGTH }, () =>
+      REFERRAL_CODE_ALPHABET.charAt(randomInt(REFERRAL_CODE_ALPHABET.length)),
+    ).join("");
+  }
+
+  private isUniqueConstraintError(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  }
+
+  async validateReferralCodeForSignup(
+    code: string,
+    email: string,
+  ): Promise<{ referrerUserId: string; referralCode: string } | null> {
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode) {
+      return null;
+    }
+
+    const referrer = await this.databaseService.user.findUnique({
+      where: { referralCode: normalizedCode },
+      select: { id: true, email: true, referralCode: true },
+    });
+
+    if (!referrer?.referralCode) {
+      return null;
+    }
+
+    if (email.trim().toLowerCase() === referrer.email.toLowerCase()) {
+      return null;
+    }
+
+    return {
+      referrerUserId: referrer.id,
+      referralCode: referrer.referralCode,
+    };
+  }
+
+  async assignReferralToNewUser(
+    userId: string,
+    attribution: { referrerUserId: string; referralCode: string },
+  ): Promise<void> {
+    await this.databaseService.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          referredByUserId: attribution.referrerUserId,
+          referralAttributionSource: ReferralAttributionSource.LINK,
+          referralSignupAt: new Date(),
+        },
+      });
+
+      await tx.referralAttribution.create({
+        data: {
+          refereeUserId: userId,
+          referrerUserId: attribution.referrerUserId,
+          referralCode: attribution.referralCode,
+          source: ReferralAttributionSource.LINK,
+        },
+      });
+    });
   }
 
   /**

@@ -17,6 +17,18 @@ export interface RoleValidationCallbacks {
   validateExistingUserRole: (email: string, role: RoleName) => Promise<boolean>;
   /** Assigns a role to a newly created user (called from databaseHooks.user.create.after) */
   assignRoleToNewUser: (userId: string, role: RoleName) => Promise<void>;
+  /** Generates and stores a referral code for a newly created user */
+  assignReferralCodeToNewUser: (userId: string) => Promise<string>;
+  /** Validates a referral code and returns the referrer user ID for new user attribution */
+  validateReferralCodeForSignup: (
+    code: string,
+    email: string,
+  ) => Promise<{ referrerUserId: string; referralCode: string } | null>;
+  /** Assigns referral attribution to a newly created user */
+  assignReferralToNewUser: (
+    userId: string,
+    attribution: { referrerUserId: string; referralCode: string },
+  ) => Promise<void>;
   /** Gets all roles for a user (used by after hook to enrich sign-in response) */
   getUserRoles: (userId: string) => Promise<RoleName[]>;
 }
@@ -36,6 +48,10 @@ export interface RoleValidationCallbacks {
  * TTL cleanup prevents memory leaks from abandoned OTP flows.
  */
 const pendingRoles = new Map<string, { role: RoleName; timestamp: number }>();
+const pendingReferrals = new Map<
+  string,
+  { referrerUserId: string; referralCode: string; timestamp: number }
+>();
 const PENDING_ROLE_TTL_MS = 10 * 60 * 1000; // 10 minutes (matches OTP expiry)
 
 /**
@@ -48,6 +64,11 @@ function cleanupExpiredPendingRoles(): void {
       pendingRoles.delete(email);
     }
   }
+  for (const [email, entry] of pendingReferrals) {
+    if (now - entry.timestamp > PENDING_ROLE_TTL_MS) {
+      pendingReferrals.delete(email);
+    }
+  }
 }
 
 /**
@@ -56,10 +77,20 @@ function cleanupExpiredPendingRoles(): void {
  */
 function setPendingRole(email: string, role: RoleName): void {
   // Clean up old entries periodically to prevent unbounded growth
-  if (pendingRoles.size > 100) {
+  if (pendingRoles.size > 100 || pendingReferrals.size > 100) {
     cleanupExpiredPendingRoles();
   }
   pendingRoles.set(email, { role, timestamp: Date.now() });
+}
+
+function setPendingReferral(
+  email: string,
+  attribution: { referrerUserId: string; referralCode: string },
+): void {
+  if (pendingRoles.size > 100 || pendingReferrals.size > 100) {
+    cleanupExpiredPendingRoles();
+  }
+  pendingReferrals.set(email, { ...attribution, timestamp: Date.now() });
 }
 
 /**
@@ -77,6 +108,22 @@ function consumePendingRole(email: string): RoleName {
     }
   }
   return USER;
+}
+
+function consumePendingReferral(
+  email: string,
+): { referrerUserId: string; referralCode: string } | null {
+  const entry = pendingReferrals.get(email);
+  if (entry) {
+    pendingReferrals.delete(email);
+    if (Date.now() - entry.timestamp <= PENDING_ROLE_TTL_MS) {
+      return {
+        referrerUserId: entry.referrerUserId,
+        referralCode: entry.referralCode,
+      };
+    }
+  }
+  return null;
 }
 
 export interface AuthConfigOptions {
@@ -117,6 +164,14 @@ function extractEmail(body: unknown): string | undefined {
 function extractRole(body: unknown): unknown {
   if (body && typeof body === "object" && "role" in body) {
     return (body as { role: unknown }).role;
+  }
+  return undefined;
+}
+
+function extractReferralCode(body: unknown): string | undefined {
+  if (body && typeof body === "object" && "referralCode" in body) {
+    const referralCode = (body as { referralCode: unknown }).referralCode;
+    return typeof referralCode === "string" ? referralCode.trim().toUpperCase() : undefined;
   }
   return undefined;
 }
@@ -194,6 +249,20 @@ export function createAuth(options: AuthConfigOptions) {
           // This is necessary because Better Auth's email-otp plugin strips
           // custom fields (like 'role') from the request body during validation.
           setPendingRole(email, role);
+
+          const referralCode = extractReferralCode(ctx.body);
+          if (referralCode) {
+            const attribution = await roleValidation.validateReferralCodeForSignup(
+              referralCode,
+              email,
+            );
+            if (!attribution) {
+              throw new APIError("BAD_REQUEST", {
+                message: "Invalid referral code",
+              });
+            }
+            setPendingReferral(email, attribution);
+          }
         }
       })
     : undefined;
@@ -276,6 +345,12 @@ export function createAuth(options: AuthConfigOptions) {
                 // Assign the role to the newly created user
                 // Protected roles were already rejected in the before hook via validateExistingUserRole()
                 await roleValidation.assignRoleToNewUser(user.id, role);
+                await roleValidation.assignReferralCodeToNewUser(user.id);
+
+                const referralAttribution = consumePendingReferral(user.email);
+                if (referralAttribution) {
+                  await roleValidation.assignReferralToNewUser(user.id, referralAttribution);
+                }
               },
             },
           },
