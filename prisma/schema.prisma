@@ -945,6 +945,7 @@ enum ReferralReleaseCondition {
 
 enum BookingReferralStatus {
   NONE
+  RESERVED
   APPLIED
   REWARDED
   REVERSED

@@ -56,7 +56,13 @@ export class BookingEligibilityService {
     const existingReserved = await this.databaseService.booking.findFirst({
       where: {
         userId: sessionUser.id,
-        referralStatus: { in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED] },
+        referralStatus: {
+          in: [
+            BookingReferralStatus.RESERVED,
+            BookingReferralStatus.APPLIED,
+            BookingReferralStatus.REWARDED,
+          ],
+        },
         status: {
           in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
         },
@@ -92,7 +98,7 @@ export class BookingEligibilityService {
     };
   }
 
-  async verifyAndClaimReferralDiscountInTransaction(
+  async verifyAndReserveReferralDiscountInTransaction(
     tx: Prisma.TransactionClient,
     userId: string,
     preliminaryEligibility: ReferralEligibility,
@@ -128,12 +134,35 @@ export class BookingEligibilityService {
       return this.getIneligibleReferralEligibility();
     }
 
-    await tx.user.update({
-      where: { id: userId },
-      data: { referralDiscountUsed: true },
+    const existingReserved = await tx.booking.findFirst({
+      where: {
+        userId,
+        referralStatus: {
+          in: [
+            BookingReferralStatus.RESERVED,
+            BookingReferralStatus.APPLIED,
+            BookingReferralStatus.REWARDED,
+          ],
+        },
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+        },
+      },
+      select: { id: true },
     });
 
-    this.logger.info({ userId }, "Referral discount claimed and marked as used");
+    if (existingReserved) {
+      this.logger.warn(
+        {
+          userId,
+          bookingId: existingReserved.id,
+        },
+        "Referral discount already reserved by an active booking",
+      );
+      throw new ReferralDiscountNoLongerAvailableException();
+    }
+
+    this.logger.info({ userId }, "Referral discount verified for booking reservation");
     return preliminaryEligibility;
   }
 

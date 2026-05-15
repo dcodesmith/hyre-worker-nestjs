@@ -368,10 +368,10 @@ export class BookingCreationService {
 
     try {
       createdBooking = await this.databaseService.$transaction(async (tx) => {
-        // CRITICAL: Verify and claim referral discount FIRST with pessimistic locking
-        // This prevents race conditions where concurrent requests could all receive the one-time discount
+        // CRITICAL: Verify and reserve referral discount FIRST with pessimistic locking.
+        // This prevents concurrent active bookings from receiving the one-time discount.
         const verifiedReferralEligibility = sessionUser
-          ? await this.eligibilityService.verifyAndClaimReferralDiscountInTransaction(
+          ? await this.eligibilityService.verifyAndReserveReferralDiscountInTransaction(
               tx,
               sessionUser.id,
               preliminaryReferralEligibility,
@@ -438,7 +438,7 @@ export class BookingCreationService {
           legs,
         });
 
-        // Create referral reward record (the discount was already claimed above)
+        // Create pending referral reward record for the reserved discount.
         await this.eligibilityService.createReferralRewardIfEligible(
           tx,
           bookingRecord.id,

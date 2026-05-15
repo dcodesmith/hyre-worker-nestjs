@@ -1,7 +1,13 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
-import { BookingStatus, type Payment, PaymentStatus, Status } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  BookingStatus,
+  type Payment,
+  PaymentStatus,
+  Status,
+} from "@prisma/client";
 import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
@@ -65,18 +71,56 @@ export class BookingConfirmationService {
       return false;
     }
 
-    // Atomic conditional update - only updates if booking exists and is still PENDING
-    // This prevents TOCTOU race conditions where status could change between read and update
-    const updateResult = await this.databaseService.booking.updateMany({
-      where: { id: bookingId, status: BookingStatus.PENDING },
-      data: {
-        status: BookingStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-      },
+    const updatedBooking = await this.databaseService.$transaction(async (tx) => {
+      // Atomic conditional update - only updates if booking exists and is still PENDING.
+      // This prevents TOCTOU race conditions where status could change between read and update.
+      const updateResult = await tx.booking.updateMany({
+        where: { id: bookingId, status: BookingStatus.PENDING },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+        },
+      });
+
+      if (updateResult.count === 0) {
+        return null;
+      }
+
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          chauffeur: true,
+          user: true,
+          car: { include: { owner: true } },
+          legs: { include: { extensions: true } },
+        },
+      });
+
+      if (
+        booking?.referralStatus === BookingReferralStatus.RESERVED &&
+        booking.userId &&
+        booking.referralReferrerUserId
+      ) {
+        await tx.user.update({
+          where: { id: booking.userId },
+          data: { referralDiscountUsed: true },
+        });
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: { referralStatus: BookingReferralStatus.APPLIED },
+        });
+
+        return {
+          ...booking,
+          referralStatus: BookingReferralStatus.APPLIED,
+        };
+      }
+
+      return booking;
     });
 
     // If no records were updated, booking doesn't exist or is not in PENDING status
-    if (updateResult.count === 0) {
+    if (!updatedBooking) {
       this.logger.info(
         {
           bookingId,
@@ -84,30 +128,6 @@ export class BookingConfirmationService {
           txRef,
         },
         "Booking not found or not in PENDING status, skipping confirmation",
-      );
-      return false;
-    }
-
-    // Fetch the updated booking with relations for notification
-    const updatedBooking = await this.databaseService.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        chauffeur: true,
-        user: true,
-        car: { include: { owner: true } },
-        legs: { include: { extensions: true } },
-      },
-    });
-
-    if (!updatedBooking) {
-      // This shouldn't happen since we just updated the booking, but handle gracefully
-      this.logger.error(
-        {
-          bookingId,
-          paymentId: payment.id,
-          txRef,
-        },
-        "Booking not found after successful update",
       );
       return false;
     }
