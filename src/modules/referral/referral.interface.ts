@@ -29,6 +29,8 @@ export interface ReferralStatsResponse {
 export interface ReferralUserSummaryResponse {
   referralCode: string | null;
   shareLink: string | null;
+  programEnabled: boolean;
+  discountAmount: number;
   hasUsedDiscount: boolean;
   referredBy: string | null;
   signupDate: Date | null;

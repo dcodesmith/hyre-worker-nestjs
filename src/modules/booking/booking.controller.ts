@@ -94,8 +94,12 @@ export class BookingController {
 
   @Post("pricing-preview")
   @HttpCode(HttpStatus.OK)
-  async getPricingPreview(@ZodBody(pricingPreviewBodySchema) body: PricingPreviewBodyDto) {
-    return this.bookingPricingPreviewService.preview(body);
+  @UseGuards(OptionalSessionGuard)
+  async getPricingPreview(
+    @ZodBody(pricingPreviewBodySchema) body: PricingPreviewBodyDto,
+    @CurrentUser() sessionUser: AuthSession["user"] | null,
+  ) {
+    return this.bookingPricingPreviewService.preview(body, sessionUser);
   }
 
   @Get()

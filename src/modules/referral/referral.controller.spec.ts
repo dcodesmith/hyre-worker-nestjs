@@ -119,6 +119,8 @@ describe("ReferralController", () => {
     vi.mocked(referralService.getCurrentUserReferralInfo).mockResolvedValue({
       referralCode: "ABCDEFGH",
       shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
+      programEnabled: true,
+      discountAmount: 10000,
       hasUsedDiscount: false,
       referredBy: null,
       signupDate: null,
@@ -145,6 +147,8 @@ describe("ReferralController", () => {
     const result = await controller.getCurrentUserReferralInfo(createMockAuthUser(), request);
 
     expect(result.referralCode).toBe("ABCDEFGH");
+    expect(result.programEnabled).toBe(true);
+    expect(result.discountAmount).toBe(10000);
     expect(referralService.getCurrentUserReferralInfo).toHaveBeenCalledWith("user-1", request);
   });
 });

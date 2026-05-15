@@ -59,6 +59,9 @@ export interface BookingPricingPreviewResponseDto {
   compareAtPlatformFeeAmount: number;
   subtotalBeforeDiscounts: number;
   compareAtSubtotalBeforeDiscounts: number;
+  referralDiscountAmount: number;
+  creditsUsed: number;
+  subtotalAfterDiscounts: number;
   vatRatePercent: number;
   vatAmount: number;
   compareAtVatAmount: number;

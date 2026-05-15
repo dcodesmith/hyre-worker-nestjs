@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
+import { Prisma } from "@prisma/client";
 import { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -8,6 +9,7 @@ import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
 import {
   AuthErrorCode,
   type AuthErrorCodeValue,
+  AuthInternalServerException,
   AuthNotFoundException,
   AuthUnauthorizedException,
 } from "./auth.error";
@@ -31,9 +33,13 @@ describe("AuthService", () => {
   };
 
   const mockDatabaseService: {
+    $transaction?: ReturnType<typeof vi.fn>;
     user?: {
       findUnique: ReturnType<typeof vi.fn>;
       update?: ReturnType<typeof vi.fn>;
+    };
+    referralAttribution?: {
+      create: ReturnType<typeof vi.fn>;
     };
   } = {};
 
@@ -782,6 +788,128 @@ describe("AuthService", () => {
         errorCode: AuthErrorCode.AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED,
         title: "Protected Role Assignment Denied",
         detail: 'Protected role "staff" cannot be assigned to new users',
+      });
+    });
+  });
+
+  describe("referral signup attribution", () => {
+    beforeEach(async () => {
+      await setupTestModule();
+
+      mockDatabaseService.user = {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      };
+      mockDatabaseService.referralAttribution = {
+        create: vi.fn(),
+      };
+      mockDatabaseService.$transaction = vi.fn(async (callback) =>
+        callback({
+          user: mockDatabaseService.user,
+          referralAttribution: mockDatabaseService.referralAttribution,
+        }),
+      );
+    });
+
+    it("validates referral code and normalizes code casing", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "referrer-1",
+        email: "referrer@example.com",
+        referralCode: "FLOWREF1",
+      });
+
+      const result = await service.validateReferralCodeForSignup(
+        " flowref1 ",
+        "new-user@example.com",
+      );
+
+      expect(mockDatabaseService.user.findUnique).toHaveBeenCalledWith({
+        where: { referralCode: "FLOWREF1" },
+        select: { id: true, email: true, referralCode: true },
+      });
+      expect(result).toEqual({
+        referrerUserId: "referrer-1",
+        referralCode: "FLOWREF1",
+      });
+    });
+
+    it("rejects invalid and self-referral codes", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.validateReferralCodeForSignup("MISSING1", "new@example.com"),
+      ).resolves.toBe(null);
+
+      mockDatabaseService.user.findUnique.mockResolvedValueOnce({
+        id: "referrer-1",
+        email: "same@example.com",
+        referralCode: "SELFREF1",
+      });
+      await expect(
+        service.validateReferralCodeForSignup("SELFREF1", "same@example.com"),
+      ).resolves.toBe(null);
+    });
+
+    it("assigns a new referral code to a newly created user", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({ referralCode: null });
+      mockDatabaseService.user.update.mockResolvedValue({});
+
+      const referralCode = await service.assignReferralCodeToNewUser("user-1");
+
+      expect(referralCode).toMatch(/^[A-Z2-9]{8}$/);
+      expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { referralCode },
+      });
+    });
+
+    it("keeps an existing referral code unchanged", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({ referralCode: "EXIST123" });
+
+      const referralCode = await service.assignReferralCodeToNewUser("user-1");
+
+      expect(referralCode).toBe("EXIST123");
+      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("throws an auth exception when referral code generation exhausts retries", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({ referralCode: null });
+      mockDatabaseService.user.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+
+      await expectProblemDetail(service.assignReferralCodeToNewUser("user-1"), {
+        errorClass: AuthInternalServerException,
+        errorCode: AuthErrorCode.AUTH_REFERRAL_CODE_GENERATION_FAILED,
+        title: "Referral Code Generation Failed",
+        detail: "Failed to generate a unique referral code. Please try again.",
+      });
+      expect(mockDatabaseService.user.update).toHaveBeenCalledTimes(5);
+    });
+
+    it("assigns referral attribution to a newly created user", async () => {
+      await service.assignReferralToNewUser("user-1", {
+        referrerUserId: "referrer-1",
+        referralCode: "FLOWREF1",
+      });
+
+      expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: {
+          referredByUserId: "referrer-1",
+          referralAttributionSource: "LINK",
+          referralSignupAt: expect.any(Date),
+        },
+      });
+      expect(mockDatabaseService.referralAttribution.create).toHaveBeenCalledWith({
+        data: {
+          refereeUserId: "user-1",
+          referrerUserId: "referrer-1",
+          referralCode: "FLOWREF1",
+          source: "LINK",
+        },
       });
     });
   });

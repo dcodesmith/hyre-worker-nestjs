@@ -68,6 +68,9 @@ describe("BookingController", () => {
     compareAtPlatformFeeAmount: 7500,
     subtotalBeforeDiscounts: 147000,
     compareAtSubtotalBeforeDiscounts: 157500,
+    referralDiscountAmount: 0,
+    creditsUsed: 0,
+    subtotalAfterDiscounts: 147000,
     vatRatePercent: 7.5,
     vatAmount: 11025,
     compareAtVatAmount: 11812.5,
@@ -391,10 +394,10 @@ describe("BookingController", () => {
         requiresFullTank: false,
       };
 
-      const result = await controller.getPricingPreview(body);
+      const result = await controller.getPricingPreview(body, null);
 
       expect(result).toEqual(mockPricingPreviewResponse);
-      expect(bookingPricingPreviewService.preview).toHaveBeenCalledWith(body);
+      expect(bookingPricingPreviewService.preview).toHaveBeenCalledWith(body, null);
     });
   });
 

@@ -2,8 +2,10 @@ import { Injectable } from "@nestjs/common";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
+import type { AuthSession } from "../auth/guards/session.guard";
 import type { BookingFinancials, LegPrice } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPersistenceService } from "./booking-persistence.service";
@@ -24,12 +26,16 @@ export class BookingPricingPreviewService {
     private readonly bookingPersistenceService: BookingPersistenceService,
     private readonly bookingLegService: BookingLegService,
     private readonly bookingCalculationService: BookingCalculationService,
+    private readonly bookingEligibilityService: BookingEligibilityService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingPricingPreviewService.name);
   }
 
-  async preview(input: PricingPreviewBodyDto): Promise<BookingPricingPreviewResponseDto> {
+  async preview(
+    input: PricingPreviewBodyDto,
+    sessionUser: AuthSession["user"] | null = null,
+  ): Promise<BookingPricingPreviewResponseDto> {
     this.logger.debug(
       {
         carId: input.carId,
@@ -69,7 +75,7 @@ export class BookingPricingPreviewService {
       }),
     );
 
-    const financials = await this.bookingCalculationService.calculateBookingCost({
+    const baseFinancials = await this.bookingCalculationService.calculateBookingCost({
       bookingType: input.bookingType,
       legs,
       car,
@@ -79,6 +85,25 @@ export class BookingPricingPreviewService {
       creditsToUse: new Decimal(0),
       referralDiscountAmount: new Decimal(0),
     });
+    const referralEligibility =
+      await this.bookingEligibilityService.checkReferralEligibilityForPricing(
+        sessionUser,
+        baseFinancials.subtotalBeforeDiscounts,
+        input.bookingType,
+      );
+
+    const financials = referralEligibility.discountAmount.gt(0)
+      ? await this.bookingCalculationService.calculateBookingCost({
+          bookingType: input.bookingType,
+          legs,
+          car,
+          includeSecurityDetail: input.includeSecurityDetail,
+          requiresFullTank: input.requiresFullTank,
+          userCreditsBalance: new Decimal(0),
+          creditsToUse: new Decimal(0),
+          referralDiscountAmount: referralEligibility.discountAmount,
+        })
+      : baseFinancials;
 
     const response = this.mapPreviewResponse(financials);
     this.logger.debug(
@@ -132,6 +157,9 @@ export class BookingPricingPreviewService {
       compareAtPlatformFeeAmount: compareAtPlatformFeeAmount.toNumber(),
       subtotalBeforeDiscounts: financials.subtotalBeforeDiscounts.toNumber(),
       compareAtSubtotalBeforeDiscounts: compareAtSubtotalBeforeDiscounts.toNumber(),
+      referralDiscountAmount: financials.referralDiscountAmount.toNumber(),
+      creditsUsed: financials.creditsUsed.toNumber(),
+      subtotalAfterDiscounts: financials.subtotalAfterDiscounts.toNumber(),
       vatRatePercent: financials.vatRatePercent.toNumber(),
       vatAmount: financials.vatAmount.toNumber(),
       compareAtVatAmount: compareAtVatAmount.toNumber(),
@@ -142,10 +170,20 @@ export class BookingPricingPreviewService {
   }
 
   private computeCoverage(legPrices: LegPrice[]): PricingPreviewDiscountCoverage {
-    if (legPrices.length === 0) return "NONE";
+    if (legPrices.length === 0) {
+      return "NONE";
+    }
+
     const discountedUnits = legPrices.filter((leg) => leg.promotion !== null).length;
-    if (discountedUnits === 0) return "NONE";
-    if (discountedUnits === legPrices.length) return "FULL";
+
+    if (discountedUnits === 0) {
+      return "NONE";
+    }
+
+    if (discountedUnits === legPrices.length) {
+      return "FULL";
+    }
+
     return "PARTIAL";
   }
 

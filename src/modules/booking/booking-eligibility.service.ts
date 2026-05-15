@@ -1,5 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, ReferralReleaseCondition, ReferralRewardStatus } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  BookingStatus,
+  Prisma,
+  ReferralReleaseCondition,
+  ReferralRewardStatus,
+} from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -20,8 +26,10 @@ export class BookingEligibilityService {
     return { eligible: false, referrerUserId: null, discountAmount: new Decimal(0) };
   }
 
-  async checkPreliminaryReferralEligibility(
+  async checkReferralEligibilityForPricing(
     sessionUser: AuthSession["user"] | null,
+    bookingAmount: Decimal,
+    bookingType: string,
   ): Promise<ReferralEligibility> {
     if (!sessionUser) {
       return this.getIneligibleReferralEligibility();
@@ -32,6 +40,7 @@ export class BookingEligibilityService {
       select: {
         referredByUserId: true,
         referralDiscountUsed: true,
+        referralSignupAt: true,
       },
     });
 
@@ -39,7 +48,48 @@ export class BookingEligibilityService {
       return this.getIneligibleReferralEligibility();
     }
 
-    return this.getReferralConfig(user.referredByUserId);
+    const config = await this.getReferralPricingConfig();
+    if (!config.enabled || config.discountAmount.lte(0)) {
+      return this.getIneligibleReferralEligibility();
+    }
+
+    const existingReserved = await this.databaseService.booking.findFirst({
+      where: {
+        userId: sessionUser.id,
+        referralStatus: { in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED] },
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+        },
+      },
+      select: { id: true },
+    });
+
+    if (existingReserved) {
+      return this.getIneligibleReferralEligibility();
+    }
+
+    if (bookingAmount.lt(config.minBookingAmount)) {
+      return this.getIneligibleReferralEligibility();
+    }
+
+    if (!config.eligibleTypes.includes(bookingType)) {
+      return this.getIneligibleReferralEligibility();
+    }
+
+    if (config.expiryDays > 0 && user.referralSignupAt) {
+      const expiryDate = new Date(user.referralSignupAt);
+      expiryDate.setDate(expiryDate.getDate() + config.expiryDays);
+
+      if (new Date() > expiryDate) {
+        return this.getIneligibleReferralEligibility();
+      }
+    }
+
+    return {
+      eligible: true,
+      referrerUserId: user.referredByUserId,
+      discountAmount: Decimal.min(config.discountAmount, bookingAmount),
+    };
   }
 
   async verifyAndClaimReferralDiscountInTransaction(
@@ -149,26 +199,37 @@ export class BookingEligibilityService {
     );
   }
 
-  private async getReferralConfig(referrerUserId: string): Promise<ReferralEligibility> {
+  private async getReferralPricingConfig(): Promise<{
+    enabled: boolean;
+    discountAmount: Decimal;
+    minBookingAmount: Decimal;
+    eligibleTypes: string[];
+    expiryDays: number;
+  }> {
     const configMap = await this.getReferralConfigMap(this.databaseService.referralProgramConfig, [
       "REFERRAL_ENABLED",
       "REFERRAL_DISCOUNT_AMOUNT",
+      "REFERRAL_MIN_BOOKING_AMOUNT",
+      "REFERRAL_ELIGIBLE_TYPES",
+      "REFERRAL_EXPIRY_DAYS",
     ]);
 
-    const isEnabled = this.parseEnabledConfig(configMap.REFERRAL_ENABLED);
-    const discountAmount = this.parseDecimalConfig(
-      configMap.REFERRAL_DISCOUNT_AMOUNT,
-      "REFERRAL_DISCOUNT_AMOUNT",
-    );
-
-    if (!isEnabled || discountAmount.lte(0)) {
-      return this.getIneligibleReferralEligibility();
-    }
-
     return {
-      eligible: true,
-      referrerUserId,
-      discountAmount,
+      enabled: this.parseEnabledConfig(configMap.REFERRAL_ENABLED ?? true),
+      discountAmount: this.parseDecimalConfig(
+        configMap.REFERRAL_DISCOUNT_AMOUNT ?? 10000,
+        "REFERRAL_DISCOUNT_AMOUNT",
+      ),
+      minBookingAmount: this.parseDecimalConfig(
+        configMap.REFERRAL_MIN_BOOKING_AMOUNT ?? 20000,
+        "REFERRAL_MIN_BOOKING_AMOUNT",
+      ),
+      eligibleTypes: this.parseStringArrayConfig(configMap.REFERRAL_ELIGIBLE_TYPES, [
+        "DAY",
+        "NIGHT",
+        "FULL_DAY",
+      ]),
+      expiryDays: this.parseNumberConfig(configMap.REFERRAL_EXPIRY_DAYS ?? 30, 30),
     };
   }
 
@@ -216,6 +277,25 @@ export class BookingEligibilityService {
       `Invalid ${key} config value type`,
     );
     return new Decimal(0);
+  }
+
+  private parseNumberConfig(rawValue: unknown, fallback: number): number {
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+    if (typeof rawValue === "string") {
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    return fallback;
+  }
+
+  private parseStringArrayConfig(rawValue: unknown, fallback: string[]): string[] {
+    if (!Array.isArray(rawValue)) {
+      return fallback;
+    }
+    const strings = rawValue.filter((item): item is string => typeof item === "string");
+    return strings.length > 0 ? strings : fallback;
   }
 
   private parseReleaseConditionConfig(rawValue: unknown): ReferralReleaseCondition {

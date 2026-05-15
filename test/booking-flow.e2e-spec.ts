@@ -17,6 +17,13 @@ import { TestDataFactory, uniqueEmail } from "./helpers";
 const ONE_DAY_MS = 86400000;
 const TWELVE_HOURS_MS = 43200000;
 
+type SameLocationCreateBookingDto = Extract<CreateBookingDto, { sameLocation: true }>;
+type ExpectedReferralBooking = {
+  referrerUserId: string;
+  discountAmount: number;
+  totalAmount: number;
+};
+
 /**
  * End-to-end test for the full booking flow:
  * Auth (OTP signup) → Create Booking → Flutterwave Webhook → Booking Confirmed
@@ -92,8 +99,13 @@ describe("Booking Flow E2E", () => {
    * 1. Creates a booking → asserts PENDING state
    * 2. Sends Flutterwave webhook → asserts CONFIRMED state
    */
-  async function runBookingFlow(cookie: string, testCarId: string): Promise<{ bookingId: string }> {
-    const bookingPayload: CreateBookingDto = {
+  async function runBookingFlow(
+    cookie: string,
+    testCarId: string,
+    overrides: Partial<SameLocationCreateBookingDto> = {},
+    expectedReferral?: ExpectedReferralBooking,
+  ): Promise<{ bookingId: string }> {
+    const bookingPayload: SameLocationCreateBookingDto = {
       carId: testCarId,
       startDate: new Date(Date.now() + ONE_DAY_MS * 2),
       endDate: new Date(Date.now() + ONE_DAY_MS * 2 + TWELVE_HOURS_MS),
@@ -104,6 +116,7 @@ describe("Booking Flow E2E", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      ...overrides,
     };
 
     const bookingResponse = await request(app.getHttpServer())
@@ -119,7 +132,9 @@ describe("Booking Flow E2E", () => {
     const { bookingId } = bookingResponse.body;
 
     const pendingBooking = await factory.getBookingById(bookingId);
+
     if (!pendingBooking) throw new Error("Booking not found after creation");
+
     expect(pendingBooking.status).toBe("PENDING");
     expect(pendingBooking.paymentStatus).toBe("UNPAID");
 
@@ -181,16 +196,29 @@ describe("Booking Flow E2E", () => {
     expect(confirmedBooking.status).toBe("CONFIRMED");
     expect(confirmedBooking.paymentStatus).toBe("PAID");
 
+    if (expectedReferral) {
+      expect(confirmedBooking.referralReferrerUserId).toBe(expectedReferral.referrerUserId);
+      expect(confirmedBooking.referralDiscountAmount.toNumber()).toBe(
+        expectedReferral.discountAmount,
+      );
+      expect(confirmedBooking.referralStatus).toBe("APPLIED");
+      expect(confirmedBooking.totalAmount.toNumber()).toBe(expectedReferral.totalAmount);
+    }
+
     // Payment should be SUCCESSFUL
     const successfulPayment = await factory.getPaymentByBookingId(bookingId);
+
     if (!successfulPayment) throw new Error("Payment not found after webhook");
+
     expect(successfulPayment.status).toBe("SUCCESSFUL");
     expect(successfulPayment.flutterwaveTransactionId).toBe(String(flwTransactionId));
     expect(successfulPayment.amountCharged?.toNumber()).toBe(expectedAmount);
 
     // Car should be BOOKED
     const bookedCar = await factory.getCarById(testCarId);
+
     if (!bookedCar) throw new Error("Car not found after webhook");
+
     expect(bookedCar.status).toBe("BOOKED");
 
     return { bookingId };
@@ -303,15 +331,100 @@ describe("Booking Flow E2E", () => {
     { clientType: "mobile", label: "Mobile client" },
     { clientType: "web", label: "Web client" },
   ])("$label - full booking flow", ({ clientType }) => {
-    it("should authenticate, create booking, process payment webhook, and confirm booking", async () => {
+    it("should authenticate referrer and referee, apply referral discount, process payment webhook, and confirm booking", async () => {
       // Create a fresh car for this test (avoids status conflicts between tests)
       const car = await factory.createCar(fleetOwnerId);
 
-      // Authenticate via the appropriate client type
-      const email = uniqueEmail(`flow-${clientType}`);
-      const { cookie } = await factory.authenticateAndGetUser(email, "user", clientType);
+      // User A signs up first and is auto-assigned a referral code
+      const { user: userA } = await factory.authenticateAndGetUser(
+        uniqueEmail(`referrer-flow-${clientType}`),
+        "user",
+        clientType,
+      );
 
-      await runBookingFlow(cookie, car.id);
+      // User B signs up using User A's referral code
+      const { cookie, user: userB } = await factory.authenticateAndGetUser(
+        uniqueEmail(`referred-flow-${clientType}`),
+        "user",
+        clientType,
+        { referralCode: userA.referralCode },
+      );
+      expect(userB.referredByUserId).toBe(userA.id);
+
+      await factory.enableReferralProgram();
+
+      // 20% car-specific promotion covering the booking window
+      await factory.createPromotion(fleetOwnerId, { carId: car.id, discountValue: 20 });
+
+      // Pin start to 9 AM local so the 12-hour DAY booking falls within a single
+      // calendar day (1 leg) regardless of when the test runs. DAY bookings
+      // generate one leg per calendar day, so a window crossing midnight would
+      // produce 2 legs and double the expected price.
+      const startDate = new Date(Date.now() + ONE_DAY_MS * 2);
+      startDate.setHours(9, 0, 0, 0);
+      const endDate = new Date(startDate.getTime() + TWELVE_HOURS_MS);
+
+      // Pricing preview should reflect both the promotion and the referral discount.
+      // Math (1 DAY leg @ dayRate 50,000, 10% platform fee, 7.5% VAT):
+      //   compare-at: 50,000 + 5,000 fee = 55,000 subtotal → +4,125 VAT → 59,125
+      //   after 20% promo: 40,000 + 4,000 fee = 44,000 subtotal
+      //   after referral: 44,000 − 10,000 = 34,000 → +2,550 VAT → 36,550 total
+      //   savings: 59,125 − 36,550 = 22,575
+      const previewResponse = await request(app.getHttpServer())
+        .post("/api/bookings/pricing-preview")
+        .set("Cookie", cookie)
+        .send({
+          carId: car.id,
+          bookingType: "DAY",
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          pickupTime: "9:00 AM",
+          includeSecurityDetail: false,
+          requiresFullTank: false,
+        });
+      expect(previewResponse.status).toBe(HttpStatus.OK);
+
+      // Per-leg base (after promo) and compare-at (before promo)
+      expect(previewResponse.body.baseTotal).toBe(40000);
+      expect(previewResponse.body.compareAtBaseTotal).toBe(50000);
+
+      // Platform fee (10% of leg net)
+      expect(previewResponse.body.platformFeeAmount).toBe(4000);
+      expect(previewResponse.body.compareAtPlatformFeeAmount).toBe(5000);
+
+      // Subtotal before referral discount (after promotion)
+      expect(previewResponse.body.subtotalBeforeDiscounts).toBe(44000);
+      expect(previewResponse.body.compareAtSubtotalBeforeDiscounts).toBe(55000);
+
+      // Referral discount applied
+      expect(previewResponse.body.referralDiscountAmount).toBe(10000);
+      expect(previewResponse.body.subtotalAfterDiscounts).toBe(34000);
+
+      // VAT (7.5%) on subtotalAfterDiscounts vs compareAtSubtotalBeforeDiscounts
+      expect(previewResponse.body.vatAmount).toBe(2550);
+      expect(previewResponse.body.compareAtVatAmount).toBe(4125);
+
+      // Final totals + combined savings (promo + referral, including their VAT impact)
+      expect(previewResponse.body.totalAmount).toBe(36550);
+      expect(previewResponse.body.compareAtTotalAmount).toBe(59125);
+      expect(previewResponse.body.savingsAmount).toBe(22575);
+      expect(previewResponse.body.discountCoverage).toBe("FULL");
+
+      // Booking creation + payment webhook must persist the same discount and total
+      await runBookingFlow(
+        cookie,
+        car.id,
+        {
+          startDate,
+          endDate,
+          clientTotalAmount: String(previewResponse.body.totalAmount),
+        },
+        {
+          referrerUserId: userA.id,
+          discountAmount: 10000,
+          totalAmount: 36550,
+        },
+      );
     });
 
     it("should initialize extension payment, process webhook, and activate extension", async () => {
