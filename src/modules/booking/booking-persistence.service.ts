@@ -189,7 +189,7 @@ export class BookingPersistenceService {
         : null,
       referralDiscountAmount: referralEligibility.discountAmount,
       referralStatus: referralEligibility.eligible
-        ? BookingReferralStatus.APPLIED
+        ? BookingReferralStatus.RESERVED
         : BookingReferralStatus.NONE,
       referralCreditsUsed: financials.creditsUsed,
       referralCreditsReserved: financials.creditsUsed,

@@ -710,6 +710,7 @@ describe("BookingCreationService", () => {
             ]),
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
+            findFirst: vi.fn().mockResolvedValue(null),
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
               bookingReference: "BK-123456-ABC",
@@ -753,7 +754,7 @@ describe("BookingCreationService", () => {
       );
     });
 
-    it("should mark referralDiscountUsed=true within the transaction to prevent race conditions", async () => {
+    it("should reserve referral discount without marking it used before payment", async () => {
       // Mock user in database with referral info
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
         createUser({
@@ -801,6 +802,7 @@ describe("BookingCreationService", () => {
             ]),
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
+            findFirst: vi.fn().mockResolvedValue(null),
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
               bookingReference: "BK-123456-ABC",
@@ -834,12 +836,7 @@ describe("BookingCreationService", () => {
 
       await service.createBooking({ input: booking, sessionUser });
 
-      // Verify that user.referralDiscountUsed was set to true WITHIN the transaction
-      // This prevents the race condition where concurrent bookings could all receive the discount
-      expect(mockUserUpdate).toHaveBeenCalledWith({
-        where: { id: "user-123" },
-        data: { referralDiscountUsed: true },
-      });
+      expect(mockUserUpdate).not.toHaveBeenCalled();
     });
 
     it("should throw ReferralDiscountNoLongerAvailableException when discount was already used (race condition)", async () => {

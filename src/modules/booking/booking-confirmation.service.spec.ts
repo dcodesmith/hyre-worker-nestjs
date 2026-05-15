@@ -2,7 +2,13 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Payment } from "@prisma/client";
-import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Status } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  BookingStatus,
+  PaymentAttemptStatus,
+  PaymentStatus,
+  Status,
+} from "@prisma/client";
 import type { Job, Queue } from "bullmq";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,9 +97,14 @@ describe("BookingConfirmationService", () => {
         {
           provide: DatabaseService,
           useValue: {
+            $transaction: vi.fn(async (callback) => callback(databaseService)),
             booking: {
               findUnique: vi.fn(),
+              update: vi.fn(),
               updateMany: vi.fn(),
+            },
+            user: {
+              update: vi.fn(),
             },
             car: {
               update: vi.fn(),
@@ -202,6 +213,45 @@ describe("BookingConfirmationService", () => {
         }),
         { priority: 1 },
       );
+    });
+
+    it("should mark reserved referral discount as used after successful payment", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        userId: "user-123",
+        referralReferrerUserId: "referrer-123",
+        referralStatus: BookingReferralStatus.RESERVED,
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+      });
+
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.booking.update).mockResolvedValueOnce({
+        ...mockBooking,
+        referralStatus: BookingReferralStatus.APPLIED,
+      });
+      vi.mocked(databaseService.user.update).mockResolvedValueOnce(
+        createUser({ id: "user-123", referralDiscountUsed: true }),
+      );
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      vi.mocked(notificationQueue.add).mockResolvedValue(createMockJob());
+
+      const result = await service.confirmFromPayment(mockPayment);
+
+      expect(result).toBe(true);
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: "user-123" },
+        data: { referralDiscountUsed: true },
+      });
+      expect(databaseService.booking.update).toHaveBeenCalledWith({
+        where: { id: "booking-123" },
+        data: { referralStatus: BookingReferralStatus.APPLIED },
+      });
     });
 
     it("should return false when payment has no bookingId", async () => {

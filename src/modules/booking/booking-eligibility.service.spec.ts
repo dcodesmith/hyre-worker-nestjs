@@ -1,4 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
+import { BookingReferralStatus, BookingStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -98,13 +99,14 @@ describe("BookingEligibilityService", () => {
     const service = module.get<BookingEligibilityService>(BookingEligibilityService);
 
     await expect(
-      service.verifyAndClaimReferralDiscountInTransaction(
+      service.verifyAndReserveReferralDiscountInTransaction(
         {
           $queryRaw: vi
             .fn()
             .mockResolvedValue([
               { id: "user-1", referredByUserId: "referrer-1", referralDiscountUsed: true },
             ]),
+          booking: { findFirst: vi.fn() },
           user: { update: vi.fn() },
         } as never,
         "user-1",
@@ -156,6 +158,51 @@ describe("BookingEligibilityService", () => {
       referrerUserId: null,
       discountAmount: new Decimal(0),
     });
+  });
+
+  it("reserves eligibility without marking the discount used before payment", async () => {
+    const mockUserUpdate = vi.fn();
+    const service = (
+      await Test.createTestingModule({
+        providers: [
+          BookingEligibilityService,
+          {
+            provide: DatabaseService,
+            useValue: {
+              user: { findUnique: vi.fn() },
+              referralProgramConfig: { findMany: vi.fn() },
+            },
+          },
+        ],
+      })
+        .useMocker(mockPinoLoggerToken)
+        .compile()
+    ).get<BookingEligibilityService>(BookingEligibilityService);
+
+    const result = await service.verifyAndReserveReferralDiscountInTransaction(
+      {
+        $queryRaw: vi
+          .fn()
+          .mockResolvedValue([
+            { id: "user-1", referredByUserId: "referrer-1", referralDiscountUsed: false },
+          ]),
+        booking: { findFirst: vi.fn().mockResolvedValue(null) },
+        user: { update: mockUserUpdate },
+      } as never,
+      "user-1",
+      {
+        eligible: true,
+        referrerUserId: "referrer-1",
+        discountAmount: new Decimal(5000),
+      },
+    );
+
+    expect(result).toEqual({
+      eligible: true,
+      referrerUserId: "referrer-1",
+      discountAmount: new Decimal(5000),
+    });
+    expect(mockUserUpdate).not.toHaveBeenCalled();
   });
 
   it("returns pricing eligibility when referred user meets amount and booking type rules", async () => {
@@ -240,6 +287,22 @@ describe("BookingEligibilityService", () => {
       eligible: false,
       referrerUserId: null,
       discountAmount: new Decimal(0),
+    });
+    expect(databaseService.booking.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: "user-1",
+        referralStatus: {
+          in: [
+            BookingReferralStatus.RESERVED,
+            BookingReferralStatus.APPLIED,
+            BookingReferralStatus.REWARDED,
+          ],
+        },
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+        },
+      },
+      select: { id: true },
     });
   });
 

@@ -66,7 +66,13 @@ export class ReferralApiService {
     const existingReserved = await this.databaseService.booking.findFirst({
       where: {
         userId,
-        referralStatus: { in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED] },
+        referralStatus: {
+          in: [
+            BookingReferralStatus.RESERVED,
+            BookingReferralStatus.APPLIED,
+            BookingReferralStatus.REWARDED,
+          ],
+        },
         status: {
           in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
         },

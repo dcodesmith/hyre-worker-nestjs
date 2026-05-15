@@ -83,7 +83,7 @@ describe("ReferralApiService", () => {
     });
     mockDatabaseService.booking.findFirst.mockResolvedValue({
       id: "booking-1",
-      referralStatus: BookingReferralStatus.APPLIED,
+      referralStatus: BookingReferralStatus.RESERVED,
     });
 
     const result = await service.checkReferralEligibility("user-1", 30000, "DAY");
