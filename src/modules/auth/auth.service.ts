@@ -70,6 +70,7 @@ export class AuthService implements OnModuleInit {
       roleValidation: {
         validateRoleForClient: this.validateRoleForClient.bind(this),
         validateExistingUserRole: this.validateExistingUserRole.bind(this),
+        isExistingUser: this.isExistingUser.bind(this),
         assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
         assignReferralCodeToNewUser: this.assignReferralCodeToNewUser.bind(this),
         validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
@@ -275,6 +276,15 @@ export class AuthService implements OnModuleInit {
 
     // Existing user - must have the role
     return user.roles.some((r) => r.name === role);
+  }
+
+  async isExistingUser(email: string): Promise<boolean> {
+    const user = await this.databaseService.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+
+    return Boolean(user);
   }
 
   /**

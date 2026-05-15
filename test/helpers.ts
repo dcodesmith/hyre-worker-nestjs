@@ -696,6 +696,7 @@ export class TestDataFactory {
         startDate: options.startDate ?? new Date(Date.now() - ONE_DAY_MS),
         endDate: options.endDate ?? new Date(Date.now() + 30 * ONE_DAY_MS),
         isActive: options.isActive ?? true,
+        ...options,
       },
       select: { id: true },
     });

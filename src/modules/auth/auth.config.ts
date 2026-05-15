@@ -15,6 +15,8 @@ export interface RoleValidationCallbacks {
   validateRoleForClient: (params: ValidateRoleForClientParams) => boolean;
   /** Validates that an existing user has the requested role */
   validateExistingUserRole: (email: string, role: RoleName) => Promise<boolean>;
+  /** Checks whether an email already belongs to a user */
+  isExistingUser: (email: string) => Promise<boolean>;
   /** Assigns a role to a newly created user (called from databaseHooks.user.create.after) */
   assignRoleToNewUser: (userId: string, role: RoleName) => Promise<void>;
   /** Generates and stores a referral code for a newly created user */
@@ -251,7 +253,7 @@ export function createAuth(options: AuthConfigOptions) {
           setPendingRole(email, role);
 
           const referralCode = extractReferralCode(ctx.body);
-          if (referralCode) {
+          if (referralCode && !(await roleValidation.isExistingUser(email))) {
             const attribution = await roleValidation.validateReferralCodeForSignup(
               referralCode,
               email,

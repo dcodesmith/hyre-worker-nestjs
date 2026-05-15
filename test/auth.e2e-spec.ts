@@ -147,6 +147,64 @@ describe("Auth E2E Tests", () => {
       const cookies = verifyResponse.headers["set-cookie"];
       expect(cookies).toBeDefined();
     });
+
+    it("should allow existing users to log in when a stale self-referral code is present", async () => {
+      const testEmail = uniqueEmail("self-referral-login");
+
+      await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: testEmail, type: "sign-in" });
+
+      const signupVerification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${testEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const signupOtp = signupVerification?.value.split(":")[0];
+
+      const signupResponse = await request(app.getHttpServer())
+        .post("/api/auth/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: testEmail, otp: signupOtp });
+
+      expect(signupResponse.status).toBe(HttpStatus.OK);
+
+      const existingUser = await databaseService.user.findUnique({
+        where: { email: testEmail },
+        select: { referralCode: true },
+      });
+      const selfReferralCode = existingUser?.referralCode;
+      expect(selfReferralCode).toEqual(expect.any(String));
+
+      const sendLoginOtpResponse = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: testEmail,
+          type: "sign-in",
+          referralCode: selfReferralCode,
+        });
+
+      expect(sendLoginOtpResponse.status).toBe(HttpStatus.OK);
+
+      const loginVerification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${testEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const loginOtp = loginVerification?.value.split(":")[0];
+
+      const loginResponse = await request(app.getHttpServer())
+        .post("/api/auth/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: testEmail,
+          otp: loginOtp,
+          referralCode: selfReferralCode,
+        });
+
+      expect(loginResponse.status).toBe(HttpStatus.OK);
+      expect(loginResponse.body.user.email).toBe(testEmail);
+    });
   });
 
   describe("Authenticated session flow", () => {

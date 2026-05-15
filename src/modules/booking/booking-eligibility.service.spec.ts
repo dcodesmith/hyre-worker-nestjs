@@ -126,6 +126,7 @@ describe("BookingEligibilityService", () => {
             createUser({ referredByUserId: "referrer-1", referralDiscountUsed: false }),
           ),
       },
+      booking: { findFirst: vi.fn().mockResolvedValue(null) },
       referralProgramConfig: {
         findMany: vi.fn().mockResolvedValue([
           { key: "REFERRAL_ENABLED", value: true },
