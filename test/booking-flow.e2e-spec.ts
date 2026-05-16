@@ -453,7 +453,11 @@ describe("Booking Flow E2E", () => {
     );
     expect(referee.referredByUserId).toBe(referrer.id);
 
-    await factory.enableReferralProgram();
+    // Configure REFERRAL_REWARD_AMOUNT so createReferralRewardIfEligible actually
+    // creates the PENDING reward + bumps userReferralStats. This is what exercises
+    // the soft-delete + stats decrement path in releaseReferralReservation.
+    const REWARD_AMOUNT = 2500;
+    await factory.enableReferralProgram({ rewardAmount: REWARD_AMOUNT });
 
     // Pin start to 9am local for a single-leg 12-hour DAY booking.
     const startDate = new Date(Date.now() + ONE_DAY_MS * 2);
@@ -487,6 +491,18 @@ describe("Booking Flow E2E", () => {
     expect(firstBooking.referralDiscountAmount.toNumber()).toBeGreaterThan(0);
     const firstTxRef = firstBooking.paymentIntent;
     if (!firstTxRef) throw new Error("First booking has no paymentIntent");
+
+    // Reservation should have created a PENDING reward and bumped referrer stats.
+    const rewardsAfterReserve = await factory.getReferralRewardsByBookingId(firstBookingId);
+    expect(rewardsAfterReserve).toHaveLength(1);
+    expect(rewardsAfterReserve[0].status).toBe("PENDING");
+    expect(rewardsAfterReserve[0].amount.toNumber()).toBe(REWARD_AMOUNT);
+    expect(rewardsAfterReserve[0].referrerUserId).toBe(referrer.id);
+
+    const statsAfterReserve = await factory.getUserReferralStats(referrer.id);
+    if (!statsAfterReserve) throw new Error("Referrer stats row missing after first reservation");
+    expect(statsAfterReserve.totalReferrals).toBe(1);
+    expect(statsAfterReserve.totalRewardsPending.toNumber()).toBe(REWARD_AMOUNT);
 
     const failedChargeData: FlutterwaveChargeData = {
       id: Date.now() + Math.floor(Math.random() * 100000),
@@ -536,6 +552,21 @@ describe("Booking Flow E2E", () => {
     expect(releasedBooking.status).toBe("PENDING");
     expect(releasedBooking.paymentStatus).toBe("UNPAID");
 
+    // The PENDING reward should be soft-deleted (audit trail preserved) and the
+    // referrer's pending counters should have been decremented back to zero —
+    // this is the regression we're protecting against. Before the fix, totalReferrals
+    // and totalRewardsPending stayed inflated and the retry below would double-count.
+    const rewardsAfterRelease = await factory.getReferralRewardsByBookingId(firstBookingId);
+    expect(rewardsAfterRelease).toHaveLength(1);
+    expect(rewardsAfterRelease[0].status).toBe("REVERSED");
+    expect(rewardsAfterRelease[0].processedAt).toBeInstanceOf(Date);
+    expect(rewardsAfterRelease[0].reason).toBe("RESERVATION_RELEASED");
+
+    const statsAfterRelease = await factory.getUserReferralStats(referrer.id);
+    if (!statsAfterRelease) throw new Error("Referrer stats row missing after release");
+    expect(statsAfterRelease.totalReferrals).toBe(0);
+    expect(statsAfterRelease.totalRewardsPending.toNumber()).toBe(0);
+
     // Attempt 2: same payload — pricing preview must reflect the discount again and a
     // fresh booking must reserve the discount with the original referrer.
     const previewResponse = await request(app.getHttpServer())
@@ -574,6 +605,24 @@ describe("Booking Flow E2E", () => {
     );
     expect(retryBooking.totalAmount.toNumber()).toBe(previewResponse.body.totalAmount);
 
+    // The retry's reward is PENDING; the original is still REVERSED (audit trail intact).
+    const rewardsAfterRetryReserve = await factory.getReferralRewardsByBookingId(retryBookingId);
+    expect(rewardsAfterRetryReserve).toHaveLength(1);
+    expect(rewardsAfterRetryReserve[0].status).toBe("PENDING");
+    expect(rewardsAfterRetryReserve[0].amount.toNumber()).toBe(REWARD_AMOUNT);
+
+    const originalRewardsAfterRetry = await factory.getReferralRewardsByBookingId(firstBookingId);
+    expect(originalRewardsAfterRetry).toHaveLength(1);
+    expect(originalRewardsAfterRetry[0].status).toBe("REVERSED");
+
+    // Stats should reflect exactly ONE active reservation, not 2 — this is the
+    // core regression assertion. Pre-fix this would be totalReferrals=2 and
+    // totalRewardsPending=2*REWARD_AMOUNT because the release path didn't decrement.
+    const statsAfterRetry = await factory.getUserReferralStats(referrer.id);
+    if (!statsAfterRetry) throw new Error("Referrer stats row missing after retry");
+    expect(statsAfterRetry.totalReferrals).toBe(1);
+    expect(statsAfterRetry.totalRewardsPending.toNumber()).toBe(REWARD_AMOUNT);
+
     // Confirm via successful webhook to make sure release didn't break the confirmation path.
     const retryTxRef = retryBooking.paymentIntent;
     if (!retryTxRef) throw new Error("Retry booking has no paymentIntent");
@@ -608,5 +657,18 @@ describe("Booking Flow E2E", () => {
     expect(confirmedRetryBooking.paymentStatus).toBe("PAID");
     expect(confirmedRetryBooking.referralStatus).toBe("APPLIED");
     expect(confirmedRetryBooking.referralReferrerUserId).toBe(referrer.id);
+
+    // With releaseCondition=COMPLETED the reward stays PENDING after confirmation
+    // (release happens on booking completion downstream). Stats should still be the
+    // single active referral — proving the release/retry loop didn't leak counters.
+    const rewardsAfterConfirm = await factory.getReferralRewardsByBookingId(retryBookingId);
+    expect(rewardsAfterConfirm).toHaveLength(1);
+    expect(rewardsAfterConfirm[0].status).toBe("PENDING");
+
+    const statsAfterConfirm = await factory.getUserReferralStats(referrer.id);
+    if (!statsAfterConfirm) throw new Error("Referrer stats row missing after confirm");
+    expect(statsAfterConfirm.totalReferrals).toBe(1);
+    expect(statsAfterConfirm.totalRewardsPending.toNumber()).toBe(REWARD_AMOUNT);
+    expect(statsAfterConfirm.totalRewardsGranted.toNumber()).toBe(0);
   });
 });

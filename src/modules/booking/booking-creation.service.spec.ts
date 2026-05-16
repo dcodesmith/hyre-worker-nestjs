@@ -727,8 +727,12 @@ describe("BookingCreationService", () => {
               { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
             ]),
           },
-          referralReward: { create: vi.fn(), deleteMany: vi.fn() },
-          userReferralStats: { upsert: vi.fn() },
+          referralReward: {
+            create: vi.fn(),
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn(),
+          },
+          userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
           user: { update: vi.fn() },
         };
 
@@ -821,8 +825,12 @@ describe("BookingCreationService", () => {
               { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
             ]),
           },
-          referralReward: { create: vi.fn(), deleteMany: vi.fn() },
-          userReferralStats: { upsert: vi.fn() },
+          referralReward: {
+            create: vi.fn(),
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn(),
+          },
+          userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
           user: { update: mockUserUpdate },
         };
 
