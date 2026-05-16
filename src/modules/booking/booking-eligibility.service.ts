@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import {
   BookingReferralStatus,
   BookingStatus,
+  PaymentStatus,
   Prisma,
   ReferralReleaseCondition,
   ReferralRewardStatus,
@@ -54,19 +55,7 @@ export class BookingEligibilityService {
     }
 
     const existingReserved = await this.databaseService.booking.findFirst({
-      where: {
-        userId: sessionUser.id,
-        referralStatus: {
-          in: [
-            BookingReferralStatus.RESERVED,
-            BookingReferralStatus.APPLIED,
-            BookingReferralStatus.REWARDED,
-          ],
-        },
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
-        },
-      },
+      where: this.buildExistingDiscountClaimFilter(sessionUser.id),
       select: { id: true },
     });
 
@@ -134,20 +123,14 @@ export class BookingEligibilityService {
       return this.getIneligibleReferralEligibility();
     }
 
+    // A new booking attempt is the user's signal that any prior unpaid reservation is
+    // abandoned. Release those reservations first so the eligibility check below sees
+    // a fresh state. Any reservation still mid-payment (paymentStatus != UNPAID) or
+    // already settled (APPLIED/REWARDED) is preserved and will block this attempt.
+    await this.releaseStaleReferralReservationsForUser(tx, userId);
+
     const existingReserved = await tx.booking.findFirst({
-      where: {
-        userId,
-        referralStatus: {
-          in: [
-            BookingReferralStatus.RESERVED,
-            BookingReferralStatus.APPLIED,
-            BookingReferralStatus.REWARDED,
-          ],
-        },
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
-        },
-      },
+      where: this.buildExistingDiscountClaimFilter(userId),
       select: { id: true },
     });
 
@@ -164,6 +147,115 @@ export class BookingEligibilityService {
 
     this.logger.info({ userId }, "Referral discount verified for booking reservation");
     return preliminaryEligibility;
+  }
+
+  /**
+   * Release a referral discount reservation tied to a booking.
+   *
+   * Idempotent: only releases when the booking is still in
+   * `RESERVED + PENDING + UNPAID` state. APPLIED/REWARDED bookings and any
+   * booking with a non-UNPAID payment status are intentionally left alone — the
+   * discount has either been settled or is mid-payment and must not be reverted.
+   *
+   * Effects when releasing:
+   * - Clears `referralReferrerUserId`, zeroes `referralDiscountAmount`
+   * - Sets `referralStatus = REVERSED`
+   * - Deletes any PENDING `ReferralReward` rows tied to the booking
+   *
+   * Call this from a transaction so the reservation release is atomic with any
+   * dependent work (e.g. reserving a new discount on a fresh booking).
+   */
+  async releaseReferralReservation(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+  ): Promise<{ released: boolean }> {
+    const booking = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        userId: true,
+        referralStatus: true,
+        status: true,
+        paymentStatus: true,
+      },
+    });
+
+    if (!booking) {
+      return { released: false };
+    }
+
+    if (
+      booking.referralStatus !== BookingReferralStatus.RESERVED ||
+      booking.status !== BookingStatus.PENDING ||
+      booking.paymentStatus !== PaymentStatus.UNPAID
+    ) {
+      return { released: false };
+    }
+
+    await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        referralStatus: BookingReferralStatus.REVERSED,
+        referralDiscountAmount: new Decimal(0),
+        referralReferrerUserId: null,
+      },
+    });
+
+    await tx.referralReward.deleteMany({
+      where: {
+        bookingId: booking.id,
+        status: ReferralRewardStatus.PENDING,
+      },
+    });
+
+    this.logger.info(
+      { bookingId: booking.id, userId: booking.userId },
+      "Released referral reservation",
+    );
+
+    return { released: true };
+  }
+
+  private buildExistingDiscountClaimFilter(userId: string): Prisma.BookingWhereInput {
+    return {
+      userId,
+      status: {
+        in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+      },
+      OR: [
+        // Settled uses of the discount — cannot be released.
+        {
+          referralStatus: {
+            in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED],
+          },
+        },
+        // Reserved on a booking that is mid-payment or already paid. RESERVED + UNPAID
+        // is intentionally excluded here because a new booking attempt releases it.
+        {
+          referralStatus: BookingReferralStatus.RESERVED,
+          paymentStatus: { not: PaymentStatus.UNPAID },
+        },
+      ],
+    };
+  }
+
+  private async releaseStaleReferralReservationsForUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<void> {
+    const stale = await tx.booking.findMany({
+      where: {
+        userId,
+        referralStatus: BookingReferralStatus.RESERVED,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+      },
+      select: { id: true },
+    });
+
+    for (const { id } of stale) {
+      await this.releaseReferralReservation(tx, id);
+    }
   }
 
   async createReferralRewardIfEligible(

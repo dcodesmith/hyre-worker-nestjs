@@ -435,4 +435,178 @@ describe("Booking Flow E2E", () => {
       await runExtensionFlow(cookie, car.id);
     });
   });
+
+  it("re-applies the referral discount on a fresh booking after a failed payment release", async () => {
+    const car = await factory.createCar(fleetOwnerId);
+
+    const { user: referrer } = await factory.authenticateAndGetUser(
+      uniqueEmail("ref-release-referrer"),
+      "user",
+      "mobile",
+    );
+
+    const { cookie, user: referee } = await factory.authenticateAndGetUser(
+      uniqueEmail("ref-release-referee"),
+      "user",
+      "mobile",
+      { referralCode: referrer.referralCode },
+    );
+    expect(referee.referredByUserId).toBe(referrer.id);
+
+    await factory.enableReferralProgram();
+
+    // Pin start to 9am local for a single-leg 12-hour DAY booking.
+    const startDate = new Date(Date.now() + ONE_DAY_MS * 2);
+    startDate.setHours(9, 0, 0, 0);
+    const endDate = new Date(startDate.getTime() + TWELVE_HOURS_MS);
+
+    const bookingPayload = {
+      carId: car.id,
+      startDate,
+      endDate,
+      pickupAddress: "123 Main St, Lagos",
+      bookingType: "DAY" as const,
+      pickupTime: "9:00 AM",
+      sameLocation: true as const,
+      includeSecurityDetail: false,
+      requiresFullTank: false,
+      useCredits: 0,
+    };
+
+    // Attempt 1: create booking with discount, then simulate a failed Flutterwave charge.
+    const firstAttempt = await request(app.getHttpServer())
+      .post("/api/bookings")
+      .set("Cookie", cookie)
+      .send(bookingPayload);
+    expect(firstAttempt.status).toBe(HttpStatus.CREATED);
+
+    const firstBookingId = firstAttempt.body.bookingId as string;
+    const firstBooking = await factory.getBookingById(firstBookingId);
+    if (!firstBooking) throw new Error("First booking not found");
+    expect(firstBooking.referralStatus).toBe("RESERVED");
+    expect(firstBooking.referralDiscountAmount.toNumber()).toBeGreaterThan(0);
+    const firstTxRef = firstBooking.paymentIntent;
+    if (!firstTxRef) throw new Error("First booking has no paymentIntent");
+
+    const failedChargeData: FlutterwaveChargeData = {
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      tx_ref: firstTxRef,
+      status: "failed",
+      charged_amount: firstBooking.totalAmount.toNumber(),
+      flw_ref: `FLW-FAILED-${Date.now()}`,
+      device_fingerprint: "device-failed-test",
+      amount: firstBooking.totalAmount.toNumber(),
+      currency: "NGN",
+      app_fee: 0,
+      merchant_fee: 0,
+      processor_response: "Card declined",
+      auth_model: "PIN",
+      ip: "127.0.0.1",
+      narration: "Booking payment",
+      payment_type: "card",
+      created_at: new Date().toISOString(),
+      account_id: 123,
+      customer: {
+        id: 456,
+        name: "Test Customer",
+        phone_number: null,
+        email: "test@example.com",
+        created_at: new Date().toISOString(),
+      },
+    };
+
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "Transaction verified",
+      data: failedChargeData,
+    });
+
+    const failedWebhook = await request(app.getHttpServer())
+      .post("/api/payments/webhook/flutterwave")
+      .set("verif-hash", webhookSecret)
+      .send({ event: "charge.completed", data: failedChargeData });
+    expect(failedWebhook.status).toBe(HttpStatus.CREATED);
+
+    // First booking's reservation should be released; user is eligible again.
+    const releasedBooking = await factory.getBookingById(firstBookingId);
+    if (!releasedBooking) throw new Error("Released booking not found");
+    expect(releasedBooking.referralStatus).toBe("REVERSED");
+    expect(releasedBooking.referralDiscountAmount.toNumber()).toBe(0);
+    expect(releasedBooking.referralReferrerUserId).toBeNull();
+    expect(releasedBooking.status).toBe("PENDING");
+    expect(releasedBooking.paymentStatus).toBe("UNPAID");
+
+    // Attempt 2: same payload — pricing preview must reflect the discount again and a
+    // fresh booking must reserve the discount with the original referrer.
+    const previewResponse = await request(app.getHttpServer())
+      .post("/api/bookings/pricing-preview")
+      .set("Cookie", cookie)
+      .send({
+        carId: car.id,
+        bookingType: "DAY",
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        pickupTime: "9:00 AM",
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+      });
+    expect(previewResponse.status).toBe(HttpStatus.OK);
+    expect(previewResponse.body.referralDiscountAmount).toBeGreaterThan(0);
+
+    const retryResponse = await request(app.getHttpServer())
+      .post("/api/bookings")
+      .set("Cookie", cookie)
+      .send({
+        ...bookingPayload,
+        clientTotalAmount: String(previewResponse.body.totalAmount),
+      });
+    expect(retryResponse.status).toBe(HttpStatus.CREATED);
+
+    const retryBookingId = retryResponse.body.bookingId as string;
+    expect(retryBookingId).not.toBe(firstBookingId);
+
+    const retryBooking = await factory.getBookingById(retryBookingId);
+    if (!retryBooking) throw new Error("Retry booking not found");
+    expect(retryBooking.referralStatus).toBe("RESERVED");
+    expect(retryBooking.referralReferrerUserId).toBe(referrer.id);
+    expect(retryBooking.referralDiscountAmount.toNumber()).toBe(
+      previewResponse.body.referralDiscountAmount,
+    );
+    expect(retryBooking.totalAmount.toNumber()).toBe(previewResponse.body.totalAmount);
+
+    // Confirm via successful webhook to make sure release didn't break the confirmation path.
+    const retryTxRef = retryBooking.paymentIntent;
+    if (!retryTxRef) throw new Error("Retry booking has no paymentIntent");
+    const retryAmount = retryBooking.totalAmount.toNumber();
+
+    const successData: FlutterwaveChargeData = {
+      ...failedChargeData,
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      tx_ref: retryTxRef,
+      status: "successful",
+      amount: retryAmount,
+      charged_amount: retryAmount,
+      flw_ref: `FLW-RETRY-${Date.now()}`,
+      processor_response: "Approved",
+    };
+
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "Transaction verified",
+      data: successData,
+    });
+
+    const successWebhook = await request(app.getHttpServer())
+      .post("/api/payments/webhook/flutterwave")
+      .set("verif-hash", webhookSecret)
+      .send({ event: "charge.completed", data: successData });
+    expect(successWebhook.status).toBe(HttpStatus.CREATED);
+
+    const confirmedRetryBooking = await factory.getBookingById(retryBookingId);
+    if (!confirmedRetryBooking) throw new Error("Confirmed retry booking not found");
+    expect(confirmedRetryBooking.status).toBe("CONFIRMED");
+    expect(confirmedRetryBooking.paymentStatus).toBe("PAID");
+    expect(confirmedRetryBooking.referralStatus).toBe("APPLIED");
+    expect(confirmedRetryBooking.referralReferrerUserId).toBe(referrer.id);
+  });
 });

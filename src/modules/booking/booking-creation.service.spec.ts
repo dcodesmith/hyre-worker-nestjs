@@ -711,6 +711,8 @@ describe("BookingCreationService", () => {
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
             findFirst: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
+            findUnique: vi.fn(),
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
               bookingReference: "BK-123456-ABC",
@@ -725,7 +727,7 @@ describe("BookingCreationService", () => {
               { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
             ]),
           },
-          referralReward: { create: vi.fn() },
+          referralReward: { create: vi.fn(), deleteMany: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
         };
@@ -803,6 +805,8 @@ describe("BookingCreationService", () => {
           flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
           booking: {
             findFirst: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
+            findUnique: vi.fn(),
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
               bookingReference: "BK-123456-ABC",
@@ -817,7 +821,7 @@ describe("BookingCreationService", () => {
               { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
             ]),
           },
-          referralReward: { create: vi.fn() },
+          referralReward: { create: vi.fn(), deleteMany: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: mockUserUpdate },
         };
