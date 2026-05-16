@@ -602,6 +602,27 @@ export class TestDataFactory {
   }
 
   /**
+   * Get all referral reward rows for a booking, ordered by creation time.
+   * Includes soft-deleted (REVERSED) rows so tests can assert on the audit
+   * trail of reservation attempts.
+   */
+  async getReferralRewardsByBookingId(bookingId: string) {
+    return this.prisma.referralReward.findMany({
+      where: { bookingId },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  /**
+   * Get the UserReferralStats row for a referrer, or null if none exists.
+   */
+  async getUserReferralStats(userId: string) {
+    return this.prisma.userReferralStats.findUnique({
+      where: { userId },
+    });
+  }
+
+  /**
    * Get a car by ID.
    */
   async getCarById(carId: string) {
@@ -708,8 +729,8 @@ export class TestDataFactory {
    * Idempotent via upsert — safe to call multiple times.
    * Sets: enabled, 10000 discount, 20000 min booking, DAY/NIGHT/FULL_DAY eligible, 30 day expiry.
    */
-  async enableReferralProgram(): Promise<void> {
-    await Promise.all([
+  async enableReferralProgram(options: { rewardAmount?: number } = {}): Promise<void> {
+    const writes: Promise<unknown>[] = [
       this.prisma.referralProgramConfig.upsert({
         where: { key: "REFERRAL_ENABLED" },
         create: { key: "REFERRAL_ENABLED", value: true },
@@ -735,7 +756,24 @@ export class TestDataFactory {
         create: { key: "REFERRAL_EXPIRY_DAYS", value: 30 },
         update: { value: 30 },
       }),
-    ]);
+    ];
+
+    if (options.rewardAmount !== undefined) {
+      writes.push(
+        this.prisma.referralProgramConfig.upsert({
+          where: { key: "REFERRAL_REWARD_AMOUNT" },
+          create: { key: "REFERRAL_REWARD_AMOUNT", value: options.rewardAmount },
+          update: { value: options.rewardAmount },
+        }),
+        this.prisma.referralProgramConfig.upsert({
+          where: { key: "REFERRAL_RELEASE_CONDITION" },
+          create: { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
+          update: { value: "COMPLETED" },
+        }),
+      );
+    }
+
+    await Promise.all(writes);
   }
 }
 

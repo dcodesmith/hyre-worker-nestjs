@@ -4,6 +4,7 @@ import { PaymentAttemptStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
+import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveChargeData } from "../flutterwave/flutterwave.interface";
@@ -18,6 +19,7 @@ export class ChargeCompletedHandler {
     private readonly flutterwaveService: FlutterwaveService,
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
+    private readonly bookingEligibilityService: BookingEligibilityService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ChargeCompletedHandler.name);
@@ -119,6 +121,9 @@ export class ChargeCompletedHandler {
     );
 
     if (payment.status !== PaymentAttemptStatus.SUCCESSFUL) {
+      if (payment.bookingId) {
+        await this.releaseReferralReservation(payment.bookingId, txRef);
+      }
       return;
     }
 
@@ -296,6 +301,27 @@ export class ChargeCompletedHandler {
 
   private toNumber(value: Decimal | number): number {
     return value instanceof Decimal ? value.toNumber() : value;
+  }
+
+  private async releaseReferralReservation(bookingId: string, txRef: string): Promise<void> {
+    try {
+      const result = await this.databaseService.$transaction((tx) =>
+        this.bookingEligibilityService.releaseReferralReservation(tx, bookingId),
+      );
+      this.logger.info(
+        { bookingId, txRef, released: result.released },
+        "Processed referral reservation release after non-successful charge",
+      );
+    } catch (error) {
+      this.logger.error(
+        {
+          bookingId,
+          txRef,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to release referral reservation after non-successful charge",
+      );
+    }
   }
 
   private async findOrCreatePayment(
