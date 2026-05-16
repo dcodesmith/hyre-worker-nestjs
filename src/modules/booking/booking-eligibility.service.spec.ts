@@ -194,8 +194,7 @@ describe("BookingEligibilityService", () => {
         booking: {
           findFirst: vi.fn().mockResolvedValue(null),
           findMany: vi.fn().mockResolvedValue([]),
-          findUnique: vi.fn(),
-          update: vi.fn(),
+          updateMany: vi.fn(),
         },
         referralReward: { deleteMany: vi.fn() },
         user: { update: mockUserUpdate },
@@ -454,29 +453,27 @@ describe("BookingEligibilityService", () => {
       return module.get<BookingEligibilityService>(BookingEligibilityService);
     };
 
-    it("clears the reservation and deletes pending reward when releasable", async () => {
+    it("clears the reservation and deletes pending reward when the conditional update affects a row", async () => {
       const service = await buildService();
-      const bookingUpdate = vi.fn().mockResolvedValue({});
+      const bookingUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
       const rewardDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
-      const bookingFindUnique = vi.fn().mockResolvedValue({
-        id: "booking-1",
-        userId: "user-1",
-        referralStatus: BookingReferralStatus.RESERVED,
-        status: BookingStatus.PENDING,
-        paymentStatus: PaymentStatus.UNPAID,
-      });
 
       const result = await service.releaseReferralReservation(
         {
-          booking: { findUnique: bookingFindUnique, update: bookingUpdate },
+          booking: { updateMany: bookingUpdateMany },
           referralReward: { deleteMany: rewardDeleteMany },
         } as never,
         "booking-1",
       );
 
       expect(result).toEqual({ released: true });
-      expect(bookingUpdate).toHaveBeenCalledWith({
-        where: { id: "booking-1" },
+      expect(bookingUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "booking-1",
+          referralStatus: BookingReferralStatus.RESERVED,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        },
         data: {
           referralStatus: BookingReferralStatus.REVERSED,
           referralDiscountAmount: new Decimal(0),
@@ -491,75 +488,25 @@ describe("BookingEligibilityService", () => {
       });
     });
 
-    it("is a no-op when the booking is missing", async () => {
+    // The atomic updateMany returns count: 0 in all "not releasable" scenarios —
+    // missing booking, already APPLIED/REWARDED, or RESERVED+mid-payment — because
+    // the state predicates live in the WHERE clause. We can't distinguish those
+    // scenarios at the unit level without a real DB; the E2E test in
+    // booking-flow.e2e-spec.ts asserts on the actual states.
+    it("is a no-op when the conditional update affects zero rows", async () => {
       const service = await buildService();
-      const bookingUpdate = vi.fn();
+      const bookingUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
       const rewardDeleteMany = vi.fn();
 
       const result = await service.releaseReferralReservation(
         {
-          booking: { findUnique: vi.fn().mockResolvedValue(null), update: bookingUpdate },
-          referralReward: { deleteMany: rewardDeleteMany },
-        } as never,
-        "missing-booking",
-      );
-
-      expect(result).toEqual({ released: false });
-      expect(bookingUpdate).not.toHaveBeenCalled();
-      expect(rewardDeleteMany).not.toHaveBeenCalled();
-    });
-
-    it("does not release a discount that has already been APPLIED", async () => {
-      const service = await buildService();
-      const bookingUpdate = vi.fn();
-      const rewardDeleteMany = vi.fn();
-
-      const result = await service.releaseReferralReservation(
-        {
-          booking: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "booking-1",
-              userId: "user-1",
-              referralStatus: BookingReferralStatus.APPLIED,
-              status: BookingStatus.CONFIRMED,
-              paymentStatus: PaymentStatus.PAID,
-            }),
-            update: bookingUpdate,
-          },
+          booking: { updateMany: bookingUpdateMany },
           referralReward: { deleteMany: rewardDeleteMany },
         } as never,
         "booking-1",
       );
 
       expect(result).toEqual({ released: false });
-      expect(bookingUpdate).not.toHaveBeenCalled();
-      expect(rewardDeleteMany).not.toHaveBeenCalled();
-    });
-
-    it("does not release a reservation that is already mid-payment", async () => {
-      const service = await buildService();
-      const bookingUpdate = vi.fn();
-      const rewardDeleteMany = vi.fn();
-
-      const result = await service.releaseReferralReservation(
-        {
-          booking: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "booking-1",
-              userId: "user-1",
-              referralStatus: BookingReferralStatus.RESERVED,
-              status: BookingStatus.PENDING,
-              paymentStatus: PaymentStatus.PAID,
-            }),
-            update: bookingUpdate,
-          },
-          referralReward: { deleteMany: rewardDeleteMany },
-        } as never,
-        "booking-1",
-      );
-
-      expect(result).toEqual({ released: false });
-      expect(bookingUpdate).not.toHaveBeenCalled();
       expect(rewardDeleteMany).not.toHaveBeenCalled();
     });
   });
@@ -585,23 +532,7 @@ describe("BookingEligibilityService", () => {
     const bookingFindMany = vi
       .fn()
       .mockResolvedValueOnce([{ id: "stale-booking-1" }, { id: "stale-booking-2" }]);
-    const bookingFindUnique = vi
-      .fn()
-      .mockResolvedValueOnce({
-        id: "stale-booking-1",
-        userId: "user-1",
-        referralStatus: BookingReferralStatus.RESERVED,
-        status: BookingStatus.PENDING,
-        paymentStatus: PaymentStatus.UNPAID,
-      })
-      .mockResolvedValueOnce({
-        id: "stale-booking-2",
-        userId: "user-1",
-        referralStatus: BookingReferralStatus.RESERVED,
-        status: BookingStatus.PENDING,
-        paymentStatus: PaymentStatus.UNPAID,
-      });
-    const bookingUpdate = vi.fn().mockResolvedValue({});
+    const bookingUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
     const rewardDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
     const bookingFindFirst = vi.fn().mockResolvedValue(null);
 
@@ -614,9 +545,8 @@ describe("BookingEligibilityService", () => {
           ]),
         booking: {
           findMany: bookingFindMany,
-          findUnique: bookingFindUnique,
           findFirst: bookingFindFirst,
-          update: bookingUpdate,
+          updateMany: bookingUpdateMany,
         },
         referralReward: { deleteMany: rewardDeleteMany },
         user: { update: vi.fn() },
@@ -643,22 +573,29 @@ describe("BookingEligibilityService", () => {
       },
       select: { id: true },
     });
-    expect(bookingUpdate).toHaveBeenCalledTimes(2);
-    expect(bookingUpdate).toHaveBeenNthCalledWith(1, {
-      where: { id: "stale-booking-1" },
-      data: {
-        referralStatus: BookingReferralStatus.REVERSED,
-        referralDiscountAmount: new Decimal(0),
-        referralReferrerUserId: null,
+    expect(bookingUpdateMany).toHaveBeenCalledTimes(2);
+    const expectedUpdateData = {
+      referralStatus: BookingReferralStatus.REVERSED,
+      referralDiscountAmount: new Decimal(0),
+      referralReferrerUserId: null,
+    };
+    expect(bookingUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        id: "stale-booking-1",
+        referralStatus: BookingReferralStatus.RESERVED,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
       },
+      data: expectedUpdateData,
     });
-    expect(bookingUpdate).toHaveBeenNthCalledWith(2, {
-      where: { id: "stale-booking-2" },
-      data: {
-        referralStatus: BookingReferralStatus.REVERSED,
-        referralDiscountAmount: new Decimal(0),
-        referralReferrerUserId: null,
+    expect(bookingUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        id: "stale-booking-2",
+        referralStatus: BookingReferralStatus.RESERVED,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
       },
+      data: expectedUpdateData,
     });
   });
 
@@ -690,9 +627,8 @@ describe("BookingEligibilityService", () => {
             ]),
           booking: {
             findMany: vi.fn().mockResolvedValue([]),
-            findUnique: vi.fn(),
             findFirst: vi.fn().mockResolvedValue({ id: "in-flight-booking" }),
-            update: vi.fn(),
+            updateMany: vi.fn(),
           },
           referralReward: { deleteMany: vi.fn() },
           user: { update: vi.fn() },

@@ -169,31 +169,18 @@ export class BookingEligibilityService {
     tx: Prisma.TransactionClient,
     bookingId: string,
   ): Promise<{ released: boolean }> {
-    const booking = await tx.booking.findUnique({
-      where: { id: bookingId },
-      select: {
-        id: true,
-        userId: true,
-        referralStatus: true,
-        status: true,
-        paymentStatus: true,
+    // Conditional update is atomic at the DB row level: the state predicates live
+    // in the WHERE clause, so a concurrent transition (e.g. a late charge.completed
+    // (successful) re-delivery flipping the booking to APPLIED+PAID) cannot be
+    // clobbered by a stale read-then-write race. count === 0 means another writer
+    // already moved the booking out of the releasable state.
+    const { count } = await tx.booking.updateMany({
+      where: {
+        id: bookingId,
+        referralStatus: BookingReferralStatus.RESERVED,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
       },
-    });
-
-    if (!booking) {
-      return { released: false };
-    }
-
-    if (
-      booking.referralStatus !== BookingReferralStatus.RESERVED ||
-      booking.status !== BookingStatus.PENDING ||
-      booking.paymentStatus !== PaymentStatus.UNPAID
-    ) {
-      return { released: false };
-    }
-
-    await tx.booking.update({
-      where: { id: booking.id },
       data: {
         referralStatus: BookingReferralStatus.REVERSED,
         referralDiscountAmount: new Decimal(0),
@@ -201,17 +188,18 @@ export class BookingEligibilityService {
       },
     });
 
+    if (count === 0) {
+      return { released: false };
+    }
+
     await tx.referralReward.deleteMany({
       where: {
-        bookingId: booking.id,
+        bookingId,
         status: ReferralRewardStatus.PENDING,
       },
     });
 
-    this.logger.info(
-      { bookingId: booking.id, userId: booking.userId },
-      "Released referral reservation",
-    );
+    this.logger.info({ bookingId }, "Released referral reservation");
 
     return { released: true };
   }
