@@ -1,5 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { BookingReferralStatus, BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  BookingStatus,
+  PaymentStatus,
+  type Prisma,
+  ReferralRewardStatus,
+} from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { ReferralInvalidCodeException, ReferralSelfReferralException } from "./referral.error";
 import type { ReferralConfig, ReferralUserSummaryResponse } from "./referral.interface";
@@ -124,7 +130,7 @@ export class ReferralApiService {
     userId: string,
     requestOrigin: string | null,
   ): Promise<ReferralUserSummaryResponse | null> {
-    const [referralInfo, bookingCredits, config] = await Promise.all([
+    const [referralInfo, rewardTotals, config] = await Promise.all([
       this.databaseService.user.findUnique({
         where: { id: userId },
         select: {
@@ -132,14 +138,6 @@ export class ReferralApiService {
           referredByUserId: true,
           referralDiscountUsed: true,
           referralSignupAt: true,
-          referralStats: {
-            select: {
-              totalReferrals: true,
-              totalRewardsGranted: true,
-              totalRewardsPending: true,
-              lastReferralAt: true,
-            },
-          },
           referrals: {
             select: {
               id: true,
@@ -167,7 +165,7 @@ export class ReferralApiService {
           },
         },
       }),
-      this.getUserBookingCredits(userId),
+      this.getReferralRewardTotals(userId),
       this.getReferralConfig(),
     ]);
 
@@ -175,17 +173,11 @@ export class ReferralApiService {
       return null;
     }
 
+    const bookingCredits = await this.getUserBookingCredits(userId, rewardTotals.totalReleased);
     const shareLink =
       referralInfo.referralCode && requestOrigin
         ? `${requestOrigin}/auth?ref=${referralInfo.referralCode}`
         : null;
-
-    const totalRewardsGranted = this.decimalToNumber(
-      referralInfo.referralStats?.totalRewardsGranted,
-    );
-    const totalRewardsPending = this.decimalToNumber(
-      referralInfo.referralStats?.totalRewardsPending,
-    );
 
     return {
       referralCode: referralInfo.referralCode,
@@ -196,10 +188,10 @@ export class ReferralApiService {
       referredBy: referralInfo.referredByUserId,
       signupDate: referralInfo.referralSignupAt,
       stats: {
-        totalReferrals: referralInfo.referralStats?.totalReferrals ?? 0,
-        totalRewardsGranted,
-        totalRewardsPending,
-        lastReferralAt: referralInfo.referralStats?.lastReferralAt ?? null,
+        totalReferrals: referralInfo.referrals.length,
+        totalRewardsGranted: rewardTotals.totalReleased,
+        totalRewardsPending: rewardTotals.totalPending,
+        lastReferralAt: this.getLastReferralAt(referralInfo.referrals),
         totalEarned: bookingCredits.totalEarned,
         totalUsed: bookingCredits.totalUsed,
         availableCredits: bookingCredits.availableCredits,
@@ -251,12 +243,32 @@ export class ReferralApiService {
     return config;
   }
 
-  private async getUserBookingCredits(userId: string) {
-    const [stats, usedCredits, reservedCredits] = await Promise.all([
-      this.databaseService.userReferralStats.findUnique({
-        where: { userId },
-        select: { totalRewardsGranted: true },
+  private async getReferralRewardTotals(userId: string) {
+    const [releasedRewards, pendingRewards] = await Promise.all([
+      this.databaseService.referralReward.aggregate({
+        where: {
+          referrerUserId: userId,
+          status: ReferralRewardStatus.RELEASED,
+        },
+        _sum: { amount: true },
       }),
+      this.databaseService.referralReward.aggregate({
+        where: {
+          referrerUserId: userId,
+          status: ReferralRewardStatus.PENDING,
+        },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    return {
+      totalReleased: this.decimalToNumber(releasedRewards._sum.amount),
+      totalPending: this.decimalToNumber(pendingRewards._sum.amount),
+    };
+  }
+
+  private async getUserBookingCredits(userId: string, totalEarned: number) {
+    const [usedCredits, reservedCredits] = await Promise.all([
       this.databaseService.booking.aggregate({
         where: {
           paymentStatus: PaymentStatus.PAID,
@@ -276,7 +288,6 @@ export class ReferralApiService {
       }),
     ]);
 
-    const totalEarned = this.decimalToNumber(stats?.totalRewardsGranted);
     const totalUsed = this.decimalToNumber(usedCredits._sum.referralCreditsUsed);
     const totalReserved = this.decimalToNumber(reservedCredits._sum.referralCreditsReserved);
 
@@ -286,6 +297,16 @@ export class ReferralApiService {
       totalReserved,
       availableCredits: Math.max(0, totalEarned - totalUsed - totalReserved),
     };
+  }
+
+  private getLastReferralAt(referrals: Array<{ createdAt: Date }>): Date | null {
+    let latest: Date | null = null;
+    for (const referral of referrals) {
+      if (!latest || referral.createdAt > latest) {
+        latest = referral.createdAt;
+      }
+    }
+    return latest;
   }
 
   private decimalToNumber(value: Prisma.Decimal | number | null | undefined): number {
