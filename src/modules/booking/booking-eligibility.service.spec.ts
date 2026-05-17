@@ -433,6 +433,45 @@ describe("BookingEligibilityService", () => {
     });
   });
 
+  it("does not create referral reward when reward and discount config keys are missing", async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingEligibilityService,
+        {
+          provide: DatabaseService,
+          useValue: {
+            user: { findUnique: vi.fn() },
+            referralProgramConfig: { findMany: vi.fn() },
+          },
+        },
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    const service = module.get<BookingEligibilityService>(BookingEligibilityService);
+    const rewardCreate = vi.fn().mockResolvedValue({});
+    const statsUpsert = vi.fn().mockResolvedValue({});
+
+    await service.createReferralRewardIfEligible(
+      {
+        referralProgramConfig: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([{ key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" }]),
+        },
+        referralReward: { create: rewardCreate },
+        userReferralStats: { upsert: statsUpsert },
+      } as never,
+      "booking-1",
+      { eligible: true, referrerUserId: "referrer-1", discountAmount: new Decimal(7500) },
+      "user-1",
+    );
+
+    expect(rewardCreate).not.toHaveBeenCalled();
+    expect(statsUpsert).not.toHaveBeenCalled();
+  });
+
   it("ignores stale RESERVED+PENDING+UNPAID bookings when checking pricing eligibility", async () => {
     const databaseService = {
       user: {

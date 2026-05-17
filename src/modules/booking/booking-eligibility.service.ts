@@ -365,9 +365,7 @@ export class BookingEligibilityService {
     ]);
 
     const rewardAmount = this.parseDecimalConfig(
-      rewardConfigMap.REFERRAL_REWARD_AMOUNT ??
-        rewardConfigMap.REFERRAL_DISCOUNT_AMOUNT ??
-        referralEligibility.discountAmount,
+      rewardConfigMap.REFERRAL_REWARD_AMOUNT ?? rewardConfigMap.REFERRAL_DISCOUNT_AMOUNT,
       "REFERRAL_REWARD_AMOUNT",
     );
     if (!rewardAmount.gt(0)) {

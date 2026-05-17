@@ -108,12 +108,6 @@ describe("ReferralApiService", () => {
       referredByUserId: null,
       referralDiscountUsed: false,
       referralSignupAt: null,
-      referralStats: {
-        totalReferrals: 2,
-        totalRewardsGranted: { toNumber: () => 2500 },
-        totalRewardsPending: { toNumber: () => 500 },
-        lastReferralAt: null,
-      },
       referrals: [
         {
           id: "user-2",
