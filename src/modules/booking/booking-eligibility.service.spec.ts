@@ -372,6 +372,67 @@ describe("BookingEligibilityService", () => {
     });
   });
 
+  it("uses REFERRAL_DISCOUNT_AMOUNT for reward amount when REFERRAL_REWARD_AMOUNT is missing", async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingEligibilityService,
+        {
+          provide: DatabaseService,
+          useValue: {
+            user: { findUnique: vi.fn() },
+            referralProgramConfig: { findMany: vi.fn() },
+          },
+        },
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    const service = module.get<BookingEligibilityService>(BookingEligibilityService);
+    const rewardCreate = vi.fn().mockResolvedValue({});
+    const statsUpsert = vi.fn().mockResolvedValue({});
+
+    await service.createReferralRewardIfEligible(
+      {
+        referralProgramConfig: {
+          findMany: vi.fn().mockResolvedValue([
+            { key: "REFERRAL_DISCOUNT_AMOUNT", value: "10000" },
+            { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
+          ]),
+        },
+        referralReward: { create: rewardCreate },
+        userReferralStats: { upsert: statsUpsert },
+      } as never,
+      "booking-1",
+      { eligible: true, referrerUserId: "referrer-1", discountAmount: new Decimal(5000) },
+      "user-1",
+    );
+
+    expect(rewardCreate).toHaveBeenCalledWith({
+      data: {
+        referrer: { connect: { id: "referrer-1" } },
+        referee: { connect: { id: "user-1" } },
+        booking: { connect: { id: "booking-1" } },
+        amount: new Decimal(10000),
+        status: ReferralRewardStatus.PENDING,
+        releaseCondition: "COMPLETED",
+      },
+    });
+    expect(statsUpsert).toHaveBeenCalledWith({
+      where: { userId: "referrer-1" },
+      create: {
+        userId: "referrer-1",
+        totalReferrals: 1,
+        totalRewardsGranted: 0,
+        totalRewardsPending: new Decimal(10000),
+      },
+      update: {
+        totalReferrals: { increment: 1 },
+        totalRewardsPending: { increment: new Decimal(10000) },
+      },
+    });
+  });
+
   it("ignores stale RESERVED+PENDING+UNPAID bookings when checking pricing eligibility", async () => {
     const databaseService = {
       user: {

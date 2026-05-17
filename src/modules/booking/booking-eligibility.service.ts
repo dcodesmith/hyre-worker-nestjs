@@ -360,11 +360,14 @@ export class BookingEligibilityService {
 
     const rewardConfigMap = await this.getReferralConfigMap(tx.referralProgramConfig, [
       "REFERRAL_REWARD_AMOUNT",
+      "REFERRAL_DISCOUNT_AMOUNT",
       "REFERRAL_RELEASE_CONDITION",
     ]);
 
     const rewardAmount = this.parseDecimalConfig(
-      rewardConfigMap.REFERRAL_REWARD_AMOUNT,
+      rewardConfigMap.REFERRAL_REWARD_AMOUNT ??
+        rewardConfigMap.REFERRAL_DISCOUNT_AMOUNT ??
+        referralEligibility.discountAmount,
       "REFERRAL_REWARD_AMOUNT",
     );
     if (!rewardAmount.gt(0)) {

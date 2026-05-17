@@ -15,6 +15,9 @@ describe("ReferralApiService", () => {
       findFirst: ReturnType<typeof vi.fn>;
       aggregate: ReturnType<typeof vi.fn>;
     };
+    referralReward: {
+      aggregate: ReturnType<typeof vi.fn>;
+    };
     userReferralStats: {
       findUnique: ReturnType<typeof vi.fn>;
     };
@@ -30,6 +33,9 @@ describe("ReferralApiService", () => {
       },
       booking: {
         findFirst: vi.fn(),
+        aggregate: vi.fn(),
+      },
+      referralReward: {
         aggregate: vi.fn(),
       },
       userReferralStats: {
@@ -130,9 +136,13 @@ describe("ReferralApiService", () => {
         },
       ],
     });
-    mockDatabaseService.userReferralStats.findUnique.mockResolvedValue({
-      totalRewardsGranted: { toNumber: () => 2500 },
-    });
+    mockDatabaseService.referralReward.aggregate
+      .mockResolvedValueOnce({
+        _sum: { amount: { toNumber: () => 2500 } },
+      })
+      .mockResolvedValueOnce({
+        _sum: { amount: { toNumber: () => 500 } },
+      });
     mockDatabaseService.booking.aggregate
       .mockResolvedValueOnce({
         _sum: { referralCreditsUsed: { toNumber: () => 500 } },
@@ -149,11 +159,67 @@ describe("ReferralApiService", () => {
     expect(result.shareLink).toBe("http://localhost:3000/auth?ref=ABCDEFGH");
     expect(result.programEnabled).toBe(true);
     expect(result.discountAmount).toBe(10000);
+    expect(result.stats.totalReferrals).toBe(1);
     expect(result.stats.totalRewardsGranted).toBe(2500);
+    expect(result.stats.totalRewardsPending).toBe(500);
     expect(result.stats.totalEarned).toBe(2500);
     expect(result.stats.totalUsed).toBe(500);
     expect(result.stats.availableCredits).toBe(1700);
     expect(result.rewards[0]?.amount).toBe(1500);
     expect(result.rewards[0]?.refereeName).toBe("Referee Name");
+  });
+
+  it("derives summary stats from source rows when denormalized stats drift", async () => {
+    mockDatabaseService.referralProgramConfig.findMany.mockResolvedValue([]);
+    mockDatabaseService.user.findUnique.mockResolvedValueOnce({
+      referralCode: "ABCDEFGH",
+      referredByUserId: null,
+      referralDiscountUsed: false,
+      referralSignupAt: null,
+      referrals: [
+        {
+          id: "referee-1",
+          name: null,
+          email: "referee@tripdly.com",
+          createdAt: new Date("2030-01-01T00:00:00.000Z"),
+        },
+      ],
+      referralRewardsEarned: [
+        {
+          id: "reward-1",
+          amount: { toNumber: () => 10000 },
+          status: "PENDING",
+          createdAt: new Date("2030-01-02T00:00:00.000Z"),
+          processedAt: null,
+          referee: {
+            name: null,
+            email: "referee@tripdly.com",
+          },
+        },
+      ],
+    });
+    mockDatabaseService.referralReward.aggregate
+      .mockResolvedValueOnce({
+        _sum: { amount: null },
+      })
+      .mockResolvedValueOnce({
+        _sum: { amount: { toNumber: () => 10000 } },
+      });
+    mockDatabaseService.booking.aggregate
+      .mockResolvedValueOnce({
+        _sum: { referralCreditsUsed: null },
+      })
+      .mockResolvedValueOnce({
+        _sum: { referralCreditsReserved: null },
+      });
+
+    const result = await service.getUserReferralSummary("referrer-1", "http://localhost:3000");
+
+    expect(result?.stats.totalReferrals).toBe(1);
+    expect(result?.stats.totalRewardsGranted).toBe(0);
+    expect(result?.stats.totalRewardsPending).toBe(10000);
+    expect(result?.stats.totalEarned).toBe(0);
+    expect(result?.stats.availableCredits).toBe(0);
+    expect(mockDatabaseService.userReferralStats.findUnique).not.toHaveBeenCalled();
   });
 });
