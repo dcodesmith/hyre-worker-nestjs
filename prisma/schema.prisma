@@ -471,11 +471,13 @@ model VehicleImage {
   approvedById String?
   notes        String?
   status       DocumentStatus @default(PENDING)
+  isPrimary    Boolean        @default(false)
   approvedBy   User?          @relation("ApprovedVehicleImages", fields: [approvedById], references: [id])
   car          Car            @relation(fields: [carId], references: [id], onDelete: Cascade)
 
   @@index([carId])
   @@index([status])
+  @@index([carId, isPrimary])
 }
 
 model Review {
