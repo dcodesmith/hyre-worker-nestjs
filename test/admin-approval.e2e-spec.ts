@@ -22,6 +22,7 @@ describe("Admin Approval E2E Tests", () => {
 
   const pdfBuffer = Buffer.from("%PDF-1.4 replacement");
   const imageBuffer = Buffer.from("fake-image-bytes");
+  const deleteObjectByKey = vi.fn().mockResolvedValue(undefined);
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -34,7 +35,7 @@ describe("Admin Approval E2E Tests", () => {
         uploadBuffer: vi.fn().mockImplementation(async (_buffer: Buffer, key: string) => {
           return `https://cdn.tripdly.test/${key}`;
         }),
-        deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
+        deleteObjectByKey,
       })
       .compile();
 
@@ -205,13 +206,33 @@ describe("Admin Approval E2E Tests", () => {
       expect(documentRow?.notes).toBe("Certificate expired");
     });
 
+    it("keeps the car PENDING when a rejected item remains after approving the rest", async () => {
+      const { car, image, document } = await createCarUnderReview();
+      await databaseService.vehicleImage.update({
+        where: { id: image.id },
+        data: { status: "REJECTED", notes: "Too blurry" },
+      });
+
+      const documentResponse = await request(app.getHttpServer())
+        .post(`/api/admin/documents/${document.id}/approve`)
+        .set("Cookie", adminCookie);
+      expect(documentResponse.status).toBe(HttpStatus.CREATED);
+
+      const carRow = await factory.getCarById(car.id);
+      expect(carRow?.approvalStatus).toBe("PENDING");
+    });
+
     it("sets the cover image and unsets the previous one", async () => {
       const { car, image } = await createCarUnderReview();
+      await databaseService.vehicleImage.update({
+        where: { id: image.id },
+        data: { status: "APPROVED" },
+      });
       const secondImage = await databaseService.vehicleImage.create({
         data: {
           carId: car.id,
           url: "https://cdn.tripdly.test/second.jpg",
-          status: "PENDING",
+          status: "APPROVED",
           isPrimary: true,
         },
       });
@@ -229,6 +250,17 @@ describe("Admin Approval E2E Tests", () => {
       expect(first?.isPrimary).toBe(true);
       expect(second?.isPrimary).toBe(false);
     });
+
+    it("rejects setting a non-approved image as the cover", async () => {
+      const { car, image } = await createCarUnderReview();
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/admin/cars/${car.id}/cover`)
+        .set("Cookie", adminCookie)
+        .send({ imageId: image.id });
+
+      expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    });
   });
 
   describe("owner re-upload of rejected files", () => {
@@ -239,6 +271,7 @@ describe("Admin Approval E2E Tests", () => {
         data: { status: "REJECTED", notes: "Blurry scan" },
       });
 
+      deleteObjectByKey.mockClear();
       const replaceResponse = await request(app.getHttpServer())
         .put(`/api/fleet-owner/cars/${car.id}/documents/${document.id}/file`)
         .set("Cookie", ownerCookie)
@@ -251,6 +284,8 @@ describe("Admin Approval E2E Tests", () => {
       expect(documentRow?.status).toBe("PENDING");
       expect(documentRow?.notes).toBeNull();
       expect(documentRow?.documentUrl).toContain("mot-v2");
+      // The previous stored file is cleaned up
+      expect(deleteObjectByKey).toHaveBeenCalledWith(`${ownerId}/${car.id}/documents/mot.pdf`);
 
       // Approve everything and confirm the car completes review
       await request(app.getHttpServer())
@@ -271,6 +306,7 @@ describe("Admin Approval E2E Tests", () => {
         data: { status: "REJECTED", notes: "Too dark" },
       });
 
+      deleteObjectByKey.mockClear();
       const response = await request(app.getHttpServer())
         .put(`/api/fleet-owner/cars/${car.id}/images/${image.id}/file`)
         .set("Cookie", ownerCookie)
@@ -280,6 +316,9 @@ describe("Admin Approval E2E Tests", () => {
       const imageRow = await databaseService.vehicleImage.findUnique({ where: { id: image.id } });
       expect(imageRow?.status).toBe("PENDING");
       expect(imageRow?.notes).toBeNull();
+      expect(imageRow?.url).toContain("photo-v2");
+      // The previous stored file is cleaned up
+      expect(deleteObjectByKey).toHaveBeenCalledWith(`${ownerId}/${car.id}/images/photo.jpg`);
     });
 
     it("rejects replacing a document that has not been rejected", async () => {

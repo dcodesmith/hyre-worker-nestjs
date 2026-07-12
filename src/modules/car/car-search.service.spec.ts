@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import {
   BookingStatus,
   BookingType,
+  DocumentStatus,
   PaymentStatus,
   ServiceTier,
   VehicleType,
@@ -451,6 +452,23 @@ describe("CarSearchService", () => {
       expect(result.cars[0]?.promotion).toBeNull();
     });
 
+    it("only selects approved images for public search results", async () => {
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.searchCars({ page: 1, limit: 12 });
+
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            images: expect.objectContaining({
+              where: { status: DocumentStatus.APPROVED },
+            }),
+          }),
+        }),
+      );
+    });
+
     it("combines multiple filters", async () => {
       const cars = [
         createMockCar({
@@ -498,6 +516,11 @@ describe("CarSearchService", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: "car-123",
+          }),
+          select: expect.objectContaining({
+            images: expect.objectContaining({
+              where: { status: DocumentStatus.APPROVED },
+            }),
           }),
         }),
       );

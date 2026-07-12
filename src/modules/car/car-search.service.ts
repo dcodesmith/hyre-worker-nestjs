@@ -3,6 +3,7 @@ import {
   BookingStatus,
   BookingType,
   CarApprovalStatus,
+  DocumentStatus,
   PaymentStatus,
   Prisma,
   Status,
@@ -274,6 +275,7 @@ export class CarSearchService {
             vehicleType: true,
             serviceTier: true,
             images: {
+              where: { status: DocumentStatus.APPROVED },
               select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
               take: 4,
@@ -372,6 +374,7 @@ export class CarSearchService {
           vehicleType: true,
           serviceTier: true,
           images: {
+            where: { status: DocumentStatus.APPROVED },
             select: { url: true },
             orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           },

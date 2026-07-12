@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { CarApprovalStatus } from "@prisma/client";
+import { CarApprovalStatus, DocumentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -30,6 +30,8 @@ describe("CarApprovalService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    // Default: run transaction callbacks against the same mock client.
+    databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarApprovalService, { provide: DatabaseService, useValue: databaseServiceMock }],
     })
@@ -64,6 +66,24 @@ describe("CarApprovalService", () => {
     expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
+  it("does not approve the car while rejected items remain unresolved", async () => {
+    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({ id: "img-1" });
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    // One REJECTED image still counts as unresolved
+    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(1);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.vehicleImage.count).toHaveBeenCalledWith({
+      where: {
+        carId: "car-1",
+        status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
+      },
+    });
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
   it("rejects approving an image that does not belong to the car", async () => {
     databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(null);
 
@@ -87,7 +107,7 @@ describe("CarApprovalService", () => {
     );
   });
 
-  it("sets exactly one cover image atomically", async () => {
+  it("sets exactly one cover image atomically, restricted to approved images", async () => {
     const tx = {
       vehicleImage: {
         findFirst: vi.fn().mockResolvedValueOnce({ id: "img-2" }),
@@ -99,6 +119,10 @@ describe("CarApprovalService", () => {
 
     await service.setCoverImage("car-1", "img-2");
 
+    expect(tx.vehicleImage.findFirst).toHaveBeenCalledWith({
+      where: { id: "img-2", carId: "car-1", status: DocumentStatus.APPROVED },
+      select: { id: true },
+    });
     expect(tx.vehicleImage.updateMany).toHaveBeenCalledWith({
       where: { carId: "car-1", isPrimary: true, NOT: { id: "img-2" } },
       data: { isPrimary: false },
@@ -109,7 +133,7 @@ describe("CarApprovalService", () => {
     });
   });
 
-  it("rejects setting a cover image that does not belong to the car", async () => {
+  it("rejects setting a cover image that does not belong to the car or is not approved", async () => {
     const tx = {
       vehicleImage: {
         findFirst: vi.fn().mockResolvedValueOnce(null),

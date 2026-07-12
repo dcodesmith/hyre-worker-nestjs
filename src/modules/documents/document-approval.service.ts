@@ -1,5 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import { CarApprovalStatus, ChauffeurApprovalStatus, DocumentStatus } from "@prisma/client";
+import {
+  CarApprovalStatus,
+  ChauffeurApprovalStatus,
+  DocumentStatus,
+  type Prisma,
+} from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { CarApprovalService } from "../car/car-approval.service";
 import { DatabaseService } from "../database/database.service";
@@ -26,22 +31,28 @@ export class DocumentApprovalService {
     try {
       await this.assertDocumentExists(documentId);
 
-      const document = await this.databaseService.documentApproval.update({
-        where: { id: documentId },
-        data: {
-          status: DocumentStatus.APPROVED,
-          approvedById: approverId,
-          approvedAt: new Date(),
-        },
+      // Transaction keeps the document write and the car/chauffeur cascade
+      // atomic; a failure in the cascade rolls the approval back too.
+      const document = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.documentApproval.update({
+          where: { id: documentId },
+          data: {
+            status: DocumentStatus.APPROVED,
+            approvedById: approverId,
+            approvedAt: new Date(),
+          },
+        });
+
+        if (updated.carId) {
+          await this.carApprovalService.approveCarIfFullyReviewed(updated.carId, tx);
+        }
+
+        if (updated.userId) {
+          await this.approveChauffeurIfFullyReviewed(updated.userId, tx);
+        }
+
+        return updated;
       });
-
-      if (document.carId) {
-        await this.carApprovalService.approveCarIfFullyReviewed(document.carId);
-      }
-
-      if (document.userId) {
-        await this.approveChauffeurIfFullyReviewed(document.userId);
-      }
 
       return { success: true, document };
     } catch (error) {
@@ -53,29 +64,36 @@ export class DocumentApprovalService {
     try {
       await this.assertDocumentExists(documentId);
 
-      const document = await this.databaseService.documentApproval.update({
-        where: { id: documentId },
-        data: {
-          status: DocumentStatus.REJECTED,
-          approvedById: approverId,
-          approvedAt: new Date(),
-          notes,
-        },
+      const document = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.documentApproval.update({
+          where: { id: documentId },
+          data: {
+            status: DocumentStatus.REJECTED,
+            approvedById: approverId,
+            approvedAt: new Date(),
+            notes,
+          },
+        });
+
+        if (updated.carId) {
+          await tx.car.update({
+            where: { id: updated.carId },
+            data: {
+              approvalStatus: CarApprovalStatus.PENDING,
+              approvalNotes: REJECTION_ACTION_NOTE,
+            },
+          });
+        }
+
+        if (updated.userId) {
+          await tx.user.update({
+            where: { id: updated.userId },
+            data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
+          });
+        }
+
+        return updated;
       });
-
-      if (document.carId) {
-        await this.databaseService.car.update({
-          where: { id: document.carId },
-          data: { approvalStatus: CarApprovalStatus.PENDING, approvalNotes: REJECTION_ACTION_NOTE },
-        });
-      }
-
-      if (document.userId) {
-        await this.databaseService.user.update({
-          where: { id: document.userId },
-          data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
-        });
-      }
 
       return { success: true, document };
     } catch (error) {
@@ -93,13 +111,16 @@ export class DocumentApprovalService {
     }
   }
 
-  private async approveChauffeurIfFullyReviewed(userId: string): Promise<void> {
-    const pendingDocuments = await this.databaseService.documentApproval.count({
-      where: { userId, status: DocumentStatus.PENDING },
+  private async approveChauffeurIfFullyReviewed(
+    userId: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const unresolvedDocuments = await tx.documentApproval.count({
+      where: { userId, status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] } },
     });
 
-    if (pendingDocuments === 0) {
-      await this.databaseService.user.update({
+    if (unresolvedDocuments === 0) {
+      await tx.user.update({
         where: { id: userId },
         data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
       });

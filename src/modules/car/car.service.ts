@@ -402,16 +402,27 @@ export class CarService {
       const key = this.getObjectKey(ownerId, carId, file.originalname, CAR_S3_CATEGORY_IMAGES);
       const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
 
-      const image = await this.databaseService.vehicleImage.update({
-        where: { id: imageId },
-        data: {
-          url,
-          status: DocumentStatus.PENDING,
-          notes: null,
-          approvedById: null,
-          approvedAt: null,
-        },
-      });
+      let image: Awaited<ReturnType<typeof this.databaseService.vehicleImage.update>>;
+      try {
+        // Guard on status in the write itself so a concurrent admin decision
+        // between the read above and this update cannot be clobbered.
+        image = await this.databaseService.vehicleImage.update({
+          where: { id: imageId, status: DocumentStatus.REJECTED },
+          data: {
+            url,
+            status: DocumentStatus.PENDING,
+            notes: null,
+            approvedById: null,
+            approvedAt: null,
+          },
+        });
+      } catch (updateError) {
+        await this.storageService.deleteObjectByKey(key).catch(() => undefined);
+        if (this.isRecordNotFoundError(updateError)) {
+          throw new FileNotRejectedException("image");
+        }
+        throw updateError;
+      }
 
       await this.deleteReplacedObject(existingImage.url);
 
@@ -460,16 +471,27 @@ export class CarService {
       const key = this.getObjectKey(ownerId, carId, file.originalname, CAR_S3_CATEGORY_DOCUMENTS);
       const documentUrl = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
 
-      const document = await this.databaseService.documentApproval.update({
-        where: { id: documentId },
-        data: {
-          documentUrl,
-          status: DocumentStatus.PENDING,
-          notes: null,
-          approvedById: null,
-          approvedAt: null,
-        },
-      });
+      let document: Awaited<ReturnType<typeof this.databaseService.documentApproval.update>>;
+      try {
+        // Guard on status in the write itself so a concurrent admin decision
+        // between the read above and this update cannot be clobbered.
+        document = await this.databaseService.documentApproval.update({
+          where: { id: documentId, status: DocumentStatus.REJECTED },
+          data: {
+            documentUrl,
+            status: DocumentStatus.PENDING,
+            notes: null,
+            approvedById: null,
+            approvedAt: null,
+          },
+        });
+      } catch (updateError) {
+        await this.storageService.deleteObjectByKey(key).catch(() => undefined);
+        if (this.isRecordNotFoundError(updateError)) {
+          throw new FileNotRejectedException("document");
+        }
+        throw updateError;
+      }
 
       await this.deleteReplacedObject(existingDocument.documentUrl);
 
@@ -489,6 +511,11 @@ export class CarService {
       );
       throw new CarUpdateFailedException();
     }
+  }
+
+  /** Prisma throws P2025 when an update's where clause matches no record. */
+  private isRecordNotFoundError(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
   }
 
   private async assertCarBelongsToOwner(carId: string, ownerId: string): Promise<void> {

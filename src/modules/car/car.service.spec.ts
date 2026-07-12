@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { DocumentStatus, ServiceTier, Status, VehicleType } from "@prisma/client";
+import { DocumentStatus, Prisma, ServiceTier, Status, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -10,6 +10,7 @@ import {
   CarDocumentNotFoundException,
   CarFetchFailedException,
   CarNotFoundException,
+  CarUpdateFailedException,
   FileNotRejectedException,
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
@@ -348,7 +349,7 @@ describe("CarService", () => {
 
       expect(result.success).toBe(true);
       expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith({
-        where: { id: "img-1" },
+        where: { id: "img-1", status: DocumentStatus.REJECTED },
         data: {
           url: "https://cdn.test/new.jpg",
           status: DocumentStatus.PENDING,
@@ -414,6 +415,42 @@ describe("CarService", () => {
 
       expect(result.success).toBe(true);
     });
+
+    it("deletes the newly uploaded object when the DB update fails", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(new Error("db down"));
+
+      await expect(
+        service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
+      ).rejects.toBeInstanceOf(CarUpdateFailedException);
+
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        expect.stringContaining("owner-1/car-1/images/"),
+      );
+    });
+
+    it("throws FileNotRejectedException when the status changes between check and write", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      // Prisma throws P2025 when the guarded update matches no record
+      databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Record not found", {
+          code: "P2025",
+          clientVersion: "test",
+        }),
+      );
+
+      await expect(
+        service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
+      ).rejects.toBeInstanceOf(FileNotRejectedException);
+
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        expect.stringContaining("owner-1/car-1/images/"),
+      );
+    });
   });
 
   describe("replaceCarDocument", () => {
@@ -442,7 +479,7 @@ describe("CarService", () => {
 
       expect(result.success).toBe(true);
       expect(databaseServiceMock.documentApproval.update).toHaveBeenCalledWith({
-        where: { id: "doc-1" },
+        where: { id: "doc-1", status: DocumentStatus.REJECTED },
         data: {
           documentUrl: "https://cdn.test/new.pdf",
           status: DocumentStatus.PENDING,
@@ -486,6 +523,26 @@ describe("CarService", () => {
         ),
       ).rejects.toBeInstanceOf(FileNotRejectedException);
       expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("deletes the newly uploaded object when the DB update fails", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.pdf");
+      databaseServiceMock.documentApproval.update.mockRejectedValueOnce(new Error("db down"));
+
+      await expect(
+        service.replaceCarDocument(
+          "car-1",
+          "owner-1",
+          "doc-1",
+          createMockFile("a.pdf", "application/pdf"),
+        ),
+      ).rejects.toBeInstanceOf(CarUpdateFailedException);
+
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        expect.stringContaining("owner-1/car-1/documents/"),
+      );
     });
   });
 });

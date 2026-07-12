@@ -121,16 +121,20 @@ export class CarApprovalService {
     try {
       await this.assertImageBelongsToCar(carId, imageId);
 
-      const image = await this.databaseService.vehicleImage.update({
-        where: { id: imageId },
-        data: {
-          status: DocumentStatus.APPROVED,
-          approvedById: approverId,
-          approvedAt: new Date(),
-        },
-      });
+      const image = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.vehicleImage.update({
+          where: { id: imageId },
+          data: {
+            status: DocumentStatus.APPROVED,
+            approvedById: approverId,
+            approvedAt: new Date(),
+          },
+        });
 
-      await this.approveCarIfFullyReviewed(carId);
+        await this.approveCarIfFullyReviewed(carId, tx);
+
+        return updated;
+      });
 
       return { success: true, image };
     } catch (error) {
@@ -142,19 +146,23 @@ export class CarApprovalService {
     try {
       await this.assertImageBelongsToCar(carId, imageId);
 
-      const image = await this.databaseService.vehicleImage.update({
-        where: { id: imageId },
-        data: {
-          status: DocumentStatus.REJECTED,
-          approvedById: approverId,
-          approvedAt: new Date(),
-          notes,
-        },
-      });
+      const image = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.vehicleImage.update({
+          where: { id: imageId },
+          data: {
+            status: DocumentStatus.REJECTED,
+            approvedById: approverId,
+            approvedAt: new Date(),
+            notes,
+          },
+        });
 
-      await this.databaseService.car.update({
-        where: { id: carId },
-        data: { approvalStatus: CarApprovalStatus.PENDING, approvalNotes: REJECTION_ACTION_NOTE },
+        await tx.car.update({
+          where: { id: carId },
+          data: { approvalStatus: CarApprovalStatus.PENDING, approvalNotes: REJECTION_ACTION_NOTE },
+        });
+
+        return updated;
       });
 
       return { success: true, image };
@@ -167,7 +175,7 @@ export class CarApprovalService {
     try {
       await this.databaseService.$transaction(async (tx) => {
         const target = await tx.vehicleImage.findFirst({
-          where: { id: imageId, carId },
+          where: { id: imageId, carId, status: DocumentStatus.APPROVED },
           select: { id: true },
         });
         if (!target) {
@@ -191,22 +199,25 @@ export class CarApprovalService {
   }
 
   /**
-   * Promote the car to APPROVED once none of its images or documents remain
-   * PENDING. Exported so the documents domain can trigger it when a car
-   * document is approved.
+   * Promote the car to APPROVED once every image and document is APPROVED;
+   * PENDING or REJECTED items block promotion. Exported so the documents
+   * domain can trigger it when a car document is approved. Accepts an
+   * optional transaction client so callers can make the cascade atomic.
    */
-  async approveCarIfFullyReviewed(carId: string): Promise<void> {
-    const [pendingDocuments, pendingImages] = await Promise.all([
-      this.databaseService.documentApproval.count({
-        where: { carId, status: DocumentStatus.PENDING },
-      }),
-      this.databaseService.vehicleImage.count({
-        where: { carId, status: DocumentStatus.PENDING },
-      }),
+  async approveCarIfFullyReviewed(carId: string, tx?: Prisma.TransactionClient): Promise<void> {
+    const db = tx ?? this.databaseService;
+    const unresolvedFilter = {
+      carId,
+      status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
+    };
+
+    const [unresolvedDocuments, unresolvedImages] = await Promise.all([
+      db.documentApproval.count({ where: unresolvedFilter }),
+      db.vehicleImage.count({ where: unresolvedFilter }),
     ]);
 
-    if (pendingDocuments === 0 && pendingImages === 0) {
-      await this.databaseService.car.update({
+    if (unresolvedDocuments === 0 && unresolvedImages === 0) {
+      await db.car.update({
         where: { id: carId },
         data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
       });
