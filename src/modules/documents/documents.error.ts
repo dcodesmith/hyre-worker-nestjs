@@ -5,6 +5,7 @@ export const DocumentsErrorCode = {
   DOCUMENT_NOT_FOUND: "DOCUMENT_NOT_FOUND",
   DOCUMENT_FILE_NOT_FOUND: "DOCUMENT_FILE_NOT_FOUND",
   DOCUMENT_FILE_FETCH_FAILED: "DOCUMENT_FILE_FETCH_FAILED",
+  DOCUMENT_APPROVAL_FAILED: "DOCUMENT_APPROVAL_FAILED",
 } as const;
 
 export class DocumentsException extends AppException {}
@@ -39,6 +40,17 @@ export class DocumentFileFetchFailedException extends DocumentsException {
       {
         title: "Document File Fetch Failed",
       },
+    );
+  }
+}
+
+export class DocumentApprovalFailedException extends DocumentsException {
+  constructor() {
+    super(
+      DocumentsErrorCode.DOCUMENT_APPROVAL_FAILED,
+      "An unexpected error occurred while processing the approval action",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Document Approval Failed" },
     );
   }
 }

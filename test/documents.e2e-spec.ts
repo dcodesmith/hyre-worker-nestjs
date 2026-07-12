@@ -15,6 +15,7 @@ describe("Documents E2E Tests", () => {
   let databaseService: DatabaseService;
   let factory: TestDataFactory;
   let adminCookie: string;
+  let staffCookie: string;
   let userCookie: string;
   let localPdfServer: Server;
   let localPdfUrl: string;
@@ -38,6 +39,10 @@ describe("Documents E2E Tests", () => {
 
     const adminAuth = await factory.createAuthenticatedAdmin(uniqueEmail("doc-admin"));
     adminCookie = adminAuth.cookie;
+
+    const staffAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-staff"), "user");
+    await factory.assignRole(staffAuth.user.id, "staff");
+    staffCookie = staffAuth.cookie;
 
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-user"), "user");
     userCookie = userAuth.cookie;
@@ -105,5 +110,22 @@ describe("Documents E2E Tests", () => {
     expect(response.headers["content-type"]).toContain("application/pdf");
     expect(response.headers["content-disposition"]).toContain("inline; filename=");
     expect(Buffer.compare(Buffer.from(response.body), pdfBody)).toBe(0);
+  });
+
+  it("GET /api/proxy-pdf/:documentId streams PDF for staff", async () => {
+    const document = await databaseService.documentApproval.create({
+      data: {
+        documentType: "INSURANCE_CERTIFICATE",
+        documentUrl: localPdfUrl,
+      },
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/api/proxy-pdf/${document.id}`)
+      .set("Cookie", staffCookie)
+      .buffer(true);
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.headers["content-type"]).toContain("application/pdf");
   });
 });

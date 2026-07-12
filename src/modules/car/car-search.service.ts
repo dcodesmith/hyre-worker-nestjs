@@ -273,7 +273,11 @@ export class CarSearchService {
             pricingIncludesFuel: true,
             vehicleType: true,
             serviceTier: true,
-            images: { select: { url: true }, orderBy: { createdAt: "asc" }, take: 4 },
+            images: {
+              select: { url: true },
+              orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+              take: 4,
+            },
             owner: { select: { username: true, name: true } },
           },
           orderBy: [{ updatedAt: "desc" }, { dayRate: "asc" }],
@@ -367,7 +371,10 @@ export class CarSearchService {
           pricingIncludesFuel: true,
           vehicleType: true,
           serviceTier: true,
-          images: { select: { url: true }, orderBy: { createdAt: "asc" } },
+          images: {
+            select: { url: true },
+            orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+          },
           owner: { select: { username: true, name: true } },
         },
       });

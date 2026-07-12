@@ -1,7 +1,7 @@
 import { Controller, Get, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { ZodParam } from "../../common/decorators/zod-validation.decorator";
-import { ADMIN } from "../auth/auth.const";
+import { ADMIN, STAFF } from "../auth/auth.const";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
@@ -14,7 +14,7 @@ export class DocumentsController {
 
   @Get("proxy-pdf/:documentId")
   @UseGuards(SessionGuard, RoleGuard)
-  @Roles(ADMIN)
+  @Roles(ADMIN, STAFF)
   async proxyPdf(
     @ZodParam("documentId", documentIdParamSchema) documentId: string,
     @Res() response: Response,

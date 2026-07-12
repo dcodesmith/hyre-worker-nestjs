@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { ServiceTier, Status, VehicleType } from "@prisma/client";
+import { DocumentStatus, ServiceTier, Status, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -7,10 +7,13 @@ import { PromotionService } from "../promotion/promotion.service";
 import { StorageService } from "../storage/storage.service";
 import {
   CarCreateFailedException,
+  CarDocumentNotFoundException,
   CarFetchFailedException,
   CarNotFoundException,
+  FileNotRejectedException,
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
+  VehicleImageNotFoundException,
 } from "./car.error";
 import { CarService } from "./car.service";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -63,9 +66,13 @@ describe("CarService", () => {
     },
     vehicleImage: {
       createMany: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
     documentApproval: {
       createMany: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
     $transaction: vi.fn(),
   };
@@ -312,6 +319,173 @@ describe("CarService", () => {
       ownerId: "owner-1",
       status: Status.HOLD,
       promotion: null,
+    });
+  });
+
+  describe("replaceCarImage", () => {
+    const rejectedImage = {
+      id: "img-1",
+      status: DocumentStatus.REJECTED,
+      url: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/images/old.jpg",
+    };
+
+    it("replaces a rejected image and resets it to PENDING", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({
+        id: "img-1",
+        url: "https://cdn.test/new.jpg",
+        status: DocumentStatus.PENDING,
+      });
+
+      const result = await service.replaceCarImage(
+        "car-1",
+        "owner-1",
+        "img-1",
+        createMockFile("new.jpg", "image/jpeg"),
+      );
+
+      expect(result.success).toBe(true);
+      expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith({
+        where: { id: "img-1" },
+        data: {
+          url: "https://cdn.test/new.jpg",
+          status: DocumentStatus.PENDING,
+          notes: null,
+          approvedById: null,
+          approvedAt: null,
+        },
+      });
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        "owner-1/car-1/images/old.jpg",
+      );
+    });
+
+    it("throws CarNotFoundException when the car is not owned by the caller", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.replaceCarImage(
+          "car-1",
+          "intruder",
+          "img-1",
+          createMockFile("new.jpg", "image/jpeg"),
+        ),
+      ).rejects.toBeInstanceOf(CarNotFoundException);
+      expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("throws VehicleImageNotFoundException when the image does not belong to the car", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.replaceCarImage("car-1", "owner-1", "stale", createMockFile("a.jpg", "image/jpeg")),
+      ).rejects.toBeInstanceOf(VehicleImageNotFoundException);
+    });
+
+    it("rejects replacing an image that is not REJECTED", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({
+        ...rejectedImage,
+        status: DocumentStatus.PENDING,
+      });
+
+      await expect(
+        service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
+      ).rejects.toBeInstanceOf(FileNotRejectedException);
+      expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("does not fail the replacement when old S3 object cleanup fails", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1" });
+      storageServiceMock.deleteObjectByKey.mockRejectedValueOnce(new Error("s3 down"));
+
+      const result = await service.replaceCarImage(
+        "car-1",
+        "owner-1",
+        "img-1",
+        createMockFile("new.jpg", "image/jpeg"),
+      );
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe("replaceCarDocument", () => {
+    const rejectedDocument = {
+      id: "doc-1",
+      status: DocumentStatus.REJECTED,
+      documentUrl: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/documents/old.pdf",
+    };
+
+    it("replaces a rejected document and resets it to PENDING", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.pdf");
+      databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+        id: "doc-1",
+        documentUrl: "https://cdn.test/new.pdf",
+        status: DocumentStatus.PENDING,
+      });
+
+      const result = await service.replaceCarDocument(
+        "car-1",
+        "owner-1",
+        "doc-1",
+        createMockFile("new.pdf", "application/pdf"),
+      );
+
+      expect(result.success).toBe(true);
+      expect(databaseServiceMock.documentApproval.update).toHaveBeenCalledWith({
+        where: { id: "doc-1" },
+        data: {
+          documentUrl: "https://cdn.test/new.pdf",
+          status: DocumentStatus.PENDING,
+          notes: null,
+          approvedById: null,
+          approvedAt: null,
+        },
+      });
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        "owner-1/car-1/documents/old.pdf",
+      );
+    });
+
+    it("throws CarDocumentNotFoundException when the document does not belong to the car", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.replaceCarDocument(
+          "car-1",
+          "owner-1",
+          "stale",
+          createMockFile("a.pdf", "application/pdf"),
+        ),
+      ).rejects.toBeInstanceOf(CarDocumentNotFoundException);
+    });
+
+    it("rejects replacing a document that is not REJECTED", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce({
+        ...rejectedDocument,
+        status: DocumentStatus.APPROVED,
+      });
+
+      await expect(
+        service.replaceCarDocument(
+          "car-1",
+          "owner-1",
+          "doc-1",
+          createMockFile("a.pdf", "application/pdf"),
+        ),
+      ).rejects.toBeInstanceOf(FileNotRejectedException);
+      expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
     });
   });
 });

@@ -6,13 +6,16 @@ import { StorageService } from "../storage/storage.service";
 import { CAR_S3_CATEGORY_DOCUMENTS, CAR_S3_CATEGORY_IMAGES } from "./car.const";
 import {
   CarCreateFailedException,
+  CarDocumentNotFoundException,
   CarException,
   CarFetchFailedException,
   CarNotFoundException,
   CarUpdateFailedException,
+  FileNotRejectedException,
   FleetOwnerNotFoundException,
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
+  VehicleImageNotFoundException,
 } from "./car.error";
 import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -35,12 +38,11 @@ export class CarService {
         id: true,
         url: true,
         status: true,
+        isPrimary: true,
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     },
     documents: {
       orderBy: {
@@ -375,6 +377,145 @@ export class CarService {
         "Failed to update car",
       );
       throw new CarUpdateFailedException();
+    }
+  }
+
+  /**
+   * Replace a rejected vehicle image with a new file. The image goes back to
+   * PENDING so admins re-review it; rejection metadata is cleared.
+   */
+  async replaceCarImage(carId: string, ownerId: string, imageId: string, file: UploadedCarFile) {
+    try {
+      await this.assertCarBelongsToOwner(carId, ownerId);
+
+      const existingImage = await this.databaseService.vehicleImage.findFirst({
+        where: { id: imageId, carId },
+        select: { id: true, status: true, url: true },
+      });
+      if (!existingImage) {
+        throw new VehicleImageNotFoundException();
+      }
+      if (existingImage.status !== DocumentStatus.REJECTED) {
+        throw new FileNotRejectedException("image");
+      }
+
+      const key = this.getObjectKey(ownerId, carId, file.originalname, CAR_S3_CATEGORY_IMAGES);
+      const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
+
+      const image = await this.databaseService.vehicleImage.update({
+        where: { id: imageId },
+        data: {
+          url,
+          status: DocumentStatus.PENDING,
+          notes: null,
+          approvedById: null,
+          approvedAt: null,
+        },
+      });
+
+      await this.deleteReplacedObject(existingImage.url);
+
+      return { success: true, image };
+    } catch (error) {
+      if (error instanceof CarException) {
+        throw error;
+      }
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          imageId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to replace vehicle image",
+      );
+      throw new CarUpdateFailedException();
+    }
+  }
+
+  /**
+   * Replace a rejected car document (MOT/insurance) with a new file. The
+   * document goes back to PENDING so admins re-review it.
+   */
+  async replaceCarDocument(
+    carId: string,
+    ownerId: string,
+    documentId: string,
+    file: UploadedCarFile,
+  ) {
+    try {
+      await this.assertCarBelongsToOwner(carId, ownerId);
+
+      const existingDocument = await this.databaseService.documentApproval.findFirst({
+        where: { id: documentId, carId },
+        select: { id: true, status: true, documentUrl: true },
+      });
+      if (!existingDocument) {
+        throw new CarDocumentNotFoundException();
+      }
+      if (existingDocument.status !== DocumentStatus.REJECTED) {
+        throw new FileNotRejectedException("document");
+      }
+
+      const key = this.getObjectKey(ownerId, carId, file.originalname, CAR_S3_CATEGORY_DOCUMENTS);
+      const documentUrl = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
+
+      const document = await this.databaseService.documentApproval.update({
+        where: { id: documentId },
+        data: {
+          documentUrl,
+          status: DocumentStatus.PENDING,
+          notes: null,
+          approvedById: null,
+          approvedAt: null,
+        },
+      });
+
+      await this.deleteReplacedObject(existingDocument.documentUrl);
+
+      return { success: true, document };
+    } catch (error) {
+      if (error instanceof CarException) {
+        throw error;
+      }
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          documentId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to replace car document",
+      );
+      throw new CarUpdateFailedException();
+    }
+  }
+
+  private async assertCarBelongsToOwner(carId: string, ownerId: string): Promise<void> {
+    const car = await this.databaseService.car.findFirst({
+      where: { id: carId, ownerId },
+      select: { id: true },
+    });
+    if (!car) {
+      throw new CarNotFoundException();
+    }
+  }
+
+  /** Best-effort cleanup of the replaced S3 object; failures are only logged. */
+  private async deleteReplacedObject(previousUrl: string): Promise<void> {
+    try {
+      const key = new URL(previousUrl).pathname.slice(1);
+      if (key) {
+        await this.storageService.deleteObjectByKey(key);
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          previousUrl,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to delete replaced car asset",
+      );
     }
   }
 }
