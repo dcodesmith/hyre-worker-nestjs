@@ -6,16 +6,14 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { REJECTION_ACTION_NOTE } from "../car/car.const";
 import { CarApprovalService } from "../car/car-approval.service";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
 import {
   DocumentApprovalFailedException,
   DocumentNotFoundException,
   DocumentsException,
 } from "./documents.error";
-
-const REJECTION_ACTION_NOTE =
-  "Action required! Some of your documents/images were rejected. Please check the rejection notes and re-upload them.";
 
 @Injectable()
 export class DocumentApprovalService {
@@ -29,8 +27,6 @@ export class DocumentApprovalService {
 
   async approveDocument(documentId: string, approverId: string) {
     try {
-      await this.assertDocumentExists(documentId);
-
       // Transaction keeps the document write and the car/chauffeur cascade
       // atomic; a failure in the cascade rolls the approval back too.
       const document = await this.databaseService.$transaction(async (tx) => {
@@ -62,8 +58,6 @@ export class DocumentApprovalService {
 
   async rejectDocument(documentId: string, approverId: string, notes: string) {
     try {
-      await this.assertDocumentExists(documentId);
-
       const document = await this.databaseService.$transaction(async (tx) => {
         const updated = await tx.documentApproval.update({
           where: { id: documentId },
@@ -101,16 +95,6 @@ export class DocumentApprovalService {
     }
   }
 
-  private async assertDocumentExists(documentId: string): Promise<void> {
-    const document = await this.databaseService.documentApproval.findUnique({
-      where: { id: documentId },
-      select: { id: true },
-    });
-    if (!document) {
-      throw new DocumentNotFoundException();
-    }
-  }
-
   private async approveChauffeurIfFullyReviewed(
     userId: string,
     tx: Prisma.TransactionClient,
@@ -134,6 +118,10 @@ export class DocumentApprovalService {
   ): DocumentsException {
     if (error instanceof DocumentsException) {
       return error;
+    }
+    // P2025: the update's where clause matched no document.
+    if (isRecordNotFoundError(error)) {
+      return new DocumentNotFoundException();
     }
     this.logger.error(
       { ...context, error: error instanceof Error ? error.message : String(error) },

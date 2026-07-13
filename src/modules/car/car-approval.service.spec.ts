@@ -1,10 +1,17 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { CarApprovalStatus, DocumentStatus } from "@prisma/client";
+import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { CarNotFoundException, VehicleImageNotFoundException } from "./car.error";
 import { CarApprovalService } from "./car-approval.service";
+
+// Prisma throws P2025 when an update's where clause matches no record
+const recordNotFoundError = () =>
+  new Prisma.PrismaClientKnownRequestError("Record not found", {
+    code: "P2025",
+    clientVersion: "test",
+  });
 
 describe("CarApprovalService", () => {
   let service: CarApprovalService;
@@ -42,7 +49,6 @@ describe("CarApprovalService", () => {
   });
 
   it("approves the car once the last pending image is approved", async () => {
-    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({ id: "img-1" });
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0);
@@ -56,7 +62,6 @@ describe("CarApprovalService", () => {
   });
 
   it("does not approve the car while items remain pending", async () => {
-    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({ id: "img-1" });
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
     databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0);
@@ -67,7 +72,6 @@ describe("CarApprovalService", () => {
   });
 
   it("does not approve the car while rejected items remain unresolved", async () => {
-    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({ id: "img-1" });
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     // One REJECTED image still counts as unresolved
@@ -85,16 +89,19 @@ describe("CarApprovalService", () => {
   });
 
   it("rejects approving an image that does not belong to the car", async () => {
-    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(null);
+    databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(recordNotFoundError());
 
     await expect(service.approveImage("car-1", "stale", "admin-1")).rejects.toBeInstanceOf(
       VehicleImageNotFoundException,
     );
-    expect(databaseServiceMock.vehicleImage.update).not.toHaveBeenCalled();
+    // The update is scoped to the car, so the cascade never runs
+    expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "stale", carId: "car-1" } }),
+    );
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
   it("sets the car back to PENDING when an image is rejected", async () => {
-    databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce({ id: "img-1" });
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
 
     await service.rejectImage("car-1", "img-1", "admin-1", "Blurry photo");
@@ -105,6 +112,12 @@ describe("CarApprovalService", () => {
         data: expect.objectContaining({ approvalStatus: CarApprovalStatus.PENDING }),
       }),
     );
+  });
+
+  it("throws CarNotFoundException when approving an unknown car", async () => {
+    databaseServiceMock.car.update.mockRejectedValueOnce(recordNotFoundError());
+
+    await expect(service.approveCar("missing")).rejects.toBeInstanceOf(CarNotFoundException);
   });
 
   it("sets exactly one cover image atomically, restricted to approved images", async () => {

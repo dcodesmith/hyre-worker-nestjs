@@ -1,7 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
+import { REJECTION_ACTION_NOTE } from "./car.const";
 import {
   CarApprovalFailedException,
   CarException,
@@ -9,9 +10,6 @@ import {
   VehicleImageNotFoundException,
 } from "./car.error";
 import type { ListCarsForReviewQueryDto } from "./dto/car-approval.dto";
-
-const REJECTION_ACTION_NOTE =
-  "Action required! Some of your documents/images were rejected. Please check the rejection notes and re-upload them.";
 
 @Injectable()
 export class CarApprovalService {
@@ -97,15 +95,6 @@ export class CarApprovalService {
 
   async approveCar(carId: string) {
     try {
-      const existing = await this.databaseService.car.findUnique({
-        where: { id: carId },
-        select: { id: true },
-      });
-
-      if (!existing) {
-        throw new CarNotFoundException();
-      }
-
       const car = await this.databaseService.car.update({
         where: { id: carId },
         data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
@@ -113,17 +102,20 @@ export class CarApprovalService {
 
       return { success: true, car };
     } catch (error) {
+      if (isRecordNotFoundError(error)) {
+        throw new CarNotFoundException();
+      }
       throw this.toApprovalError(error, "Failed to approve car", { carId });
     }
   }
 
   async approveImage(carId: string, imageId: string, approverId: string) {
     try {
-      await this.assertImageBelongsToCar(carId, imageId);
-
       const image = await this.databaseService.$transaction(async (tx) => {
+        // The carId in the where clause scopes the update to the right car;
+        // Prisma throws P2025 when the image is missing or belongs elsewhere.
         const updated = await tx.vehicleImage.update({
-          where: { id: imageId },
+          where: { id: imageId, carId },
           data: {
             status: DocumentStatus.APPROVED,
             approvedById: approverId,
@@ -138,17 +130,18 @@ export class CarApprovalService {
 
       return { success: true, image };
     } catch (error) {
+      if (isRecordNotFoundError(error)) {
+        throw new VehicleImageNotFoundException();
+      }
       throw this.toApprovalError(error, "Failed to approve vehicle image", { carId, imageId });
     }
   }
 
   async rejectImage(carId: string, imageId: string, approverId: string, notes: string) {
     try {
-      await this.assertImageBelongsToCar(carId, imageId);
-
       const image = await this.databaseService.$transaction(async (tx) => {
         const updated = await tx.vehicleImage.update({
-          where: { id: imageId },
+          where: { id: imageId, carId },
           data: {
             status: DocumentStatus.REJECTED,
             approvedById: approverId,
@@ -167,6 +160,9 @@ export class CarApprovalService {
 
       return { success: true, image };
     } catch (error) {
+      if (isRecordNotFoundError(error)) {
+        throw new VehicleImageNotFoundException();
+      }
       throw this.toApprovalError(error, "Failed to reject vehicle image", { carId, imageId });
     }
   }
@@ -221,17 +217,6 @@ export class CarApprovalService {
         where: { id: carId },
         data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
       });
-    }
-  }
-
-  private async assertImageBelongsToCar(carId: string, imageId: string): Promise<void> {
-    const image = await this.databaseService.vehicleImage.findFirst({
-      where: { id: imageId, carId },
-      select: { id: true },
-    });
-
-    if (!image) {
-      throw new VehicleImageNotFoundException();
     }
   }
 

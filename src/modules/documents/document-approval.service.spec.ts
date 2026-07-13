@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { ChauffeurApprovalStatus } from "@prisma/client";
+import { ChauffeurApprovalStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarApprovalService } from "../car/car-approval.service";
@@ -7,12 +7,18 @@ import { DatabaseService } from "../database/database.service";
 import { DocumentApprovalService } from "./document-approval.service";
 import { DocumentApprovalFailedException, DocumentNotFoundException } from "./documents.error";
 
+// Prisma throws P2025 when an update's where clause matches no record
+const recordNotFoundError = () =>
+  new Prisma.PrismaClientKnownRequestError("Record not found", {
+    code: "P2025",
+    clientVersion: "test",
+  });
+
 describe("DocumentApprovalService", () => {
   let service: DocumentApprovalService;
 
   const databaseServiceMock = {
     documentApproval: {
-      findUnique: vi.fn(),
       update: vi.fn(),
       count: vi.fn(),
     },
@@ -46,7 +52,6 @@ describe("DocumentApprovalService", () => {
   });
 
   it("delegates car re-evaluation when a car document is approved", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce({ id: "doc-1" });
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: "car-1",
@@ -64,7 +69,6 @@ describe("DocumentApprovalService", () => {
   });
 
   it("approves a chauffeur once their last document is approved", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce({ id: "doc-1" });
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: null,
@@ -81,7 +85,6 @@ describe("DocumentApprovalService", () => {
   });
 
   it("rejects a chauffeur document and flags the user", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce({ id: "doc-1" });
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: null,
@@ -97,25 +100,24 @@ describe("DocumentApprovalService", () => {
   });
 
   it("throws when approving a missing document", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce(null);
+    databaseServiceMock.documentApproval.update.mockRejectedValueOnce(recordNotFoundError());
 
     await expect(service.approveDocument("missing", "admin-1")).rejects.toBeInstanceOf(
       DocumentNotFoundException,
     );
-    expect(databaseServiceMock.documentApproval.update).not.toHaveBeenCalled();
+    expect(carApprovalServiceMock.approveCarIfFullyReviewed).not.toHaveBeenCalled();
   });
 
   it("throws when rejecting a missing document", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce(null);
+    databaseServiceMock.documentApproval.update.mockRejectedValueOnce(recordNotFoundError());
 
     await expect(service.rejectDocument("missing", "admin-1", "Expired")).rejects.toBeInstanceOf(
       DocumentNotFoundException,
     );
-    expect(databaseServiceMock.documentApproval.update).not.toHaveBeenCalled();
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
   it("maps unexpected errors to DocumentApprovalFailedException without leaking them", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce({ id: "doc-1" });
     databaseServiceMock.documentApproval.update.mockRejectedValueOnce(
       new Error("db connection lost"),
     );
@@ -126,7 +128,6 @@ describe("DocumentApprovalService", () => {
   });
 
   it("rolls back the document write when the cascade fails", async () => {
-    databaseServiceMock.documentApproval.findUnique.mockResolvedValueOnce({ id: "doc-1" });
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: "car-1",

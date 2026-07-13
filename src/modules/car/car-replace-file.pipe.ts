@@ -4,32 +4,25 @@ import { CarValidationException } from "./car.error";
 import type { UploadedCarFile } from "./car.interface";
 
 @Injectable()
-export class CarImageFilePipe implements PipeTransform<UploadedCarFile | undefined> {
-  transform(file: UploadedCarFile | undefined): UploadedCarFile {
-    if (!file) {
-      throw new CarValidationException("An image file is required");
-    }
-    if (!IMAGE_MIME_TYPES_SET.has(file.mimetype)) {
-      throw new CarValidationException("Images must be JPEG, PNG or WebP");
-    }
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      throw new CarValidationException("Each image must be less than 5MB");
-    }
-    return file;
-  }
-}
+export class CarReplaceFilePipe implements PipeTransform<UploadedCarFile | undefined> {
+  constructor(private readonly kind: "image" | "document") {}
 
-@Injectable()
-export class CarDocumentFilePipe implements PipeTransform<UploadedCarFile | undefined> {
   transform(file: UploadedCarFile | undefined): UploadedCarFile {
+    const isImage = this.kind === "image";
     if (!file) {
-      throw new CarValidationException("A document file is required");
+      throw new CarValidationException(
+        isImage ? "An image file is required" : "A document file is required",
+      );
     }
-    if (file.mimetype !== PDF_MIME_TYPE) {
-      throw new CarValidationException("Documents must be PDF files");
+    if (isImage ? !IMAGE_MIME_TYPES_SET.has(file.mimetype) : file.mimetype !== PDF_MIME_TYPE) {
+      throw new CarValidationException(
+        isImage ? "Images must be JPEG, PNG or WebP" : "Documents must be PDF files",
+      );
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      throw new CarValidationException("Document files must be less than 5MB");
+      throw new CarValidationException(
+        isImage ? "Each image must be less than 5MB" : "Document files must be less than 5MB",
+      );
     }
     return file;
   }

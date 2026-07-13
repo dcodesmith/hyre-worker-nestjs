@@ -4,6 +4,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 
+/** Prisma throws P2025 when an update's where clause matches no record. */
+export function isRecordNotFoundError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
+}
+
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly isDevelopment: boolean;

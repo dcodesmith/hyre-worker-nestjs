@@ -6,8 +6,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { type RejectBodyDto, rejectBodySchema } from "../car/dto/car-approval.dto";
 import { DocumentApprovalService } from "./document-approval.service";
-import { type RejectBodyDto, rejectBodySchema } from "./dto/document-approval.dto";
 import { documentIdParamSchema } from "./dto/proxy-pdf.dto";
 
 @Controller("api/admin/documents")
