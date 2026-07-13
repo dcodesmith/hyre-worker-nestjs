@@ -463,6 +463,7 @@ describe("CarSearchService", () => {
           select: expect.objectContaining({
             images: expect.objectContaining({
               where: { status: DocumentStatus.APPROVED },
+              orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
             }),
           }),
         }),
@@ -520,6 +521,7 @@ describe("CarSearchService", () => {
           select: expect.objectContaining({
             images: expect.objectContaining({
               where: { status: DocumentStatus.APPROVED },
+              orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
             }),
           }),
         }),

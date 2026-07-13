@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { ChauffeurApprovalStatus, Prisma } from "@prisma/client";
+import { CarApprovalStatus, ChauffeurApprovalStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarApprovalService } from "../car/car-approval.service";
@@ -99,6 +99,25 @@ describe("DocumentApprovalService", () => {
     });
   });
 
+  it("rejects a car document and flags the car with an action-required note", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "doc-1",
+      carId: "car-1",
+      userId: null,
+    });
+
+    await service.rejectDocument("doc-1", "admin-1", "Expired");
+
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+      where: { id: "car-1" },
+      data: {
+        approvalStatus: CarApprovalStatus.PENDING,
+        approvalNotes: expect.stringContaining("Action required"),
+      },
+    });
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
+  });
+
   it("throws when approving a missing document", async () => {
     databaseServiceMock.documentApproval.update.mockRejectedValueOnce(recordNotFoundError());
 
@@ -127,7 +146,7 @@ describe("DocumentApprovalService", () => {
     );
   });
 
-  it("rolls back the document write when the cascade fails", async () => {
+  it("fails the whole approval when the cascade fails inside the transaction", async () => {
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: "car-1",
