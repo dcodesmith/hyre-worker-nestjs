@@ -1,10 +1,18 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { DocumentStatus, Prisma, ServiceTier, Status, VehicleType } from "@prisma/client";
+import {
+  CarApprovalStatus,
+  DocumentStatus,
+  Prisma,
+  ServiceTier,
+  Status,
+  VehicleType,
+} from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { StorageService } from "../storage/storage.service";
+import { REJECTION_ACTION_NOTE } from "./car.const";
 import {
   CarCreateFailedException,
   CarDocumentNotFoundException,
@@ -88,6 +96,7 @@ describe("CarService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
@@ -358,6 +367,13 @@ describe("CarService", () => {
           approvedAt: null,
         },
       });
+      expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+        where: { id: "car-1" },
+        data: {
+          approvalStatus: CarApprovalStatus.PENDING,
+          approvalNotes: REJECTION_ACTION_NOTE,
+        },
+      });
       expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
         "owner-1/car-1/images/old.jpg",
       );
@@ -486,6 +502,13 @@ describe("CarService", () => {
           notes: null,
           approvedById: null,
           approvedAt: null,
+        },
+      });
+      expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+        where: { id: "car-1" },
+        data: {
+          approvalStatus: CarApprovalStatus.PENDING,
+          approvalNotes: REJECTION_ACTION_NOTE,
         },
       });
       expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(

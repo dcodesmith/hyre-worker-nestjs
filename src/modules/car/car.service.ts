@@ -11,7 +11,11 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
-import { CAR_S3_CATEGORY_DOCUMENTS, CAR_S3_CATEGORY_IMAGES } from "./car.const";
+import {
+  CAR_S3_CATEGORY_DOCUMENTS,
+  CAR_S3_CATEGORY_IMAGES,
+  REJECTION_ACTION_NOTE,
+} from "./car.const";
 import {
   CarCreateFailedException,
   CarDocumentNotFoundException,
@@ -454,16 +458,28 @@ export class CarService {
       let record: VehicleImage | DocumentApproval;
       try {
         // Guard on status in the write itself so a concurrent admin decision
-        // between the read above and this update cannot be clobbered.
-        record = isImage
-          ? await this.databaseService.vehicleImage.update({
-              where: { id: fileId, status: DocumentStatus.REJECTED },
-              data: { url, ...resetData },
-            })
-          : await this.databaseService.documentApproval.update({
-              where: { id: fileId, status: DocumentStatus.REJECTED },
-              data: { documentUrl: url, ...resetData },
-            });
+        // between the read above and this update cannot be clobbered. Demote
+        // the car too — approveCar can leave APPROVED while rejected assets
+        // remain; re-upload must pull the listing out of public search.
+        record = await this.databaseService.$transaction(async (tx) => {
+          const updated = isImage
+            ? await tx.vehicleImage.update({
+                where: { id: fileId, status: DocumentStatus.REJECTED },
+                data: { url, ...resetData },
+              })
+            : await tx.documentApproval.update({
+                where: { id: fileId, status: DocumentStatus.REJECTED },
+                data: { documentUrl: url, ...resetData },
+              });
+          await tx.car.update({
+            where: { id: carId },
+            data: {
+              approvalStatus: CarApprovalStatus.PENDING,
+              approvalNotes: REJECTION_ACTION_NOTE,
+            },
+          });
+          return updated;
+        });
       } catch (updateError) {
         await this.storageService.deleteObjectByKey(key).catch(() => undefined);
         if (isRecordNotFoundError(updateError)) {

@@ -284,6 +284,9 @@ describe("Admin Approval E2E Tests", () => {
       expect(documentRow?.status).toBe("PENDING");
       expect(documentRow?.notes).toBeNull();
       expect(documentRow?.documentUrl).toContain("mot-v2");
+      // Re-upload demotes the car so it cannot stay publicly searchable
+      const pendingCar = await factory.getCarById(car.id);
+      expect(pendingCar?.approvalStatus).toBe("PENDING");
       // The previous stored file is cleaned up
       expect(deleteObjectByKey).toHaveBeenCalledWith(`${ownerId}/${car.id}/documents/mot.pdf`);
 
@@ -319,6 +322,28 @@ describe("Admin Approval E2E Tests", () => {
       expect(imageRow?.url).toContain("photo-v2");
       // The previous stored file is cleaned up
       expect(deleteObjectByKey).toHaveBeenCalledWith(`${ownerId}/${car.id}/images/photo.jpg`);
+    });
+
+    it("pulls an APPROVED car back to PENDING when a rejected file is re-uploaded", async () => {
+      const { car, image } = await createCarUnderReview();
+      await databaseService.vehicleImage.update({
+        where: { id: image.id },
+        data: { status: "REJECTED", notes: "Too dark" },
+      });
+      // Force-approve can leave the listing public while rejected assets remain
+      await request(app.getHttpServer())
+        .post(`/api/admin/cars/${car.id}/approve`)
+        .set("Cookie", adminCookie)
+        .expect(HttpStatus.CREATED);
+
+      await request(app.getHttpServer())
+        .put(`/api/fleet-owner/cars/${car.id}/images/${image.id}/file`)
+        .set("Cookie", ownerCookie)
+        .attach("file", imageBuffer, { filename: "photo-v2.jpg", contentType: "image/jpeg" })
+        .expect(HttpStatus.OK);
+
+      const carRow = await factory.getCarById(car.id);
+      expect(carRow?.approvalStatus).toBe("PENDING");
     });
 
     it("rejects replacing a document that has not been rejected", async () => {
