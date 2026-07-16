@@ -515,14 +515,41 @@ describe("CarSearchService", () => {
         limit: 12,
       });
 
-      const filterClause = databaseServiceMock.car.findMany.mock.calls[0][0].where.AND[1];
-      expect(filterClause).toMatchObject({
+      const andClauses = databaseServiceMock.car.findMany.mock.calls[0][0].where.AND;
+      expect(andClauses[1]).toMatchObject({
         vehicleType: { in: [VehicleType.SUV, VehicleType.SEDAN] },
         passengerCapacity: { gte: 5 },
         pricingIncludesFuel: true,
         // Price filters the booking-type rate field, not dayRate.
         nightRate: { gte: 40000, lte: 90000 },
       });
+
+      // dealsOnly must require an active car-level OR fleet-wide promotion,
+      // both date-bounded so removing either branch fails this test.
+      const dealsClause = andClauses.at(-1);
+      expect(dealsClause.OR).toEqual([
+        {
+          promotions: {
+            some: {
+              isActive: true,
+              startDate: { lte: expect.any(Date) },
+              endDate: { gt: expect.any(Date) },
+            },
+          },
+        },
+        {
+          owner: {
+            promotions: {
+              some: {
+                isActive: true,
+                startDate: { lte: expect.any(Date) },
+                endDate: { gt: expect.any(Date) },
+                carId: null,
+              },
+            },
+          },
+        },
+      ]);
     });
 
     it("countOnly returns total without cars or facets", async () => {

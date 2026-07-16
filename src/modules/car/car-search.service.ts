@@ -80,10 +80,6 @@ export class CarSearchService {
     [BookingType.AIRPORT_PICKUP]: "airportPickupRate",
   };
 
-  private getRateField(bookingType: BookingType | undefined): RateField {
-    return bookingType ? CarSearchService.RATE_FIELD_BY_BOOKING_TYPE[bookingType] : "dayRate";
-  }
-
   /** Base visibility: cars that are publicly listable regardless of user filters. */
   private buildBaseVisibilityWhere(fleetOwnersToExclude: string[]): Prisma.CarWhereInput {
     return {
@@ -97,11 +93,14 @@ export class CarSearchService {
   }
 
   /** A car is "on promotion" via its own active promo or its owner's fleet-wide one. */
-  private buildDealsOnlyWhere(): Prisma.CarWhereInput {
-    const now = new Date();
+  private buildDealsOnlyWhere(referenceDate: Date): Prisma.CarWhereInput {
     // ponytail: inlines PromotionService.activeAtWhere (the canonical active-window
     // predicate). Unify into a shared export if a third copy of this appears.
-    const active = { isActive: true, startDate: { lte: now }, endDate: { gt: now } };
+    const active = {
+      isActive: true,
+      startDate: { lte: referenceDate },
+      endDate: { gt: referenceDate },
+    };
     return {
       OR: [
         { promotions: { some: active } },
@@ -127,6 +126,7 @@ export class CarSearchService {
       model: string | undefined;
       makeModelQuery: string | null;
       rateField: RateField;
+      referenceDate: Date;
     },
     fleetOwnersToExclude: string[],
   ): Prisma.CarWhereInput {
@@ -161,16 +161,18 @@ export class CarSearchService {
         }),
       },
       // Separate AND entry so the makes OR doesn't collide with makeModelQuery's OR.
+      // Selected makes come from the facet list, so match exactly (case-insensitive)
+      // rather than substring — "BMW" must not also pull in "BMW X".
       ...(params.makes.length > 0
         ? [
             {
               OR: params.makes.map((make) => ({
-                make: { contains: make, mode: Prisma.QueryMode.insensitive },
+                make: { equals: make, mode: Prisma.QueryMode.insensitive },
               })),
             },
           ]
         : []),
-      ...(params.dealsOnly ? [this.buildDealsOnlyWhere()] : []),
+      ...(params.dealsOnly ? [this.buildDealsOnlyWhere(params.referenceDate)] : []),
     ];
 
     return { AND: andClauses };
@@ -334,7 +336,12 @@ export class CarSearchService {
     try {
       // Parse filters from query
       const { serviceTiers, vehicleTypes, makes, makeModelQuery } = this.parseSearchFilters(query);
-      const rateField = this.getRateField(query.bookingType);
+      const rateField = query.bookingType
+        ? CarSearchService.RATE_FIELD_BY_BOOKING_TYPE[query.bookingType]
+        : "dayRate";
+      // One reference date drives both the deals-only filter and promotion enrichment,
+      // so a dated search never disagrees with itself about which promos are active.
+      const referenceDate = query.from ?? new Date();
 
       // Get unavailable fleet owners for the date if provided
       const fleetOwnersToExclude = query.from
@@ -363,6 +370,7 @@ export class CarSearchService {
           model: query.model,
           makeModelQuery,
           rateField,
+          referenceDate,
         },
         fleetOwnersToExclude,
       );
@@ -394,10 +402,6 @@ export class CarSearchService {
           },
         };
       }
-
-      const baseVisibilityWhere: Prisma.CarWhereInput = {
-        AND: [this.buildBaseVisibilityWhere(fleetOwnersToExclude)],
-      };
 
       // Pagination setup
       const take = query.limit;
@@ -434,9 +438,8 @@ export class CarSearchService {
           skip,
           take,
         }),
-        this.getSearchFacets(baseVisibilityWhere, rateField),
+        this.getSearchFacets(this.buildBaseVisibilityWhere(fleetOwnersToExclude), rateField),
       ]);
-      const referenceDate = query.from ?? new Date();
       const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
         cars,
         referenceDate,

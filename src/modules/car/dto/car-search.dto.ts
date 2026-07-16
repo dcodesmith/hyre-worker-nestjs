@@ -45,53 +45,58 @@ const optionalFlag = z.preprocess(
 /**
  * Query parameters schema for car search endpoint
  */
-export const carSearchQuerySchema = z.object({
-  // Free-text search query (maps to vehicleType/serviceTier or make/model)
-  q: z.string().optional(),
+export const carSearchQuerySchema = z
+  .object({
+    // Free-text search query (maps to vehicleType/serviceTier or make/model)
+    q: z.string().optional(),
 
-  // Multi-select filters (comma-separated in the URL, e.g. "SUV,SEDAN"). A single
-  // value parses as a one-element array, so legacy single-value callers keep working.
-  serviceTier: z
-    .preprocess(
-      parseCsv,
-      z.array(z.enum(Object.values(ServiceTier) as [ServiceTier, ...ServiceTier[]])),
-    )
-    .optional(),
-  vehicleType: z
-    .preprocess(
-      parseCsv,
-      z.array(z.enum(Object.values(VehicleType) as [VehicleType, ...VehicleType[]])),
-    )
-    .optional(),
-  make: z.preprocess(parseCsv, z.array(z.string().min(1)).max(20)).optional(),
-  color: z.string().optional(),
-  model: z.string().optional(),
+    // Multi-select filters (comma-separated in the URL, e.g. "SUV,SEDAN"). A single
+    // value parses as a one-element array, so legacy single-value callers keep working.
+    serviceTier: z
+      .preprocess(
+        parseCsv,
+        z.array(z.enum(Object.values(ServiceTier) as [ServiceTier, ...ServiceTier[]])),
+      )
+      .optional(),
+    vehicleType: z
+      .preprocess(
+        parseCsv,
+        z.array(z.enum(Object.values(VehicleType) as [VehicleType, ...VehicleType[]])),
+      )
+      .optional(),
+    make: z.preprocess(parseCsv, z.array(z.string().min(1)).max(20)).optional(),
+    color: z.string().optional(),
+    model: z.string().optional(),
 
-  // Facet filters
-  minPrice: z.coerce.number().int().min(0).optional(),
-  maxPrice: z.coerce.number().int().min(0).optional(),
-  minCapacity: z.coerce.number().int().min(0).optional(),
-  fuelIncluded: optionalFlag,
-  dealsOnly: optionalFlag,
+    // Facet filters
+    minPrice: z.coerce.number().int().min(0).optional(),
+    maxPrice: z.coerce.number().int().min(0).optional(),
+    minCapacity: z.coerce.number().int().min(0).optional(),
+    fuelIncluded: optionalFlag,
+    dealsOnly: optionalFlag,
 
-  // Date/availability filters (accepts ISO strings like "2024-03-01" and coerces to Date)
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
-  bookingType: z.enum(Object.values(BookingType) as [BookingType, ...BookingType[]]).optional(),
-  // Pickup time: "9 AM", "9:00 AM", "11 PM", "2:30 PM" (matches booking DTO)
-  pickupTime: z
-    .string()
-    .regex(/^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i, "Pickup time format: H:MM AM/PM")
-    .optional(),
-  flightNumber: z.string().optional(),
+    // Date/availability filters (accepts ISO strings like "2024-03-01" and coerces to Date)
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    bookingType: z.enum(Object.values(BookingType) as [BookingType, ...BookingType[]]).optional(),
+    // Pickup time: "9 AM", "9:00 AM", "11 PM", "2:30 PM" (matches booking DTO)
+    pickupTime: z
+      .string()
+      .regex(/^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i, "Pickup time format: H:MM AM/PM")
+      .optional(),
+    flightNumber: z.string().optional(),
 
-  // Lightweight count-only mode for the filter panel's live "Show N vehicles"
-  countOnly: optionalFlag,
+    // Lightweight count-only mode for the filter panel's live "Show N vehicles"
+    countOnly: optionalFlag,
 
-  // Pagination
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(50).default(12),
-});
+    // Pagination
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(50).default(12),
+  })
+  .refine((q) => q.minPrice === undefined || q.maxPrice === undefined || q.maxPrice >= q.minPrice, {
+    message: "maxPrice must be greater than or equal to minPrice",
+    path: ["maxPrice"],
+  });
 
 export type CarSearchQueryDto = z.infer<typeof carSearchQuerySchema>;
 
