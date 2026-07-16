@@ -36,6 +36,7 @@ export class DocumentApprovalService {
             status: DocumentStatus.APPROVED,
             approvedById: approverId,
             approvedAt: new Date(),
+            notes: null,
           },
         });
 

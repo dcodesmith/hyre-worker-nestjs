@@ -60,6 +60,10 @@ describe("DocumentApprovalService", () => {
 
     await service.approveDocument("doc-1", "admin-1");
 
+    // Approving clears any stale rejection note on the document
+    expect(databaseServiceMock.documentApproval.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ notes: null }) }),
+    );
     // Cascade runs inside the transaction, sharing the same client
     expect(carApprovalServiceMock.approveCarIfFullyReviewed).toHaveBeenCalledWith(
       "car-1",

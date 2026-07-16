@@ -120,6 +120,7 @@ export class CarApprovalService {
             status: DocumentStatus.APPROVED,
             approvedById: approverId,
             approvedAt: new Date(),
+            notes: null,
           },
         });
 
@@ -147,6 +148,7 @@ export class CarApprovalService {
             approvedById: approverId,
             approvedAt: new Date(),
             notes,
+            isPrimary: false,
           },
         });
 

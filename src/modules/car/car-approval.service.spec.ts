@@ -55,6 +55,10 @@ describe("CarApprovalService", () => {
 
     await service.approveImage("car-1", "img-1", "admin-1");
 
+    // Approving clears any stale rejection note on the image
+    expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ notes: null }) }),
+    );
     expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
       where: { id: "car-1" },
       data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
@@ -106,6 +110,15 @@ describe("CarApprovalService", () => {
 
     await service.rejectImage("car-1", "img-1", "admin-1", "Blurry photo");
 
+    // A rejected image must lose its cover flag so search ordering stays correct
+    expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: DocumentStatus.REJECTED,
+          isPrimary: false,
+        }),
+      }),
+    );
     expect(databaseServiceMock.car.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "car-1" },
