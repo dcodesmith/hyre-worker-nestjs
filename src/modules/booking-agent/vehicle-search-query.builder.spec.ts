@@ -66,10 +66,10 @@ describe("VehicleSearchQueryBuilder", () => {
       vehicleType: "SUV",
     });
 
-    expect(query.make).toBe("Toyota");
+    expect(query.make).toEqual(["Toyota"]);
     expect(query.model).toBe("Prado");
     expect(query.color).toBe("Black");
-    expect(query.vehicleType).toBe("SUV");
+    expect(query.vehicleType).toEqual(["SUV"]);
     expect(query.bookingType).toBe("DAY");
     expect(query.from).toBeInstanceOf(Date);
     expect(query.to).toBeInstanceOf(Date);
@@ -82,7 +82,7 @@ describe("VehicleSearchQueryBuilder", () => {
       make: "Toyota",
     });
 
-    expect(query.make).toBe("Toyota");
+    expect(query.make).toEqual(["Toyota"]);
     expect(query.from).toBeUndefined();
     expect(query.to).toBeUndefined();
   });
@@ -103,7 +103,7 @@ describe("VehicleSearchQueryBuilder", () => {
 
     expect(queries.length).toBeGreaterThan(1);
     expect(queries[0]).toMatchObject({
-      make: "Toyota",
+      make: ["Toyota"],
       model: "Prado",
     });
     expect(queries).toEqual(

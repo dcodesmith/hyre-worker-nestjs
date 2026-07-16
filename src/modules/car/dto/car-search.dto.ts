@@ -27,6 +27,21 @@ export const SERVICE_TIER_LABELS: Record<ServiceTier, string> = {
  */
 export const BOOKING_TYPES = ["DAY", "NIGHT", "FULL_DAY", "AIRPORT_PICKUP"] as const;
 
+/** Splits a comma-separated query value ("SUV,SEDAN") into a trimmed list. */
+const parseCsv = (raw: unknown): unknown =>
+  typeof raw === "string"
+    ? raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : raw;
+
+/** URL boolean flag: "1"/"true" → true, absent → undefined (i.e. not filtering). */
+const optionalFlag = z.preprocess(
+  (value) => (value === undefined ? undefined : value === "1" || value === "true"),
+  z.boolean().optional(),
+);
+
 /**
  * Query parameters schema for car search endpoint
  */
@@ -34,12 +49,30 @@ export const carSearchQuerySchema = z.object({
   // Free-text search query (maps to vehicleType/serviceTier or make/model)
   q: z.string().optional(),
 
-  // Direct filters
-  serviceTier: z.enum(Object.values(ServiceTier) as [ServiceTier, ...ServiceTier[]]).optional(),
-  vehicleType: z.enum(Object.values(VehicleType) as [VehicleType, ...VehicleType[]]).optional(),
+  // Multi-select filters (comma-separated in the URL, e.g. "SUV,SEDAN"). A single
+  // value parses as a one-element array, so legacy single-value callers keep working.
+  serviceTier: z
+    .preprocess(
+      parseCsv,
+      z.array(z.enum(Object.values(ServiceTier) as [ServiceTier, ...ServiceTier[]])),
+    )
+    .optional(),
+  vehicleType: z
+    .preprocess(
+      parseCsv,
+      z.array(z.enum(Object.values(VehicleType) as [VehicleType, ...VehicleType[]])),
+    )
+    .optional(),
+  make: z.preprocess(parseCsv, z.array(z.string().min(1)).max(20)).optional(),
   color: z.string().optional(),
-  make: z.string().optional(),
   model: z.string().optional(),
+
+  // Facet filters
+  minPrice: z.coerce.number().int().min(0).optional(),
+  maxPrice: z.coerce.number().int().min(0).optional(),
+  minCapacity: z.coerce.number().int().min(0).optional(),
+  fuelIncluded: optionalFlag,
+  dealsOnly: optionalFlag,
 
   // Date/availability filters (accepts ISO strings like "2024-03-01" and coerces to Date)
   from: z.coerce.date().optional(),
@@ -51,6 +84,9 @@ export const carSearchQuerySchema = z.object({
     .regex(/^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i, "Pickup time format: H:MM AM/PM")
     .optional(),
   flightNumber: z.string().optional(),
+
+  // Lightweight count-only mode for the filter panel's live "Show N vehicles"
+  countOnly: optionalFlag,
 
   // Pagination
   page: z.coerce.number().int().min(1).default(1),
@@ -111,9 +147,18 @@ export interface PublicCarDetailDto extends SearchCarDto {
  * Applied filters in the response (for client to display active filters)
  */
 export interface SearchFiltersDto {
-  serviceTier: ServiceTier | null;
-  vehicleType: VehicleType | null;
+  serviceTiers: ServiceTier[];
+  vehicleTypes: VehicleType[];
   bookingType: BookingType | null;
+}
+
+/**
+ * Facet data for the filter panel: available makes with counts and price bounds
+ * for the active booking-type rate field.
+ */
+export interface SearchFacetsDto {
+  makes: { name: string; count: number }[];
+  price: { min: number; max: number };
 }
 
 /**
@@ -134,6 +179,7 @@ export interface SearchPaginationDto {
 export interface CarSearchResponseDto {
   cars: SearchCarDto[];
   filters: SearchFiltersDto;
+  facets: SearchFacetsDto | null;
   pagination: SearchPaginationDto;
 }
 

@@ -26,6 +26,8 @@ describe("CarSearchService", () => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
       count: vi.fn(),
+      groupBy: vi.fn(),
+      aggregate: vi.fn(),
     },
     user: {
       findMany: vi.fn(),
@@ -66,6 +68,8 @@ describe("CarSearchService", () => {
     vi.clearAllMocks();
     mockCarIdCounter = 0;
     databaseServiceMock.booking.findMany.mockResolvedValue([]);
+    databaseServiceMock.car.groupBy.mockResolvedValue([]);
+    databaseServiceMock.car.aggregate.mockResolvedValue({ _min: {}, _max: {} });
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
@@ -139,13 +143,13 @@ describe("CarSearchService", () => {
       databaseServiceMock.car.findMany.mockResolvedValueOnce(luxuryCars);
 
       const result = await service.searchCars({
-        serviceTier: ServiceTier.LUXURY,
+        serviceTier: [ServiceTier.LUXURY],
         page: 1,
         limit: 12,
       });
 
       expect(result.cars).toHaveLength(2);
-      expect(result.filters.serviceTier).toBe(ServiceTier.LUXURY);
+      expect(result.filters.serviceTiers).toEqual([ServiceTier.LUXURY]);
     });
 
     it("returns cars matching vehicleType filter", async () => {
@@ -157,13 +161,13 @@ describe("CarSearchService", () => {
       databaseServiceMock.car.findMany.mockResolvedValueOnce(suvCars);
 
       const result = await service.searchCars({
-        vehicleType: VehicleType.SUV,
+        vehicleType: [VehicleType.SUV],
         page: 1,
         limit: 12,
       });
 
       expect(result.cars).toHaveLength(2);
-      expect(result.filters.vehicleType).toBe(VehicleType.SUV);
+      expect(result.filters.vehicleTypes).toEqual([VehicleType.SUV]);
     });
 
     it("maps free-text query to filters", async () => {
@@ -177,7 +181,7 @@ describe("CarSearchService", () => {
         limit: 12,
       });
 
-      expect(result.filters.serviceTier).toBe(ServiceTier.LUXURY);
+      expect(result.filters.serviceTiers).toEqual([ServiceTier.LUXURY]);
     });
 
     it("searches by make/model when query doesn't match filters", async () => {
@@ -192,8 +196,8 @@ describe("CarSearchService", () => {
       });
 
       expect(result.cars).toHaveLength(1);
-      expect(result.filters.serviceTier).toBeNull();
-      expect(result.filters.vehicleType).toBeNull();
+      expect(result.filters.serviceTiers).toEqual([]);
+      expect(result.filters.vehicleTypes).toEqual([]);
     });
 
     it("filters by color", async () => {
@@ -483,16 +487,82 @@ describe("CarSearchService", () => {
       databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
 
       const result = await service.searchCars({
-        serviceTier: ServiceTier.EXECUTIVE,
-        vehicleType: VehicleType.SUV,
-        make: "Toyota",
+        serviceTier: [ServiceTier.EXECUTIVE],
+        vehicleType: [VehicleType.SUV],
+        make: ["Toyota"],
         page: 1,
         limit: 12,
       });
 
       expect(result.cars).toHaveLength(1);
-      expect(result.filters.serviceTier).toBe(ServiceTier.EXECUTIVE);
-      expect(result.filters.vehicleType).toBe(VehicleType.SUV);
+      expect(result.filters.serviceTiers).toEqual([ServiceTier.EXECUTIVE]);
+      expect(result.filters.vehicleTypes).toEqual([VehicleType.SUV]);
+    });
+
+    it("filters by multiple vehicle types, price, capacity, fuel and deals", async () => {
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([createMockCar({ id: "car-1" })]);
+
+      await service.searchCars({
+        vehicleType: [VehicleType.SUV, VehicleType.SEDAN],
+        minPrice: 40000,
+        maxPrice: 90000,
+        minCapacity: 5,
+        fuelIncluded: true,
+        dealsOnly: true,
+        bookingType: BookingType.NIGHT,
+        page: 1,
+        limit: 12,
+      });
+
+      const filterClause = databaseServiceMock.car.findMany.mock.calls[0][0].where.AND[1];
+      expect(filterClause).toMatchObject({
+        vehicleType: { in: [VehicleType.SUV, VehicleType.SEDAN] },
+        passengerCapacity: { gte: 5 },
+        pricingIncludesFuel: true,
+        // Price filters the booking-type rate field, not dayRate.
+        nightRate: { gte: 40000, lte: 90000 },
+      });
+    });
+
+    it("countOnly returns total without cars or facets", async () => {
+      databaseServiceMock.car.count.mockResolvedValueOnce(42);
+
+      const result = await service.searchCars({
+        serviceTier: [ServiceTier.LUXURY],
+        countOnly: true,
+        page: 1,
+        limit: 12,
+      });
+
+      expect(result.cars).toEqual([]);
+      expect(result.facets).toBeNull();
+      expect(result.pagination.total).toBe(42);
+      expect(databaseServiceMock.car.findMany).not.toHaveBeenCalled();
+    });
+
+    it("returns facets (make counts + price bounds) on normal search", async () => {
+      databaseServiceMock.car.count.mockResolvedValueOnce(3);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([createMockCar({ id: "car-1" })]);
+      databaseServiceMock.car.groupBy.mockResolvedValueOnce([
+        { make: "Toyota", _count: { _all: 2 } },
+        { make: "toyota ", _count: { _all: 1 } },
+        { make: "Lexus", _count: { _all: 1 } },
+      ]);
+      databaseServiceMock.car.aggregate.mockResolvedValueOnce({
+        _min: { dayRate: 30000, nightRate: 40000, fullDayRate: 0, airportPickupRate: 0 },
+        _max: { dayRate: 90000, nightRate: 120000, fullDayRate: 0, airportPickupRate: 0 },
+      });
+
+      const result = await service.searchCars({ page: 1, limit: 12 });
+
+      // Dirty duplicates merged, sorted by count desc.
+      expect(result.facets?.makes).toEqual([
+        { name: "Toyota", count: 3 },
+        { name: "Lexus", count: 1 },
+      ]);
+      // Default booking type uses dayRate bounds.
+      expect(result.facets?.price).toEqual({ min: 30000, max: 90000 });
     });
   });
 

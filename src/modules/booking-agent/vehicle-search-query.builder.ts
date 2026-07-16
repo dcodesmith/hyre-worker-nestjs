@@ -82,10 +82,10 @@ export class VehicleSearchQueryBuilder {
     const query = this.buildTemporalQuery(extracted);
 
     if (extracted.color) query.color = extracted.color;
-    if (extracted.make) query.make = extracted.make;
+    if (extracted.make) query.make = [extracted.make];
     if (extracted.model) query.model = extracted.model;
-    if (extracted.vehicleType) query.vehicleType = extracted.vehicleType;
-    if (extracted.serviceTier) query.serviceTier = extracted.serviceTier;
+    if (extracted.vehicleType) query.vehicleType = [extracted.vehicleType];
+    if (extracted.serviceTier) query.serviceTier = [extracted.serviceTier];
 
     return query;
   }
@@ -94,16 +94,18 @@ export class VehicleSearchQueryBuilder {
     const base = this.buildTemporalQuery(extracted);
     const queries: CarSearchQueryDto[] = [];
 
+    const asList = (value: string | undefined) => (value ? [value] : undefined);
+
     if (extracted.make || extracted.model) {
-      queries.push(this.mergeQuery(base, { make: extracted.make, model: extracted.model }));
+      queries.push(this.mergeQuery(base, { make: asList(extracted.make), model: extracted.model }));
     }
 
     if (extracted.color) {
       queries.push(
         this.mergeQuery(base, {
           color: extracted.color,
-          vehicleType: extracted.vehicleType,
-          serviceTier: extracted.serviceTier,
+          vehicleType: asList(extracted.vehicleType),
+          serviceTier: asList(extracted.serviceTier),
         }),
       );
     }
@@ -111,14 +113,14 @@ export class VehicleSearchQueryBuilder {
     if (extracted.vehicleType || extracted.serviceTier) {
       queries.push(
         this.mergeQuery(base, {
-          vehicleType: extracted.vehicleType,
-          serviceTier: extracted.serviceTier,
+          vehicleType: asList(extracted.vehicleType),
+          serviceTier: asList(extracted.serviceTier),
         }),
       );
     }
 
     if (extracted.make) {
-      queries.push(this.mergeQuery(base, { make: extracted.make }));
+      queries.push(this.mergeQuery(base, { make: asList(extracted.make) }));
     }
 
     queries.push(base);
