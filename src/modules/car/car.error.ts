@@ -10,6 +10,10 @@ export const CarErrorCode = {
   CAR_UPDATE_FAILED: "CAR_UPDATE_FAILED",
   OWNER_DRIVER_CAR_LIMIT_REACHED: "OWNER_DRIVER_CAR_LIMIT_REACHED",
   REGISTRATION_NUMBER_ALREADY_EXISTS: "REGISTRATION_NUMBER_ALREADY_EXISTS",
+  VEHICLE_IMAGE_NOT_FOUND: "VEHICLE_IMAGE_NOT_FOUND",
+  CAR_APPROVAL_FAILED: "CAR_APPROVAL_FAILED",
+  CAR_DOCUMENT_NOT_FOUND: "CAR_DOCUMENT_NOT_FOUND",
+  FILE_NOT_REJECTED: "FILE_NOT_REJECTED",
 } as const;
 
 export class CarException extends AppException {}
@@ -95,6 +99,50 @@ export class RegistrationNumberAlreadyExistsException extends CarException {
       `A car with registration number ${registrationNumber} already exists in your fleet`,
       HttpStatus.CONFLICT,
       { title: "Registration Number Already Exists" },
+    );
+  }
+}
+
+export class VehicleImageNotFoundException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.VEHICLE_IMAGE_NOT_FOUND,
+      "Vehicle image not found for this car",
+      HttpStatus.NOT_FOUND,
+      { title: "Vehicle Image Not Found" },
+    );
+  }
+}
+
+export class CarApprovalFailedException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CAR_APPROVAL_FAILED,
+      "An unexpected error occurred while processing the approval action",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Car Approval Failed" },
+    );
+  }
+}
+
+export class CarDocumentNotFoundException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CAR_DOCUMENT_NOT_FOUND,
+      "Document not found for this car",
+      HttpStatus.NOT_FOUND,
+      { title: "Car Document Not Found" },
+    );
+  }
+}
+
+export class FileNotRejectedException extends CarException {
+  constructor(fileKind: "image" | "document") {
+    super(
+      CarErrorCode.FILE_NOT_REJECTED,
+      `Only rejected ${fileKind}s can be replaced`,
+      HttpStatus.BAD_REQUEST,
+      { title: "File Not Rejected" },
     );
   }
 }

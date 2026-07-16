@@ -1,18 +1,33 @@
 import { Injectable } from "@nestjs/common";
-import { CarApprovalStatus, DocumentStatus, DocumentType, Prisma, Status } from "@prisma/client";
+import {
+  CarApprovalStatus,
+  type DocumentApproval,
+  DocumentStatus,
+  DocumentType,
+  Prisma,
+  Status,
+  type VehicleImage,
+} from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
-import { CAR_S3_CATEGORY_DOCUMENTS, CAR_S3_CATEGORY_IMAGES } from "./car.const";
+import {
+  CAR_S3_CATEGORY_DOCUMENTS,
+  CAR_S3_CATEGORY_IMAGES,
+  REJECTION_ACTION_NOTE,
+} from "./car.const";
 import {
   CarCreateFailedException,
+  CarDocumentNotFoundException,
   CarException,
   CarFetchFailedException,
   CarNotFoundException,
   CarUpdateFailedException,
+  FileNotRejectedException,
   FleetOwnerNotFoundException,
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
+  VehicleImageNotFoundException,
 } from "./car.error";
 import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -35,12 +50,11 @@ export class CarService {
         id: true,
         url: true,
         status: true,
+        isPrimary: true,
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     },
     documents: {
       orderBy: {
@@ -375,6 +389,150 @@ export class CarService {
         "Failed to update car",
       );
       throw new CarUpdateFailedException();
+    }
+  }
+
+  /**
+   * Replace a rejected vehicle image with a new file. The image goes back to
+   * PENDING so admins re-review it; rejection metadata is cleared.
+   */
+  async replaceCarImage(carId: string, ownerId: string, imageId: string, file: UploadedCarFile) {
+    const image = await this.replaceRejectedFile(carId, ownerId, imageId, file, "image");
+    return { success: true, image };
+  }
+
+  /**
+   * Replace a rejected car document (MOT/insurance) with a new file. The
+   * document goes back to PENDING so admins re-review it.
+   */
+  async replaceCarDocument(
+    carId: string,
+    ownerId: string,
+    documentId: string,
+    file: UploadedCarFile,
+  ) {
+    const document = await this.replaceRejectedFile(carId, ownerId, documentId, file, "document");
+    return { success: true, document };
+  }
+
+  private async replaceRejectedFile(
+    carId: string,
+    ownerId: string,
+    fileId: string,
+    file: UploadedCarFile,
+    kind: "image" | "document",
+  ): Promise<VehicleImage | DocumentApproval> {
+    const isImage = kind === "image";
+    try {
+      await this.assertCarBelongsToOwner(carId, ownerId);
+
+      const existing = isImage
+        ? await this.databaseService.vehicleImage.findFirst({
+            where: { id: fileId, carId },
+            select: { id: true, status: true, url: true },
+          })
+        : await this.databaseService.documentApproval
+            .findFirst({
+              where: { id: fileId, carId },
+              select: { id: true, status: true, documentUrl: true },
+            })
+            .then((document) => document && { ...document, url: document.documentUrl });
+      if (!existing) {
+        throw isImage ? new VehicleImageNotFoundException() : new CarDocumentNotFoundException();
+      }
+      if (existing.status !== DocumentStatus.REJECTED) {
+        throw new FileNotRejectedException(kind);
+      }
+
+      const category = isImage ? CAR_S3_CATEGORY_IMAGES : CAR_S3_CATEGORY_DOCUMENTS;
+      const key = this.getObjectKey(ownerId, carId, file.originalname, category);
+      const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
+
+      const resetData = {
+        status: DocumentStatus.PENDING,
+        notes: null,
+        approvedById: null,
+        approvedAt: null,
+      };
+
+      let record: VehicleImage | DocumentApproval;
+      try {
+        // Guard on status in the write itself so a concurrent admin decision
+        // between the read above and this update cannot be clobbered. Demote
+        // the car too — approveCar can leave APPROVED while rejected assets
+        // remain; re-upload must pull the listing out of public search.
+        record = await this.databaseService.$transaction(async (tx) => {
+          const updated = isImage
+            ? await tx.vehicleImage.update({
+                where: { id: fileId, status: DocumentStatus.REJECTED },
+                data: { url, ...resetData },
+              })
+            : await tx.documentApproval.update({
+                where: { id: fileId, status: DocumentStatus.REJECTED },
+                data: { documentUrl: url, ...resetData },
+              });
+          await tx.car.update({
+            where: { id: carId },
+            data: {
+              approvalStatus: CarApprovalStatus.PENDING,
+              approvalNotes: REJECTION_ACTION_NOTE,
+            },
+          });
+          return updated;
+        });
+      } catch (updateError) {
+        await this.storageService.deleteObjectByKey(key).catch(() => undefined);
+        if (isRecordNotFoundError(updateError)) {
+          throw new FileNotRejectedException(kind);
+        }
+        throw updateError;
+      }
+
+      await this.deleteReplacedObject(existing.url);
+
+      return record;
+    } catch (error) {
+      if (error instanceof CarException) {
+        throw error;
+      }
+      this.logger.error(
+        {
+          carId,
+          ownerId,
+          fileId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        `Failed to replace car ${kind}`,
+      );
+      throw new CarUpdateFailedException();
+    }
+  }
+
+  private async assertCarBelongsToOwner(carId: string, ownerId: string): Promise<void> {
+    const car = await this.databaseService.car.findFirst({
+      where: { id: carId, ownerId },
+      select: { id: true },
+    });
+    if (!car) {
+      throw new CarNotFoundException();
+    }
+  }
+
+  /** Best-effort cleanup of the replaced S3 object; failures are only logged. */
+  private async deleteReplacedObject(previousUrl: string): Promise<void> {
+    try {
+      const key = new URL(previousUrl).pathname.slice(1);
+      if (key) {
+        await this.storageService.deleteObjectByKey(key);
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          previousUrl,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to delete replaced car asset",
+      );
     }
   }
 }

@@ -65,7 +65,7 @@ export class AuthService implements OnModuleInit {
       authBaseUrl,
       trustedOrigins,
       secureCookies: nodeEnv !== "development",
-      enableRateLimit: true,
+      enableRateLimit: nodeEnv !== "test",
       sendOTPEmail: this.authEmailService.sendOTPEmail.bind(this.authEmailService),
       roleValidation: {
         validateRoleForClient: this.validateRoleForClient.bind(this),

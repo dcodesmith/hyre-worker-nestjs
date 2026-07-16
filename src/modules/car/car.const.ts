@@ -13,3 +13,6 @@ export const CAR_UPLOAD_FIELD_CONFIG = [
 
 export const CAR_S3_CATEGORY_IMAGES = "images";
 export const CAR_S3_CATEGORY_DOCUMENTS = "documents";
+
+export const REJECTION_ACTION_NOTE =
+  "Action required! Some of your documents/images were rejected. Please check the rejection notes and re-upload them.";

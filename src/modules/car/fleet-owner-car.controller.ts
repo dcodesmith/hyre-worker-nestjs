@@ -3,11 +3,13 @@ import {
   Get,
   Patch,
   Post,
+  Put,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileFieldsInterceptor } from "@nestjs/platform-express";
+import { FileFieldsInterceptor, FileInterceptor } from "@nestjs/platform-express";
 import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
 import { FLEET_OWNER } from "../auth/auth.const";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -16,9 +18,11 @@ import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { CAR_UPLOAD_FIELD_CONFIG } from "./car.const";
-import type { CarCreateFiles } from "./car.interface";
+import type { CarCreateFiles, UploadedCarFile } from "./car.interface";
 import { CarService } from "./car.service";
 import { CarCreateFilesPipe } from "./car-create-files.pipe";
+import { CarReplaceFilePipe } from "./car-replace-file.pipe";
+import { cuidParamSchema } from "./dto/car-approval.dto";
 import { type CreateCarMultipartBodyDto, createCarMultipartBodySchema } from "./dto/create-car.dto";
 import { carIdParamSchema, type UpdateCarBodyDto, updateCarBodySchema } from "./dto/update-car.dto";
 
@@ -58,5 +62,27 @@ export class FleetOwnerCarController {
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {
     return this.carService.updateCar(carId, sessionUser.id, body);
+  }
+
+  @Put(":carId/images/:imageId/file")
+  @UseInterceptors(FileInterceptor("file"))
+  async replaceCarImage(
+    @ZodParam("carId", carIdParamSchema) carId: string,
+    @ZodParam("imageId", cuidParamSchema) imageId: string,
+    @UploadedFile(new CarReplaceFilePipe("image")) file: UploadedCarFile,
+    @CurrentUser() sessionUser: AuthSession["user"],
+  ) {
+    return this.carService.replaceCarImage(carId, sessionUser.id, imageId, file);
+  }
+
+  @Put(":carId/documents/:documentId/file")
+  @UseInterceptors(FileInterceptor("file"))
+  async replaceCarDocument(
+    @ZodParam("carId", carIdParamSchema) carId: string,
+    @ZodParam("documentId", cuidParamSchema) documentId: string,
+    @UploadedFile(new CarReplaceFilePipe("document")) file: UploadedCarFile,
+    @CurrentUser() sessionUser: AuthSession["user"],
+  ) {
+    return this.carService.replaceCarDocument(carId, sessionUser.id, documentId, file);
   }
 }
