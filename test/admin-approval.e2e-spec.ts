@@ -214,6 +214,45 @@ describe("Admin Approval E2E Tests", () => {
       expect(carRow?.approvalStatus).toBe("PENDING");
     });
 
+    it("never leaves a car APPROVED with a rejected asset under concurrent approve/reject", async () => {
+      // Set up a car that is one approval away from APPROVED, plus a second
+      // already-approved image we can reject at the same time.
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const secondImage = await databaseService.vehicleImage.create({
+        data: {
+          carId: car.id,
+          url: `https://cdn.tripdly.test/${ownerId}/${car.id}/images/photo-2.jpg`,
+          status: "APPROVED",
+        },
+      });
+      await databaseService.documentApproval.updateMany({
+        where: { id: { in: [document.id, insuranceDocument.id] } },
+        data: { status: "APPROVED" },
+      });
+
+      // Race the promotion (approve the last pending image) against a demotion
+      // (reject the other image). Row locking must serialize these so the car
+      // can never end up APPROVED while a rejected image remains.
+      await Promise.all([
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
+          .set("Cookie", adminCookie),
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${secondImage.id}/reject`)
+          .set("Cookie", adminCookie)
+          .send({ notes: "Blurry" }),
+      ]);
+
+      const [carRow, rejectedCount] = await Promise.all([
+        factory.getCarById(car.id),
+        databaseService.vehicleImage.count({
+          where: { carId: car.id, status: "REJECTED" },
+        }),
+      ]);
+      expect(rejectedCount).toBeGreaterThan(0);
+      expect(carRow?.approvalStatus).toBe("PENDING");
+    });
+
     it("rejecting a document requires notes and flags the car for action", async () => {
       const { car, document } = await createCarUnderReview();
 

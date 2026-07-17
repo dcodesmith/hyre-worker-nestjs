@@ -9,7 +9,7 @@ import {
   type VehicleImage,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import {
   CAR_S3_CATEGORY_DOCUMENTS,
@@ -462,6 +462,8 @@ export class CarService {
         // the car too — approveCar can leave APPROVED while rejected assets
         // remain; re-upload must pull the listing out of public search.
         record = await this.databaseService.$transaction(async (tx) => {
+          // Serialize with concurrent approval so this demotion can't be overwritten.
+          await lockCarRow(tx, carId);
           const updated = isImage
             ? await tx.vehicleImage.update({
                 where: { id: fileId, status: DocumentStatus.REJECTED },

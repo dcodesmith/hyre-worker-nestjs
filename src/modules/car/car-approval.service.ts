@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
 import { REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
 import {
   CarApprovalBlockedException,
@@ -96,21 +96,23 @@ export class CarApprovalService {
 
   async approveCar(carId: string) {
     try {
-      const existing = await this.databaseService.car.findUnique({
-        where: { id: carId },
-        select: { id: true },
+      // Lock the car and evaluate eligibility in one transaction so a concurrent
+      // reject/re-upload cannot slip between the check and the APPROVED write.
+      const car = await this.databaseService.$transaction(async (tx) => {
+        const exists = await lockCarRow(tx, carId);
+        if (!exists) {
+          throw new CarNotFoundException();
+        }
+
+        // A car can only be approved once every image and document is approved.
+        const approved = await this.approveCarIfFullyReviewed(carId, tx);
+        if (!approved) {
+          throw new CarApprovalBlockedException();
+        }
+
+        return tx.car.findUnique({ where: { id: carId } });
       });
-      if (!existing) {
-        throw new CarNotFoundException();
-      }
 
-      // A car can only be approved once every image and document is approved.
-      const approved = await this.approveCarIfFullyReviewed(carId);
-      if (!approved) {
-        throw new CarApprovalBlockedException();
-      }
-
-      const car = await this.databaseService.car.findUnique({ where: { id: carId } });
       return { success: true, car };
     } catch (error) {
       if (error instanceof CarException) {
@@ -155,6 +157,9 @@ export class CarApprovalService {
   async rejectImage(carId: string, imageId: string, approverId: string, notes: string) {
     try {
       const image = await this.databaseService.$transaction(async (tx) => {
+        // Serialize with concurrent approval so a reject can't be overwritten.
+        await lockCarRow(tx, carId);
+
         const updated = await tx.vehicleImage.update({
           where: { id: imageId, carId },
           data: {
@@ -216,10 +221,14 @@ export class CarApprovalService {
    * missing required document, or any PENDING/REJECTED item is not promotable
    * (guards the "zero-doc" hole where an empty car would otherwise auto-approve).
    * Returns whether the car ended up approved. Exported so the documents domain
-   * can trigger it; accepts an optional tx so callers can make the cascade atomic.
+   * can trigger it. Runs inside the caller's transaction and takes a row lock on
+   * the car first, so the eligibility read and the APPROVED write are serialized
+   * against concurrent reject/re-upload transitions.
    */
-  async approveCarIfFullyReviewed(carId: string, tx?: Prisma.TransactionClient): Promise<boolean> {
-    const db = tx ?? this.databaseService;
+  async approveCarIfFullyReviewed(carId: string, tx: Prisma.TransactionClient): Promise<boolean> {
+    // Serialize this car's approval read+write against reject/re-upload.
+    await lockCarRow(tx, carId);
+
     const unresolvedFilter = {
       carId,
       status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
@@ -227,10 +236,10 @@ export class CarApprovalService {
 
     const [unresolvedDocuments, unresolvedImages, approvedImageCount, approvedRequiredDocs] =
       await Promise.all([
-        db.documentApproval.count({ where: unresolvedFilter }),
-        db.vehicleImage.count({ where: unresolvedFilter }),
-        db.vehicleImage.count({ where: { carId, status: DocumentStatus.APPROVED } }),
-        db.documentApproval.findMany({
+        tx.documentApproval.count({ where: unresolvedFilter }),
+        tx.vehicleImage.count({ where: unresolvedFilter }),
+        tx.vehicleImage.count({ where: { carId, status: DocumentStatus.APPROVED } }),
+        tx.documentApproval.findMany({
           where: {
             carId,
             status: DocumentStatus.APPROVED,
@@ -252,7 +261,7 @@ export class CarApprovalService {
       hasAllRequiredDocuments;
 
     if (fullyReviewed) {
-      await db.car.update({
+      await tx.car.update({
         where: { id: carId },
         data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
       });

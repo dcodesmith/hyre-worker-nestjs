@@ -42,6 +42,7 @@ describe("CarApprovalService", () => {
       update: vi.fn(),
       count: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
 
@@ -54,6 +55,8 @@ describe("CarApprovalService", () => {
     databaseServiceMock.documentApproval.count.mockResolvedValue(0);
     databaseServiceMock.vehicleImage.count.mockResolvedValue(0);
     databaseServiceMock.documentApproval.findMany.mockResolvedValue([]);
+    // Row lock (SELECT ... FOR UPDATE) resolves to an existing car by default.
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ id: "car-1" }]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarApprovalService, { provide: DatabaseService, useValue: databaseServiceMock }],
     })
@@ -176,16 +179,18 @@ describe("CarApprovalService", () => {
   });
 
   it("throws CarNotFoundException when approving an unknown car", async () => {
-    databaseServiceMock.car.findUnique.mockResolvedValueOnce(null);
+    // Row lock returns no rows => car does not exist.
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(service.approveCar("missing")).rejects.toBeInstanceOf(CarNotFoundException);
     expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
   it("approveCar approves a car whose documents are all approved", async () => {
-    databaseServiceMock.car.findUnique
-      .mockResolvedValueOnce({ id: "car-1" }) // existence check
-      .mockResolvedValueOnce({ id: "car-1", approvalStatus: CarApprovalStatus.APPROVED }); // final fetch
+    databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      id: "car-1",
+      approvalStatus: CarApprovalStatus.APPROVED,
+    });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     databaseServiceMock.vehicleImage.count
       .mockResolvedValueOnce(0) // unresolved
@@ -202,7 +207,6 @@ describe("CarApprovalService", () => {
   });
 
   it("approveCar is blocked when images/documents are not all approved", async () => {
-    databaseServiceMock.car.findUnique.mockResolvedValueOnce({ id: "car-1" });
     // One document still pending.
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
 

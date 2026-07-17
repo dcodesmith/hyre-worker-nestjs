@@ -83,6 +83,7 @@ describe("CarService", () => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   const storageServiceMock = {
@@ -97,6 +98,7 @@ describe("CarService", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ id: "car-1" }]);
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({

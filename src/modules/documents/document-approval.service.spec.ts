@@ -28,6 +28,7 @@ describe("DocumentApprovalService", () => {
     user: {
       update: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   const carApprovalServiceMock = {
@@ -38,6 +39,8 @@ describe("DocumentApprovalService", () => {
     vi.clearAllMocks();
     // Run transaction callbacks against the same mock client.
     databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
+    // Row lock (SELECT ... FOR UPDATE) resolves to an existing car by default.
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ id: "car-1" }]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DocumentApprovalService,
