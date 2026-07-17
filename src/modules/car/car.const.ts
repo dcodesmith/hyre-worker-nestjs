@@ -1,5 +1,17 @@
+import { DocumentType } from "@prisma/client";
+
 export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 export const MAX_IMAGE_COUNT = 5;
+
+/**
+ * Car documents that must exist and be APPROVED before a car can be listed.
+ * Owner-level docs (NIN, licence) live on the user, not the car. Mirrors what
+ * car creation always uploads (see persistUploadedCarAssets).
+ */
+export const REQUIRED_CAR_DOCUMENT_TYPES = [
+  DocumentType.MOT_CERTIFICATE,
+  DocumentType.INSURANCE_CERTIFICATE,
+] as const;
 
 export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export const IMAGE_MIME_TYPES_SET = new Set<string>(IMAGE_MIME_TYPES);

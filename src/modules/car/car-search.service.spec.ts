@@ -2,7 +2,6 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import {
   BookingStatus,
   BookingType,
-  DocumentStatus,
   PaymentStatus,
   ServiceTier,
   VehicleType,
@@ -466,7 +465,7 @@ describe("CarSearchService", () => {
         expect.objectContaining({
           select: expect.objectContaining({
             images: expect.objectContaining({
-              where: { status: DocumentStatus.APPROVED },
+              select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
             }),
           }),
@@ -617,7 +616,7 @@ describe("CarSearchService", () => {
           }),
           select: expect.objectContaining({
             images: expect.objectContaining({
-              where: { status: DocumentStatus.APPROVED },
+              select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
             }),
           }),
