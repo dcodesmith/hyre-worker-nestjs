@@ -462,8 +462,8 @@ export class CarService {
         // the car too — approveCar can leave APPROVED while rejected assets
         // remain; re-upload must pull the listing out of public search.
         record = await this.databaseService.$transaction(async (tx) => {
-          // Serialize with concurrent approval so this demotion can't be overwritten.
-          await lockCarRow(tx, carId);
+          // Asset lock before car lock — same order as approve/reject paths,
+          // so concurrent moderation + re-upload cannot deadlock.
           const updated = isImage
             ? await tx.vehicleImage.update({
                 where: { id: fileId, status: DocumentStatus.REJECTED },
@@ -473,6 +473,8 @@ export class CarService {
                 where: { id: fileId, status: DocumentStatus.REJECTED },
                 data: { documentUrl: url, ...resetData },
               });
+          // Serialize with concurrent approval so this demotion can't be overwritten.
+          await lockCarRow(tx, carId);
           await tx.car.update({
             where: { id: carId },
             data: {

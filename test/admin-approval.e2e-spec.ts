@@ -233,7 +233,7 @@ describe("Admin Approval E2E Tests", () => {
       // Race the promotion (approve the last pending image) against a demotion
       // (reject the other image). Row locking must serialize these so the car
       // can never end up APPROVED while a rejected image remains.
-      await Promise.all([
+      const [approveRes, rejectRes] = await Promise.all([
         request(app.getHttpServer())
           .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
           .set("Cookie", adminCookie),
@@ -242,6 +242,9 @@ describe("Admin Approval E2E Tests", () => {
           .set("Cookie", adminCookie)
           .send({ notes: "Blurry" }),
       ]);
+      // Both must complete; a deadlock abort would surface as a 5xx and fail here.
+      expect(approveRes.status).toBe(HttpStatus.CREATED);
+      expect(rejectRes.status).toBe(HttpStatus.CREATED);
 
       const [carRow, rejectedCount] = await Promise.all([
         factory.getCarById(car.id),
@@ -251,6 +254,32 @@ describe("Admin Approval E2E Tests", () => {
       ]);
       expect(rejectedCount).toBeGreaterThan(0);
       expect(carRow?.approvalStatus).toBe("PENDING");
+    });
+
+    it("serializes concurrent approve and reject on the same image without deadlock", async () => {
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      await databaseService.documentApproval.updateMany({
+        where: { id: { in: [document.id, insuranceDocument.id] } },
+        data: { status: "APPROVED" },
+      });
+
+      // Same-asset race: both paths take the image row lock then the car lock.
+      // Inverted lock order would deadlock; asserting both statuses catches that.
+      const [approveRes, rejectRes] = await Promise.all([
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
+          .set("Cookie", adminCookie),
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/reject`)
+          .set("Cookie", adminCookie)
+          .send({ notes: "Blurry" }),
+      ]);
+
+      expect(approveRes.status).toBe(HttpStatus.CREATED);
+      expect(rejectRes.status).toBe(HttpStatus.CREATED);
+
+      const imageRow = await databaseService.vehicleImage.findUnique({ where: { id: image.id } });
+      expect(["APPROVED", "REJECTED"]).toContain(imageRow?.status);
     });
 
     it("rejecting a document requires notes and flags the car for action", async () => {

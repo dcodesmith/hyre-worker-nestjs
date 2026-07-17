@@ -157,9 +157,8 @@ export class CarApprovalService {
   async rejectImage(carId: string, imageId: string, approverId: string, notes: string) {
     try {
       const image = await this.databaseService.$transaction(async (tx) => {
-        // Serialize with concurrent approval so a reject can't be overwritten.
-        await lockCarRow(tx, carId);
-
+        // Asset lock before car lock — same order as approveImage / rejectDocument,
+        // so concurrent approve+reject on the same image cannot deadlock.
         const updated = await tx.vehicleImage.update({
           where: { id: imageId, carId },
           data: {
@@ -171,6 +170,8 @@ export class CarApprovalService {
           },
         });
 
+        // Serialize with concurrent approval so this demotion can't be overwritten.
+        await lockCarRow(tx, carId);
         await tx.car.update({
           where: { id: carId },
           data: { approvalStatus: CarApprovalStatus.PENDING, approvalNotes: REJECTION_ACTION_NOTE },
