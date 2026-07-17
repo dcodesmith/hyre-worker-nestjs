@@ -9,6 +9,20 @@ export function isRecordNotFoundError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
 }
 
+/**
+ * Take a row-level lock on a car inside a transaction (`SELECT ... FOR UPDATE`)
+ * so that concurrent approval-status transitions (approve / reject / re-upload)
+ * serialize per car. Without this, one transaction can read asset state, then a
+ * concurrent reject can commit, and the first transaction's write overwrites it —
+ * leaving a car APPROVED with a rejected asset. Returns whether the car exists.
+ */
+export async function lockCarRow(tx: Prisma.TransactionClient, carId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM "Car" WHERE id = ${carId} FOR UPDATE`,
+  );
+  return rows.length > 0;
+}
+
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly isDevelopment: boolean;

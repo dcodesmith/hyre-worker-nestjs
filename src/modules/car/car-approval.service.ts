@@ -1,9 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
-import { REJECTION_ACTION_NOTE } from "./car.const";
+import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
+import { REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
 import {
+  CarApprovalBlockedException,
   CarApprovalFailedException,
   CarException,
   CarNotFoundException,
@@ -95,13 +96,28 @@ export class CarApprovalService {
 
   async approveCar(carId: string) {
     try {
-      const car = await this.databaseService.car.update({
-        where: { id: carId },
-        data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
+      // Lock the car and evaluate eligibility in one transaction so a concurrent
+      // reject/re-upload cannot slip between the check and the APPROVED write.
+      const car = await this.databaseService.$transaction(async (tx) => {
+        const exists = await lockCarRow(tx, carId);
+        if (!exists) {
+          throw new CarNotFoundException();
+        }
+
+        // A car can only be approved once every image and document is approved.
+        const approved = await this.approveCarIfFullyReviewed(carId, tx);
+        if (!approved) {
+          throw new CarApprovalBlockedException();
+        }
+
+        return tx.car.findUnique({ where: { id: carId } });
       });
 
       return { success: true, car };
     } catch (error) {
+      if (error instanceof CarException) {
+        throw error;
+      }
       if (isRecordNotFoundError(error)) {
         throw new CarNotFoundException();
       }
@@ -141,6 +157,8 @@ export class CarApprovalService {
   async rejectImage(carId: string, imageId: string, approverId: string, notes: string) {
     try {
       const image = await this.databaseService.$transaction(async (tx) => {
+        // Asset lock before car lock — same order as approveImage / rejectDocument,
+        // so concurrent approve+reject on the same image cannot deadlock.
         const updated = await tx.vehicleImage.update({
           where: { id: imageId, carId },
           data: {
@@ -152,6 +170,8 @@ export class CarApprovalService {
           },
         });
 
+        // Serialize with concurrent approval so this demotion can't be overwritten.
+        await lockCarRow(tx, carId);
         await tx.car.update({
           where: { id: carId },
           data: { approvalStatus: CarApprovalStatus.PENDING, approvalNotes: REJECTION_ACTION_NOTE },
@@ -197,29 +217,58 @@ export class CarApprovalService {
   }
 
   /**
-   * Promote the car to APPROVED once every image and document is APPROVED;
-   * PENDING or REJECTED items block promotion. Exported so the documents
-   * domain can trigger it when a car document is approved. Accepts an
-   * optional transaction client so callers can make the cascade atomic.
+   * Promote the car to APPROVED only when it actually has the required assets
+   * AND every image and document is APPROVED. A car with no approved images, a
+   * missing required document, or any PENDING/REJECTED item is not promotable
+   * (guards the "zero-doc" hole where an empty car would otherwise auto-approve).
+   * Returns whether the car ended up approved. Exported so the documents domain
+   * can trigger it. Runs inside the caller's transaction and takes a row lock on
+   * the car first, so the eligibility read and the APPROVED write are serialized
+   * against concurrent reject/re-upload transitions.
    */
-  async approveCarIfFullyReviewed(carId: string, tx?: Prisma.TransactionClient): Promise<void> {
-    const db = tx ?? this.databaseService;
+  async approveCarIfFullyReviewed(carId: string, tx: Prisma.TransactionClient): Promise<boolean> {
+    // Serialize this car's approval read+write against reject/re-upload.
+    await lockCarRow(tx, carId);
+
     const unresolvedFilter = {
       carId,
       status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
     };
 
-    const [unresolvedDocuments, unresolvedImages] = await Promise.all([
-      db.documentApproval.count({ where: unresolvedFilter }),
-      db.vehicleImage.count({ where: unresolvedFilter }),
-    ]);
+    const [unresolvedDocuments, unresolvedImages, approvedImageCount, approvedRequiredDocs] =
+      await Promise.all([
+        tx.documentApproval.count({ where: unresolvedFilter }),
+        tx.vehicleImage.count({ where: unresolvedFilter }),
+        tx.vehicleImage.count({ where: { carId, status: DocumentStatus.APPROVED } }),
+        tx.documentApproval.findMany({
+          where: {
+            carId,
+            status: DocumentStatus.APPROVED,
+            documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] },
+          },
+          select: { documentType: true },
+          distinct: ["documentType"],
+        }),
+      ]);
 
-    if (unresolvedDocuments === 0 && unresolvedImages === 0) {
-      await db.car.update({
+    const hasAllRequiredDocuments = REQUIRED_CAR_DOCUMENT_TYPES.every((type) =>
+      approvedRequiredDocs.some((doc) => doc.documentType === type),
+    );
+
+    const fullyReviewed =
+      unresolvedDocuments === 0 &&
+      unresolvedImages === 0 &&
+      approvedImageCount > 0 &&
+      hasAllRequiredDocuments;
+
+    if (fullyReviewed) {
+      await tx.car.update({
         where: { id: carId },
         data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
       });
     }
+
+    return fullyReviewed;
   }
 
   private toApprovalError(

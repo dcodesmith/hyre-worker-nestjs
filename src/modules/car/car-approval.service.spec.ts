@@ -1,10 +1,19 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
+import { CarApprovalStatus, DocumentStatus, DocumentType, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
-import { CarNotFoundException, VehicleImageNotFoundException } from "./car.error";
+import {
+  CarApprovalBlockedException,
+  CarNotFoundException,
+  VehicleImageNotFoundException,
+} from "./car.error";
 import { CarApprovalService } from "./car-approval.service";
+
+const approvedRequiredDocs = [
+  { documentType: DocumentType.MOT_CERTIFICATE },
+  { documentType: DocumentType.INSURANCE_CERTIFICATE },
+];
 
 // Prisma throws P2025 when an update's where clause matches no record
 const recordNotFoundError = () =>
@@ -25,6 +34,7 @@ describe("CarApprovalService", () => {
     },
     documentApproval: {
       count: vi.fn(),
+      findMany: vi.fn(),
     },
     car: {
       findMany: vi.fn(),
@@ -32,6 +42,7 @@ describe("CarApprovalService", () => {
       update: vi.fn(),
       count: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
 
@@ -39,6 +50,13 @@ describe("CarApprovalService", () => {
     vi.clearAllMocks();
     // Default: run transaction callbacks against the same mock client.
     databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
+    // Safe defaults so approveCarIfFullyReviewed's extra reads never throw;
+    // individual tests override with mockResolvedValueOnce for sequencing.
+    databaseServiceMock.documentApproval.count.mockResolvedValue(0);
+    databaseServiceMock.vehicleImage.count.mockResolvedValue(0);
+    databaseServiceMock.documentApproval.findMany.mockResolvedValue([]);
+    // Row lock (SELECT ... FOR UPDATE) resolves to an existing car by default.
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ id: "car-1" }]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [CarApprovalService, { provide: DatabaseService, useValue: databaseServiceMock }],
     })
@@ -50,8 +68,12 @@ describe("CarApprovalService", () => {
 
   it("approves the car once the last pending image is approved", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    // Fully reviewed: nothing unresolved, an approved image exists, required docs present.
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
-    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(2); // approved images
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");
 
@@ -92,6 +114,35 @@ describe("CarApprovalService", () => {
     expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
+  it("does not approve a car that has no approved images", async () => {
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(0); // no approved images
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
+  it("does not approve a car that is missing a required document", async () => {
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(2); // approved images
+    // Only MOT approved; insurance missing.
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce([
+      { documentType: DocumentType.MOT_CERTIFICATE },
+    ]);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
   it("rejects approving an image that does not belong to the car", async () => {
     databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(recordNotFoundError());
 
@@ -128,9 +179,39 @@ describe("CarApprovalService", () => {
   });
 
   it("throws CarNotFoundException when approving an unknown car", async () => {
-    databaseServiceMock.car.update.mockRejectedValueOnce(recordNotFoundError());
+    // Row lock returns no rows => car does not exist.
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(service.approveCar("missing")).rejects.toBeInstanceOf(CarNotFoundException);
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
+  it("approveCar approves a car whose documents are all approved", async () => {
+    databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      id: "car-1",
+      approvalStatus: CarApprovalStatus.APPROVED,
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved
+      .mockResolvedValueOnce(3); // approved
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+
+    const result = await service.approveCar("car-1");
+
+    expect(result.success).toBe(true);
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+      where: { id: "car-1" },
+      data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
+    });
+  });
+
+  it("approveCar is blocked when images/documents are not all approved", async () => {
+    // One document still pending.
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
+
+    await expect(service.approveCar("car-1")).rejects.toBeInstanceOf(CarApprovalBlockedException);
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
   it("sets exactly one cover image atomically, restricted to approved images", async () => {

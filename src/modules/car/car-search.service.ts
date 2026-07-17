@@ -3,7 +3,6 @@ import {
   BookingStatus,
   BookingType,
   CarApprovalStatus,
-  DocumentStatus,
   PaymentStatus,
   Prisma,
   type ServiceTier,
@@ -426,8 +425,9 @@ export class CarSearchService {
             pricingIncludesFuel: true,
             vehicleType: true,
             serviceTier: true,
+            // hireApp parity: an approved car shows all its images regardless of
+            // per-image status. The car is already gated on approvalStatus above.
             images: {
-              where: { status: DocumentStatus.APPROVED },
               select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
               take: 4,
@@ -522,8 +522,9 @@ export class CarSearchService {
           pricingIncludesFuel: true,
           vehicleType: true,
           serviceTier: true,
+          // hireApp parity: an approved car shows all its images regardless of
+          // per-image status. The car is already gated on approvalStatus above.
           images: {
-            where: { status: DocumentStatus.APPROVED },
             select: { url: true },
             orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           },

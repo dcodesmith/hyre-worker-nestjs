@@ -8,7 +8,7 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { REJECTION_ACTION_NOTE } from "../car/car.const";
 import { CarApprovalService } from "../car/car-approval.service";
-import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
+import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
 import {
   DocumentApprovalFailedException,
   DocumentNotFoundException,
@@ -71,6 +71,8 @@ export class DocumentApprovalService {
         });
 
         if (updated.carId) {
+          // Serialize with concurrent approval so this demotion can't be overwritten.
+          await lockCarRow(tx, updated.carId);
           await tx.car.update({
             where: { id: updated.carId },
             data: {

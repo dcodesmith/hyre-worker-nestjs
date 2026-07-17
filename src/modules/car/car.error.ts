@@ -12,6 +12,7 @@ export const CarErrorCode = {
   REGISTRATION_NUMBER_ALREADY_EXISTS: "REGISTRATION_NUMBER_ALREADY_EXISTS",
   VEHICLE_IMAGE_NOT_FOUND: "VEHICLE_IMAGE_NOT_FOUND",
   CAR_APPROVAL_FAILED: "CAR_APPROVAL_FAILED",
+  CAR_APPROVAL_BLOCKED: "CAR_APPROVAL_BLOCKED",
   CAR_DOCUMENT_NOT_FOUND: "CAR_DOCUMENT_NOT_FOUND",
   FILE_NOT_REJECTED: "FILE_NOT_REJECTED",
 } as const;
@@ -121,6 +122,17 @@ export class CarApprovalFailedException extends CarException {
       "An unexpected error occurred while processing the approval action",
       HttpStatus.INTERNAL_SERVER_ERROR,
       { title: "Car Approval Failed" },
+    );
+  }
+}
+
+export class CarApprovalBlockedException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CAR_APPROVAL_BLOCKED,
+      "All images and documents must be approved before the car can be approved",
+      HttpStatus.CONFLICT,
+      { title: "Car Approval Blocked" },
     );
   }
 }

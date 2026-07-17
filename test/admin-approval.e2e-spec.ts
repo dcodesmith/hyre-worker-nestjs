@@ -74,7 +74,11 @@ describe("Admin Approval E2E Tests", () => {
     await app.close();
   });
 
-  /** Create a PENDING car with one pending image and one pending MOT document. */
+  /**
+   * Create a PENDING car with one pending image and the required pending
+   * documents (MOT + insurance) — mirrors what car creation always uploads, so
+   * approving the full set promotes the car (all required assets present).
+   */
   async function createCarUnderReview() {
     const car = await factory.createCar(ownerId, { approvalStatus: "PENDING" });
     const image = await databaseService.vehicleImage.create({
@@ -92,7 +96,15 @@ describe("Admin Approval E2E Tests", () => {
         status: "PENDING",
       },
     });
-    return { car, image, document };
+    const insuranceDocument = await databaseService.documentApproval.create({
+      data: {
+        carId: car.id,
+        documentType: "INSURANCE_CERTIFICATE",
+        documentUrl: `https://cdn.tripdly.test/${ownerId}/${car.id}/documents/insurance.pdf`,
+        status: "PENDING",
+      },
+    });
+    return { car, image, document, insuranceDocument };
   }
 
   describe("role enforcement", () => {
@@ -160,7 +172,7 @@ describe("Admin Approval E2E Tests", () => {
 
   describe("approval cascade", () => {
     it("approves the car once staff and admin approve all pending items", async () => {
-      const { car, image, document } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
 
       const documentResponse = await request(app.getHttpServer())
         .post(`/api/admin/documents/${document.id}/approve`)
@@ -168,6 +180,15 @@ describe("Admin Approval E2E Tests", () => {
       expect(documentResponse.status).toBe(HttpStatus.CREATED);
 
       let carRow = await factory.getCarById(car.id);
+      expect(carRow?.approvalStatus).toBe("PENDING");
+
+      const insuranceResponse = await request(app.getHttpServer())
+        .post(`/api/admin/documents/${insuranceDocument.id}/approve`)
+        .set("Cookie", staffCookie);
+      expect(insuranceResponse.status).toBe(HttpStatus.CREATED);
+
+      // Still PENDING: the image has not been approved yet.
+      carRow = await factory.getCarById(car.id);
       expect(carRow?.approvalStatus).toBe("PENDING");
 
       const imageResponse = await request(app.getHttpServer())
@@ -178,6 +199,87 @@ describe("Admin Approval E2E Tests", () => {
       carRow = await factory.getCarById(car.id);
       expect(carRow?.approvalStatus).toBe("APPROVED");
       expect(carRow?.approvalNotes).toBeNull();
+    });
+
+    it("blocks direct car approval while items are still pending", async () => {
+      const { car } = await createCarUnderReview();
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/admin/cars/${car.id}/approve`)
+        .set("Cookie", adminCookie);
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+
+      const carRow = await factory.getCarById(car.id);
+      expect(carRow?.approvalStatus).toBe("PENDING");
+    });
+
+    it("never leaves a car APPROVED with a rejected asset under concurrent approve/reject", async () => {
+      // Set up a car that is one approval away from APPROVED, plus a second
+      // already-approved image we can reject at the same time.
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const secondImage = await databaseService.vehicleImage.create({
+        data: {
+          carId: car.id,
+          url: `https://cdn.tripdly.test/${ownerId}/${car.id}/images/photo-2.jpg`,
+          status: "APPROVED",
+        },
+      });
+      await databaseService.documentApproval.updateMany({
+        where: { id: { in: [document.id, insuranceDocument.id] } },
+        data: { status: "APPROVED" },
+      });
+
+      // Race the promotion (approve the last pending image) against a demotion
+      // (reject the other image). Row locking must serialize these so the car
+      // can never end up APPROVED while a rejected image remains.
+      const [approveRes, rejectRes] = await Promise.all([
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
+          .set("Cookie", adminCookie),
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${secondImage.id}/reject`)
+          .set("Cookie", adminCookie)
+          .send({ notes: "Blurry" }),
+      ]);
+      // Both must complete; a deadlock abort would surface as a 5xx and fail here.
+      expect(approveRes.status).toBe(HttpStatus.CREATED);
+      expect(rejectRes.status).toBe(HttpStatus.CREATED);
+
+      const [carRow, rejectedCount] = await Promise.all([
+        factory.getCarById(car.id),
+        databaseService.vehicleImage.count({
+          where: { carId: car.id, status: "REJECTED" },
+        }),
+      ]);
+      expect(rejectedCount).toBeGreaterThan(0);
+      expect(carRow?.approvalStatus).toBe("PENDING");
+    });
+
+    it("serializes concurrent approve and reject on the same image without deadlock", async () => {
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      await databaseService.documentApproval.updateMany({
+        where: { id: { in: [document.id, insuranceDocument.id] } },
+        data: { status: "APPROVED" },
+      });
+
+      // Same-asset race: both paths take the image row lock then the car lock.
+      // Inverted lock order would deadlock; asserting both statuses catches that.
+      const [approveRes, rejectRes] = await Promise.all([
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
+          .set("Cookie", adminCookie),
+        request(app.getHttpServer())
+          .post(`/api/admin/cars/${car.id}/images/${image.id}/reject`)
+          .set("Cookie", adminCookie)
+          .send({ notes: "Blurry" }),
+      ]);
+
+      expect(approveRes.status).toBe(HttpStatus.CREATED);
+      expect(rejectRes.status).toBe(HttpStatus.CREATED);
+
+      const imageRow = await databaseService.vehicleImage.findUnique({ where: { id: image.id } });
+      expect(["APPROVED", "REJECTED"]).toContain(imageRow?.status);
     });
 
     it("rejecting a document requires notes and flags the car for action", async () => {
@@ -265,7 +367,7 @@ describe("Admin Approval E2E Tests", () => {
 
   describe("owner re-upload of rejected files", () => {
     it("lets the owner replace a rejected document, then approval completes the loop", async () => {
-      const { car, image, document } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument } = await createCarUnderReview();
       await databaseService.documentApproval.update({
         where: { id: document.id },
         data: { status: "REJECTED", notes: "Blurry scan" },
@@ -293,6 +395,9 @@ describe("Admin Approval E2E Tests", () => {
       // Approve everything and confirm the car completes review
       await request(app.getHttpServer())
         .post(`/api/admin/documents/${document.id}/approve`)
+        .set("Cookie", adminCookie);
+      await request(app.getHttpServer())
+        .post(`/api/admin/documents/${insuranceDocument.id}/approve`)
         .set("Cookie", adminCookie);
       await request(app.getHttpServer())
         .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)
@@ -330,11 +435,13 @@ describe("Admin Approval E2E Tests", () => {
         where: { id: image.id },
         data: { status: "REJECTED", notes: "Too dark" },
       });
-      // Force-approve can leave the listing public while rejected assets remain
-      await request(app.getHttpServer())
-        .post(`/api/admin/cars/${car.id}/approve`)
-        .set("Cookie", adminCookie)
-        .expect(HttpStatus.CREATED);
+      // A legacy/edge APPROVED car can still have a rejected asset (the approve
+      // endpoint now blocks this, so set it directly). Re-upload must pull it
+      // back to PENDING so it cannot stay publicly searchable.
+      await databaseService.car.update({
+        where: { id: car.id },
+        data: { approvalStatus: "APPROVED" },
+      });
 
       await request(app.getHttpServer())
         .put(`/api/fleet-owner/cars/${car.id}/images/${image.id}/file`)
