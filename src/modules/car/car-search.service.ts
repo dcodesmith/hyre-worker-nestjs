@@ -6,7 +6,9 @@ import {
   DocumentStatus,
   PaymentStatus,
   Prisma,
+  type ServiceTier,
   Status,
+  type VehicleType,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
@@ -19,6 +21,7 @@ import type {
   CarSearchResponseDto,
   MappedQueryFilters,
   PublicCarDetailDto,
+  SearchFacetsDto,
 } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
 
@@ -26,6 +29,8 @@ interface AvailabilityInterval {
   startDate: Date;
   endDate: Date;
 }
+
+type RateField = "dayRate" | "nightRate" | "fullDayRate" | "airportPickupRate";
 
 @Injectable()
 export class CarSearchService {
@@ -42,28 +47,66 @@ export class CarSearchService {
    * Returns resolved filters with any mapped values from the query string.
    */
   private parseSearchFilters(query: CarSearchQueryDto): {
-    serviceTier: CarSearchQueryDto["serviceTier"];
-    vehicleType: CarSearchQueryDto["vehicleType"];
+    serviceTiers: ServiceTier[];
+    vehicleTypes: VehicleType[];
+    makes: string[];
     makeModelQuery: string | null;
   } {
-    let serviceTier = query.serviceTier;
-    let vehicleType = query.vehicleType;
+    const serviceTiers = [...(query.serviceTier ?? [])];
+    const vehicleTypes = [...(query.vehicleType ?? [])];
+    const makes = query.make ?? [];
     let makeModelQuery: string | null = null;
 
-    // If free-text query provided and no explicit filters, try to map it
-    if (query.q && !serviceTier && !vehicleType) {
+    // Free-text query only contributes when no explicit type/tier filters are set.
+    if (query.q && serviceTiers.length === 0 && vehicleTypes.length === 0) {
       const mapped: MappedQueryFilters = mapQueryToFilters(query.q);
-      if (mapped.vehicleType) vehicleType = mapped.vehicleType;
-      if (mapped.serviceTier) serviceTier = mapped.serviceTier;
+      if (mapped.vehicleType) vehicleTypes.push(mapped.vehicleType);
+      if (mapped.serviceTier) serviceTiers.push(mapped.serviceTier);
       makeModelQuery = mapped.remainingQuery?.trim() || null;
     }
 
-    // If no mapping happened and there's a query, use it for make/model search
-    if (query.q && !serviceTier && !vehicleType && !makeModelQuery) {
+    // If nothing mapped, fall back to searching make/model with the raw query.
+    if (query.q && serviceTiers.length === 0 && vehicleTypes.length === 0 && !makeModelQuery) {
       makeModelQuery = query.q.trim();
     }
 
-    return { serviceTier, vehicleType, makeModelQuery };
+    return { serviceTiers, vehicleTypes, makes, makeModelQuery };
+  }
+
+  private static readonly RATE_FIELD_BY_BOOKING_TYPE: Record<BookingType, RateField> = {
+    [BookingType.DAY]: "dayRate",
+    [BookingType.NIGHT]: "nightRate",
+    [BookingType.FULL_DAY]: "fullDayRate",
+    [BookingType.AIRPORT_PICKUP]: "airportPickupRate",
+  };
+
+  /** Base visibility: cars that are publicly listable regardless of user filters. */
+  private buildBaseVisibilityWhere(fleetOwnersToExclude: string[]): Prisma.CarWhereInput {
+    return {
+      ...(fleetOwnersToExclude.length > 0 && {
+        ownerId: { notIn: fleetOwnersToExclude },
+      }),
+      status: { in: [Status.AVAILABLE, Status.BOOKED] },
+      approvalStatus: CarApprovalStatus.APPROVED,
+      owner: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    };
+  }
+
+  /** A car is "on promotion" via its own active promo or its owner's fleet-wide one. */
+  private buildDealsOnlyWhere(referenceDate: Date): Prisma.CarWhereInput {
+    // ponytail: inlines PromotionService.activeAtWhere (the canonical active-window
+    // predicate). Unify into a shared export if a third copy of this appears.
+    const active = {
+      isActive: true,
+      startDate: { lte: referenceDate },
+      endDate: { gt: referenceDate },
+    };
+    return {
+      OR: [
+        { promotions: { some: active } },
+        { owner: { promotions: { some: { ...active, carId: null } } } },
+      ],
+    };
   }
 
   /**
@@ -71,43 +114,115 @@ export class CarSearchService {
    */
   private buildWhereClause(
     params: {
-      serviceTier: CarSearchQueryDto["serviceTier"];
-      vehicleType: CarSearchQueryDto["vehicleType"];
+      serviceTiers: ServiceTier[];
+      vehicleTypes: VehicleType[];
+      makes: string[];
+      minPrice: number | undefined;
+      maxPrice: number | undefined;
+      minCapacity: number | undefined;
+      fuelIncluded: boolean | undefined;
+      dealsOnly: boolean | undefined;
       color: string | undefined;
-      make: string | undefined;
       model: string | undefined;
       makeModelQuery: string | null;
+      rateField: RateField;
+      referenceDate: Date;
     },
     fleetOwnersToExclude: string[],
   ): Prisma.CarWhereInput {
+    const hasPriceFilter = params.minPrice !== undefined || params.maxPrice !== undefined;
+
+    const andClauses: Prisma.CarWhereInput[] = [
+      this.buildBaseVisibilityWhere(fleetOwnersToExclude),
+      {
+        ...(params.serviceTiers.length > 0 && { serviceTier: { in: params.serviceTiers } }),
+        ...(params.vehicleTypes.length > 0 && { vehicleType: { in: params.vehicleTypes } }),
+        ...(params.minCapacity !== undefined && {
+          passengerCapacity: { gte: params.minCapacity },
+        }),
+        ...(params.fuelIncluded && { pricingIncludesFuel: true }),
+        ...(hasPriceFilter && {
+          [params.rateField]: {
+            ...(params.minPrice !== undefined && { gte: params.minPrice }),
+            ...(params.maxPrice !== undefined && { lte: params.maxPrice }),
+          },
+        }),
+        ...(params.color && {
+          color: { contains: params.color, mode: Prisma.QueryMode.insensitive },
+        }),
+        ...(params.model && {
+          model: { contains: params.model, mode: Prisma.QueryMode.insensitive },
+        }),
+        ...(params.makeModelQuery && {
+          OR: [
+            { make: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
+            { model: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
+          ],
+        }),
+      },
+      // Separate AND entry so the makes OR doesn't collide with makeModelQuery's OR.
+      // Selected makes come from the facet list, so match exactly (case-insensitive)
+      // rather than substring — "BMW" must not also pull in "BMW X".
+      ...(params.makes.length > 0
+        ? [
+            {
+              OR: params.makes.map((make) => ({
+                make: { equals: make, mode: Prisma.QueryMode.insensitive },
+              })),
+            },
+          ]
+        : []),
+      ...(params.dealsOnly ? [this.buildDealsOnlyWhere(params.referenceDate)] : []),
+    ];
+
+    return { AND: andClauses };
+  }
+
+  /**
+   * Aggregates facet data (make counts + price bounds) over base visibility only,
+   * so all options stay visible regardless of the user's current selections.
+   */
+  private async getSearchFacets(
+    baseWhere: Prisma.CarWhereInput,
+    rateField: RateField,
+  ): Promise<SearchFacetsDto> {
+    const [makeGroups, priceAggregate] = await Promise.all([
+      this.databaseService.car.groupBy({
+        by: ["make"],
+        where: baseWhere,
+        _count: { _all: true },
+      }),
+      this.databaseService.car.aggregate({
+        where: baseWhere,
+        _min: { dayRate: true, nightRate: true, fullDayRate: true, airportPickupRate: true },
+        _max: { dayRate: true, nightRate: true, fullDayRate: true, airportPickupRate: true },
+      }),
+    ]);
+
+    // Merge dirty values like "Toyota " and "Toyota" into a single entry.
+    const makeMap = new Map<string, { name: string; count: number }>();
+    for (const group of makeGroups) {
+      const name = group.make.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const existing = makeMap.get(key);
+      if (existing) {
+        existing.count += group._count._all;
+      } else {
+        makeMap.set(key, { name, count: group._count._all });
+      }
+    }
+
+    const makes = [...makeMap.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+    );
+
     return {
-      AND: [
-        {
-          ...(fleetOwnersToExclude.length > 0 && {
-            ownerId: { notIn: fleetOwnersToExclude },
-          }),
-          status: { in: [Status.AVAILABLE, Status.BOOKED] },
-          approvalStatus: CarApprovalStatus.APPROVED,
-          owner: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
-          ...(params.serviceTier && { serviceTier: params.serviceTier }),
-          ...(params.vehicleType && { vehicleType: params.vehicleType }),
-          ...(params.color && {
-            color: { contains: params.color, mode: Prisma.QueryMode.insensitive },
-          }),
-          ...(params.make && {
-            make: { contains: params.make, mode: Prisma.QueryMode.insensitive },
-          }),
-          ...(params.model && {
-            model: { contains: params.model, mode: Prisma.QueryMode.insensitive },
-          }),
-          ...(params.makeModelQuery && {
-            OR: [
-              { make: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
-              { model: { contains: params.makeModelQuery, mode: Prisma.QueryMode.insensitive } },
-            ],
-          }),
-        },
-      ],
+      makes,
+      price: {
+        min: priceAggregate._min[rateField] ?? 0,
+        max: priceAggregate._max[rateField] ?? 0,
+      },
     };
   }
 
@@ -220,7 +335,13 @@ export class CarSearchService {
 
     try {
       // Parse filters from query
-      const { serviceTier, vehicleType, makeModelQuery } = this.parseSearchFilters(query);
+      const { serviceTiers, vehicleTypes, makes, makeModelQuery } = this.parseSearchFilters(query);
+      const rateField = query.bookingType
+        ? CarSearchService.RATE_FIELD_BY_BOOKING_TYPE[query.bookingType]
+        : "dayRate";
+      // One reference date drives both the deals-only filter and promotion enrichment,
+      // so a dated search never disagrees with itself about which promos are active.
+      const referenceDate = query.from ?? new Date();
 
       // Get unavailable fleet owners for the date if provided
       const fleetOwnersToExclude = query.from
@@ -237,12 +358,19 @@ export class CarSearchService {
       // Build where clause
       const whereClause = this.buildWhereClause(
         {
-          serviceTier,
-          vehicleType,
+          serviceTiers,
+          vehicleTypes,
+          makes,
+          minPrice: query.minPrice,
+          maxPrice: query.maxPrice,
+          minCapacity: query.minCapacity,
+          fuelIncluded: query.fuelIncluded,
+          dealsOnly: query.dealsOnly,
           color: query.color,
-          make: query.make,
           model: query.model,
           makeModelQuery,
+          rateField,
+          referenceDate,
         },
         fleetOwnersToExclude,
       );
@@ -251,11 +379,35 @@ export class CarSearchService {
         availabilityInterval,
       );
 
+      const filters = {
+        serviceTiers,
+        vehicleTypes,
+        bookingType: query.bookingType ?? null,
+      };
+
+      // Lightweight count-only mode for the filter panel's live "Show N vehicles".
+      if (query.countOnly) {
+        const total = await this.databaseService.car.count({ where: searchWhereClause });
+        return {
+          cars: [],
+          filters,
+          facets: null,
+          pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            totalPages: Math.ceil(total / query.limit),
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        };
+      }
+
       // Pagination setup
       const take = query.limit;
       const skip = (query.page - 1) * query.limit;
 
-      const [totalCount, cars] = await Promise.all([
+      const [totalCount, cars, facets] = await Promise.all([
         this.databaseService.car.count({ where: searchWhereClause }),
         this.databaseService.car.findMany({
           where: searchWhereClause,
@@ -286,8 +438,8 @@ export class CarSearchService {
           skip,
           take,
         }),
+        this.getSearchFacets(this.buildBaseVisibilityWhere(fleetOwnersToExclude), rateField),
       ]);
-      const referenceDate = query.from ?? new Date();
       const carsWithPromotion = await this.carPromotionEnrichmentService.enrichCarsWithPromotion({
         cars,
         referenceDate,
@@ -314,11 +466,8 @@ export class CarSearchService {
 
       return {
         cars: enrichedCars,
-        filters: {
-          serviceTier: serviceTier ?? null,
-          vehicleType: vehicleType ?? null,
-          bookingType: query.bookingType ?? null,
-        },
+        filters,
+        facets,
         pagination: {
           page: query.page,
           limit: query.limit,

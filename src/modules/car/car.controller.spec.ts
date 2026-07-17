@@ -121,10 +121,11 @@ describe("CarController", () => {
           createMockSearchCar({ id: "car-2", serviceTier: ServiceTier.LUXURY }),
         ],
         filters: {
-          serviceTier: ServiceTier.LUXURY,
-          vehicleType: null,
+          serviceTiers: [ServiceTier.LUXURY],
+          vehicleTypes: [],
           bookingType: null,
         },
+        facets: null,
         pagination: {
           page: 1,
           limit: 12,
@@ -137,14 +138,14 @@ describe("CarController", () => {
       vi.mocked(carSearchService.searchCars).mockResolvedValueOnce(mockResponse);
 
       const result = await controller.searchCars({
-        serviceTier: ServiceTier.LUXURY,
+        serviceTier: [ServiceTier.LUXURY],
         page: 1,
         limit: 12,
       });
 
       expect(result).toEqual(mockResponse);
       expect(carSearchService.searchCars).toHaveBeenCalledWith({
-        serviceTier: ServiceTier.LUXURY,
+        serviceTier: [ServiceTier.LUXURY],
         page: 1,
         limit: 12,
       });
@@ -154,10 +155,11 @@ describe("CarController", () => {
       const emptyResponse: CarSearchResponseDto = {
         cars: [],
         filters: {
-          serviceTier: null,
-          vehicleType: null,
+          serviceTiers: [],
+          vehicleTypes: [],
           bookingType: null,
         },
+        facets: null,
         pagination: {
           page: 1,
           limit: 12,
@@ -179,10 +181,11 @@ describe("CarController", () => {
       const mockResponse: CarSearchResponseDto = {
         cars: [],
         filters: {
-          serviceTier: ServiceTier.EXECUTIVE,
-          vehicleType: VehicleType.SUV,
+          serviceTiers: [ServiceTier.EXECUTIVE],
+          vehicleTypes: [VehicleType.SUV],
           bookingType: BookingType.DAY,
         },
+        facets: null,
         pagination: {
           page: 2,
           limit: 10,
@@ -196,10 +199,10 @@ describe("CarController", () => {
 
       const query = {
         q: "Toyota",
-        serviceTier: ServiceTier.EXECUTIVE,
-        vehicleType: VehicleType.SUV,
+        serviceTier: [ServiceTier.EXECUTIVE],
+        vehicleType: [VehicleType.SUV],
         color: "Black",
-        make: "Toyota",
+        make: ["Toyota"],
         from: new Date("2024-03-01"),
         to: new Date("2024-03-02"),
         bookingType: BookingType.DAY,

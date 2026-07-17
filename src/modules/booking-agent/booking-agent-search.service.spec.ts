@@ -18,9 +18,10 @@ describe("BookingAgentSearchService", () => {
     cars,
     filters: {
       bookingType: null,
-      serviceTier: null,
-      vehicleType: null,
+      serviceTiers: [],
+      vehicleTypes: [],
     },
+    facets: null,
     pagination: {
       page: 1,
       limit: 10,
