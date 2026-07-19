@@ -14,6 +14,7 @@ import {
 import {
   FlightAlreadyLandedException,
   FlightAwareApiException,
+  FlightNonLagosDestinationException,
   FlightNotFoundException,
   InvalidFlightNumberException,
 } from "./flightaware.error";
@@ -158,11 +159,7 @@ export class FlightAwareService implements OnModuleDestroy {
     if (!destinationCode || !SUPPORTED_PICKUP_DESTINATIONS.has(destinationCode)) {
       const destinationName = flight.destinationIATA || flight.destination;
       const originName = flight.originIATA || flight.origin;
-
-      return {
-        message: `Flight ${flightNumber.toUpperCase()} flies from ${originName} to ${destinationName}. We only provide airport pickup for flights arriving in Lagos (LOS).`,
-        flight: null,
-      };
+      throw new FlightNonLagosDestinationException(flightNumber, originName, destinationName);
     }
 
     return {

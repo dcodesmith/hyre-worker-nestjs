@@ -246,8 +246,11 @@ export class BookingCreationService {
   ): Promise<FlightDataForBooking> {
     const pickupDateStr = format(pickupDate, "yyyy-MM-dd");
 
-    // FlightAwareService now throws FlightAwareException on validation errors
-    const flight = await this.flightAwareService.validateFlight(flightNumber, pickupDateStr);
+    // Airport pickup search enforces Lagos destination via typed error codes.
+    const { flight } = await this.flightAwareService.searchAirportPickupFlight(
+      flightNumber,
+      pickupDateStr,
+    );
 
     // Calculate drive time if we have the drop-off address
     let driveTimeMinutes: number | undefined;

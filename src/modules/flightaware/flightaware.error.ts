@@ -9,6 +9,7 @@ export const FlightAwareErrorCode = {
   FLIGHT_NOT_FOUND: "FLIGHT_NOT_FOUND",
   FLIGHT_ALREADY_LANDED: "FLIGHT_ALREADY_LANDED",
   INVALID_FLIGHT_NUMBER: "INVALID_FLIGHT_NUMBER",
+  NON_LAGOS_DESTINATION: "NON_LAGOS_DESTINATION",
   API_ERROR: "FLIGHTAWARE_API_ERROR",
   FLIGHT_RECORD_NOT_FOUND: "FLIGHT_RECORD_NOT_FOUND",
 } as const;
@@ -67,6 +68,20 @@ export class InvalidFlightNumberException extends FlightAwareException {
       `Invalid flight number format: ${flightNumber}. Expected format: 2-3 alphanumeric airline code + 1-5 digits (e.g., BA74, AA123)`,
       HttpStatus.BAD_REQUEST,
       "Invalid Flight Number",
+    );
+  }
+}
+
+/**
+ * Exception when a flight does not arrive at a supported pickup airport (Lagos / LOS).
+ */
+export class FlightNonLagosDestinationException extends FlightAwareException {
+  constructor(flightNumber: string, origin: string, destination: string) {
+    super(
+      FlightAwareErrorCode.NON_LAGOS_DESTINATION,
+      `Flight ${flightNumber.toUpperCase()} flies from ${origin} to ${destination}. We only provide airport pickup for flights arriving in Lagos (LOS).`,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      "Unsupported Pickup Destination",
     );
   }
 }

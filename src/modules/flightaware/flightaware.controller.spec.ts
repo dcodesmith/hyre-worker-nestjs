@@ -4,6 +4,7 @@ import { FlightStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlightAwareController } from "./flightaware.controller";
+import { FlightNonLagosDestinationException } from "./flightaware.error";
 import { FlightAwareService } from "./flightaware.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 
@@ -77,23 +78,17 @@ describe("FlightAwareController", () => {
     });
   });
 
-  it("returns informational response for non-Lagos flights", async () => {
-    vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValueOnce({
-      message:
-        "Flight BA74 flies from LHR to JFK. We only provide airport pickup for flights arriving in Lagos (LOS).",
-      flight: null,
-    });
+  it("propagates non-Lagos destination errors from the service", async () => {
+    vi.mocked(flightAwareService.searchAirportPickupFlight).mockRejectedValueOnce(
+      new FlightNonLagosDestinationException("BA74", "LHR", "JFK"),
+    );
 
-    const result = await controller.searchFlight({
-      flightNumber: "BA74",
-      date: "2030-01-01",
-    });
-
-    expect(result).toEqual({
-      message:
-        "Flight BA74 flies from LHR to JFK. We only provide airport pickup for flights arriving in Lagos (LOS).",
-      flight: null,
-    });
+    await expect(
+      controller.searchFlight({
+        flightNumber: "BA74",
+        date: "2030-01-01",
+      }),
+    ).rejects.toBeInstanceOf(FlightNonLagosDestinationException);
   });
 
   it("forwards webhook payload to webhook service", async () => {
