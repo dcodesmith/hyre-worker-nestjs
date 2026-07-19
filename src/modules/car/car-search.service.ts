@@ -15,6 +15,7 @@ import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.hel
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
+import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 import type {
   CarSearchQueryDto,
   CarSearchResponseDto,
@@ -36,6 +37,7 @@ export class CarSearchService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
+    private readonly carRatingsEnrichmentService: CarRatingsEnrichmentService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(CarSearchService.name);
@@ -445,8 +447,12 @@ export class CarSearchService {
         referenceDate,
         failureMessage: "Failed to enrich search results with promotions",
       });
+      const carsWithRatings = await this.carRatingsEnrichmentService.enrichCarsWithRatings({
+        cars: carsWithPromotion,
+        failureMessage: "Failed to enrich search results with ratings",
+      });
 
-      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
+      const enrichedCars = carsWithRatings.map(({ ownerId: _ownerId, ...car }) => car);
 
       // Calculate pagination
       const totalPages = Math.ceil(totalCount / query.limit);
@@ -541,7 +547,11 @@ export class CarSearchService {
         referenceDate: referenceDate ?? new Date(),
         failureMessage: "Failed to enrich public car with promotion",
       });
-      const { ownerId: _ownerId, ...publicCar } = carWithPromotion;
+      const [carWithRatings] = await this.carRatingsEnrichmentService.enrichCarsWithRatings({
+        cars: [carWithPromotion],
+        failureMessage: "Failed to enrich public car with ratings",
+      });
+      const { ownerId: _ownerId, ...publicCar } = carWithRatings;
 
       return publicCar;
     } catch (error) {

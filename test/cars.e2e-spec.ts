@@ -19,6 +19,7 @@ describe("Cars E2E Tests", () => {
   let secondOwnerCookie: string;
   let secondOwnerId: string;
   let userCookie: string;
+  let userId: string;
   let publicCarId: string;
   let ownerCarId: string;
 
@@ -63,6 +64,7 @@ describe("Cars E2E Tests", () => {
 
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("cars-user"), "user");
     userCookie = userAuth.cookie;
+    userId = userAuth.user.id;
 
     await databaseService.user.update({
       where: { id: ownerId },
@@ -197,6 +199,13 @@ describe("Cars E2E Tests", () => {
     for (const cat of response.body.categories as { type?: string }[]) {
       expect(["vehicleType", "serviceTier", "make"]).toContain(cat.type);
     }
+    for (const car of response.body.allCars as {
+      averageRating?: number;
+      totalReviews?: number;
+    }[]) {
+      expect(typeof car.averageRating).toBe("number");
+      expect(typeof car.totalReviews).toBe("number");
+    }
   });
 
   it("GET /api/cars/search returns public search payload", async () => {
@@ -207,6 +216,53 @@ describe("Cars E2E Tests", () => {
     expect(response.body.pagination.page).toBe(1);
     expect(response.body.pagination.limit).toBe(12);
     expect(response.body.pagination.total).toBeGreaterThanOrEqual(1);
+    for (const car of response.body.cars as {
+      averageRating?: number;
+      totalReviews?: number;
+    }[]) {
+      expect(typeof car.averageRating).toBe("number");
+      expect(typeof car.totalReviews).toBe("number");
+    }
+  });
+
+  it("GET /api/cars/search and categories include aggregated ratings for reviewed cars", async () => {
+    const booking = await factory.createBooking(userId, publicCarId, {
+      status: "COMPLETED",
+    });
+    await factory.createReview(booking.id, userId, {
+      carRating: 5,
+      overallRating: 5,
+    });
+
+    const searchResponse = await request(app.getHttpServer()).get(
+      `/api/cars/search?page=1&limit=50`,
+    );
+    expect(searchResponse.status).toBe(HttpStatus.OK);
+    const searchCar = (
+      searchResponse.body.cars as {
+        id: string;
+        averageRating: number;
+        totalReviews: number;
+      }[]
+    ).find((car) => car.id === publicCarId);
+    expect(searchCar).toBeDefined();
+    expect(searchCar?.averageRating).toBe(5);
+    expect(searchCar?.totalReviews).toBeGreaterThanOrEqual(1);
+
+    const categoriesResponse = await request(app.getHttpServer()).get(
+      "/api/cars/categories?limit=50",
+    );
+    expect(categoriesResponse.status).toBe(HttpStatus.OK);
+    const categoryCar = (
+      categoriesResponse.body.allCars as {
+        id: string;
+        averageRating: number;
+        totalReviews: number;
+      }[]
+    ).find((car) => car.id === publicCarId);
+    expect(categoryCar).toBeDefined();
+    expect(categoryCar?.averageRating).toBe(5);
+    expect(categoryCar?.totalReviews).toBeGreaterThanOrEqual(1);
   });
 
   it("GET /api/cars/:carId returns approved public car detail", async () => {

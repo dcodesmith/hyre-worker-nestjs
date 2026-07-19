@@ -4,6 +4,7 @@ import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
+import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 import type {
   CarCategoriesQueryDto,
   CarCategoriesResponseDto,
@@ -18,6 +19,7 @@ export class CarCategoriesService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
+    private readonly carRatingsEnrichmentService: CarRatingsEnrichmentService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(CarCategoriesService.name);
@@ -83,8 +85,12 @@ export class CarCategoriesService {
         failureMessage:
           "Promotion enrichment failed for categorized cars; returning cars without promotions",
       });
+      const carsWithRatings = await this.carRatingsEnrichmentService.enrichCarsWithRatings({
+        cars: carsWithPromotion,
+        failureMessage: "Failed to enrich categorized cars with ratings",
+      });
 
-      const enrichedCars = carsWithPromotion.map(({ ownerId: _ownerId, ...car }) => car);
+      const enrichedCars = carsWithRatings.map(({ ownerId: _ownerId, ...car }) => car);
 
       const categories = this.categorizeCars(enrichedCars);
 

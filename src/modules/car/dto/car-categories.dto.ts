@@ -31,6 +31,10 @@ export interface PublicCarDto {
   serviceTier: ServiceTier;
   images: { url: string }[];
   promotion: CarPromotionDto | null;
+  /** Visible-review average (0 when none). */
+  averageRating: number;
+  /** Visible review count (0 when none). */
+  totalReviews: number;
 }
 
 /**

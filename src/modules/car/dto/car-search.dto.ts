@@ -137,6 +137,10 @@ export interface SearchCarDto {
   images: { url: string }[];
   owner: CarOwnerDto;
   promotion: CarPromotionDto | null;
+  /** Visible-review average (0 when none). */
+  averageRating: number;
+  /** Visible review count (0 when none). */
+  totalReviews: number;
 }
 
 /**
