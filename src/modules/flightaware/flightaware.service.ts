@@ -10,6 +10,7 @@ import {
   IATA_TO_ICAO_MAP,
   ISO_DATE_ONLY_REGEX,
   parseIsoDateOnlyToUtc,
+  toFlightAwareDateTime,
 } from "./flightaware.const";
 import {
   FlightAlreadyLandedException,
@@ -266,8 +267,8 @@ export class FlightAwareService implements OnModuleDestroy {
     endDate: Date,
     pickupDate: string,
   ): Promise<InternalFlightResult> {
-    const start = startDate.toISOString();
-    const end = endDate.toISOString();
+    const start = toFlightAwareDateTime(startDate);
+    const end = toFlightAwareDateTime(endDate);
 
     const tryFlightNumber = async (flightNum: string): Promise<InternalFlightResult | null> => {
       const apiUrl = `/flights/${flightNum}?start=${start}&end=${end}`;
@@ -391,7 +392,10 @@ export class FlightAwareService implements OnModuleDestroy {
     operation = "fetchFlight",
   ): InternalFlightResult {
     const errorInfo = this.httpClientService.handleError(error, operation, "FlightAware");
-    this.logger.warn({ operation, status: errorInfo.status, flightNum }, "FlightAware API error");
+    this.logger.warn(
+      { operation, status: errorInfo.status, flightNum, detail: errorInfo.message },
+      "FlightAware API error",
+    );
 
     if (errorInfo.status === HttpStatus.NOT_FOUND) {
       return { type: "notFound" };

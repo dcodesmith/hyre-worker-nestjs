@@ -27,6 +27,10 @@ export const parseIsoDateOnlyToUtc = (value: string): Date | null => {
   return date;
 };
 
+/** AeroAPI rejects fractional seconds — hireApp parity. */
+export const toFlightAwareDateTime = (date: Date): string =>
+  date.toISOString().replace(/\.\d{3}Z$/, "Z");
+
 export const IATA_TO_ICAO_MAP: Record<string, string> = {
   // International carriers
   AF: "AFR", // Air France
