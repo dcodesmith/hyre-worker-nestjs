@@ -118,9 +118,10 @@ export interface CreateAlertParams {
   events?: string[];
 }
 
-export type SearchFlightResult =
-  | { flight: null; message: string }
-  | { flight: ValidatedFlight; warning?: string };
+export type SearchFlightResult = {
+  flight: ValidatedFlight;
+  warning?: string;
+};
 
 export type FlightAwareWebhookResult = {
   duplicate: boolean;

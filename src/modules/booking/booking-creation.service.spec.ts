@@ -154,7 +154,7 @@ describe("BookingCreationService", () => {
         {
           provide: FlightAwareService,
           useValue: {
-            validateFlight: vi.fn(),
+            searchAirportPickupFlight: vi.fn(),
           },
         },
         {
@@ -546,7 +546,9 @@ describe("BookingCreationService", () => {
         status: "Scheduled",
         isLive: true,
       };
-      vi.mocked(flightAwareService.validateFlight).mockResolvedValue(validatedFlight);
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+        flight: validatedFlight,
+      });
 
       vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
         durationMinutes: 60,
@@ -610,7 +612,10 @@ describe("BookingCreationService", () => {
       const result = await service.createBooking({ input: booking, sessionUser: user });
 
       expect(result.bookingId).toBe("booking-123");
-      expect(flightAwareService.validateFlight).toHaveBeenCalledWith("BA74", "2025-02-01");
+      expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith(
+        "BA74",
+        "2025-02-01",
+      );
       expect(mapsService.calculateAirportTripDuration).toHaveBeenCalledWith(
         "Victoria Island, Lagos",
       );
@@ -621,7 +626,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
-      vi.mocked(flightAwareService.validateFlight).mockRejectedValue(
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockRejectedValue(
         new FlightNotFoundException("INVALID123", "2025-02-01"),
       );
 
@@ -644,7 +649,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
-      vi.mocked(flightAwareService.validateFlight).mockRejectedValue(
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockRejectedValue(
         new FlightAlreadyLandedException("BA74", "2:30 PM", "2025-02-02"),
       );
 

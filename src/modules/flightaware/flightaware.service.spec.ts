@@ -12,6 +12,7 @@ import { HttpClientService } from "../http-client/http-client.service";
 import {
   FlightAlreadyLandedException,
   FlightAwareApiException,
+  FlightNonLagosDestinationException,
   FlightNotFoundException,
   InvalidFlightNumberException,
 } from "./flightaware.error";
@@ -384,6 +385,35 @@ describe("FlightAwareService", () => {
   });
 
   describe("searchAirportPickupFlight", () => {
+    it("should throw NON_LAGOS_DESTINATION when flight does not arrive in Lagos", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-123",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "KJFK", code_iata: "JFK" },
+              scheduled_on: "2025-12-25T14:00:00Z",
+              estimated_on: "2025-12-25T14:30:00Z",
+              status: "Scheduled",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const error = await service
+        .searchAirportPickupFlight("BA74", "2025-12-25")
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(FlightNonLagosDestinationException);
+      expect((error as FlightNonLagosDestinationException).getErrorCode()).toBe(
+        "NON_LAGOS_DESTINATION",
+      );
+    });
+
     it("should allow pickup when destination IATA is missing but ICAO is DNMM", async () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: {
