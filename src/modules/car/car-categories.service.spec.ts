@@ -342,6 +342,45 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]?.totalReviews).toBe(2);
     });
 
+    it("keeps promotion when ratings are also enriched", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      promotionServiceMock.getActivePromotionsForCars.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-1",
+            {
+              id: "promo-1",
+              name: "Weekend Deal",
+              discountValue: 10,
+            },
+          ],
+        ]),
+      );
+      reviewsReadServiceMock.getBatchCarRatings.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-1",
+            {
+              averageRating: 5,
+              totalReviews: 1,
+              ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 1 },
+            },
+          ],
+        ]),
+      );
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars[0]?.promotion).toEqual({
+        id: "promo-1",
+        name: "Weekend Deal",
+        discountValue: 10,
+      });
+      expect(result.allCars[0]?.averageRating).toBe(5);
+      expect(result.allCars[0]?.totalReviews).toBe(1);
+    });
+
     it("fails open with zero ratings when ratings enrichment throws", async () => {
       const cars = [createMockCar({ id: "car-1" })];
       databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);

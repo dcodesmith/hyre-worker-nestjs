@@ -60,4 +60,37 @@ describe("CarRatingsEnrichmentService", () => {
       "ratings batch failed",
     );
   });
+
+  it("preserves existing promotion fields on the car", async () => {
+    const { service, reviewsReadService } = createSut();
+    reviewsReadService.getBatchCarRatings.mockResolvedValueOnce(
+      new Map([
+        [
+          "car-1",
+          {
+            averageRating: 5,
+            totalReviews: 1,
+            ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 1 },
+          },
+        ],
+      ]),
+    );
+
+    const result = await service.enrichCarsWithRatings({
+      cars: [
+        {
+          id: "car-1",
+          promotion: { id: "promo-1", name: "Weekend Deal", discountValue: 20 },
+        },
+      ],
+      failureMessage: "ratings batch failed",
+    });
+
+    expect(result[0]).toEqual({
+      id: "car-1",
+      promotion: { id: "promo-1", name: "Weekend Deal", discountValue: 20 },
+      averageRating: 5,
+      totalReviews: 1,
+    });
+  });
 });
