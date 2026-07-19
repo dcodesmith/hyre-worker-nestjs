@@ -1,26 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { Test, type TestingModule } from "@nestjs/testing";
+import { PinoLogger } from "nestjs-pino";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
+import { ReviewsReadService } from "../reviews/reviews-read.service";
 import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 
 describe("CarRatingsEnrichmentService", () => {
-  const createSut = () => {
-    const reviewsReadService = {
-      getBatchCarRatings: vi.fn(),
-    };
-    const logger = {
-      setContext: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    };
-    const service = new CarRatingsEnrichmentService(reviewsReadService as never, logger as never);
-
-    return { service, reviewsReadService, logger };
+  let service: CarRatingsEnrichmentService;
+  const reviewsReadServiceMock = {
+    getBatchCarRatings: vi.fn(),
   };
+  const logger = createMockPinoLogger();
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    reviewsReadServiceMock.getBatchCarRatings.mockResolvedValue(new Map());
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CarRatingsEnrichmentService,
+        { provide: ReviewsReadService, useValue: reviewsReadServiceMock },
+        { provide: PinoLogger, useValue: logger },
+      ],
+    }).compile();
+
+    service = module.get(CarRatingsEnrichmentService);
+  });
 
   it("attaches averageRating and totalReviews from batch lookup", async () => {
-    const { service, reviewsReadService } = createSut();
-    reviewsReadService.getBatchCarRatings.mockResolvedValueOnce(
+    reviewsReadServiceMock.getBatchCarRatings.mockResolvedValueOnce(
       new Map([
         [
           "car-1",
@@ -38,7 +46,7 @@ describe("CarRatingsEnrichmentService", () => {
       failureMessage: "ratings batch failed",
     });
 
-    expect(reviewsReadService.getBatchCarRatings).toHaveBeenCalledWith(["car-1", "car-2"]);
+    expect(reviewsReadServiceMock.getBatchCarRatings).toHaveBeenCalledWith(["car-1", "car-2"]);
     expect(result).toEqual([
       { id: "car-1", averageRating: 4.5, totalReviews: 2 },
       { id: "car-2", averageRating: 0, totalReviews: 0 },
@@ -46,8 +54,7 @@ describe("CarRatingsEnrichmentService", () => {
   });
 
   it("fails open with zero ratings when batch lookup throws", async () => {
-    const { service, reviewsReadService, logger } = createSut();
-    reviewsReadService.getBatchCarRatings.mockRejectedValueOnce(new Error("ratings down"));
+    reviewsReadServiceMock.getBatchCarRatings.mockRejectedValueOnce(new Error("ratings down"));
 
     const result = await service.enrichCarsWithRatings({
       cars: [{ id: "car-1" }],
@@ -62,8 +69,7 @@ describe("CarRatingsEnrichmentService", () => {
   });
 
   it("preserves existing promotion fields on the car", async () => {
-    const { service, reviewsReadService } = createSut();
-    reviewsReadService.getBatchCarRatings.mockResolvedValueOnce(
+    reviewsReadServiceMock.getBatchCarRatings.mockResolvedValueOnce(
       new Map([
         [
           "car-1",
