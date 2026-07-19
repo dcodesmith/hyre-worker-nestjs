@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ISO_DATE_ONLY_REGEX, parseIsoDateOnlyToUtc } from "./flightaware.const";
+import {
+  ISO_DATE_ONLY_REGEX,
+  parseIsoDateOnlyToUtc,
+  toFlightAwareDateTime,
+} from "./flightaware.const";
 
 describe("flightaware.const", () => {
   describe("ISO_DATE_ONLY_REGEX", () => {
@@ -28,6 +32,17 @@ describe("flightaware.const", () => {
     it("should return null for non date-only values", () => {
       expect(parseIsoDateOnlyToUtc("2025-12-25T00:00:00Z")).toBeNull();
       expect(parseIsoDateOnlyToUtc("2025/12/25")).toBeNull();
+    });
+  });
+
+  describe("toFlightAwareDateTime", () => {
+    it("should strip fractional seconds", () => {
+      expect(toFlightAwareDateTime(new Date("2026-07-20T12:00:00.000Z"))).toBe(
+        "2026-07-20T12:00:00Z",
+      );
+      expect(toFlightAwareDateTime(new Date("2026-07-21T18:50:02.201Z"))).toBe(
+        "2026-07-21T18:50:02Z",
+      );
     });
   });
 });

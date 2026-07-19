@@ -133,6 +133,9 @@ describe("FlightAwareService", () => {
       const result1 = await service.validateFlight("BA74", "2025-12-25");
       expect(result1.flightId).toBe("BA74-123");
       expect(mockHttpClient.get).toHaveBeenCalledTimes(1);
+      const liveUrl = mockHttpClient.get.mock.calls[0]?.[0] as string;
+      expect(liveUrl).toContain("start=2025-12-24T12:00:00Z");
+      expect(liveUrl).toContain("end=2025-12-26T12:00:00Z");
 
       // Second call - should use cache
       const result2 = await service.validateFlight("BA74", "2025-12-25");
