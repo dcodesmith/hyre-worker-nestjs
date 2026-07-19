@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
+import { ReviewsReadService } from "../reviews/reviews-read.service";
 import { CarFetchFailedException } from "./car.error";
 import { CarCategoriesService } from "./car-categories.service";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
+import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 import type { PublicCarDto } from "./dto/car-categories.dto";
 
 describe("CarCategoriesService", () => {
@@ -19,6 +21,9 @@ describe("CarCategoriesService", () => {
   };
   const promotionServiceMock = {
     getActivePromotionsForCars: vi.fn(),
+  };
+  const reviewsReadServiceMock = {
+    getBatchCarRatings: vi.fn(),
   };
 
   const createMockCar = (
@@ -36,18 +41,23 @@ describe("CarCategoriesService", () => {
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
     promotion: null,
+    averageRating: 0,
+    totalReviews: 0,
     ...overrides,
   });
 
   beforeEach(async () => {
     vi.clearAllMocks();
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
+    reviewsReadServiceMock.getBatchCarRatings.mockResolvedValue(new Map());
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CarCategoriesService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
+        { provide: ReviewsReadService, useValue: reviewsReadServiceMock },
         CarPromotionEnrichmentService,
+        CarRatingsEnrichmentService,
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -308,6 +318,40 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]?.id).toBe("car-1");
       expect(result.allCars[0]?.promotion).toBeNull();
       expect(result.allCars[0]).not.toHaveProperty("ownerId");
+    });
+
+    it("enriches cars with ratings from batch lookup", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      reviewsReadServiceMock.getBatchCarRatings.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-1",
+            {
+              averageRating: 4,
+              totalReviews: 2,
+              ratingDistribution: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
+            },
+          ],
+        ]),
+      );
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars[0]?.averageRating).toBe(4);
+      expect(result.allCars[0]?.totalReviews).toBe(2);
+    });
+
+    it("fails open with zero ratings when ratings enrichment throws", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      reviewsReadServiceMock.getBatchCarRatings.mockRejectedValueOnce(new Error("ratings down"));
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars).toHaveLength(1);
+      expect(result.allCars[0]?.averageRating).toBe(0);
+      expect(result.allCars[0]?.totalReviews).toBe(0);
     });
 
     it("uses query.from as promotion reference date when provided", async () => {

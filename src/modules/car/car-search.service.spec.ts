@@ -10,8 +10,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
+import { ReviewsReadService } from "../reviews/reviews-read.service";
 import { CarFetchFailedException, CarNotFoundException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
+import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 import { CarSearchService } from "./car-search.service";
 import type { SearchCarDto } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
@@ -39,6 +41,9 @@ describe("CarSearchService", () => {
     getActivePromotionsForCars: vi.fn(),
     getActivePromotionForCar: vi.fn(),
   };
+  const reviewsReadServiceMock = {
+    getBatchCarRatings: vi.fn(),
+  };
 
   const createMockCar = (
     overrides: Partial<SearchCarDto & { ownerId: string }> = {},
@@ -60,6 +65,8 @@ describe("CarSearchService", () => {
     images: [{ url: "https://example.com/car.jpg" }],
     owner: { username: "fleetowner1", name: "Fleet Owner" },
     promotion: null,
+    averageRating: 0,
+    totalReviews: 0,
     ...overrides,
   });
 
@@ -71,12 +78,15 @@ describe("CarSearchService", () => {
     databaseServiceMock.car.aggregate.mockResolvedValue({ _min: {}, _max: {} });
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
+    reviewsReadServiceMock.getBatchCarRatings.mockResolvedValue(new Map());
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CarSearchService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
+        { provide: ReviewsReadService, useValue: reviewsReadServiceMock },
         CarPromotionEnrichmentService,
+        CarRatingsEnrichmentService,
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -455,6 +465,42 @@ describe("CarSearchService", () => {
       expect(result.cars[0]?.promotion).toBeNull();
     });
 
+    it("enriches returned cars with ratings when available", async () => {
+      const cars = [createMockCar({ id: "car-rated" })];
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      reviewsReadServiceMock.getBatchCarRatings.mockResolvedValueOnce(
+        new Map([
+          [
+            "car-rated",
+            {
+              averageRating: 5,
+              totalReviews: 1,
+              ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 1 },
+            },
+          ],
+        ]),
+      );
+
+      const result = await service.searchCars({ page: 1, limit: 12 });
+
+      expect(result.cars[0]?.averageRating).toBe(5);
+      expect(result.cars[0]?.totalReviews).toBe(1);
+    });
+
+    it("returns cars with zero ratings when ratings enrichment fails", async () => {
+      const cars = [createMockCar({ id: "car-1" })];
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
+      reviewsReadServiceMock.getBatchCarRatings.mockRejectedValueOnce(new Error("ratings down"));
+
+      const result = await service.searchCars({ page: 1, limit: 12 });
+
+      expect(result.cars).toHaveLength(1);
+      expect(result.cars[0]?.averageRating).toBe(0);
+      expect(result.cars[0]?.totalReviews).toBe(0);
+    });
+
     it("only selects approved images for public search results", async () => {
       databaseServiceMock.car.count.mockResolvedValueOnce(0);
       databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
@@ -607,6 +653,8 @@ describe("CarSearchService", () => {
         id: "car-123",
         owner: { username: "fleetowner1", name: "Fleet Owner" },
         promotion: null,
+        averageRating: 0,
+        totalReviews: 0,
       });
       expect("ownerId" in result).toBe(false);
       expect(databaseServiceMock.car.findFirst).toHaveBeenCalledWith(

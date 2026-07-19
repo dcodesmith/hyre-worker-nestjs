@@ -115,20 +115,54 @@ export class ReviewsReadService {
     };
   }
 
-  private async getCarRatings(carId: string): Promise<AggregatedRatings> {
-    // This reads all ratings into memory (O(n)); consider DB-side aggregation
-    // (groupBy/avg/count) or cached aggregates when review volume grows.
+  /**
+   * Batch card ratings for list endpoints (search/categories).
+   * One query for all carIds; cars with no visible reviews get zeros.
+   */
+  async getBatchCarRatings(carIds: string[]): Promise<Map<string, AggregatedRatings>> {
+    const result = new Map<string, AggregatedRatings>();
+    if (carIds.length === 0) {
+      return result;
+    }
+
+    const ratingsByCarId = new Map<string, number[]>();
+    for (const carId of carIds) {
+      ratingsByCarId.set(carId, []);
+    }
+
+    // This reads all matching ratings into memory (O(n)); consider DB-side
+    // aggregation or cached aggregates when review volume grows.
     const reviews = await this.databaseService.review.findMany({
       where: {
         isVisible: true,
-        booking: { carId },
+        booking: { carId: { in: carIds } },
       },
       select: {
         carRating: true,
+        booking: { select: { carId: true } },
       },
     });
 
-    return this.calculateRatings(reviews.map((review) => review.carRating));
+    for (const review of reviews) {
+      ratingsByCarId.get(review.booking.carId)?.push(review.carRating);
+    }
+
+    for (const [carId, ratings] of ratingsByCarId) {
+      result.set(carId, this.calculateRatings(ratings));
+    }
+
+    return result;
+  }
+
+  private async getCarRatings(carId: string): Promise<AggregatedRatings> {
+    const ratingsByCarId = await this.getBatchCarRatings([carId]);
+    return (
+      ratingsByCarId.get(carId) ?? {
+        averageRating: 0,
+        totalReviews: 0,
+        ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+      }
+    );
   }
 
   private async getChauffeurRatings(chauffeurId: string): Promise<AggregatedRatings> {

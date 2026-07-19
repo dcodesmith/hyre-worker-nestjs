@@ -54,7 +54,10 @@ describe("ReviewsReadService", () => {
   it("returns car reviews with pagination", async () => {
     vi.mocked(databaseService.review.findMany)
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([createReview({ carRating: 5 }), createReview({ carRating: 4 })]);
+      .mockResolvedValueOnce([
+        { carRating: 5, booking: { carId: "car-1" } },
+        { carRating: 4, booking: { carId: "car-1" } },
+      ] as never);
     vi.mocked(databaseService.review.count).mockResolvedValueOnce(0);
 
     const result = await service.getCarReviews("car-1", {
@@ -65,6 +68,11 @@ describe("ReviewsReadService", () => {
 
     expect(result.pagination.page).toBe(1);
     expect(result).toHaveProperty("ratings");
+    expect(result.ratings).toEqual({
+      averageRating: 4.5,
+      totalReviews: 2,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 1 },
+    });
     expect(databaseService.review.findMany).toHaveBeenCalledTimes(2);
     const listQueryArgs = vi.mocked(databaseService.review.findMany).mock.calls[0]?.[0] as
       | ReviewFindManyCallArg
@@ -147,5 +155,48 @@ describe("ReviewsReadService", () => {
       | undefined;
     expect(listQueryArgs?.where.booking.chauffeurId).toBe("chauffeur-1");
     expect(listQueryArgs?.where.booking.carId).toBeUndefined();
+  });
+
+  it("batches car ratings for multiple cars in one query", async () => {
+    vi.mocked(databaseService.review.findMany).mockResolvedValueOnce([
+      { carRating: 5, booking: { carId: "car-1" } },
+      { carRating: 3, booking: { carId: "car-1" } },
+      { carRating: 4, booking: { carId: "car-2" } },
+    ] as never);
+
+    const result = await service.getBatchCarRatings(["car-1", "car-2", "car-3"]);
+
+    expect(databaseService.review.findMany).toHaveBeenCalledWith({
+      where: {
+        isVisible: true,
+        booking: { carId: { in: ["car-1", "car-2", "car-3"] } },
+      },
+      select: {
+        carRating: true,
+        booking: { select: { carId: true } },
+      },
+    });
+    expect(result.get("car-1")).toEqual({
+      averageRating: 4,
+      totalReviews: 2,
+      ratingDistribution: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
+    });
+    expect(result.get("car-2")).toEqual({
+      averageRating: 4,
+      totalReviews: 1,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 0 },
+    });
+    expect(result.get("car-3")).toEqual({
+      averageRating: 0,
+      totalReviews: 0,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
+  });
+
+  it("returns empty map for empty car id list without querying", async () => {
+    const result = await service.getBatchCarRatings([]);
+
+    expect(result.size).toBe(0);
+    expect(databaseService.review.findMany).not.toHaveBeenCalled();
   });
 });
