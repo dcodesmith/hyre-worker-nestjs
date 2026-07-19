@@ -58,6 +58,7 @@ describe("FlightAwareService", () => {
     service.onModuleDestroy();
     vi.useRealTimers();
   });
+
   describe("lifecycle hooks", () => {
     it("should clear the cache cleanup interval on module destroy", () => {
       // Verify onModuleDestroy can be called without errors
@@ -434,11 +435,9 @@ describe("FlightAwareService", () => {
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
 
       const result = await service.searchAirportPickupFlight("BA74", "2025-12-25");
-      expect(result.flight).not.toBeNull();
-      if (result.flight) {
-        expect(result.flight.destination).toBe("DNMM");
-        expect(result.flight.destinationIATA).toBeUndefined();
-      }
+
+      expect(result.flight.destination).toBe("DNMM");
+      expect(result.flight.destinationIATA).toBeUndefined();
     });
 
     it("should allow pickup when destination IATA is empty and ICAO is DNMM", async () => {
