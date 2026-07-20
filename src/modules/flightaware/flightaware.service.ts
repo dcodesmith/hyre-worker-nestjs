@@ -607,11 +607,11 @@ export class FlightAwareService implements OnModuleDestroy {
     const scheduledArrival = flight.scheduled_in ?? flight.scheduled_on;
     const estimatedArrival = flight.estimated_in ?? flight.estimated_on ?? undefined;
     const actualArrival = flight.actual_in ?? flight.actual_on ?? undefined;
-    const authoritativeArrival = flight.actual_in
-      ? { arrivalTime: flight.actual_in, arrivalTimeSource: "actual" as const }
-      : flight.estimated_in
-        ? { arrivalTime: flight.estimated_in, arrivalTimeSource: "estimated" as const }
-        : this.resolveArrivalTime(scheduledArrival, estimatedArrival, actualArrival);
+    const authoritativeArrival = this.resolveArrivalTime(
+      scheduledArrival,
+      estimatedArrival,
+      actualArrival,
+    );
 
     return {
       scheduledArrival,

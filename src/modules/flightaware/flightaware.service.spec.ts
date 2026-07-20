@@ -177,6 +177,37 @@ describe("FlightAwareService", () => {
       expect(result.actualArrival).toBeUndefined();
     });
 
+    it("should prefer a runway actual over a stale gate estimate", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "DAL54",
+              fa_flight_id: "DAL54-20260720",
+              origin: { code: "KATL", code_iata: "ATL" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_on: "2026-07-20T08:12:00Z",
+              scheduled_in: "2026-07-20T08:45:00Z",
+              estimated_in: "2026-07-20T09:05:00Z",
+              actual_on: "2026-07-20T09:10:00Z",
+              actual_in: null,
+              status: "Landed / Taxiing",
+            },
+          ],
+        },
+      });
+      vi.setSystemTime(new Date("2026-07-20T09:00:00Z"));
+
+      const result = await service.validateFlight("DL54", "2026-07-20");
+
+      expect(result).toMatchObject({
+        estimatedArrival: "2026-07-20T09:05:00Z",
+        actualArrival: "2026-07-20T09:10:00Z",
+        arrivalTime: "2026-07-20T09:10:00Z",
+        arrivalTimeSource: "actual",
+      });
+    });
+
     it("should refresh a live flight after the one-minute cache TTL", async () => {
       const createLiveResponse = (estimatedIn: string) => ({
         data: {
