@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+import { Controller, Get, Header, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
 import { ZodBody, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
 import { flightAwareWebhookSchema } from "./dto/flightaware-webhook.dto";
@@ -17,6 +17,7 @@ export class FlightAwareController {
   ) {}
 
   @Get("search-flight")
+  @Header("Cache-Control", "no-store")
   async searchFlight(
     @ZodQuery(searchFlightQuerySchema) query: SearchFlightQueryDto,
   ): Promise<SearchFlightResult> {

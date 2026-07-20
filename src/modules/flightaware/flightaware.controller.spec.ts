@@ -63,6 +63,8 @@ describe("FlightAwareController", () => {
         destination: "DNMM",
         destinationIATA: "LOS",
         scheduledArrival: "2030-01-01T13:00:00.000Z",
+        arrivalTime: "2030-01-01T13:00:00.000Z",
+        arrivalTimeSource: "scheduled",
       },
     });
 
