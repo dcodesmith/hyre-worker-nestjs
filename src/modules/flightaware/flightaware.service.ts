@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable, OnModuleDestroy } from "@nestjs/common";
+import { HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosInstance } from "axios";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
@@ -27,6 +27,7 @@ import type {
   SearchFlightResult,
   ValidatedFlight,
 } from "./flightaware.interface";
+import { FlightAwareCacheService } from "./flightaware-cache.service";
 
 /**
  * Internal result type for flight validation (used for caching and internal processing).
@@ -40,35 +41,22 @@ type InternalFlightResult =
 
 const SUPPORTED_PICKUP_DESTINATIONS = new Set(["LOS"]);
 const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
-const LIVE_FLIGHT_CACHE_TTL_MS = 60 * 1000;
-const SCHEDULED_FLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const NOT_FOUND_CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_CLEANUP_INTERVAL_MS = Math.min(
-  LIVE_FLIGHT_CACHE_TTL_MS,
-  SCHEDULED_FLIGHT_CACHE_TTL_MS,
-  NOT_FOUND_CACHE_TTL_MS,
-);
 
 /**
  * Service for interacting with FlightAware AeroAPI
  * Handles flight validation and alert management
  */
 @Injectable()
-export class FlightAwareService implements OnModuleDestroy {
+export class FlightAwareService {
   private readonly apiKey: string;
   private readonly timezone: string;
   private readonly baseUrl = "https://aeroapi.flightaware.com/aeroapi";
   private readonly httpClient: AxiosInstance;
-  private readonly cleanupIntervalId: NodeJS.Timeout;
 
-  /** In-memory cache for flight validation results (null = not found) */
-  private readonly flightCache = new Map<
-    string,
-    { data: ValidatedFlight | null; expiresAt: number }
-  >();
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
+    private readonly cacheService: FlightAwareCacheService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(FlightAwareService.name);
@@ -84,12 +72,6 @@ export class FlightAwareService implements OnModuleDestroy {
       },
       serviceName: "FlightAware",
     });
-
-    // Start periodic cache cleanup
-    this.cleanupIntervalId = setInterval(
-      () => this.cleanupExpiredCacheEntries(),
-      CACHE_CLEANUP_INTERVAL_MS,
-    );
   }
 
   /**
@@ -113,7 +95,7 @@ export class FlightAwareService implements OnModuleDestroy {
     const normalizedPickupDate = this.normalizePickupDate(pickupDate);
 
     // 2. Check cache
-    const cached = this.getCachedFlight(normalizedFlightNumber, normalizedPickupDate);
+    const cached = await this.cacheService.get(normalizedFlightNumber, normalizedPickupDate);
     if (cached !== undefined) {
       this.logger.debug(
         { flightNumber: normalizedFlightNumber, pickupDate: normalizedPickupDate },
@@ -184,20 +166,18 @@ export class FlightAwareService implements OnModuleDestroy {
   /**
    * Convert internal flight result to either a ValidatedFlight or throw an exception.
    */
-  private handleFlightResult(
+  private async handleFlightResult(
     result: InternalFlightResult,
     flightNumber: string,
     pickupDate: string,
-  ): ValidatedFlight {
+  ): Promise<ValidatedFlight> {
     switch (result.type) {
       case "success":
-        // Cache successful result
-        this.setCachedFlight(flightNumber, pickupDate, result.flight);
+        await this.cacheService.set(flightNumber, pickupDate, result.flight);
         return result.flight;
 
       case "notFound":
-        // Cache not found result
-        this.setCachedFlight(flightNumber, pickupDate, null);
+        await this.cacheService.set(flightNumber, pickupDate, null);
         throw new FlightNotFoundException(flightNumber, pickupDate);
 
       case "alreadyLanded":
@@ -669,72 +649,5 @@ export class FlightAwareService implements OnModuleDestroy {
       minute: "2-digit",
       hour12: true,
     });
-  }
-
-  // Cache methods
-
-  private getCacheKey(flightNumber: string, date: string): string {
-    return `flight:${flightNumber.toUpperCase()}:${date}`;
-  }
-
-  /**
-   * Get cached flight result.
-   * @returns ValidatedFlight if found and valid, null if flight was cached as not found,
-   *          undefined if not in cache or expired
-   */
-  private getCachedFlight(flightNumber: string, date: string): ValidatedFlight | null | undefined {
-    const key = this.getCacheKey(flightNumber, date);
-    const cached = this.flightCache.get(key);
-
-    if (!cached) return undefined;
-
-    if (Date.now() >= cached.expiresAt) {
-      this.flightCache.delete(key);
-      return undefined;
-    }
-
-    return cached.data;
-  }
-
-  /**
-   * Cache a flight result.
-   * @param data - ValidatedFlight for successful lookup, null for not found
-   */
-  private setCachedFlight(flightNumber: string, date: string, data: ValidatedFlight | null): void {
-    const key = this.getCacheKey(flightNumber, date);
-    const ttl =
-      data === null
-        ? NOT_FOUND_CACHE_TTL_MS
-        : data.isLive
-          ? LIVE_FLIGHT_CACHE_TTL_MS
-          : SCHEDULED_FLIGHT_CACHE_TTL_MS;
-
-    this.flightCache.set(key, {
-      data,
-      expiresAt: Date.now() + ttl,
-    });
-  }
-
-  private cleanupExpiredCacheEntries(): void {
-    const now = Date.now();
-    let removedCount = 0;
-
-    for (const [key, value] of this.flightCache.entries()) {
-      if (now >= value.expiresAt) {
-        this.flightCache.delete(key);
-        removedCount++;
-      }
-    }
-
-    if (removedCount > 0) {
-      this.logger.debug(
-        { removedCount, remainingCount: this.flightCache.size },
-        "Cleaned up expired cache entries",
-      );
-    }
-  }
-
-  onModuleDestroy(): void {
-    clearInterval(this.cleanupIntervalId);
   }
 }

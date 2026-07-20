@@ -18,10 +18,15 @@ import {
 } from "./flightaware.error";
 import type { ValidatedFlight } from "./flightaware.interface";
 import { FlightAwareService } from "./flightaware.service";
+import { FlightAwareCacheService } from "./flightaware-cache.service";
 
 describe("FlightAwareService", () => {
   let service: FlightAwareService;
   let mockHttpClient: ReturnType<typeof createMockAxiosInstance>;
+  let mockFlightCache: {
+    get: ReturnType<typeof vi.fn>;
+    set: ReturnType<typeof vi.fn>;
+  };
 
   const mockConfigService = {
     get: vi.fn((key: string) => {
@@ -39,12 +44,17 @@ describe("FlightAwareService", () => {
 
     mockHttpClient = createMockAxiosInstance();
     mockHttpClientService = createMockHttpClientService(mockHttpClient);
+    mockFlightCache = {
+      get: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FlightAwareService,
         { provide: ConfigService, useValue: mockConfigService },
         { provide: HttpClientService, useValue: mockHttpClientService },
+        { provide: FlightAwareCacheService, useValue: mockFlightCache },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -54,20 +64,7 @@ describe("FlightAwareService", () => {
   });
 
   afterEach(() => {
-    // Clean up the interval before switching to real timers
-    service.onModuleDestroy();
     vi.useRealTimers();
-  });
-
-  describe("lifecycle hooks", () => {
-    it("should clear the cache cleanup interval on module destroy", () => {
-      // Verify onModuleDestroy can be called without errors
-      // This ensures the interval ID is properly stored and can be cleared
-      expect(() => service.onModuleDestroy()).not.toThrow();
-
-      // Call it again to ensure it's idempotent (shouldn't throw even if already cleared)
-      expect(() => service.onModuleDestroy()).not.toThrow();
-    });
   });
 
   describe("isValidFlightNumberFormat", () => {
@@ -117,40 +114,38 @@ describe("FlightAwareService", () => {
     });
 
     it("should return cached result on cache hit", async () => {
-      // First call - cache miss
-      mockHttpClient.get.mockResolvedValueOnce({
-        data: {
-          flights: [
-            {
-              ident: "BA74",
-              fa_flight_id: "BA74-123",
-              origin: { code: "LHR", code_iata: "LHR" },
-              destination: { code: "LOS", code_iata: "LOS", name: "Lagos", city: "Lagos" },
-              scheduled_on: "2025-12-25T14:00:00Z",
-              estimated_on: "2025-12-25T14:30:00Z",
-              status: "En Route",
-            },
-          ],
-        },
-      });
+      const cachedFlight: ValidatedFlight = {
+        flightNumber: "BA74",
+        flightId: "BA74-123",
+        origin: "LHR",
+        destination: "LOS",
+        scheduledArrival: "2025-12-25T14:00:00Z",
+        arrivalTime: "2025-12-25T14:30:00Z",
+        arrivalTimeSource: "estimated",
+        isLive: true,
+      };
+      mockFlightCache.get.mockResolvedValueOnce(cachedFlight);
 
-      // Set time to a date before the flight
-      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+      const result = await service.validateFlight("ba74", "2025-12-25");
 
-      const result1 = await service.validateFlight("BA74", "2025-12-25");
-      expect(result1.flightId).toBe("BA74-123");
-      expect(mockHttpClient.get).toHaveBeenCalledTimes(1);
-      const liveUrl = mockHttpClient.get.mock.calls[0]?.[0] as string;
-      expect(liveUrl).toContain("start=2025-12-24T12:00:00Z");
-      expect(liveUrl).toContain("end=2025-12-26T12:00:00Z");
-
-      // Second call - should use cache
-      const result2 = await service.validateFlight("BA74", "2025-12-25");
-      expect(result2.flightId).toBe("BA74-123");
-      expect(mockHttpClient.get).toHaveBeenCalledTimes(1); // Still 1, cache hit
+      expect(result).toEqual(cachedFlight);
+      expect(mockFlightCache.get).toHaveBeenCalledWith("BA74", "2025-12-25");
+      expect(mockHttpClient.get).not.toHaveBeenCalled();
+      expect(mockFlightCache.set).not.toHaveBeenCalled();
     });
 
-    it("should remove expired live entries during minute-aligned cache cleanup", async () => {
+    it("should return cached not-found results without calling FlightAware", async () => {
+      mockFlightCache.get.mockResolvedValueOnce(null);
+
+      await expect(service.validateFlight("BA74", "2025-12-25")).rejects.toThrow(
+        FlightNotFoundException,
+      );
+
+      expect(mockHttpClient.get).not.toHaveBeenCalled();
+      expect(mockFlightCache.set).not.toHaveBeenCalled();
+    });
+
+    it("should cache successful FlightAware responses", async () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: {
           flights: [
@@ -165,17 +160,14 @@ describe("FlightAwareService", () => {
         },
       });
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
-      await service.validateFlight("BA74", "2025-12-25");
-      const cache = (
-        service as unknown as {
-          flightCache: Map<string, { data: ValidatedFlight | null; expiresAt: number }>;
-        }
-      ).flightCache;
 
-      expect(cache.size).toBe(1);
-      vi.advanceTimersByTime(60_001);
+      const result = await service.validateFlight("BA74", "2025-12-25");
 
-      expect(cache.size).toBe(0);
+      expect(result.flightId).toBe("BA74-123");
+      expect(mockFlightCache.set).toHaveBeenCalledWith("BA74", "2025-12-25", result);
+      const liveUrl = mockHttpClient.get.mock.calls[0]?.[0] as string;
+      expect(liveUrl).toContain("start=2025-12-24T12:00:00Z");
+      expect(liveUrl).toContain("end=2025-12-26T12:00:00Z");
     });
 
     it("should use the delayed gate estimate as the authoritative live arrival", async () => {
@@ -243,42 +235,6 @@ describe("FlightAwareService", () => {
       });
     });
 
-    it("should refresh a live flight after the one-minute cache TTL", async () => {
-      const createLiveResponse = (estimatedIn: string) => ({
-        data: {
-          flights: [
-            {
-              ident: "DAL54",
-              fa_flight_id: "DAL54-20260720",
-              origin: { code: "KATL", code_iata: "ATL" },
-              destination: { code: "DNMM", code_iata: "LOS" },
-              scheduled_on: "2026-07-20T08:12:00Z",
-              scheduled_in: "2026-07-20T08:45:00Z",
-              estimated_in: estimatedIn,
-              status: "On The Way! / Delayed",
-            },
-          ],
-        },
-      });
-      mockHttpClient.get
-        .mockResolvedValueOnce(createLiveResponse("2026-07-20T09:11:00Z"))
-        .mockResolvedValueOnce(createLiveResponse("2026-07-20T09:30:00Z"));
-      vi.setSystemTime(new Date("2026-07-20T05:00:00Z"));
-
-      const initial = await service.validateFlight("DL54", "2026-07-20");
-      const cached = await service.validateFlight("DL54", "2026-07-20");
-
-      expect(initial.arrivalTime).toBe("2026-07-20T09:11:00Z");
-      expect(cached.arrivalTime).toBe("2026-07-20T09:11:00Z");
-      expect(mockHttpClient.get).toHaveBeenCalledTimes(1);
-
-      vi.advanceTimersByTime(60_001);
-      const refreshed = await service.validateFlight("DL54", "2026-07-20");
-
-      expect(refreshed.arrivalTime).toBe("2026-07-20T09:30:00Z");
-      expect(mockHttpClient.get).toHaveBeenCalledTimes(2);
-    });
-
     it("should throw FlightNotFoundException when no flights match", async () => {
       // Mock both IATA and ICAO attempts returning empty
       mockHttpClient.get.mockResolvedValueOnce({
@@ -293,6 +249,7 @@ describe("FlightAwareService", () => {
       await expect(service.validateFlight("BA74", "2025-12-25")).rejects.toThrow(
         FlightNotFoundException,
       );
+      expect(mockFlightCache.set).toHaveBeenCalledWith("BA74", "2025-12-25", null);
     });
 
     it("should throw FlightAwareApiException for API authentication errors", async () => {
