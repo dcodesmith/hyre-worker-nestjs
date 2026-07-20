@@ -259,10 +259,7 @@ export class BookingCreationService {
       driveTimeMinutes = driveTimeResult.durationMinutes;
     }
 
-    // Get the best arrival time
-    const arrivalTimeStr =
-      flight.actualArrival ?? flight.estimatedArrival ?? flight.scheduledArrival;
-    const arrivalTime = new Date(arrivalTimeStr);
+    const arrivalTime = new Date(flight.arrivalTime);
 
     return {
       flightId: flight.flightId,

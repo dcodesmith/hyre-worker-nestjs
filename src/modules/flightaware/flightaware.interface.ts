@@ -7,6 +7,8 @@ import { FlightStatus } from "@prisma/client";
 /**
  * Validated flight information returned from FlightAware
  */
+export type FlightArrivalTimeSource = "actual" | "estimated" | "scheduled";
+
 export interface ValidatedFlight {
   flightNumber: string;
   flightId: string;
@@ -20,9 +22,15 @@ export interface ValidatedFlight {
   destinationName?: string;
   /** Destination city (e.g., "Lagos") */
   destinationCity?: string;
+  /** Scheduled gate arrival, falling back to runway arrival when unavailable. */
   scheduledArrival: string;
+  /** Latest estimated gate arrival, falling back to runway arrival when unavailable. */
   estimatedArrival?: string;
+  /** Actual gate arrival, falling back to runway arrival when unavailable. */
   actualArrival?: string;
+  /** Best available arrival time: actual, then estimated, then scheduled. */
+  arrivalTime: string;
+  arrivalTimeSource: FlightArrivalTimeSource;
   status?: string;
   aircraftType?: string;
   delay?: number;
@@ -36,13 +44,15 @@ export interface ValidatedFlight {
 export interface FlightAwareFlightLeg {
   ident: string;
   fa_flight_id: string;
-  actual_off?: string;
-  actual_on?: string;
-  estimated_off?: string;
-  estimated_on?: string;
-  estimated_in?: string;
+  actual_off?: string | null;
+  actual_on?: string | null;
+  actual_in?: string | null;
+  estimated_off?: string | null;
+  estimated_on?: string | null;
+  estimated_in?: string | null;
   scheduled_off: string;
   scheduled_on: string;
+  scheduled_in?: string | null;
   origin: {
     code: string;
     code_iata?: string;

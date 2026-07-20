@@ -59,23 +59,40 @@ describe("FlightAware E2E Tests", () => {
     await app.close();
   });
 
-  it("GET /api/search-flight returns info for non-Lagos destination", async () => {
+  it("GET /api/search-flight returns the authoritative delayed arrival without client caching", async () => {
     vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValueOnce({
-      message:
-        "Flight BA74 flies from LHR to JFK. We only provide airport pickup for flights arriving in Lagos (LOS).",
-      flight: null,
+      flight: {
+        flightNumber: "DL54",
+        flightId: "DAL54-20260720",
+        origin: "KATL",
+        originIATA: "ATL",
+        destination: "DNMM",
+        destinationIATA: "LOS",
+        scheduledArrival: "2026-07-20T08:45:00.000Z",
+        estimatedArrival: "2026-07-20T09:11:00.000Z",
+        arrivalTime: "2026-07-20T09:11:00.000Z",
+        arrivalTimeSource: "estimated",
+        status: "On The Way! / Delayed",
+        isLive: true,
+      },
     });
 
     const response = await request(app.getHttpServer()).get(
-      `/api/search-flight?flightNumber=BA74&date=${upcomingDate}`,
+      `/api/search-flight?flightNumber=DL54&date=${upcomingDate}`,
     );
 
     expect(response.status).toBe(HttpStatus.OK);
-    expect(response.body).toEqual({
-      message:
-        "Flight BA74 flies from LHR to JFK. We only provide airport pickup for flights arriving in Lagos (LOS).",
-      flight: null,
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toMatchObject({
+      flight: {
+        flightNumber: "DL54",
+        scheduledArrival: "2026-07-20T08:45:00.000Z",
+        estimatedArrival: "2026-07-20T09:11:00.000Z",
+        arrivalTime: "2026-07-20T09:11:00.000Z",
+        arrivalTimeSource: "estimated",
+      },
     });
+    expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith("DL54", upcomingDate);
   });
 
   it("POST /api/webhooks/flightaware rejects invalid secret", async () => {

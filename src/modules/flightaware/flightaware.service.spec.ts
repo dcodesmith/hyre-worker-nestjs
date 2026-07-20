@@ -143,6 +143,76 @@ describe("FlightAwareService", () => {
       expect(mockHttpClient.get).toHaveBeenCalledTimes(1); // Still 1, cache hit
     });
 
+    it("should use the delayed gate estimate as the authoritative live arrival", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "DAL54",
+              fa_flight_id: "DAL54-20260720",
+              origin: { code: "KATL", code_iata: "ATL" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_on: "2026-07-20T08:12:00Z",
+              scheduled_in: "2026-07-20T08:45:00Z",
+              estimated_on: "2026-07-20T09:00:00Z",
+              estimated_in: "2026-07-20T09:11:00Z",
+              actual_on: null,
+              actual_in: null,
+              status: "On The Way! / Delayed",
+            },
+          ],
+        },
+      });
+
+      vi.setSystemTime(new Date("2026-07-20T05:00:00Z"));
+
+      const result = await service.validateFlight("DL54", "2026-07-20");
+
+      expect(result).toMatchObject({
+        scheduledArrival: "2026-07-20T08:45:00Z",
+        estimatedArrival: "2026-07-20T09:11:00Z",
+        arrivalTime: "2026-07-20T09:11:00Z",
+        arrivalTimeSource: "estimated",
+      });
+      expect(result.actualArrival).toBeUndefined();
+    });
+
+    it("should refresh a live flight after the one-minute cache TTL", async () => {
+      const createLiveResponse = (estimatedIn: string) => ({
+        data: {
+          flights: [
+            {
+              ident: "DAL54",
+              fa_flight_id: "DAL54-20260720",
+              origin: { code: "KATL", code_iata: "ATL" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_on: "2026-07-20T08:12:00Z",
+              scheduled_in: "2026-07-20T08:45:00Z",
+              estimated_in: estimatedIn,
+              status: "On The Way! / Delayed",
+            },
+          ],
+        },
+      });
+      mockHttpClient.get
+        .mockResolvedValueOnce(createLiveResponse("2026-07-20T09:11:00Z"))
+        .mockResolvedValueOnce(createLiveResponse("2026-07-20T09:30:00Z"));
+      vi.setSystemTime(new Date("2026-07-20T05:00:00Z"));
+
+      const initial = await service.validateFlight("DL54", "2026-07-20");
+      const cached = await service.validateFlight("DL54", "2026-07-20");
+
+      expect(initial.arrivalTime).toBe("2026-07-20T09:11:00Z");
+      expect(cached.arrivalTime).toBe("2026-07-20T09:11:00Z");
+      expect(mockHttpClient.get).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(60_001);
+      const refreshed = await service.validateFlight("DL54", "2026-07-20");
+
+      expect(refreshed.arrivalTime).toBe("2026-07-20T09:30:00Z");
+      expect(mockHttpClient.get).toHaveBeenCalledTimes(2);
+    });
+
     it("should throw FlightNotFoundException when no flights match", async () => {
       // Mock both IATA and ICAO attempts returning empty
       mockHttpClient.get.mockResolvedValueOnce({
@@ -197,7 +267,9 @@ describe("FlightAwareService", () => {
               origin_iata: "LHR",
               destination: "LOS",
               destination_iata: "LOS",
+              scheduled_on: "2025-12-30T13:30:00Z",
               scheduled_in: "2025-12-30T14:00:00Z",
+              estimated_in: "2025-12-30T14:20:00Z",
             },
           ],
         },
@@ -212,6 +284,10 @@ describe("FlightAwareService", () => {
 
       const result = await service.validateFlight("BA74", "2025-12-30");
       expect(result.flightId).toBe("BA74-scheduled");
+      expect(result.scheduledArrival).toBe("2025-12-30T14:00:00Z");
+      expect(result.estimatedArrival).toBe("2025-12-30T14:20:00Z");
+      expect(result.arrivalTime).toBe("2025-12-30T14:20:00Z");
+      expect(result.arrivalTimeSource).toBe("estimated");
 
       // Verify schedules API was called
       expect(mockHttpClient.get).toHaveBeenCalledWith(expect.stringContaining("/schedules/"));

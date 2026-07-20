@@ -543,7 +543,10 @@ describe("BookingCreationService", () => {
         destination: "DNMM",
         destinationIATA: "LOS",
         scheduledArrival: "2025-02-01T14:30:00Z",
-        status: "Scheduled",
+        estimatedArrival: "2025-02-01T15:00:00Z",
+        arrivalTime: "2025-02-01T15:00:00Z",
+        arrivalTimeSource: "estimated",
+        status: "Delayed",
         isLive: true,
       };
       vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
@@ -618,6 +621,11 @@ describe("BookingCreationService", () => {
       );
       expect(mapsService.calculateAirportTripDuration).toHaveBeenCalledWith(
         "Victoria Island, Lagos",
+      );
+      expect(legService.generateLegs).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flightArrivalTime: new Date("2025-02-01T15:00:00Z"),
+        }),
       );
     });
 

@@ -40,6 +40,9 @@ type InternalFlightResult =
 
 const SUPPORTED_PICKUP_DESTINATIONS = new Set(["LOS"]);
 const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
+const LIVE_FLIGHT_CACHE_TTL_MS = 60 * 1000;
+const SCHEDULED_FLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const NOT_FOUND_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Service for interacting with FlightAware AeroAPI
@@ -58,9 +61,6 @@ export class FlightAwareService implements OnModuleDestroy {
     string,
     { data: ValidatedFlight | null; expiresAt: number }
   >();
-  private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-  private readonly NOT_FOUND_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
     private readonly httpClientService: HttpClientService,
@@ -102,24 +102,28 @@ export class FlightAwareService implements OnModuleDestroy {
     }
 
     const normalizedFlightNumber = flightNumber.toUpperCase();
+    const normalizedPickupDate = this.normalizePickupDate(pickupDate);
 
     // 2. Check cache
-    const cached = this.getCachedFlight(normalizedFlightNumber, pickupDate);
+    const cached = this.getCachedFlight(normalizedFlightNumber, normalizedPickupDate);
     if (cached !== undefined) {
-      this.logger.debug({ flightNumber: normalizedFlightNumber, pickupDate }, "Flight cache HIT");
+      this.logger.debug(
+        { flightNumber: normalizedFlightNumber, pickupDate: normalizedPickupDate },
+        "Flight cache HIT",
+      );
       if (cached === null) {
-        throw new FlightNotFoundException(normalizedFlightNumber, pickupDate);
+        throw new FlightNotFoundException(normalizedFlightNumber, normalizedPickupDate);
       }
       return cached;
     }
 
     this.logger.debug(
-      { flightNumber: normalizedFlightNumber, pickupDate },
+      { flightNumber: normalizedFlightNumber, pickupDate: normalizedPickupDate },
       "Flight cache MISS - calling API",
     );
 
     // 3. Calculate search window
-    const { startDate, endDate } = this.getPickupSearchWindow(pickupDate);
+    const { startDate, endDate } = this.getPickupSearchWindow(normalizedPickupDate);
 
     // Determine which API to use based on how far in the future
     const now = new Date();
@@ -137,14 +141,14 @@ export class FlightAwareService implements OnModuleDestroy {
         normalizedFlightNumber,
         startDate,
         cappedEndDate,
-        pickupDate,
+        normalizedPickupDate,
       );
     } else {
       result = await this.fetchScheduledFlight(normalizedFlightNumber, startDate, endDate);
     }
 
     // Convert result to exception or return flight
-    return this.handleFlightResult(result, normalizedFlightNumber, pickupDate);
+    return this.handleFlightResult(result, normalizedFlightNumber, normalizedPickupDate);
   }
 
   async searchAirportPickupFlight(
@@ -202,14 +206,8 @@ export class FlightAwareService implements OnModuleDestroy {
     }
   }
 
-  private getArrivalWarning(flight: {
-    actualArrival?: string;
-    estimatedArrival?: string;
-    scheduledArrival: string;
-  }): string | undefined {
-    const arrivalTime = new Date(
-      flight.actualArrival ?? flight.estimatedArrival ?? flight.scheduledArrival,
-    );
+  private getArrivalWarning(flight: { arrivalTime: string }): string | undefined {
+    const arrivalTime = new Date(flight.arrivalTime);
     const now = new Date();
     const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
 
@@ -251,6 +249,23 @@ export class FlightAwareService implements OnModuleDestroy {
     endDate.setUTCHours(endDate.getUTCHours() + 12, 0, 0, 0);
 
     return { startDate, endDate };
+  }
+
+  private normalizePickupDate(value: string): string {
+    const dateOnlyUtc = parseIsoDateOnlyToUtc(value);
+    if (dateOnlyUtc) {
+      return value;
+    }
+    if (ISO_DATE_ONLY_REGEX.test(value)) {
+      throw new FlightAwareApiException(`Invalid pickup date: ${value}`);
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new FlightAwareApiException(`Invalid pickup date: ${value}`);
+    }
+
+    return this.toLocaleDateString(parsed);
   }
 
   private buildUtcDateFromIsoString(value: string): Date {
@@ -427,7 +442,7 @@ export class FlightAwareService implements OnModuleDestroy {
     let nextFlightDate: string | null = null;
 
     for (const flight of flights) {
-      const arrivalTimeUTC = flight.actual_on || flight.estimated_on || flight.scheduled_on;
+      const arrivalTimeUTC = this.getFlightArrivalFields(flight).arrivalTime;
       const arrivalDate = new Date(arrivalTimeUTC);
       const localeDateStr = this.toLocaleDateString(arrivalDate);
 
@@ -465,6 +480,8 @@ export class FlightAwareService implements OnModuleDestroy {
     flight: FlightAwareFlightLeg,
     flightNumber: string,
   ): InternalFlightResult {
+    const arrival = this.getFlightArrivalFields(flight);
+
     return {
       type: "success",
       flight: {
@@ -477,9 +494,11 @@ export class FlightAwareService implements OnModuleDestroy {
         destinationIATA: flight.destination.code_iata,
         destinationName: flight.destination.name,
         destinationCity: flight.destination.city,
-        scheduledArrival: flight.scheduled_on,
-        estimatedArrival: flight.estimated_in,
-        actualArrival: flight.actual_on,
+        scheduledArrival: arrival.scheduledArrival,
+        estimatedArrival: arrival.estimatedArrival,
+        actualArrival: arrival.actualArrival,
+        arrivalTime: arrival.arrivalTime,
+        arrivalTimeSource: arrival.arrivalTimeSource,
         status: flight.status,
         aircraftType: flight.aircraft_type,
         delay: flight.delay,
@@ -492,15 +511,15 @@ export class FlightAwareService implements OnModuleDestroy {
     scheduledFlight: FlightAwareScheduledFlight,
     flightNumber: string,
   ): Promise<InternalFlightResult> {
-    const scheduledArrival =
-      scheduledFlight.estimated_in ??
-      scheduledFlight.scheduled_in ??
-      scheduledFlight.actual_in ??
-      scheduledFlight.scheduled_on;
+    const scheduledArrival = scheduledFlight.scheduled_in ?? scheduledFlight.scheduled_on;
 
     if (!scheduledArrival) {
       return { type: "notFound" };
     }
+
+    const estimatedArrival = scheduledFlight.estimated_in ?? undefined;
+    const actualArrival = scheduledFlight.actual_in ?? undefined;
+    const arrival = this.resolveArrivalTime(scheduledArrival, estimatedArrival, actualArrival);
 
     // Fetch airport info for destination details
     let destinationName: string | undefined;
@@ -535,6 +554,10 @@ export class FlightAwareService implements OnModuleDestroy {
         destinationName,
         destinationCity,
         scheduledArrival,
+        estimatedArrival,
+        actualArrival,
+        arrivalTime: arrival.arrivalTime,
+        arrivalTimeSource: arrival.arrivalTimeSource,
         status: "Scheduled",
         aircraftType: scheduledFlight.aircraft_type ?? undefined,
         isLive: false,
@@ -556,9 +579,7 @@ export class FlightAwareService implements OnModuleDestroy {
       return null;
     }
 
-    const landedTime = this.formatLocaleTime(
-      landedFlight.actual_on || landedFlight.estimated_on || landedFlight.scheduled_on,
-    );
+    const landedTime = this.formatLocaleTime(this.getFlightArrivalFields(landedFlight).arrivalTime);
 
     return {
       type: "alreadyLanded",
@@ -574,6 +595,47 @@ export class FlightAwareService implements OnModuleDestroy {
   ): string | undefined {
     const normalizedIata = destinationIATA?.trim();
     return normalizedIata || (destinationICAO === "DNMM" ? "LOS" : undefined);
+  }
+
+  private getFlightArrivalFields(flight: FlightAwareFlightLeg): {
+    scheduledArrival: string;
+    estimatedArrival?: string;
+    actualArrival?: string;
+    arrivalTime: string;
+    arrivalTimeSource: ValidatedFlight["arrivalTimeSource"];
+  } {
+    const scheduledArrival = flight.scheduled_in ?? flight.scheduled_on;
+    const estimatedArrival = flight.estimated_in ?? flight.estimated_on ?? undefined;
+    const actualArrival = flight.actual_in ?? flight.actual_on ?? undefined;
+    const authoritativeArrival = flight.actual_in
+      ? { arrivalTime: flight.actual_in, arrivalTimeSource: "actual" as const }
+      : flight.estimated_in
+        ? { arrivalTime: flight.estimated_in, arrivalTimeSource: "estimated" as const }
+        : this.resolveArrivalTime(scheduledArrival, estimatedArrival, actualArrival);
+
+    return {
+      scheduledArrival,
+      estimatedArrival,
+      actualArrival,
+      ...authoritativeArrival,
+    };
+  }
+
+  private resolveArrivalTime(
+    scheduledArrival: string,
+    estimatedArrival?: string,
+    actualArrival?: string,
+  ): {
+    arrivalTime: string;
+    arrivalTimeSource: ValidatedFlight["arrivalTimeSource"];
+  } {
+    if (actualArrival) {
+      return { arrivalTime: actualArrival, arrivalTimeSource: "actual" };
+    }
+    if (estimatedArrival) {
+      return { arrivalTime: estimatedArrival, arrivalTimeSource: "estimated" };
+    }
+    return { arrivalTime: scheduledArrival, arrivalTimeSource: "scheduled" };
   }
 
   private toLocaleDateString(date: Date): string {
@@ -626,7 +688,12 @@ export class FlightAwareService implements OnModuleDestroy {
    */
   private setCachedFlight(flightNumber: string, date: string, data: ValidatedFlight | null): void {
     const key = this.getCacheKey(flightNumber, date);
-    const ttl = data === null ? this.NOT_FOUND_CACHE_TTL_MS : this.CACHE_TTL_MS;
+    const ttl =
+      data === null
+        ? NOT_FOUND_CACHE_TTL_MS
+        : data.isLive
+          ? LIVE_FLIGHT_CACHE_TTL_MS
+          : SCHEDULED_FLIGHT_CACHE_TTL_MS;
 
     this.flightCache.set(key, {
       data,
