@@ -10,6 +10,7 @@ import { GlobalExceptionFilter } from "../src/common/filters/global-exception.fi
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlightAwareService } from "../src/modules/flightaware/flightaware.service";
+import { FlightAwareCacheService } from "../src/modules/flightaware/flightaware-cache.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("FlightAware E2E Tests", () => {
@@ -17,6 +18,7 @@ describe("FlightAware E2E Tests", () => {
   let databaseService: DatabaseService;
   let factory: TestDataFactory;
   let flightAwareService: FlightAwareService;
+  let flightAwareCacheService: FlightAwareCacheService;
   let webhookPath: string;
 
   const upcomingDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -43,6 +45,7 @@ describe("FlightAware E2E Tests", () => {
     databaseService = app.get(DatabaseService);
     factory = new TestDataFactory(databaseService, app);
     flightAwareService = moduleFixture.get(FlightAwareService);
+    flightAwareCacheService = moduleFixture.get(FlightAwareCacheService);
     const configService = app.get(ConfigService);
     const configuredWebhookSecret = configService.getOrThrow("FLIGHTAWARE_WEBHOOK_SECRET");
     webhookPath = `/api/webhooks/flightaware?secret=${configuredWebhookSecret}`;
@@ -93,6 +96,24 @@ describe("FlightAware E2E Tests", () => {
       },
     });
     expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith("DL54", upcomingDate);
+  });
+
+  it("shares flight search results through Redis", async () => {
+    const flight = {
+      flightNumber: "DL54",
+      flightId: "DAL54-redis-e2e",
+      origin: "KATL",
+      destination: "DNMM",
+      scheduledArrival: "2030-01-01T08:45:00.000Z",
+      estimatedArrival: "2030-01-01T09:11:00.000Z",
+      arrivalTime: "2030-01-01T09:11:00.000Z",
+      arrivalTimeSource: "estimated" as const,
+      isLive: true,
+    };
+
+    await flightAwareCacheService.set("DL54", "2030-01-01", flight);
+
+    await expect(flightAwareCacheService.get("dl54", "2030-01-01")).resolves.toEqual(flight);
   });
 
   it("POST /api/webhooks/flightaware rejects invalid secret", async () => {
