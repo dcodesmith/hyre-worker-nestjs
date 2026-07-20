@@ -48,6 +48,7 @@ import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
         const client = new Redis(redisUrl, {
           maxRetriesPerRequest: 2,
           enableReadyCheck: true,
+          commandTimeout: 2000,
         });
         client.on("error", (error) => {
           logger.error(
