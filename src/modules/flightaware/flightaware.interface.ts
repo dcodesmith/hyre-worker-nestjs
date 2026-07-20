@@ -96,8 +96,10 @@ export interface FlightAwareScheduledFlight {
   scheduled_off?: string | null;
   scheduled_on?: string | null;
   estimated_in?: string | null;
+  estimated_on?: string | null;
   actual_out?: string | null;
   actual_in?: string | null;
+  actual_on?: string | null;
   aircraft_type?: string | null;
 }
 

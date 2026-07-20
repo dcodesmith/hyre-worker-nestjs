@@ -43,6 +43,11 @@ const SUPPORTED_ALREADY_LANDED_DESTINATIONS = new Set(["LOS"]);
 const LIVE_FLIGHT_CACHE_TTL_MS = 60 * 1000;
 const SCHEDULED_FLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const NOT_FOUND_CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_CLEANUP_INTERVAL_MS = Math.min(
+  LIVE_FLIGHT_CACHE_TTL_MS,
+  SCHEDULED_FLIGHT_CACHE_TTL_MS,
+  NOT_FOUND_CACHE_TTL_MS,
+);
 
 /**
  * Service for interacting with FlightAware AeroAPI
@@ -81,7 +86,10 @@ export class FlightAwareService implements OnModuleDestroy {
     });
 
     // Start periodic cache cleanup
-    this.cleanupIntervalId = setInterval(() => this.cleanupExpiredCacheEntries(), 60 * 60 * 1000);
+    this.cleanupIntervalId = setInterval(
+      () => this.cleanupExpiredCacheEntries(),
+      CACHE_CLEANUP_INTERVAL_MS,
+    );
   }
 
   /**
@@ -256,7 +264,12 @@ export class FlightAwareService implements OnModuleDestroy {
     if (dateOnlyUtc) {
       return value;
     }
-    if (ISO_DATE_ONLY_REGEX.test(value)) {
+
+    const calendarDate = value.slice(0, 10);
+    if (
+      ISO_DATE_ONLY_REGEX.test(value) ||
+      (ISO_DATE_ONLY_REGEX.test(calendarDate) && !parseIsoDateOnlyToUtc(calendarDate))
+    ) {
       throw new FlightAwareApiException(`Invalid pickup date: ${value}`);
     }
 
@@ -517,8 +530,9 @@ export class FlightAwareService implements OnModuleDestroy {
       return { type: "notFound" };
     }
 
-    const estimatedArrival = scheduledFlight.estimated_in ?? undefined;
-    const actualArrival = scheduledFlight.actual_in ?? undefined;
+    const estimatedArrival =
+      scheduledFlight.estimated_in ?? scheduledFlight.estimated_on ?? undefined;
+    const actualArrival = scheduledFlight.actual_in ?? scheduledFlight.actual_on ?? undefined;
     const arrival = this.resolveArrivalTime(scheduledArrival, estimatedArrival, actualArrival);
 
     // Fetch airport info for destination details
@@ -674,7 +688,7 @@ export class FlightAwareService implements OnModuleDestroy {
 
     if (!cached) return undefined;
 
-    if (Date.now() > cached.expiresAt) {
+    if (Date.now() >= cached.expiresAt) {
       this.flightCache.delete(key);
       return undefined;
     }
@@ -706,7 +720,7 @@ export class FlightAwareService implements OnModuleDestroy {
     let removedCount = 0;
 
     for (const [key, value] of this.flightCache.entries()) {
-      if (now > value.expiresAt) {
+      if (now >= value.expiresAt) {
         this.flightCache.delete(key);
         removedCount++;
       }
