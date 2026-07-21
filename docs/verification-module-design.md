@@ -28,12 +28,33 @@ Prerequisites that don't exist yet (out of scope for this module but required be
 2. **No user-level document upload API** — `DocumentApproval.userId` rows (NIN, DL, LASDRI, COI) have approval cascades but no upload path.
 3. **No bank details API** — nothing creates `BankDetails`.
 
+## 1b. Vendor selection — Prembly, single commercial vendor
+
+We evaluated whether **Prembly (IdentityPass)** can replace **Mono**. It can — for everything this platform needs, in one integration, and it also does the two things Mono can't (vehicle plate + insurance). Decision: **use Prembly as the sole commercial verification vendor**, alongside the free government portals (autoreg + DVIS) for vehicle registration/roadworthiness.
+
+| Verification we need | Mono | Prembly | Notes |
+|---|---|---|---|
+| NIN (photo/address/phone) | ✓ ₦80 | ✓ ₦80 (`/verification/vnin-basic`; advance + `nin/face` available) | parity |
+| Driver's licence (expiry + photo) | ✓ ₦60 | ✓ ₦50–80 (`/verification/drivers_license/advance`; `/drivers_license/face` matches a selfie in one call) | Prembly adds built-in DL+face |
+| Bank account resolution | ✓ ₦15 | ✓ ₦15 (`/verification/bank_account/comparism` returns a name-match score; `/advance` returns the linked NIN/BVN) | parity, richer on advance |
+| CAC | ✓ ₦60–600 | ✓ ₦20–100 (`/verification/cac[/advance]`) | Prembly cheaper |
+| Face match / liveness | ✓ Prove ₦30+₦100–500 | ✓ `/verification/biometrics/face/comparison` + `liveliness_check`; SDK liveness | parity |
+| AML / PEP / sanctions | ✓ | ✓ `/api/v1/verification/aml-screening` | parity |
+| **Vehicle plate** | ✗ | ✓ `/verification/vehicle` (make/model/colour; VIN via `/vehicle/vin`) | Prembly only |
+| **Insurance policy (NIID)** | ✗ | ✓ `/verification/insurance_policy` | Prembly only — this is why we already picked it for insurance |
+| Bank accounts linked to a BVN | ✓ ₦842 | ✗ | **we don't use this** |
+| BVN with NIBSS-iGree consent flow | ✓ | ✗ (direct lookup, no consent step) | **we don't use BVN at all** |
+
+The only two Mono-exclusive capabilities (accounts-by-BVN, consented BVN) are ones **our design never uses** — chauffeurs are verified by NIN+DL, fleet owners by NIN + account-number resolution. So there's no reason to keep a second integration. On the September-2024 price signals Prembly is equal-or-cheaper on every overlapping check. Auth is an `x-api-key` header (some endpoints also need `app-id`), there's a free sandbox with published test data, and per-request `callback_url` webhooks with opt-in retry.
+
+**Availability caveat (the one point where Mono is ahead):** Mono publishes a public per-endpoint status page (60-day uptime: NIN 100%, account lookup 100%, CAC 99.9%); Prembly has **no public status page** and documents soft-failure response codes (`02` = retry later) with rate limits that vary by plan. Both ultimately ride the same upstream government rails (NIMC, FRSC, CAC, NIID), which are the real failure point. Mitigation is already in the design: wrap every call in retries with backoff, keep the admin `NEEDS_REVIEW` manual fallback so a vendor/portal outage never fully blocks onboarding, and enable Prembly's callback retries. If, in production, Prembly's identity availability proves worse than acceptable, Mono remains a drop-in second source for NIN/DL/bank via the same provider-module seam — but we start single-vendor and only add Mono if the data says to.
+
 ## 2. Chauffeur verification — NIN + driver's licence cross-match
 
 Per the decision, chauffeur verification is exactly this, no background check for now:
 
-1. Look up **NIN** (Mono `POST /v3/lookup/nin`, ₦80) → returns names, DOB, phone, residential address, photo.
-2. Look up **driver's licence** (Mono `POST /v3/lookup/driver_license`, ₦60) → returns names, DOB, issue/expiry dates, photo, state of issue.
+1. Look up **NIN** (Prembly `POST /verification/vnin-basic`, ~₦80) → returns names, DOB, phone, residential address, photo.
+2. Look up **driver's licence** (Prembly `POST /verification/drivers_license/advance`, ~₦50–80) → returns names, DOB, issue/expiry dates, photo, state of issue.
 3. **Cross-match** the two results and the chauffeur's account:
    - **Name** matches across NIN and DL (normalised: case, ordering, diacritics, common short forms; fuzzy score with a threshold).
    - **Address** on NIN matches the address the chauffeur/fleet owner entered (NIN carries residential address; the DL lookup does not reliably return address, so address matching is NIN ↔ our record).
@@ -44,7 +65,7 @@ Per the decision, chauffeur verification is exactly this, no background check fo
 
 Result feeds `chauffeurApprovalStatus`. Store `expiry_date` so the reminder queue can re-check and auto-demote on lapse.
 
-Why Mono here: it's the one vendor that returns both NIN and FRSC driver's licence in a single integration, cheaply, with the registry data we need to cross-match. Note the lookups return the **registry photo** but do not do a selfie/face match — if we later want to prove the person is the licence holder, add Mono Prove (tier_1) selfie/liveness in hireApp. Not required for the first cut.
+The lookups return the **registry photo**; they don't match a selfie on their own. If we later want to prove the person *is* the licence holder, Prembly's `/verification/drivers_license/face` does the DL lookup and a selfie match in a single call — no separate vendor needed. Not required for the first cut.
 
 ## 3. Vehicle verification — plate lookup + confirm + document upload
 
@@ -60,12 +81,12 @@ Note: autoreg gives make/model/colour/chassis but **not year of manufacture** in
 
 ### Insurance (NIID) — how to verify without the captcha
 
-Do **not** scrape or captcha-solve askniid.org (brittle + Cybercrimes Act / terms exposure). Two legitimate paths:
+Do **not** scrape or captcha-solve askniid.org (brittle + Cybercrimes Act / terms exposure). Use Prembly — the same vendor we use for identity:
 
-- **Reseller now:** Prembly `POST https://api.prembly.com/verification/insurance_policy` (header `x-api-key`, body `{channel, number}` where `number` is the **policy number**). Returns policy number, reg number, cover type, make/model/colour/chassis, issue/expiry dates, status. Sandbox test policy `AAO/24/4/00000/20`. Ship with this — it's a documented REST wrapper over NIID data.
-- **Direct later:** the NIA runs an official SOAP/HTTP web service at `https://niid.org/NIA_API/Service.asmx`, operation `Vehicle_PolicyVerification(SearchString, SearchType, Username, Password)` — plate or policy number, credentials issued by the NIA (email info@nigeriainsurers.org). No self-serve signup; commercial/MOU process. Switch to this when granted, keep Prembly as failover.
+- **Prembly now:** `POST https://api.prembly.com/verification/insurance_policy` (header `x-api-key`, body `{channel: "policy", number}` where `number` is the **policy number**). Returns policy number, reg number, cover type, make/model/colour/chassis, issue/expiry dates, status. Sandbox test policy `AAO/24/4/00000/20`. It's a documented REST wrapper over NIID data.
+- **Direct NIA later (optional):** the NIA runs an official SOAP/HTTP web service at `https://niid.org/NIA_API/Service.asmx`, operation `Vehicle_PolicyVerification(SearchString, SearchType, Username, Password)` — plate or policy number, credentials issued by the NIA (email info@nigeriainsurers.org). No self-serve signup; commercial/MOU process. Only worth pursuing if we want to remove the Prembly middleman or need plate-based (not policy-based) search.
 
-Because NIID needs the policy number, collect the policy number (it's on the certificate; OCR it from the upload) and cross-check the returned reg number against the plate.
+Because the check needs the policy number, collect it (it's on the certificate; OCR it from the upload) and cross-check the returned reg number against the plate.
 
 ### The onboarding flow (fleet owner adding a car)
 
@@ -102,26 +123,22 @@ Call it **`verification`** (`src/modules/verification`) — the domain module hi
 
 ```
 src/modules/
-  mono/                          # provider client (NIN, driver's licence, bank account)
-    mono.module.ts
-    mono.service.ts              # createClient({ baseURL, headers: { 'mono-sec-key' }, serviceName: 'Mono' })
-    mono.interface.ts
-  vehicle-registry/              # government-portal clients (autoreg, DVIS)
+  prembly/                       # sole commercial vendor: NIN, driver's licence, bank account, insurance
+    prembly.module.ts
+    prembly.service.ts           # createClient({ baseURL, headers: { 'x-api-key', 'app-id' }, serviceName: 'Prembly' })
+    prembly.interface.ts
+  vehicle-registry/              # free government-portal clients (autoreg, DVIS)
     vehicle-registry.module.ts
     autoreg.service.ts           # GET for anti-forgery token+cookie, then POST regNumber; parse modal HTML
     dvis.service.ts              # POST reg_no → JSON
     vehicle-registry.interface.ts
-  insurance-registry/            # NIID via Prembly now, NIA web service later
-    insurance-registry.module.ts
-    prembly.service.ts
-    insurance-registry.interface.ts
   verification/
     verification.module.ts
     verification.controller.ts          # /api/fleet-owner/verifications, /chauffeurs/:id/..., /cars/:id/...
     admin-verification.controller.ts    # /api/admin/verifications
-    chauffeur-verification.service.ts   # NIN + DL lookup + cross-match
-    bank-verification.service.ts        # account-number resolve → BankDetails.isVerified
-    vehicle-verification.service.ts     # autoreg + DVIS + insurance orchestration
+    chauffeur-verification.service.ts   # NIN + DL lookup (Prembly) + cross-match
+    bank-verification.service.ts        # account-number resolve (Prembly) → BankDetails.isVerified
+    vehicle-verification.service.ts     # autoreg + DVIS + Prembly insurance orchestration
     verification.service.ts             # persistence + status
     verification.processor.ts           # BullMQ processor (retries, portal flakiness)
     verification.error.ts               # AppException subclasses + VerificationErrorCode
@@ -183,12 +200,11 @@ enum VerificationCheckStatus {
 }
 
 enum VerificationProvider {
-  MONO
-  AUTOREG
-  DVIS
-  NIID
-  PREMBLY
-  MANUAL
+  PREMBLY      // NIN, driver's licence, bank account, insurance
+  AUTOREG      // vehicle registration lookup
+  DVIS         // roadworthiness
+  NIID         // direct NIA web service (optional, later)
+  MANUAL       // admin override / LASDRI
 }
 ```
 
@@ -219,7 +235,7 @@ The document uploads themselves reuse the existing car document-upload path (the
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/fleet-owner/verifications/identity` | NIN lookup for the fleet owner, name/DOB match against their account. |
-| POST | `/api/fleet-owner/verifications/bank-account` | Resolve account number (Mono, ₦15), name-match → sets `BankDetails.isVerified`, `lastVerifiedAt`, `verificationResponse`. |
+| POST | `/api/fleet-owner/verifications/bank-account` | Resolve account number (Prembly `bank_account/comparism`, ~₦15), name-match → sets `BankDetails.isVerified`, `lastVerifiedAt`, `verificationResponse`. |
 
 ### Status (subject owner)
 
@@ -245,9 +261,10 @@ No webhooks needed in this cut: NIN/DL/bank/portal lookups are all synchronous. 
 3. **Year of manufacture** — not returned by autoreg; derive from VIN (10th char) or collect from the owner as unverified.
 4. **Comprehensive-cover check** — Lagos e-hailing requires comprehensive insurance; check the NIID/Prembly `type_of_cover`, not just that a policy exists.
 5. **Expiry re-verification** — store `expiresAt` for licence, RWC, and insurance; the existing `reminder` queue re-checks and auto-demotes chauffeur/car status on lapse.
-6. **New env vars** — `MONO_SECRET_KEY`, `MONO_BASE_URL`; `AUTOREG_BASE_URL`, `DVIS_BASE_URL`; `PREMBLY_API_KEY`, `PREMBLY_BASE_URL` (and later `NIID_WS_URL`/`NIID_USERNAME`/`NIID_PASSWORD`) in `envSchema`.
-7. **Commercials to start early** — Mono Lookup needs account-manager activation (sales@mono.co); NIA/NIID direct access needs an MOU (info@nigeriainsurers.org). Prembly is self-serve to unblock insurance in the meantime.
-8. **Face match (optional, later)** — NIN/DL lookups return the registry photo but don't match a selfie. Add Mono Prove tier_1 in hireApp if we want to prove the driver is the licence holder.
+6. **New env vars** — `PREMBLY_API_KEY`, `PREMBLY_APP_ID`, `PREMBLY_BASE_URL`; `AUTOREG_BASE_URL`, `DVIS_BASE_URL` (and later, if we go direct to NIA, `NIID_WS_URL`/`NIID_USERNAME`/`NIID_PASSWORD`) in `envSchema`.
+7. **Commercials to start early** — Prembly is self-serve (free sandbox, prepaid wallet for live calls); get current naira per-call pricing and any rate-limit/SLA terms in writing before committing volume, since Prembly publishes neither pricing nor a status page. Direct NIA/NIID access is optional and needs an MOU (info@nigeriainsurers.org).
+8. **Face match (optional, later)** — NIN/DL lookups return the registry photo but don't match a selfie. Prembly's `/verification/drivers_license/face` (or `nin/face`) adds selfie matching in the same call/vendor if we want to prove the driver is the licence holder.
+9. **Availability hedge** — Prembly has no public status page and rides the same government rails as everyone. Keep Mono documented as a drop-in second source for NIN/DL/bank behind the same provider-module seam; only integrate it if Prembly's production availability proves inadequate.
 
 ## Appendix — verified portal request/response samples (plate `fkj528hb`)
 
