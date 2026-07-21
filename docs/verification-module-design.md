@@ -34,18 +34,20 @@ We evaluated whether **Prembly (IdentityPass)** can replace **Mono**. It can —
 
 | Verification we need | Mono | Prembly | Notes |
 |---|---|---|---|
-| NIN (photo/address/phone) | ✓ ₦80 | ✓ ₦80 (`/verification/vnin-basic`; advance + `nin/face` available) | parity |
-| Driver's licence (expiry + photo) | ✓ ₦60 | ✓ ₦50–80 (`/verification/drivers_license/advance`; `/drivers_license/face` matches a selfie in one call) | Prembly adds built-in DL+face |
-| Bank account resolution | ✓ ₦15 | ✓ ₦15 (`/verification/bank_account/comparism` returns a name-match score; `/advance` returns the linked NIN/BVN) | parity, richer on advance |
-| CAC | ✓ ₦60–600 | ✓ ₦20–100 (`/verification/cac[/advance]`) | Prembly cheaper |
-| Face match / liveness | ✓ Prove ₦30+₦100–500 | ✓ `/verification/biometrics/face/comparison` + `liveliness_check`; SDK liveness | parity |
+| NIN (photo/address/phone) | ✓ | ✓ (`/verification/vnin-basic`; advance + `nin/face` available) | parity |
+| Driver's licence (expiry + photo) | ✓ | ✓ (`/verification/drivers_license/advance`; `/drivers_license/face` matches a selfie in one call) | Prembly adds built-in DL+face |
+| Bank account resolution | ✓ | ✓ (`/verification/bank_account/comparism` returns a name-match score; `/advance` returns the linked NIN/BVN) | parity, richer on advance |
+| CAC | ✓ | ✓ (`/verification/cac[/advance]`) | parity |
+| Face match / liveness | ✓ Prove | ✓ `/verification/biometrics/face/comparison` + `liveliness_check`; SDK liveness | parity |
 | AML / PEP / sanctions | ✓ | ✓ `/api/v1/verification/aml-screening` | parity |
 | **Vehicle plate** | ✗ | ✓ `/verification/vehicle` (make/model/colour; VIN via `/vehicle/vin`) | Prembly only |
 | **Insurance policy (NIID)** | ✗ | ✓ `/verification/insurance_policy` | Prembly only — this is why we already picked it for insurance |
-| Bank accounts linked to a BVN | ✓ ₦842 | ✗ | **we don't use this** |
+| Bank accounts linked to a BVN | ✓ | ✗ | **we don't use this** |
 | BVN with NIBSS-iGree consent flow | ✓ | ✗ (direct lookup, no consent step) | **we don't use BVN at all** |
 
-The only two Mono-exclusive capabilities (accounts-by-BVN, consented BVN) are ones **our design never uses** — chauffeurs are verified by NIN+DL, fleet owners by NIN + account-number resolution. So there's no reason to keep a second integration. On the September-2024 price signals Prembly is equal-or-cheaper on every overlapping check. Auth is an `x-api-key` header (some endpoints also need `app-id`), there's a free sandbox with published test data, and per-request `callback_url` webhooks with opt-in retry.
+The only two Mono-exclusive capabilities (accounts-by-BVN, consented BVN) are ones **our design never uses** — chauffeurs are verified by NIN+DL, fleet owners by NIN + account-number resolution. So on capability grounds there's no reason to keep a second integration. Auth is an `x-api-key` header (some endpoints also need `app-id`), there's a free sandbox with published test data, and per-request `callback_url` webhooks with opt-in retry.
+
+**Pricing is NOT confirmed — do not assume Prembly is cheaper.** `prembly.com/pricing` publishes no per-endpoint prices at all: it's a "Get your Custom Pricing" configurator (pick services + countries → "Estimated Price Range $.../request") gated behind a quote/brochure form, with a marketing line of "flexible plans starting from **$0.50 per check**" and USD as the schema currency. Taken at face value, $0.50/check (≈₦750+) is *more expensive* than Mono's known naira lookup prices (NIN ₦80, DL ₦60, account ₦15) — but that figure is almost certainly a blended/global KYC rate, not the Nigerian local-ID lookup price, which is only visible after dashboard login on the pay-as-you-go wallet. An earlier draft called Prembly "equal-or-cheaper" based on a stale, unverifiable 2024 reseller price list; that claim is withdrawn. **Treat cost as unknown and decide the vendor on capability coverage, not price.** Get current per-endpoint naira pricing for NIN, DL, bank-account, plate, and insurance in writing from both Prembly and Mono before committing, and compare like-for-like.
 
 **Availability caveat (the one point where Mono is ahead):** Mono publishes a public per-endpoint status page (60-day uptime: NIN 100%, account lookup 100%, CAC 99.9%); Prembly has **no public status page** and documents soft-failure response codes (`02` = retry later) with rate limits that vary by plan. Both ultimately ride the same upstream government rails (NIMC, FRSC, CAC, NIID), which are the real failure point. Mitigation is already in the design: wrap every call in retries with backoff, keep the admin `NEEDS_REVIEW` manual fallback so a vendor/portal outage never fully blocks onboarding, and enable Prembly's callback retries. If, in production, Prembly's identity availability proves worse than acceptable, Mono remains a drop-in second source for NIN/DL/bank via the same provider-module seam — but we start single-vendor and only add Mono if the data says to.
 
@@ -53,8 +55,8 @@ The only two Mono-exclusive capabilities (accounts-by-BVN, consented BVN) are on
 
 Per the decision, chauffeur verification is exactly this, no background check for now:
 
-1. Look up **NIN** (Prembly `POST /verification/vnin-basic`, ~₦80) → returns names, DOB, phone, residential address, photo.
-2. Look up **driver's licence** (Prembly `POST /verification/drivers_license/advance`, ~₦50–80) → returns names, DOB, issue/expiry dates, photo, state of issue.
+1. Look up **NIN** (Prembly `POST /verification/vnin-basic`) → returns names, DOB, phone, residential address, photo.
+2. Look up **driver's licence** (Prembly `POST /verification/drivers_license/advance`) → returns names, DOB, issue/expiry dates, photo, state of issue.
 3. **Cross-match** the two results and the chauffeur's account:
    - **Name** matches across NIN and DL (normalised: case, ordering, diacritics, common short forms; fuzzy score with a threshold).
    - **Address** on NIN matches the address the chauffeur/fleet owner entered (NIN carries residential address; the DL lookup does not reliably return address, so address matching is NIN ↔ our record).
@@ -235,7 +237,7 @@ The document uploads themselves reuse the existing car document-upload path (the
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/fleet-owner/verifications/identity` | NIN lookup for the fleet owner, name/DOB match against their account. |
-| POST | `/api/fleet-owner/verifications/bank-account` | Resolve account number (Prembly `bank_account/comparism`, ~₦15), name-match → sets `BankDetails.isVerified`, `lastVerifiedAt`, `verificationResponse`. |
+| POST | `/api/fleet-owner/verifications/bank-account` | Resolve account number (Prembly `bank_account/comparism`), name-match → sets `BankDetails.isVerified`, `lastVerifiedAt`, `verificationResponse`. |
 
 ### Status (subject owner)
 
