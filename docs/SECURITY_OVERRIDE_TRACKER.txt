@@ -1,0 +1,60 @@
+Security Override Tracker
+=========================
+
+Track temporary dependency overrides added for security remediation.
+
+Active Overrides
+----------------
+
+hono forced to 4.12.29
+- Reason: Mitigate Snyk advisory SNYK-JS-HONO-16438966 (resource allocation without limits/throttling) affecting hono@4.12.9.
+- Where set: package.json -> pnpm.overrides.hono
+- Introduced through: @prisma/client -> prisma -> @prisma/dev -> hono
+- Added on: 2026-05-07
+- Removal condition: Remove this override once Prisma dependency chain resolves hono>=4.12.16 without a forced override.
+- Verification command: pnpm why hono
+
+@hono/node-server forced to 1.19.17
+- Reason: Mitigate Snyk advisory SNYK-JS-HONONODESERVER-18170326 (directory traversal) affecting @hono/node-server@1.19.11.
+- Where set: package.json -> pnpm.overrides.@hono/node-server
+- Introduced through: @prisma/client -> prisma -> @prisma/dev -> @hono/node-server
+- Added on: 2026-07-27
+- Removal condition: Remove once Prisma dependency chain resolves @hono/node-server>=1.19.17 without a forced override.
+- Verification command: pnpm why @hono/node-server
+
+next forced to 16.2.11
+- Reason: Mitigate Snyk advisories SNYK-JS-NEXT-18233133 and SNYK-JS-NEXT-18233136 (resource allocation / SSRF) affecting next@16.2.6.
+- Where set: package.json -> pnpm.overrides.next
+- Introduced through: better-auth -> next (peer dependency)
+- Added on: 2026-07-27
+- Removal condition: Remove once better-auth resolves next>=16.2.11 without a forced override.
+- Verification command: pnpm why next
+
+postcss forced to 8.5.18
+- Reason: Mitigate Snyk advisories SNYK-JS-POSTCSS-18313036 and SNYK-JS-POSTCSS-18313038 (directory traversal) affecting postcss@8.4.31 and postcss@8.5.8.
+- Where set: package.json -> pnpm.overrides.postcss
+- Introduced through: better-auth -> next -> postcss
+- Added on: 2026-07-27
+- Removal condition: Remove once next dependency chain resolves postcss>=8.5.18 without a forced override.
+- Verification command: pnpm why postcss
+
+sharp forced to 0.35.0
+- Reason: Mitigate Snyk advisories SNYK-JS-SHARP-18184259 and SNYK-JS-SHARP-18184418 (integer overflow / heap buffer overflow) affecting sharp@0.34.5.
+- Where set: package.json -> pnpm.overrides.sharp
+- Introduced through: better-auth -> next -> sharp
+- Added on: 2026-07-27
+- Removal condition: Remove once next dependency chain resolves sharp>=0.35.0 without a forced override.
+- Verification command: pnpm why sharp
+
+brace-expansion forced to 5.0.8
+- Reason: Mitigate Snyk advisory SNYK-JS-BRACEEXPANSION-18313044 (resource allocation without limits/throttling) affecting brace-expansion@5.0.7.
+- Where set: package.json -> pnpm.overrides.brace-expansion
+- Introduced through: react-email -> glob -> minimatch -> brace-expansion
+- Added on: 2026-07-27
+- Removal condition: Remove once upstream dependency chain resolves brace-expansion>=5.0.8 without a forced override.
+- Verification command: pnpm why brace-expansion
+
+Review Cadence
+--------------
+- Re-check on every Prisma upgrade PR.
+- Re-check at least once per month if Prisma is not upgraded.
