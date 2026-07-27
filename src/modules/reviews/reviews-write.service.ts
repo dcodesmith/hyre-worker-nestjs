@@ -207,10 +207,12 @@ export class ReviewsWriteService {
       await this.notificationService.queueReviewReceivedNotifications({
         bookingId: booking.id,
         owner: {
+          userId: booking.car.owner.id,
           name: ownerName,
           email: booking.car.owner.email,
         },
         chauffeur: {
+          userId: booking.chauffeur.id,
           name: chauffeurName,
           email: booking.chauffeur.email,
         },

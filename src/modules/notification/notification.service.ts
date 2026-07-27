@@ -12,6 +12,7 @@ import {
   SEND_NOTIFICATION_JOB_NAME,
 } from "./notification.const";
 import {
+  NotificationAudience,
   NotificationChannel,
   NotificationJobData,
   NotificationResult,
@@ -31,14 +32,12 @@ import {
  * Context required to resolve push delivery for booking reminders.
  *
  * `NormalisedBookingLegDetails` is template-only, so callers must explicitly
- * pass the operational user IDs (and optionally pre-resolved push tokens).
+ * pass the operational user IDs.
  * Making this required prevents accidental push omission on the reminder path.
  */
 export type ReminderRecipientContext = {
   customerUserId?: string;
   chauffeurUserId?: string;
-  customerPushTokens?: string[];
-  chauffeurPushTokens?: string[];
 };
 
 @Injectable()
@@ -64,26 +63,28 @@ export class NotificationService {
     showReviewRequest?: boolean;
   }): Promise<NotificationJobData | null> {
     const bookingDetails = normaliseBookingDetails(booking);
-    const customerChannels = await this.recipientChannelResolver.resolve({
+    const customerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
       email: bookingDetails.customerEmail,
       phoneNumber: bookingDetails.customerPhone,
       userId: booking.userId ?? booking.user?.id ?? undefined,
     });
 
-    if (customerChannels.channels.length === 0) {
+    if (customerChannels.length === 0) {
       return null;
     }
 
     return {
       id: `status-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.BOOKING_STATUS_CHANGE,
-      channels: customerChannels.channels,
+      audience: NotificationAudience.CUSTOMER,
+      channels: customerChannels,
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
+          userId: booking.userId ?? booking.user?.id ?? undefined,
           email: bookingDetails.customerEmail,
           phoneNumber: bookingDetails.customerPhone,
-          pushTokens: customerChannels.pushTokens,
         },
       },
       pushPayload: {
@@ -116,26 +117,28 @@ export class NotificationService {
     booking: BookingWithRelations,
   ): Promise<NotificationJobData | null> {
     const bookingDetails = normaliseBookingDetails(booking);
-    const customerChannels = await this.recipientChannelResolver.resolve({
+    const customerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
       email: bookingDetails.customerEmail,
       phoneNumber: bookingDetails.customerPhone,
       userId: booking.userId ?? booking.user?.id ?? undefined,
     });
 
-    if (customerChannels.channels.length === 0) {
+    if (customerChannels.length === 0) {
       return null;
     }
 
     return {
       id: `chauffeur-assigned-${bookingDetails.id}-${Date.now()}`,
       type: NotificationType.CHAUFFEUR_ASSIGNED,
-      channels: customerChannels.channels,
+      audience: NotificationAudience.CUSTOMER,
+      channels: customerChannels,
       bookingId: bookingDetails.id,
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
+          userId: booking.userId ?? booking.user?.id ?? undefined,
           email: bookingDetails.customerEmail,
           phoneNumber: bookingDetails.customerPhone,
-          pushTokens: customerChannels.pushTokens,
         },
       },
       pushPayload: {
@@ -170,9 +173,9 @@ export class NotificationService {
    *
    * Channel resolution mirrors the other builders (status / chauffeur-assigned
    * / reminder) — both customer and fleet-owner paths go through
-   * `recipientChannelResolver.resolve`, which also adds the PUSH channel when
-   * active push tokens exist. Keeping all builders on the same resolver is the
-   * DRY invariant that prevents the "cancellation never produces PUSH" bug.
+   * `recipientChannelResolver.resolve`, which schedules PUSH for supported
+   * customer audiences with a user ID. Active tokens are resolved only when
+   * the worker delivers the job, so durable payloads do not contain snapshots.
    */
   async buildBookingCancellationJobData(booking: BookingWithRelations): Promise<{
     customer: NotificationJobData | null;
@@ -188,31 +191,32 @@ export class NotificationService {
     const ownerEmail = booking.car?.owner?.email ?? undefined;
     const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
 
-    const [customerChannels, ownerChannels] = await Promise.all([
-      this.recipientChannelResolver.resolve({
-        email: bookingDetails.customerEmail,
-        phoneNumber: bookingDetails.customerPhone,
-        userId: booking.userId ?? booking.user?.id ?? undefined,
-      }),
-      this.recipientChannelResolver.resolve({
-        email: ownerEmail,
-        phoneNumber: ownerPhone,
-        userId: booking.car?.owner?.id ?? undefined,
-      }),
-    ]);
+    const customerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
+      email: bookingDetails.customerEmail,
+      phoneNumber: bookingDetails.customerPhone,
+      userId: booking.userId ?? booking.user?.id ?? undefined,
+    });
+    const ownerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.FLEET_OWNER,
+      email: ownerEmail,
+      phoneNumber: ownerPhone,
+      userId: booking.car?.owner?.id ?? undefined,
+    });
 
     const customer: NotificationJobData | null =
-      customerChannels.channels.length > 0
+      customerChannels.length > 0
         ? {
             id: `cancelled-client-${bookingDetails.id}-${Date.now()}`,
             type: NotificationType.BOOKING_CANCELLED,
-            channels: customerChannels.channels,
+            audience: NotificationAudience.CUSTOMER,
+            channels: customerChannels,
             bookingId: bookingDetails.id,
             recipients: {
               [CLIENT_RECIPIENT_TYPE]: {
+                userId: booking.userId ?? booking.user?.id ?? undefined,
                 email: bookingDetails.customerEmail,
                 phoneNumber: bookingDetails.customerPhone,
-                pushTokens: customerChannels.pushTokens,
               },
             },
             pushPayload: {
@@ -228,17 +232,18 @@ export class NotificationService {
         : null;
 
     const owner: NotificationJobData | null =
-      ownerChannels.channels.length > 0
+      ownerChannels.length > 0
         ? {
             id: `cancelled-owner-${bookingDetails.id}-${Date.now()}`,
             type: NotificationType.BOOKING_CANCELLED,
-            channels: ownerChannels.channels,
+            audience: NotificationAudience.FLEET_OWNER,
+            channels: ownerChannels,
             bookingId: bookingDetails.id,
             recipients: {
               [FLEET_OWNER_RECIPIENT_TYPE]: {
+                userId: booking.car?.owner?.id ?? undefined,
                 email: ownerEmail,
                 phoneNumber: ownerPhone,
-                pushTokens: ownerChannels.pushTokens,
               },
             },
             pushPayload: {
@@ -280,7 +285,6 @@ export class NotificationService {
         email: bookingLegDetails.customerEmail,
         phoneNumber: bookingLegDetails.customerPhone,
         userId: context.customerUserId,
-        pushTokens: context.customerPushTokens,
         type,
       }),
       this.createReminderJobData({
@@ -289,7 +293,6 @@ export class NotificationService {
         email: bookingLegDetails.chauffeurEmail,
         phoneNumber: bookingLegDetails.chauffeurPhone,
         userId: context.chauffeurUserId,
-        pushTokens: context.chauffeurPushTokens,
         type,
       }),
     ]);
@@ -314,10 +317,12 @@ export class NotificationService {
     const ownerJobData: NotificationJobData = {
       id: `review-received-owner-${params.bookingId}-${Date.now()}`,
       type: NotificationType.REVIEW_RECEIVED,
+      audience: NotificationAudience.FLEET_OWNER,
       channels: [NotificationChannel.EMAIL],
       bookingId: params.bookingId,
       recipients: {
         [FLEET_OWNER_RECIPIENT_TYPE]: {
+          userId: params.owner.userId,
           email: params.owner.email,
         },
       },
@@ -333,10 +338,12 @@ export class NotificationService {
     const chauffeurJobData: NotificationJobData = {
       id: `review-received-chauffeur-${params.bookingId}-${Date.now()}`,
       type: NotificationType.REVIEW_RECEIVED,
+      audience: NotificationAudience.CHAUFFEUR,
       channels: [NotificationChannel.EMAIL],
       bookingId: params.bookingId,
       recipients: {
         [CHAUFFEUR_RECIPIENT_TYPE]: {
+          userId: params.chauffeur.userId,
           email: params.chauffeur.email,
         },
       },
@@ -363,7 +370,6 @@ export class NotificationService {
     email,
     phoneNumber,
     userId,
-    pushTokens,
     type,
   }: {
     bookingLegDetails: NormalisedBookingLegDetails;
@@ -371,16 +377,19 @@ export class NotificationService {
     email: string | undefined;
     phoneNumber: string | undefined;
     userId: string | undefined;
-    pushTokens?: string[];
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END;
   }): Promise<NotificationJobData | null> {
-    const recipientChannels = await this.recipientChannelResolver.resolve({
+    const audience =
+      recipientType === CLIENT_RECIPIENT_TYPE
+        ? NotificationAudience.CUSTOMER
+        : NotificationAudience.CHAUFFEUR;
+    const recipientChannels = this.recipientChannelResolver.resolve({
+      audience,
       email,
       phoneNumber,
       userId,
-      pushTokens,
     });
-    if (recipientChannels.channels.length === 0) {
+    if (recipientChannels.length === 0) {
       return null;
     }
 
@@ -392,13 +401,14 @@ export class NotificationService {
     return {
       id: `reminder-${recipientType}-${bookingLegDetails.bookingLegId}-${type}-${Date.now()}`,
       type,
-      channels: recipientChannels.channels,
+      audience,
+      channels: recipientChannels,
       bookingId: bookingLegDetails.bookingId,
       recipients: {
         [recipientType]: {
+          userId,
           email,
           phoneNumber,
-          pushTokens: recipientChannels.pushTokens,
         },
       },
       pushPayload: {

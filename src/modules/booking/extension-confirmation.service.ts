@@ -10,7 +10,11 @@ import {
   CLIENT_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import {
+  NotificationAudience,
+  type NotificationJobData,
+  NotificationType,
+} from "../notification/notification.interface";
 import { deriveNotificationChannels } from "../notification/notification-channel.helper";
 import { BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND } from "../notification/template-data.interface";
 
@@ -118,10 +122,12 @@ export class ExtensionConfirmationService {
       {
         id: notificationJobId,
         type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+        audience: NotificationAudience.CUSTOMER,
         channels,
         bookingId: updatedExtension.bookingLeg.booking.id,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {
+            userId: updatedExtension.bookingLeg.booking.userId ?? undefined,
             email: bookingDetails.customerEmail,
             phoneNumber: bookingDetails.customerPhone,
           },

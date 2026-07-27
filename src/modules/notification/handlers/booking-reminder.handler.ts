@@ -3,7 +3,7 @@ import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/clie
 import { normaliseBookingLegDetails } from "../../../shared/helper";
 import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "../notification.const";
 import { NotificationType } from "../notification.interface";
-import { NotificationService, ReminderRecipientContext } from "../notification.service";
+import { NotificationService } from "../notification.service";
 import type { HandlerEvent, OutboxEventHandler } from "./outbox-event-handler.interface";
 
 const SUBTYPE_BY_TYPE: Record<
@@ -17,12 +17,6 @@ const SUBTYPE_BY_TYPE: Record<
 export type BookingReminderInput = {
   bookingLeg: Parameters<typeof normaliseBookingLegDetails>[0];
   type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END;
-  /**
-   * Optional pre-resolved push tokens for fan-out batching. Reminder cron can
-   * fetch tokens for many recipients in one round-trip and pass them in to
-   * avoid N+1 lookups (perf review, Issue 13A).
-   */
-  context?: Pick<ReminderRecipientContext, "customerPushTokens" | "chauffeurPushTokens">;
 };
 
 @Injectable()
@@ -31,7 +25,7 @@ export class BookingReminderHandler implements OutboxEventHandler<BookingReminde
 
   constructor(private readonly notificationService: NotificationService) {}
 
-  async buildEvents({ bookingLeg, type, context }: BookingReminderInput): Promise<HandlerEvent[]> {
+  async buildEvents({ bookingLeg, type }: BookingReminderInput): Promise<HandlerEvent[]> {
     const subtype = SUBTYPE_BY_TYPE[type];
     const inboxTitle =
       type === NotificationType.BOOKING_REMINDER_START
@@ -48,8 +42,6 @@ export class BookingReminderHandler implements OutboxEventHandler<BookingReminde
       {
         customerUserId: bookingLeg.booking.userId ?? undefined,
         chauffeurUserId: bookingLeg.booking.chauffeurId ?? undefined,
-        customerPushTokens: context?.customerPushTokens,
-        chauffeurPushTokens: context?.chauffeurPushTokens,
       },
     );
 

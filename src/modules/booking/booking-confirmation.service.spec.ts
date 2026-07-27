@@ -19,7 +19,7 @@ import { createBooking, createCar, createOwner, createUser } from "../../shared/
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import type { NotificationJobData } from "../notification/notification.interface";
-import { NotificationType } from "../notification/notification.interface";
+import { NotificationAudience, NotificationType } from "../notification/notification.interface";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -205,7 +205,13 @@ describe("BookingConfirmationService", () => {
         "send-notification",
         expect.objectContaining({
           type: NotificationType.BOOKING_CONFIRMED,
+          audience: NotificationAudience.CUSTOMER,
           bookingId: "booking-123",
+          recipients: expect.objectContaining({
+            client: expect.objectContaining({
+              userId: mockBooking.userId,
+            }),
+          }),
           templateData: expect.objectContaining({
             templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
             subject: "Your booking is confirmed!",
@@ -371,9 +377,11 @@ describe("BookingConfirmationService", () => {
         "send-notification",
         expect.objectContaining({
           type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+          audience: NotificationAudience.FLEET_OWNER,
           bookingId: "booking-123",
           recipients: expect.objectContaining({
             fleetOwner: expect.objectContaining({
+              userId: mockBooking.car?.owner?.id,
               email: "owner@example.com",
             }),
           }),

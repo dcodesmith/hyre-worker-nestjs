@@ -1,6 +1,10 @@
 import { NotificationOutboxEventType } from "@prisma/client";
 import { z } from "zod";
-import { NotificationChannel, NotificationType } from "./notification.interface";
+import {
+  NotificationAudience,
+  NotificationChannel,
+  NotificationType,
+} from "./notification.interface";
 
 const notificationTypeValues = Object.values(NotificationType) as [
   NotificationType,
@@ -10,6 +14,11 @@ const notificationTypeValues = Object.values(NotificationType) as [
 const notificationChannelValues = Object.values(NotificationChannel) as [
   NotificationChannel,
   ...NotificationChannel[],
+];
+
+const notificationAudienceValues = Object.values(NotificationAudience) as [
+  NotificationAudience,
+  ...NotificationAudience[],
 ];
 
 const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
@@ -29,6 +38,8 @@ const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
 export const notificationJobDataSchema = z.object({
   id: z.string().min(1),
   type: z.enum(notificationTypeValues),
+  // Optional while pre-migration jobs/outbox rows remain readable.
+  audience: z.enum(notificationAudienceValues).optional(),
   channels: z.array(z.enum(notificationChannelValues)).min(1),
   bookingId: z.string().min(1),
   pushPayload: z
@@ -41,8 +52,10 @@ export const notificationJobDataSchema = z.object({
   recipients: z.record(
     z.string(),
     z.object({
+      userId: z.string().min(1).optional(),
       email: z.string().optional(),
       phoneNumber: z.string().optional(),
+      // Legacy token snapshots remain parseable until retained jobs expire.
       pushTokens: z.array(z.string()).optional(),
     }),
   ),

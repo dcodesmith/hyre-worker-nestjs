@@ -10,25 +10,27 @@ import {
   createUser,
 } from "../../../shared/helper.fixtures";
 import { CHAUFFEUR_RECIPIENT_TYPE, CLIENT_RECIPIENT_TYPE } from "../notification.const";
-import { NotificationType } from "../notification.interface";
+import { NotificationAudience, NotificationType } from "../notification.interface";
 import { NotificationService } from "../notification.service";
 import { BookingReminderHandler } from "./booking-reminder.handler";
 
 const customerJob = {
   id: "reminder-customer-leg-1",
   type: NotificationType.BOOKING_REMINDER_START,
+  audience: NotificationAudience.CUSTOMER,
   channels: ["email" as const, "push" as const],
   bookingId: "booking-1",
-  recipients: { [CLIENT_RECIPIENT_TYPE]: { email: "j@x.com", pushTokens: ["t1"] } },
+  recipients: { [CLIENT_RECIPIENT_TYPE]: { userId: "user-1", email: "j@x.com" } },
   templateData: {},
 };
 
 const chauffeurJob = {
   id: "reminder-chauffeur-leg-1",
   type: NotificationType.BOOKING_REMINDER_START,
-  channels: ["push" as const],
+  audience: NotificationAudience.CHAUFFEUR,
+  channels: ["email" as const],
   bookingId: "booking-1",
-  recipients: { [CHAUFFEUR_RECIPIENT_TYPE]: { pushTokens: ["t2"] } },
+  recipients: { [CHAUFFEUR_RECIPIENT_TYPE]: { userId: "chauffeur-1" } },
   templateData: {},
 };
 
@@ -107,17 +109,13 @@ describe("BookingReminderHandler", () => {
     );
   });
 
-  it("threads pre-resolved push tokens from context into the job-data builder (Issue 13A)", async () => {
+  it("passes recipient user IDs to the job-data builder", async () => {
     notificationService.buildBookingReminderJobData.mockResolvedValueOnce([]);
     const leg = buildLeg();
 
     await handler.buildEvents({
       bookingLeg: leg,
       type: NotificationType.BOOKING_REMINDER_END,
-      context: {
-        customerPushTokens: ["t-cust-1", "t-cust-2"],
-        chauffeurPushTokens: ["t-chauf-1"],
-      },
     });
 
     expect(notificationService.buildBookingReminderJobData).toHaveBeenCalledWith(
@@ -126,8 +124,6 @@ describe("BookingReminderHandler", () => {
       {
         customerUserId: "user-1",
         chauffeurUserId: "chauffeur-1",
-        customerPushTokens: ["t-cust-1", "t-cust-2"],
-        chauffeurPushTokens: ["t-chauf-1"],
       },
     );
   });

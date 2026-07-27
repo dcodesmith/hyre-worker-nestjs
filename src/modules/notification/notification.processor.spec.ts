@@ -6,6 +6,7 @@ import * as emailTemplates from "../../templates/emails";
 import { EmailService } from "../email/email.service";
 import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
 import {
+  NotificationAudience,
   NotificationChannel,
   NotificationJobData,
   NotificationResult,
@@ -42,6 +43,28 @@ describe("NotificationProcessor", () => {
       opts: { attempts: 3 },
       updateProgress: vi.fn().mockResolvedValue(undefined),
     }) as unknown as Job<NotificationJobData, NotificationResult[], string>;
+
+  const pushTemplateData: NotificationJobData["templateData"] = {
+    templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+    id: "booking-push",
+    bookingReference: "BR-PUSH",
+    customerName: "Push Customer",
+    ownerName: "Owner",
+    chauffeurName: "Chauffeur",
+    chauffeurPhoneNumber: "1234567890",
+    carName: "Car",
+    pickupLocation: "Pickup",
+    returnLocation: "Return",
+    startDate: "2026-07-27",
+    endDate: "2026-07-28",
+    totalAmount: "10000",
+    title: "Booking update",
+    status: "confirmed",
+    cancellationReason: "",
+    subject: "Booking update",
+    oldStatus: "pending",
+    newStatus: "confirmed",
+  };
 
   beforeEach(async () => {
     // Spy on the template functions
@@ -83,6 +106,7 @@ describe("NotificationProcessor", () => {
         {
           provide: PushTokenService,
           useValue: {
+            getActiveTokensForUsers: vi.fn().mockResolvedValue({}),
             revokeTokens: vi.fn(),
           },
         },
@@ -602,6 +626,64 @@ describe("NotificationProcessor", () => {
       data: { bookingId: "booking-111", type: NotificationType.CHAUFFEUR_ASSIGNED },
     });
     expect(pushTokenService.revokeTokens).toHaveBeenCalledWith(["ExponentPushToken[b]"]);
+  });
+
+  it("resolves active push tokens from the recipient user ID at delivery time", async () => {
+    const job = createJob("job-late-token", {
+      id: "notification-late-token",
+      type: NotificationType.BOOKING_STATUS_CHANGE,
+      audience: NotificationAudience.CUSTOMER,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-push",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          userId: "customer-late-token",
+        },
+      },
+      templateData: pushTemplateData,
+    });
+    vi.mocked(pushTokenService.getActiveTokensForUsers).mockResolvedValueOnce({
+      "customer-late-token": ["ExponentPushToken[latest]"],
+    });
+    vi.mocked(pushService.sendPushNotifications).mockResolvedValueOnce({
+      sent: 1,
+      failed: 0,
+      invalidTokens: [],
+    });
+
+    await expect(processor.process(job)).resolves.toEqual([
+      expect.objectContaining({
+        channel: NotificationChannel.PUSH,
+        success: true,
+      }),
+    ]);
+
+    expect(pushTokenService.getActiveTokensForUsers).toHaveBeenCalledWith(["customer-late-token"]);
+    expect(pushService.sendPushNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokens: ["ExponentPushToken[latest]"],
+      }),
+    );
+  });
+
+  it("does not deliver push to an explicitly unsupported audience", async () => {
+    const job = createJob("job-owner-push", {
+      id: "notification-owner-push",
+      type: NotificationType.BOOKING_STATUS_CHANGE,
+      audience: NotificationAudience.FLEET_OWNER,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-push",
+      recipients: {
+        [FLEET_OWNER_RECIPIENT_TYPE]: {
+          userId: "fleet-owner-1",
+        },
+      },
+      templateData: pushTemplateData,
+    });
+
+    await expect(processor.process(job)).resolves.toEqual([]);
+    expect(pushTokenService.getActiveTokensForUsers).not.toHaveBeenCalled();
+    expect(pushService.sendPushNotifications).not.toHaveBeenCalled();
   });
 
   it("should fail PUSH channel with retryable error when only retryable push errors exist", async () => {

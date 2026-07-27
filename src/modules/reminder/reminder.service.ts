@@ -21,7 +21,6 @@ import { DatabaseService } from "../database/database.service";
 import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { PushTokenService } from "../notification/push-token.service";
 
 const REMINDER_LABEL_BY_TYPE = {
   [NotificationType.BOOKING_REMINDER_START]: "start",
@@ -47,7 +46,6 @@ export class ReminderService {
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingReminderHandler: BookingReminderHandler,
-    private readonly pushTokenService: PushTokenService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ReminderService.name);
@@ -107,7 +105,6 @@ export class ReminderService {
         return "No relevant booking legs today, so no start reminders to send.";
       }
 
-      const tokensByUserId = await this.prefetchPushTokensForLegs(legs);
       const limit = pLimit(REMINDER_CONCURRENCY);
       const results = await Promise.all(
         legs.map((leg) =>
@@ -116,11 +113,7 @@ export class ReminderService {
               { legId: leg.id, legStartTime: leg.legStartTime.toISOString() },
               "Processing booking leg start reminder",
             );
-            return this.queueReminderForLeg(
-              leg,
-              NotificationType.BOOKING_REMINDER_START,
-              tokensByUserId,
-            );
+            return this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_START);
           }),
         ),
       );
@@ -229,17 +222,12 @@ export class ReminderService {
         return "Processed and queued end reminders for 0 legs.";
       }
 
-      const tokensByUserId = await this.prefetchPushTokensForLegs(dueLegs);
       const limit = pLimit(REMINDER_CONCURRENCY);
       const results = await Promise.all(
         dueLegs.map((leg) =>
           limit(() => {
             this.logger.info({ legId: leg.id }, "Processing booking leg end reminder");
-            return this.queueReminderForLeg(
-              leg,
-              NotificationType.BOOKING_REMINDER_END,
-              tokensByUserId,
-            );
+            return this.queueReminderForLeg(leg, NotificationType.BOOKING_REMINDER_END);
           }),
         ),
       );
@@ -289,33 +277,9 @@ export class ReminderService {
     return effectiveEndTime;
   }
 
-  /**
-   * Batch-fetch active push tokens for every customer + chauffeur across the
-   * given legs in a single round-trip. Replaces N+1 per-recipient lookups
-   * inside `RecipientChannelResolverService.resolve()` (Issue 13A).
-   */
-  private async prefetchPushTokensForLegs(legs: ReminderLeg[]): Promise<Record<string, string[]>> {
-    const userIds = new Set<string>();
-    for (const leg of legs) {
-      if (leg.booking.userId) {
-        userIds.add(leg.booking.userId);
-      }
-      if (leg.booking.chauffeurId) {
-        userIds.add(leg.booking.chauffeurId);
-      }
-    }
-
-    if (userIds.size === 0) {
-      return {};
-    }
-
-    return this.pushTokenService.getActiveTokensForUsers([...userIds]);
-  }
-
   private async queueReminderForLeg(
     leg: ReminderLeg,
     type: NotificationType.BOOKING_REMINDER_START | NotificationType.BOOKING_REMINDER_END,
-    tokensByUserId: Record<string, string[]>,
   ): Promise<boolean> {
     return this.queueReminderNotification(
       leg.id,
@@ -323,14 +287,6 @@ export class ReminderService {
         await this.notificationOutboxService.create(this.bookingReminderHandler, {
           bookingLeg: leg,
           type,
-          context: {
-            customerPushTokens: leg.booking.userId
-              ? (tokensByUserId[leg.booking.userId] ?? [])
-              : undefined,
-            chauffeurPushTokens: leg.booking.chauffeurId
-              ? (tokensByUserId[leg.booking.chauffeurId] ?? [])
-              : undefined,
-          },
         });
       },
       REMINDER_LABEL_BY_TYPE[type],
