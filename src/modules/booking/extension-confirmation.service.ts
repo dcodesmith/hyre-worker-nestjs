@@ -15,7 +15,7 @@ import {
   type NotificationJobData,
   NotificationType,
 } from "../notification/notification.interface";
-import { deriveNotificationChannels } from "../notification/notification-channel.helper";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import { BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND } from "../notification/template-data.interface";
 
 @Injectable()
@@ -23,6 +23,7 @@ export class ExtensionConfirmationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly logger: PinoLogger,
+    private readonly recipientChannelResolver: RecipientChannelResolverService,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
   ) {
@@ -103,7 +104,13 @@ export class ExtensionConfirmationService {
 
     const bookingDetails = normaliseBookingDetails(updatedExtension.bookingLeg.booking);
     const extensionDetails = normaliseExtensionDetails(updatedExtension);
-    const channels = deriveNotificationChannels(bookingDetails);
+    const userId = updatedExtension.bookingLeg.booking.userId ?? undefined;
+    const channels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
+      email: bookingDetails.customerEmail,
+      phoneNumber: bookingDetails.customerPhone,
+      userId,
+    });
 
     if (channels.length === 0) {
       this.logger.warn(
@@ -127,7 +134,7 @@ export class ExtensionConfirmationService {
         bookingId: updatedExtension.bookingLeg.booking.id,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {
-            userId: updatedExtension.bookingLeg.booking.userId ?? undefined,
+            userId,
             email: bookingDetails.customerEmail,
             phoneNumber: bookingDetails.customerPhone,
           },

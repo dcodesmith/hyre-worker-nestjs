@@ -60,6 +60,7 @@ import { WhatsAppService } from "./whatsapp.service";
     NotificationOutboxService,
     WhatsAppService,
     PushTokenService,
+    RecipientChannelResolverService,
     ChauffeurAssignedHandler,
     BookingStatusChangedHandler,
     BookingReminderHandler,

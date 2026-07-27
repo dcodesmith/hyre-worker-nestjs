@@ -19,7 +19,12 @@ import { createBooking, createCar, createOwner, createUser } from "../../shared/
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import type { NotificationJobData } from "../notification/notification.interface";
-import { NotificationAudience, NotificationType } from "../notification/notification.interface";
+import {
+  NotificationAudience,
+  NotificationChannel,
+  NotificationType,
+} from "../notification/notification.interface";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -94,6 +99,7 @@ describe("BookingConfirmationService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingConfirmationService,
+        RecipientChannelResolverService,
         {
           provide: DatabaseService,
           useValue: {
@@ -206,6 +212,7 @@ describe("BookingConfirmationService", () => {
         expect.objectContaining({
           type: NotificationType.BOOKING_CONFIRMED,
           audience: NotificationAudience.CUSTOMER,
+          channels: expect.arrayContaining([NotificationChannel.PUSH]),
           bookingId: "booking-123",
           recipients: expect.objectContaining({
             client: expect.objectContaining({
@@ -477,6 +484,7 @@ describe("BookingConfirmationService", () => {
       const mockBooking = createMockBookingWithRelations({
         id: "booking-123",
         status: BookingStatus.CONFIRMED,
+        userId: null,
         user: null,
         guestUser: {
           name: "No Contact Guest",

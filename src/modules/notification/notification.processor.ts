@@ -576,6 +576,10 @@ export class NotificationProcessor extends WorkerHost {
     );
     const uniqueTokens = uniquePushRecipients.map((entry) => entry.pushToken);
     if (uniqueTokens.length === 0) {
+      this.logger.debug(
+        { bookingId, type, recipientCount: recipientEntries.length },
+        "Push notification skipped: no active tokens found",
+      );
       return null;
     }
 

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import * as emailTemplates from "../../templates/emails";
@@ -28,6 +29,7 @@ describe("NotificationProcessor", () => {
   let whatsAppService: WhatsAppService;
   let pushService: PushService;
   let pushTokenService: PushTokenService;
+  let logger: PinoLogger;
 
   const createJob = (
     id: string,
@@ -120,6 +122,7 @@ describe("NotificationProcessor", () => {
     whatsAppService = module.get<WhatsAppService>(WhatsAppService);
     pushService = module.get<PushService>(PushService);
     pushTokenService = module.get<PushTokenService>(PushTokenService);
+    logger = module.get<PinoLogger>(PinoLogger);
   });
 
   it("should process notification job with EMAIL channel successfully", async () => {
@@ -664,6 +667,34 @@ describe("NotificationProcessor", () => {
         tokens: ["ExponentPushToken[latest]"],
       }),
     );
+  });
+
+  it("logs when no active push tokens are found", async () => {
+    const job = createJob("job-no-token", {
+      id: "notification-no-token",
+      type: NotificationType.BOOKING_STATUS_CHANGE,
+      audience: NotificationAudience.CUSTOMER,
+      channels: [NotificationChannel.PUSH],
+      bookingId: "booking-push",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          userId: "customer-no-token",
+        },
+      },
+      templateData: pushTemplateData,
+    });
+
+    await expect(processor.process(job)).resolves.toEqual([]);
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      {
+        bookingId: "booking-push",
+        type: NotificationType.BOOKING_STATUS_CHANGE,
+        recipientCount: 1,
+      },
+      "Push notification skipped: no active tokens found",
+    );
+    expect(pushService.sendPushNotifications).not.toHaveBeenCalled();
   });
 
   it("does not deliver push to an explicitly unsupported audience", async () => {

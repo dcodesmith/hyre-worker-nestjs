@@ -26,6 +26,7 @@ import {
   NotificationType,
 } from "../notification/notification.interface";
 import { deriveNotificationChannels } from "../notification/notification-channel.helper";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -46,6 +47,7 @@ export class BookingConfirmationService {
     private readonly eventEmitter: EventEmitter2,
     private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
     private readonly logger: PinoLogger,
+    private readonly recipientChannelResolver: RecipientChannelResolverService,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
   ) {
@@ -223,7 +225,12 @@ export class BookingConfirmationService {
     bookingDetails: ReturnType<typeof normaliseBookingDetails>,
   ): Promise<void> {
     try {
-      const channels = deriveNotificationChannels(bookingDetails);
+      const channels = this.recipientChannelResolver.resolve({
+        audience: NotificationAudience.CUSTOMER,
+        email: bookingDetails.customerEmail,
+        phoneNumber: bookingDetails.customerPhone,
+        userId,
+      });
       if (channels.length === 0) {
         this.logger.warn(
           {

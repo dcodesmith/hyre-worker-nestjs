@@ -10,6 +10,7 @@ import {
   NotificationChannel,
   NotificationType,
 } from "../notification/notification.interface";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
 
 describe("ExtensionConfirmationService", () => {
@@ -34,6 +35,7 @@ describe("ExtensionConfirmationService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExtensionConfirmationService,
+        RecipientChannelResolverService,
         {
           provide: DatabaseService,
           useValue: databaseServiceMock,
@@ -118,7 +120,11 @@ describe("ExtensionConfirmationService", () => {
       expect.objectContaining({
         type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
         audience: NotificationAudience.CUSTOMER,
-        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
         recipients: expect.objectContaining({
           client: expect.objectContaining({
             userId: "customer-1",
