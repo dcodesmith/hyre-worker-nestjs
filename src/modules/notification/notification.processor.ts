@@ -21,6 +21,7 @@ import {
   FLEET_OWNER_RECIPIENT_TYPE,
 } from "./notification.const";
 import {
+  NotificationAudience,
   NotificationChannel,
   NotificationJobData,
   NotificationRecipientResult,
@@ -107,15 +108,16 @@ export class NotificationProcessor extends WorkerHost {
         continue;
       }
 
-      const result = await this.processChannel(
-        id,
+      const result = await this.processChannel({
+        notificationId: id,
         channel,
         type,
         recipients,
         templateData,
-        job.data.bookingId,
-        job.data.pushPayload,
-      );
+        bookingId: job.data.bookingId,
+        pushPayload: job.data.pushPayload,
+        audience: job.data.audience,
+      });
       if (result) results.push(result);
       if (result?.success) {
         succeededChannels.add(channel);
@@ -148,15 +150,25 @@ export class NotificationProcessor extends WorkerHost {
     return results;
   }
 
-  private async processChannel(
-    notificationId: string,
-    channel: NotificationChannel,
-    type: NotificationType,
-    recipients: NotificationJobData["recipients"],
-    templateData: TemplateData,
-    bookingId: string,
-    pushPayload: NotificationJobData["pushPayload"],
-  ): Promise<NotificationResult | null> {
+  private async processChannel({
+    notificationId,
+    channel,
+    type,
+    recipients,
+    templateData,
+    bookingId,
+    pushPayload,
+    audience,
+  }: {
+    notificationId: string;
+    channel: NotificationChannel;
+    type: NotificationType;
+    recipients: NotificationJobData["recipients"];
+    templateData: TemplateData;
+    bookingId: string;
+    pushPayload: NotificationJobData["pushPayload"];
+    audience: NotificationJobData["audience"];
+  }): Promise<NotificationResult | null> {
     try {
       if (channel === NotificationChannel.EMAIL) {
         return await this.sendEmailNotification(type, recipients, templateData);
@@ -167,7 +179,13 @@ export class NotificationProcessor extends WorkerHost {
       }
 
       if (channel === NotificationChannel.PUSH) {
-        return await this.sendPushNotification(type, recipients, bookingId, pushPayload);
+        return await this.sendPushNotification({
+          type,
+          recipients,
+          bookingId,
+          pushPayload,
+          audience,
+        });
       }
 
       return null;
@@ -521,14 +539,34 @@ export class NotificationProcessor extends WorkerHost {
     });
   }
 
-  private async sendPushNotification(
-    type: NotificationType,
-    recipients: NotificationJobData["recipients"],
-    bookingId: string,
-    pushPayload: NotificationJobData["pushPayload"],
-  ): Promise<NotificationResult | null> {
-    const pushRecipients = Object.entries(recipients).flatMap(([recipientType, recipient]) =>
-      (recipient?.pushTokens ?? []).map((token) => ({
+  private async sendPushNotification({
+    type,
+    recipients,
+    bookingId,
+    pushPayload,
+    audience,
+  }: {
+    type: NotificationType;
+    recipients: NotificationJobData["recipients"];
+    bookingId: string;
+    pushPayload: NotificationJobData["pushPayload"];
+    audience: NotificationJobData["audience"];
+  }): Promise<NotificationResult | null> {
+    if (audience && audience !== NotificationAudience.CUSTOMER) {
+      return null;
+    }
+
+    const recipientEntries = Object.entries(recipients);
+    const userIds = recipientEntries.flatMap(([, recipient]) =>
+      recipient?.userId ? [recipient.userId] : [],
+    );
+    const tokensByUserId =
+      userIds.length > 0 ? await this.pushTokenService.getActiveTokensForUsers(userIds) : {};
+    const pushRecipients = recipientEntries.flatMap(([recipientType, recipient]) =>
+      [
+        ...(recipient?.pushTokens ?? []),
+        ...(recipient?.userId ? (tokensByUserId[recipient.userId] ?? []) : []),
+      ].map((token) => ({
         recipient: recipientType as RecipientType,
         pushToken: token,
       })),
@@ -538,6 +576,10 @@ export class NotificationProcessor extends WorkerHost {
     );
     const uniqueTokens = uniquePushRecipients.map((entry) => entry.pushToken);
     if (uniqueTokens.length === 0) {
+      this.logger.debug(
+        { bookingId, type, recipientCount: recipientEntries.length },
+        "Push notification skipped: no active tokens found",
+      );
       return null;
     }
 

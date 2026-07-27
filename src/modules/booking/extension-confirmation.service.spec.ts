@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
-import { NotificationChannel, NotificationType } from "../notification/notification.interface";
+import {
+  NotificationAudience,
+  NotificationChannel,
+  NotificationType,
+} from "../notification/notification.interface";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
 
 describe("ExtensionConfirmationService", () => {
@@ -30,6 +35,7 @@ describe("ExtensionConfirmationService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExtensionConfirmationService,
+        RecipientChannelResolverService,
         {
           provide: DatabaseService,
           useValue: databaseServiceMock,
@@ -60,6 +66,7 @@ describe("ExtensionConfirmationService", () => {
         legEndTime: new Date("2026-02-20T10:00:00.000Z"),
         booking: {
           id: "booking-1",
+          userId: "customer-1",
           bookingReference: "BOOK-1",
           status: "PENDING",
           pickupLocation: "A",
@@ -112,7 +119,17 @@ describe("ExtensionConfirmationService", () => {
       expect.any(String),
       expect.objectContaining({
         type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        audience: NotificationAudience.CUSTOMER,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: expect.objectContaining({
+          client: expect.objectContaining({
+            userId: "customer-1",
+          }),
+        }),
       }),
       expect.objectContaining({
         jobId: "booking-extension-confirmed-extension-1",

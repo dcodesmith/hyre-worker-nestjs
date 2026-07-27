@@ -20,8 +20,13 @@ import {
   FLEET_OWNER_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "../notification/notification.const";
-import { type NotificationJobData, NotificationType } from "../notification/notification.interface";
+import {
+  NotificationAudience,
+  type NotificationJobData,
+  NotificationType,
+} from "../notification/notification.interface";
 import { deriveNotificationChannels } from "../notification/notification-channel.helper";
+import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -42,6 +47,7 @@ export class BookingConfirmationService {
     private readonly eventEmitter: EventEmitter2,
     private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
     private readonly logger: PinoLogger,
+    private readonly recipientChannelResolver: RecipientChannelResolverService,
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
   ) {
@@ -194,7 +200,7 @@ export class BookingConfirmationService {
       const bookingDetails = normaliseBookingDetails(booking);
 
       // Queue customer notification
-      await this.queueCustomerNotification(booking.id, bookingDetails);
+      await this.queueCustomerNotification(booking.id, booking.userId ?? undefined, bookingDetails);
 
       // Queue fleet owner notification
       await this.queueFleetOwnerNotification(booking, bookingDetails);
@@ -215,10 +221,16 @@ export class BookingConfirmationService {
    */
   private async queueCustomerNotification(
     bookingId: string,
+    userId: string | undefined,
     bookingDetails: ReturnType<typeof normaliseBookingDetails>,
   ): Promise<void> {
     try {
-      const channels = deriveNotificationChannels(bookingDetails);
+      const channels = this.recipientChannelResolver.resolve({
+        audience: NotificationAudience.CUSTOMER,
+        email: bookingDetails.customerEmail,
+        phoneNumber: bookingDetails.customerPhone,
+        userId,
+      });
       if (channels.length === 0) {
         this.logger.warn(
           {
@@ -232,10 +244,12 @@ export class BookingConfirmationService {
       const jobData: NotificationJobData = {
         id: `booking-confirmed-${bookingId}-${Date.now()}`,
         type: NotificationType.BOOKING_CONFIRMED,
+        audience: NotificationAudience.CUSTOMER,
         channels,
         bookingId,
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: {
+            userId,
             email: bookingDetails.customerEmail,
             phoneNumber: bookingDetails.customerPhone,
           },
@@ -295,6 +309,7 @@ export class BookingConfirmationService {
       const jobData: NotificationJobData = {
         id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
         type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+        audience: NotificationAudience.FLEET_OWNER,
         channels: deriveNotificationChannels({
           email: ownerEmail ?? undefined,
           phoneNumber: ownerPhone ?? undefined,
@@ -302,6 +317,7 @@ export class BookingConfirmationService {
         bookingId: booking.id,
         recipients: {
           [FLEET_OWNER_RECIPIENT_TYPE]: {
+            userId: booking.car?.owner?.id,
             email: ownerEmail ?? undefined,
             phoneNumber: ownerPhone ?? undefined,
           },

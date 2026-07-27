@@ -6,6 +6,12 @@ export enum NotificationChannel {
   PUSH = "push",
 }
 
+export enum NotificationAudience {
+  CUSTOMER = "customer",
+  FLEET_OWNER = "fleet-owner",
+  CHAUFFEUR = "chauffeur",
+}
+
 export enum NotificationType {
   BOOKING_STATUS_CHANGE = "booking-status-change",
   BOOKING_REMINDER_START = "booking-reminder-start",
@@ -33,6 +39,13 @@ export interface WhatsAppNotificationData {
 export interface NotificationJobData {
   id: string;
   type: NotificationType;
+  /**
+   * Client audience allowed to receive push for this job.
+   *
+   * Optional only for backward compatibility with already-persisted outbox
+   * rows and BullMQ jobs. New jobs must set it explicitly.
+   */
+  audience?: NotificationAudience;
   channels: NotificationChannel[];
   bookingId: string;
   pushPayload?: {
@@ -44,8 +57,17 @@ export interface NotificationJobData {
     Record<
       RecipientType,
       {
+        /**
+         * Resolve active push tokens at delivery time. This keeps outbox
+         * payloads free of token snapshots that can become stale before send.
+         */
+        userId?: string;
         email?: string;
         phoneNumber?: string;
+        /**
+         * Backward compatibility for jobs persisted before delivery-time token
+         * resolution. New jobs should use `userId` instead.
+         */
         pushTokens?: string[];
       }
     >
@@ -93,10 +115,12 @@ export type NotificationRecipientResult =
 export interface QueueReviewReceivedNotificationParams {
   bookingId: string;
   owner: {
+    userId: string;
     name: string;
     email: string;
   };
   chauffeur: {
+    userId: string;
     name: string;
     email: string;
   };

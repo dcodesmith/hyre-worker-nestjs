@@ -6,6 +6,7 @@ import {
   createBooking,
   createCar,
   createChauffeur,
+  createOwner,
   createReview,
   createUser,
 } from "../../shared/helper.fixtures";
@@ -81,6 +82,7 @@ describe("ReviewsWriteService", () => {
         make: "Toyota",
         model: "Camry",
         year: 2023,
+        owner: createOwner({ id: "owner-1" }),
       });
       const chauffeur = createChauffeur({
         id: "chauffeur-1",
@@ -130,7 +132,12 @@ describe("ReviewsWriteService", () => {
       expect(databaseService.review.create).toHaveBeenCalled();
       // Non-blocking notification dispatch should still enqueue notifications
       await Promise.resolve();
-      expect(notificationService.queueReviewReceivedNotifications).toHaveBeenCalledTimes(1);
+      expect(notificationService.queueReviewReceivedNotifications).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: expect.objectContaining({ userId: "owner-1" }),
+          chauffeur: expect.objectContaining({ userId: "chauffeur-1" }),
+        }),
+      );
     });
 
     it("throws when booking does not exist", async () => {

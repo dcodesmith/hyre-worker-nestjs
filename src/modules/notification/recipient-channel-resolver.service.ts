@@ -1,41 +1,27 @@
 import { Injectable } from "@nestjs/common";
-import { NotificationChannel } from "./notification.interface";
+import { NotificationAudience, NotificationChannel } from "./notification.interface";
 import { deriveNotificationChannels } from "./notification-channel.helper";
-import { PushTokenService } from "./push-token.service";
 
-type ResolveRecipientChannelsInput = {
+export type ResolveRecipientChannelsInput = {
+  audience: NotificationAudience;
   email?: string;
   phoneNumber?: string;
   userId?: string;
-  pushTokens?: string[];
-};
-
-type ResolvedRecipientChannels = {
-  channels: NotificationChannel[];
-  pushTokens: string[];
 };
 
 @Injectable()
 export class RecipientChannelResolverService {
-  constructor(private readonly pushTokenService: PushTokenService) {}
-
-  async resolve(input: ResolveRecipientChannelsInput): Promise<ResolvedRecipientChannels> {
-    const { email, phoneNumber, userId, pushTokens: tokensFromCaller } = input;
+  resolve(input: ResolveRecipientChannelsInput): NotificationChannel[] {
+    const { audience, email, phoneNumber, userId } = input;
     const channels = deriveNotificationChannels({ email, phoneNumber });
 
-    const tokensBeforeDedupe =
-      tokensFromCaller ??
-      (userId ? await this.pushTokenService.getActiveTokensForUser(userId) : []);
-
-    const pushTokens = [...new Set(tokensBeforeDedupe)];
-
-    if (pushTokens.length > 0) {
+    // The current mobile app supports customer sessions only. A user ID is
+    // enough to schedule PUSH because active tokens are resolved by the worker
+    // immediately before delivery, not snapshotted into the job/outbox.
+    if (audience === NotificationAudience.CUSTOMER && userId) {
       channels.push(NotificationChannel.PUSH);
     }
 
-    return {
-      channels: [...new Set(channels)],
-      pushTokens,
-    };
+    return [...new Set(channels)];
   }
 }

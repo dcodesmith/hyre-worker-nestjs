@@ -149,7 +149,14 @@ describe("Notification outbox round-trip (e2e)", () => {
     expect(job?.data).toMatchObject({
       bookingId: booking.id,
       type: "booking-status-change",
+      audience: "customer",
+      recipients: {
+        client: {
+          userId: customer.id,
+        },
+      },
     });
+    expect(job?.data.recipients.client).not.toHaveProperty("pushTokens");
 
     // Step 6 — our DISPATCHED row must not be re-claimed when the dispatcher
     // runs again. Global `reprocessed` may be > 0 if other suites added rows.
