@@ -7,9 +7,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BookingConfirmationService } from "../src/modules/booking/booking-confirmation.service";
 import { DatabaseService } from "../src/modules/database/database.service";
+import { BookingConfirmedHandler } from "../src/modules/notification/handlers/booking-confirmed.handler";
 import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
+import { BookingPaymentReconciliationService } from "../src/modules/payment/booking-payment-reconciliation.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 /**
@@ -24,6 +27,9 @@ describe("Notification outbox round-trip (e2e)", () => {
   let databaseService: DatabaseService;
   let outboxService: NotificationOutboxService;
   let statusChangedHandler: BookingStatusChangedHandler;
+  let bookingConfirmedHandler: BookingConfirmedHandler;
+  let bookingConfirmationService: BookingConfirmationService;
+  let reconciliationService: BookingPaymentReconciliationService;
   let notificationsQueue: Queue;
   let factory: TestDataFactory;
 
@@ -40,6 +46,9 @@ describe("Notification outbox round-trip (e2e)", () => {
     databaseService = app.get(DatabaseService);
     outboxService = app.get(NotificationOutboxService);
     statusChangedHandler = app.get(BookingStatusChangedHandler);
+    bookingConfirmedHandler = app.get(BookingConfirmedHandler);
+    bookingConfirmationService = app.get(BookingConfirmationService);
+    reconciliationService = app.get(BookingPaymentReconciliationService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
     factory = new TestDataFactory(databaseService, app);
 
@@ -167,5 +176,138 @@ describe("Notification outbox round-trip (e2e)", () => {
     });
     expect(still.status).toBe(NotificationOutboxStatus.DISPATCHED);
     expect(still.processedAt?.toISOString()).toBe(processedAtSnapshot?.toISOString());
+  });
+
+  it("atomically confirms a booking and writes customer and owner outbox events", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("confirmation-outbox-customer"),
+      name: "Confirmation Outbox Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id);
+    const paymentRecord = await factory.createPayment(booking.id, {
+      amountExpected: 50000,
+      amountCharged: 50000,
+      status: "SUCCESSFUL",
+      confirmedAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
+    const payment = await databaseService.payment.findUniqueOrThrow({
+      where: { id: paymentRecord.id },
+    });
+
+    await expect(bookingConfirmationService.confirmFromPayment(payment)).resolves.toBe(true);
+
+    const confirmedBooking = await databaseService.booking.findUniqueOrThrow({
+      where: { id: booking.id },
+    });
+    expect(confirmedBooking.status).toBe("CONFIRMED");
+    expect(confirmedBooking.paymentStatus).toBe("PAID");
+
+    const outboxRows = await databaseService.notificationOutboxEvent.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { dedupeKey: "asc" },
+    });
+    expect(outboxRows).toHaveLength(2);
+    expect(outboxRows.map((row) => row.dedupeKey)).toEqual([
+      expect.stringMatching(/^booking-confirmed:.+:client:.+$/),
+      expect.stringMatching(/^booking-confirmed:.+:fleet-owner:.+$/),
+    ]);
+    expect(outboxRows.every((row) => row.status === NotificationOutboxStatus.PENDING)).toBe(true);
+
+    const inboxRows = await databaseService.notificationInbox.findMany({
+      where: { userId: customer.id, payload: { path: ["bookingId"], equals: booking.id } },
+    });
+    expect(inboxRows).toHaveLength(1);
+    expect(inboxRows[0].title).toBe("Booking confirmed");
+
+    await expect(bookingConfirmationService.confirmFromPayment(payment)).resolves.toBe(false);
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(2);
+
+    for (let i = 0; i < 10; i++) {
+      await outboxService.processPendingEvents();
+      const pendingCount = await databaseService.notificationOutboxEvent.count({
+        where: {
+          id: { in: outboxRows.map((row) => row.id) },
+          status: { not: NotificationOutboxStatus.DISPATCHED },
+        },
+      });
+      if (pendingCount === 0) {
+        break;
+      }
+    }
+
+    for (const row of outboxRows) {
+      const job = await notificationsQueue.getJob(`notification-outbox-${row.id}`);
+      expect(job?.data.bookingId).toBe(booking.id);
+      expect(["booking-confirmed", "fleet-owner-new-booking"]).toContain(job?.data.type);
+    }
+  });
+
+  it("rolls back booking confirmation when its outbox event cannot be built", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("confirmation-rollback-customer"),
+      name: "Confirmation Rollback Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id);
+    const paymentRecord = await factory.createPayment(booking.id, {
+      amountExpected: 50000,
+      amountCharged: 50000,
+      status: "SUCCESSFUL",
+      confirmedAt: new Date(),
+    });
+    const payment = await databaseService.payment.findUniqueOrThrow({
+      where: { id: paymentRecord.id },
+    });
+    const buildEventsSpy = vi
+      .spyOn(bookingConfirmedHandler, "buildEvents")
+      .mockRejectedValueOnce(new Error("outbox build failed"));
+
+    await expect(bookingConfirmationService.confirmFromPayment(payment)).rejects.toThrow(
+      "outbox build failed",
+    );
+    buildEventsSpy.mockRestore();
+
+    const unchangedBooking = await databaseService.booking.findUniqueOrThrow({
+      where: { id: booking.id },
+    });
+    expect(unchangedBooking.status).toBe("PENDING");
+    expect(unchangedBooking.paymentStatus).toBe("UNPAID");
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it("recovers a stale successful payment whose booking remains pending", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("confirmation-reconcile-customer"),
+      name: "Confirmation Reconcile Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id);
+    await factory.createPayment(booking.id, {
+      amountExpected: 50000,
+      amountCharged: 50000,
+      status: "SUCCESSFUL",
+      confirmedAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
+
+    await expect(reconciliationService.reconcilePendingBookings()).resolves.toBeGreaterThanOrEqual(
+      1,
+    );
+
+    const recoveredBooking = await databaseService.booking.findUniqueOrThrow({
+      where: { id: booking.id },
+    });
+    expect(recoveredBooking.status).toBe("CONFIRMED");
+    expect(recoveredBooking.paymentStatus).toBe("PAID");
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(2);
   });
 });

@@ -1,4 +1,3 @@
-import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import {
@@ -8,29 +7,12 @@ import {
   PaymentStatus,
   Status,
 } from "@prisma/client";
-import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
-import { normaliseBookingDetails } from "../../shared/helper";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
-import {
-  CLIENT_RECIPIENT_TYPE,
-  FLEET_OWNER_RECIPIENT_TYPE,
-  SEND_NOTIFICATION_JOB_NAME,
-} from "../notification/notification.const";
-import {
-  NotificationAudience,
-  type NotificationJobData,
-  NotificationType,
-} from "../notification/notification.interface";
-import { deriveNotificationChannels } from "../notification/notification-channel.helper";
-import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
-import {
-  BOOKING_CONFIRMED_TEMPLATE_KIND,
-  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
-} from "../notification/template-data.interface";
+import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -47,9 +29,8 @@ export class BookingConfirmationService {
     private readonly eventEmitter: EventEmitter2,
     private readonly eventEmitterReadinessWatcher: EventEmitterReadinessWatcher,
     private readonly logger: PinoLogger,
-    private readonly recipientChannelResolver: RecipientChannelResolverService,
-    @InjectQueue(NOTIFICATIONS_QUEUE)
-    private readonly notificationQueue: Queue<NotificationJobData>,
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly bookingConfirmedHandler: BookingConfirmedHandler,
   ) {
     this.logger.setContext(BookingConfirmationService.name);
   }
@@ -102,6 +83,7 @@ export class BookingConfirmationService {
         },
       });
 
+      let confirmedBooking = booking;
       if (
         booking?.referralStatus === BookingReferralStatus.RESERVED &&
         booking.userId &&
@@ -116,13 +98,21 @@ export class BookingConfirmationService {
           data: { referralStatus: BookingReferralStatus.APPLIED },
         });
 
-        return {
+        confirmedBooking = {
           ...booking,
           referralStatus: BookingReferralStatus.APPLIED,
         };
       }
 
-      return booking;
+      if (confirmedBooking) {
+        await this.notificationOutboxService.create(
+          this.bookingConfirmedHandler,
+          { booking: confirmedBooking },
+          tx,
+        );
+      }
+
+      return confirmedBooking;
     });
 
     // If no records were updated, booking doesn't exist or is not in PENDING status
@@ -151,8 +141,6 @@ export class BookingConfirmationService {
     // Update car status to BOOKED to prevent double-booking
     await this.updateCarStatusToBooked(updatedBooking.carId, bookingId);
 
-    // Queue notification asynchronously (don't block webhook response)
-    await this.queueBookingConfirmedNotification(updatedBooking);
     await this.emitBookingConfirmedEvent(updatedBooking);
 
     return true;
@@ -187,167 +175,6 @@ export class BookingConfirmationService {
           error: error instanceof Error ? error.message : String(error),
         },
         "Failed to update car status to BOOKED",
-      );
-    }
-  }
-
-  /**
-   * Queue a booking confirmation notification.
-   * Uses the notification queue to avoid blocking the webhook handler.
-   */
-  private async queueBookingConfirmedNotification(booking: BookingWithRelations): Promise<void> {
-    try {
-      const bookingDetails = normaliseBookingDetails(booking);
-
-      // Queue customer notification
-      await this.queueCustomerNotification(booking.id, booking.userId ?? undefined, bookingDetails);
-
-      // Queue fleet owner notification
-      await this.queueFleetOwnerNotification(booking, bookingDetails);
-    } catch (error) {
-      // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error(
-        {
-          bookingId: booking.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue booking notifications",
-      );
-    }
-  }
-
-  /**
-   * Queue notification to the customer about their confirmed booking.
-   */
-  private async queueCustomerNotification(
-    bookingId: string,
-    userId: string | undefined,
-    bookingDetails: ReturnType<typeof normaliseBookingDetails>,
-  ): Promise<void> {
-    try {
-      const channels = this.recipientChannelResolver.resolve({
-        audience: NotificationAudience.CUSTOMER,
-        email: bookingDetails.customerEmail,
-        phoneNumber: bookingDetails.customerPhone,
-        userId,
-      });
-      if (channels.length === 0) {
-        this.logger.warn(
-          {
-            bookingId,
-          },
-          "No customer delivery channel available for booking confirmation",
-        );
-        return;
-      }
-
-      const jobData: NotificationJobData = {
-        id: `booking-confirmed-${bookingId}-${Date.now()}`,
-        type: NotificationType.BOOKING_CONFIRMED,
-        audience: NotificationAudience.CUSTOMER,
-        channels,
-        bookingId,
-        recipients: {
-          [CLIENT_RECIPIENT_TYPE]: {
-            userId,
-            email: bookingDetails.customerEmail,
-            phoneNumber: bookingDetails.customerPhone,
-          },
-        },
-        templateData: {
-          templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
-          ...bookingDetails,
-          subject: "Your booking is confirmed!",
-        },
-      };
-
-      await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
-
-      this.logger.info(
-        {
-          bookingId,
-          notificationId: jobData.id,
-        },
-        "Queued booking confirmation notification",
-      );
-    } catch (error) {
-      // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error(
-        {
-          bookingId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue booking confirmation notification",
-      );
-    }
-  }
-
-  /**
-   * Queue notification to the fleet owner about the new booking.
-   * Fleet owner needs to assign a chauffeur for the booking.
-   */
-  private async queueFleetOwnerNotification(
-    booking: BookingWithRelations,
-    bookingDetails: ReturnType<typeof normaliseBookingDetails>,
-  ): Promise<void> {
-    const ownerEmail = booking.car?.owner?.email;
-    const ownerPhone = booking.car?.owner?.phoneNumber;
-
-    // Skip if fleet owner has no contact info
-    if (!ownerEmail && !ownerPhone) {
-      this.logger.warn(
-        {
-          bookingId: booking.id,
-          ownerId: booking.car?.owner?.id,
-        },
-        "Fleet owner has no contact info, skipping notification",
-      );
-      return;
-    }
-
-    try {
-      const jobData: NotificationJobData = {
-        id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
-        type: NotificationType.FLEET_OWNER_NEW_BOOKING,
-        audience: NotificationAudience.FLEET_OWNER,
-        channels: deriveNotificationChannels({
-          email: ownerEmail ?? undefined,
-          phoneNumber: ownerPhone ?? undefined,
-        }),
-        bookingId: booking.id,
-        recipients: {
-          [FLEET_OWNER_RECIPIENT_TYPE]: {
-            userId: booking.car?.owner?.id,
-            email: ownerEmail ?? undefined,
-            phoneNumber: ownerPhone ?? undefined,
-          },
-        },
-        templateData: {
-          templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
-          ...bookingDetails,
-          subject: "New Booking Alert",
-        },
-      };
-
-      await this.notificationQueue.add(SEND_NOTIFICATION_JOB_NAME, jobData, { priority: 1 });
-
-      this.logger.info(
-        {
-          bookingId: booking.id,
-          notificationId: jobData.id,
-          ownerId: booking.car?.owner?.id,
-        },
-        "Queued fleet owner new booking notification",
-      );
-    } catch (error) {
-      // Log but don't throw - notification failure shouldn't fail the confirmation
-      this.logger.error(
-        {
-          bookingId: booking.id,
-          ownerId: booking.car?.owner?.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue fleet owner notification",
       );
     }
   }
