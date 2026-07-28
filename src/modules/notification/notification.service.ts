@@ -21,7 +21,7 @@ import {
   NotificationJobData,
   NotificationResult,
   NotificationType,
-  QueueReviewReceivedNotificationParams,
+  ReviewReceivedNotificationParams,
 } from "./notification.interface";
 import { createBookingNotificationData } from "./notification-target";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
@@ -489,15 +489,12 @@ export class NotificationService {
     return jobs;
   }
 
-  /**
-   * Queue review received notifications for both fleet owner and chauffeur.
-   * Email-only for now (no WhatsApp template configured for review notifications).
-   */
-  async queueReviewReceivedNotifications(
-    params: QueueReviewReceivedNotificationParams,
-  ): Promise<void> {
+  buildReviewReceivedJobData(params: ReviewReceivedNotificationParams): {
+    owner: NotificationJobData;
+    chauffeur: NotificationJobData;
+  } {
     const ownerJobData: NotificationJobData = {
-      id: `review-received-owner-${params.bookingId}-${Date.now()}`,
+      id: `review-received-owner-${params.reviewId}`,
       type: NotificationType.REVIEW_RECEIVED,
       audience: NotificationAudience.FLEET_OWNER,
       channels: [NotificationChannel.EMAIL],
@@ -518,7 +515,7 @@ export class NotificationService {
     };
 
     const chauffeurJobData: NotificationJobData = {
-      id: `review-received-chauffeur-${params.bookingId}-${Date.now()}`,
+      id: `review-received-chauffeur-${params.reviewId}`,
       type: NotificationType.REVIEW_RECEIVED,
       audience: NotificationAudience.CHAUFFEUR,
       channels: [NotificationChannel.EMAIL],
@@ -538,12 +535,7 @@ export class NotificationService {
       },
     };
 
-    await Promise.all([this.addJobToQueue(ownerJobData), this.addJobToQueue(chauffeurJobData)]);
-
-    this.logger.info(
-      { bookingId: params.bookingId, channels: [NotificationChannel.EMAIL] },
-      "Queued review received notifications",
-    );
+    return { owner: ownerJobData, chauffeur: chauffeurJobData };
   }
 
   private async createReminderJobData({

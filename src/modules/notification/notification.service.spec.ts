@@ -35,6 +35,7 @@ import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 
 describe("NotificationService", () => {
@@ -782,6 +783,80 @@ describe("NotificationService", () => {
       const { owner } = await service.buildBookingCancellationJobData(booking);
 
       expect(owner).toBeNull();
+    });
+  });
+
+  describe("buildReviewReceivedJobData", () => {
+    it("builds deterministic email jobs for the fleet owner and chauffeur", () => {
+      const reviewDate = new Date("2026-07-28T12:00:00.000Z");
+
+      const jobs = service.buildReviewReceivedJobData({
+        reviewId: "review-1",
+        bookingId: "booking-1",
+        owner: {
+          userId: "owner-1",
+          name: "Owner",
+          email: "owner@example.com",
+        },
+        chauffeur: {
+          userId: "chauffeur-1",
+          name: "Chauffeur",
+          email: "chauffeur@example.com",
+        },
+        review: {
+          customerName: "Customer",
+          bookingReference: "BK-12345678",
+          carName: "Toyota Camry (2023)",
+          overallRating: 5,
+          carRating: 5,
+          chauffeurRating: 4,
+          serviceRating: 5,
+          comment: "Excellent trip",
+          reviewDate,
+        },
+      });
+
+      expect(jobs.owner).toMatchObject({
+        id: "review-received-owner-review-1",
+        type: NotificationType.REVIEW_RECEIVED,
+        audience: NotificationAudience.FLEET_OWNER,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: "booking-1",
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            userId: "owner-1",
+            email: "owner@example.com",
+          },
+        },
+        templateData: {
+          templateKind: REVIEW_RECEIVED_TEMPLATE_KIND,
+          ownerName: "Owner",
+          chauffeurName: "Chauffeur",
+          reviewDate,
+          subject: "New 5-star review received for Toyota Camry (2023)",
+        },
+      });
+      expect(jobs.chauffeur).toMatchObject({
+        id: "review-received-chauffeur-review-1",
+        type: NotificationType.REVIEW_RECEIVED,
+        audience: NotificationAudience.CHAUFFEUR,
+        channels: [NotificationChannel.EMAIL],
+        bookingId: "booking-1",
+        recipients: {
+          [CHAUFFEUR_RECIPIENT_TYPE]: {
+            userId: "chauffeur-1",
+            email: "chauffeur@example.com",
+          },
+        },
+        templateData: {
+          templateKind: REVIEW_RECEIVED_TEMPLATE_KIND,
+          ownerName: "Owner",
+          chauffeurName: "Chauffeur",
+          reviewDate,
+          subject: "New 4-star review received for your service",
+        },
+      });
+      expect(mockQueue.add).not.toHaveBeenCalled();
     });
   });
 });

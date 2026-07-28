@@ -12,6 +12,7 @@ import { BookingReminderHandler } from "./handlers/booking-reminder.handler";
 import { BookingStatusChangedHandler } from "./handlers/booking-status-changed.handler";
 import { BookingUpdatedHandler } from "./handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "./handlers/chauffeur-assigned.handler";
+import { ReviewReceivedHandler } from "./handlers/review-received.handler";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
 import { NotificationOutboxScheduler } from "./notification-outbox.scheduler";
@@ -60,6 +61,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingConfirmedHandler,
     BookingExtensionConfirmedHandler,
     BookingUpdatedHandler,
+    ReviewReceivedHandler,
   ],
   exports: [
     NotificationService,
@@ -74,6 +76,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingConfirmedHandler,
     BookingExtensionConfirmedHandler,
     BookingUpdatedHandler,
+    ReviewReceivedHandler,
     BullModule,
   ],
 })

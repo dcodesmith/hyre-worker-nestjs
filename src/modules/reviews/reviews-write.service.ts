@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { subDays } from "date-fns";
-import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { ReviewReceivedHandler } from "../notification/handlers/review-received.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import type { CreateReviewDto, UpdateReviewDto } from "./dto/reviews.dto";
 import {
   ReviewAlreadyExistsException,
@@ -16,51 +16,13 @@ import {
   ReviewUpdateWindowExpiredException,
 } from "./reviews.error";
 
-type ReviewCreationBooking = {
-  id: string;
-  userId: string | null;
-  status: BookingStatus;
-  endDate: Date;
-  chauffeurId: string | null;
-  bookingReference: string;
-  car: {
-    make: string;
-    model: string;
-    year: number;
-    owner: {
-      id: string;
-      name: string | null;
-      email: string;
-    };
-  };
-  chauffeur: {
-    id: string;
-    name: string | null;
-    email: string;
-  } | null;
-  user: {
-    name: string | null;
-    email: string;
-  } | null;
-};
-
-type ReviewCreationBookingWithChauffeur = ReviewCreationBooking & {
-  chauffeur: {
-    id: string;
-    name: string | null;
-    email: string;
-  };
-};
-
 @Injectable()
 export class ReviewsWriteService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly notificationService: NotificationService,
-    private readonly logger: PinoLogger,
-  ) {
-    this.logger.setContext(ReviewsWriteService.name);
-  }
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly reviewReceivedHandler: ReviewReceivedHandler,
+  ) {}
 
   async createReview(userId: string, input: CreateReviewDto) {
     const booking = await this.databaseService.booking.findFirst({
@@ -121,6 +83,7 @@ export class ReviewsWriteService {
     if (!booking.chauffeur) {
       throw new ReviewBookingChauffeurRequiredException();
     }
+    const chauffeur = booking.chauffeur;
 
     const thirtyDaysAgo = subDays(new Date(), 30);
     if (booking.endDate < thirtyDaysAgo) {
@@ -128,22 +91,54 @@ export class ReviewsWriteService {
     }
 
     try {
-      const review = await this.databaseService.review.create({
-        data: {
-          bookingId: input.bookingId,
-          userId,
-          overallRating: input.overallRating,
-          carRating: input.carRating,
-          chauffeurRating: input.chauffeurRating,
-          serviceRating: input.serviceRating,
-          comment: input.comment ?? null,
-          isVisible: true,
-        },
+      return await this.databaseService.$transaction(async (tx) => {
+        const review = await tx.review.create({
+          data: {
+            bookingId: input.bookingId,
+            userId,
+            overallRating: input.overallRating,
+            carRating: input.carRating,
+            chauffeurRating: input.chauffeurRating,
+            serviceRating: input.serviceRating,
+            comment: input.comment ?? null,
+            isVisible: true,
+          },
+        });
+
+        await this.notificationOutboxService.create(
+          this.reviewReceivedHandler,
+          {
+            reviewId: review.id,
+            bookingId: booking.id,
+            owner: {
+              userId: booking.car.owner.id,
+              name: booking.car.owner.name || "Fleet Owner",
+              email: booking.car.owner.email,
+            },
+            chauffeur: {
+              userId: chauffeur.id,
+              name: chauffeur.name || "Chauffeur",
+              email: chauffeur.email,
+            },
+            review: {
+              customerName: booking.user?.name || booking.user?.email || "Customer",
+              bookingReference: booking.bookingReference,
+              carName: booking.car.year
+                ? `${booking.car.make} ${booking.car.model} (${booking.car.year})`
+                : `${booking.car.make} ${booking.car.model}`,
+              overallRating: input.overallRating,
+              carRating: input.carRating,
+              chauffeurRating: input.chauffeurRating,
+              serviceRating: input.serviceRating,
+              comment: input.comment ?? null,
+              reviewDate: review.createdAt,
+            },
+          },
+          tx,
+        );
+
+        return review;
       });
-
-      await this.queueReviewNotifications(booking, input);
-
-      return review;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         throw new ReviewAlreadyExistsException();
@@ -191,52 +186,5 @@ export class ReviewsWriteService {
         ...(input.comment !== undefined && { comment: input.comment }),
       },
     });
-  }
-
-  private async queueReviewNotifications(
-    booking: ReviewCreationBookingWithChauffeur,
-    input: CreateReviewDto,
-  ): Promise<void> {
-    const ownerName = booking.car.owner.name || "Fleet Owner";
-    const chauffeurName = booking.chauffeur?.name || "Chauffeur";
-    const customerName = booking.user?.name || booking.user?.email || "Customer";
-    const carName = booking.car.year
-      ? `${booking.car.make} ${booking.car.model} (${booking.car.year})`
-      : `${booking.car.make} ${booking.car.model}`;
-    try {
-      await this.notificationService.queueReviewReceivedNotifications({
-        bookingId: booking.id,
-        owner: {
-          userId: booking.car.owner.id,
-          name: ownerName,
-          email: booking.car.owner.email,
-        },
-        chauffeur: {
-          userId: booking.chauffeur.id,
-          name: chauffeurName,
-          email: booking.chauffeur.email,
-        },
-        review: {
-          customerName,
-          bookingReference: booking.bookingReference,
-          carName,
-          overallRating: input.overallRating,
-          carRating: input.carRating,
-          chauffeurRating: input.chauffeurRating,
-          serviceRating: input.serviceRating,
-          comment: input.comment ?? null,
-          reviewDate: new Date(),
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        {
-          bookingId: booking.id,
-          bookingReference: booking.bookingReference,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue review received notifications",
-      );
-    }
   }
 }

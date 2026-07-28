@@ -1,7 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   createBooking,
   createCar,
@@ -11,7 +10,8 @@ import {
   createUser,
 } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import { NotificationService } from "../notification/notification.service";
+import { ReviewReceivedHandler } from "../notification/handlers/review-received.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   ReviewAlreadyExistsException,
   ReviewBookingNotCompletedException,
@@ -24,39 +24,58 @@ import { ReviewsWriteService } from "./reviews-write.service";
 describe("ReviewsWriteService", () => {
   let service: ReviewsWriteService;
   let databaseService: DatabaseService;
-  let notificationService: NotificationService;
+  let notificationOutboxService: NotificationOutboxService;
+  let reviewReceivedHandler: ReviewReceivedHandler;
+  let transactionClient: {
+    review: {
+      create: ReturnType<typeof vi.fn>;
+    };
+  };
 
   beforeEach(async () => {
+    const reviewCreate = vi.fn();
+    transactionClient = {
+      review: {
+        create: reviewCreate,
+      },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReviewsWriteService,
         {
           provide: DatabaseService,
           useValue: {
+            $transaction: vi.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+              callback(transactionClient),
+            ),
             booking: {
               findFirst: vi.fn(),
             },
             review: {
-              create: vi.fn(),
+              create: reviewCreate,
               findUnique: vi.fn(),
               update: vi.fn(),
             },
           },
         },
         {
-          provide: NotificationService,
+          provide: NotificationOutboxService,
           useValue: {
-            queueReviewReceivedNotifications: vi.fn().mockResolvedValue(undefined),
+            create: vi.fn().mockResolvedValue(2),
           },
         },
+        {
+          provide: ReviewReceivedHandler,
+          useValue: {},
+        },
       ],
-    })
-      .useMocker(mockPinoLoggerToken)
-      .compile();
+    }).compile();
 
     service = module.get<ReviewsWriteService>(ReviewsWriteService);
     databaseService = module.get<DatabaseService>(DatabaseService);
-    notificationService = module.get<NotificationService>(NotificationService);
+    notificationOutboxService = module.get<NotificationOutboxService>(NotificationOutboxService);
+    reviewReceivedHandler = module.get<ReviewReceivedHandler>(ReviewReceivedHandler);
   });
 
   describe("createReview", () => {
@@ -111,32 +130,33 @@ describe("ReviewsWriteService", () => {
 
     it("creates review for eligible booking", async () => {
       vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(createReviewBookingMock());
-
-      vi.mocked(databaseService.review.create).mockResolvedValueOnce(
-        createReview({
-          id: "review-1",
-          bookingId: input.bookingId,
-          userId: "user-1",
-        }),
-      );
+      const createdReview = createReview({
+        id: "review-1",
+        bookingId: input.bookingId,
+        userId: "user-1",
+        createdAt: new Date("2026-07-28T12:00:00.000Z"),
+      });
+      vi.mocked(databaseService.review.create).mockResolvedValueOnce(createdReview);
 
       const result = await service.createReview("user-1", input);
 
-      expect(result).toEqual(
-        createReview({
-          id: "review-1",
-          bookingId: input.bookingId,
-          userId: "user-1",
-        }),
-      );
+      expect(result).toEqual(createdReview);
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
       expect(databaseService.review.create).toHaveBeenCalled();
-      // Non-blocking notification dispatch should still enqueue notifications
-      await Promise.resolve();
-      expect(notificationService.queueReviewReceivedNotifications).toHaveBeenCalledWith(
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        reviewReceivedHandler,
         expect.objectContaining({
+          reviewId: "review-1",
+          bookingId: input.bookingId,
           owner: expect.objectContaining({ userId: "owner-1" }),
           chauffeur: expect.objectContaining({ userId: "chauffeur-1" }),
+          review: expect.objectContaining({
+            customerName: "Customer",
+            bookingReference: "BK-12345678",
+            reviewDate: createdReview.createdAt,
+          }),
         }),
+        transactionClient,
       );
     });
 
@@ -198,7 +218,7 @@ describe("ReviewsWriteService", () => {
       );
     });
 
-    it("does not fail review creation when notification queueing fails", async () => {
+    it("fails the transaction when the durable notification cannot be created", async () => {
       vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(createReviewBookingMock());
 
       vi.mocked(databaseService.review.create).mockResolvedValueOnce(
@@ -209,17 +229,11 @@ describe("ReviewsWriteService", () => {
         }),
       );
 
-      vi.mocked(notificationService.queueReviewReceivedNotifications).mockRejectedValueOnce(
+      vi.mocked(notificationOutboxService.create).mockRejectedValueOnce(
         new Error("Queue unavailable"),
       );
 
-      await expect(service.createReview("user-1", input)).resolves.toEqual(
-        createReview({
-          id: "review-2",
-          bookingId: input.bookingId,
-          userId: "user-1",
-        }),
-      );
+      await expect(service.createReview("user-1", input)).rejects.toThrow("Queue unavailable");
     });
   });
 

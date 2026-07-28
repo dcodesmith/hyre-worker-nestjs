@@ -7,7 +7,6 @@ import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { NotificationService } from "../src/modules/notification/notification.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("Reviews E2E Tests", () => {
@@ -23,15 +22,12 @@ describe("Reviews E2E Tests", () => {
 
   beforeAll(async () => {
     const mockSendOTPEmail = vi.fn().mockResolvedValue(undefined);
-    const mockQueueReviewReceivedNotifications = vi.fn().mockResolvedValue(undefined);
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
       .overrideProvider(AuthEmailService)
       .useValue({ sendOTPEmail: mockSendOTPEmail })
-      .overrideProvider(NotificationService)
-      .useValue({ queueReviewReceivedNotifications: mockQueueReviewReceivedNotifications })
       .compile();
 
     app = moduleFixture.createNestApplication({
