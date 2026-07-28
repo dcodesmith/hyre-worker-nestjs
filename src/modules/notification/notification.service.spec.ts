@@ -28,8 +28,10 @@ import {
 import { NotificationService } from "./notification.service";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
 } from "./template-data.interface";
 
 describe("NotificationService", () => {
@@ -216,6 +218,77 @@ describe("NotificationService", () => {
         }),
       });
       expect(jobData?.recipients[CLIENT_RECIPIENT_TYPE]).not.toHaveProperty("pushTokens");
+    });
+  });
+
+  describe("buildBookingConfirmedJobData", () => {
+    it("builds customer push/email/whatsapp and fleet-owner email jobs", async () => {
+      const booking = createBooking({
+        id: "booking-confirmed-1",
+        userId: "customer-1",
+        user: createUser({ id: "customer-1" }),
+        car: createCar({
+          owner: createOwner({
+            id: "owner-1",
+            email: "owner@example.com",
+            phoneNumber: null,
+          }),
+        }),
+      });
+
+      const { customer, owner } = await service.buildBookingConfirmedJobData(booking);
+
+      expect(customer).toMatchObject({
+        type: NotificationType.BOOKING_CONFIRMED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({ userId: "customer-1" }),
+        },
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
+        }),
+      });
+      expect(owner).toMatchObject({
+        type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+        audience: NotificationAudience.FLEET_OWNER,
+        channels: [NotificationChannel.EMAIL],
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: expect.objectContaining({
+            userId: "owner-1",
+            email: "owner@example.com",
+          }),
+        },
+        templateData: expect.objectContaining({
+          templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+        }),
+      });
+    });
+
+    it("returns null jobs when a guest and fleet owner have no delivery channels", async () => {
+      const booking = createBooking({
+        userId: null,
+        user: null,
+        guestUser: {
+          name: "No Contact Guest",
+          email: null,
+          phoneNumber: null,
+          guestContactSource: "WEB_GUEST_FORM",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+        car: createCar({
+          owner: createOwner({ email: null, phoneNumber: null }),
+        }),
+      });
+
+      await expect(service.buildBookingConfirmedJobData(booking)).resolves.toEqual({
+        customer: null,
+        owner: null,
+      });
     });
   });
 

@@ -7,6 +7,7 @@ import { AuthModule } from "../auth/auth.module";
 import { BookingModule } from "../booking/booking.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
+import { BookingPaymentReconciliationService } from "./booking-payment-reconciliation.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { PaymentController } from "./payment.controller";
 import { PaymentProcessor } from "./payment.processor";
@@ -45,6 +46,7 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
     PaymentApiService,
     PaymentWebhookService,
     PaymentProcessor,
+    BookingPaymentReconciliationService,
     ChargeCompletedHandler,
     TransferCompletedHandler,
     RefundCompletedHandler,

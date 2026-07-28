@@ -22,8 +22,10 @@ import {
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
 } from "./template-data.interface";
@@ -159,6 +161,78 @@ export class NotificationService {
         subject: "Your chauffeur has been assigned",
       },
     };
+  }
+
+  async buildBookingConfirmedJobData(booking: BookingWithRelations): Promise<{
+    customer: NotificationJobData | null;
+    owner: NotificationJobData | null;
+  }> {
+    const bookingDetails = normaliseBookingDetails(booking);
+    const customerUserId = booking.userId ?? booking.user?.id ?? undefined;
+    const ownerUserId = booking.car?.owner?.id ?? undefined;
+    const ownerEmail = booking.car?.owner?.email ?? undefined;
+    const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
+
+    const customerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
+      email: bookingDetails.customerEmail,
+      phoneNumber: bookingDetails.customerPhone,
+      userId: customerUserId,
+    });
+    const ownerChannels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.FLEET_OWNER,
+      email: ownerEmail,
+      phoneNumber: ownerPhone,
+      userId: ownerUserId,
+    });
+
+    const customer: NotificationJobData | null =
+      customerChannels.length > 0
+        ? {
+            id: `booking-confirmed-${booking.id}-${Date.now()}`,
+            type: NotificationType.BOOKING_CONFIRMED,
+            audience: NotificationAudience.CUSTOMER,
+            channels: customerChannels,
+            bookingId: booking.id,
+            recipients: {
+              [CLIENT_RECIPIENT_TYPE]: {
+                userId: customerUserId,
+                email: bookingDetails.customerEmail,
+                phoneNumber: bookingDetails.customerPhone,
+              },
+            },
+            templateData: {
+              templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
+              ...bookingDetails,
+              subject: "Your booking is confirmed!",
+            },
+          }
+        : null;
+
+    const owner: NotificationJobData | null =
+      ownerChannels.length > 0
+        ? {
+            id: `fleet-owner-new-booking-${booking.id}-${Date.now()}`,
+            type: NotificationType.FLEET_OWNER_NEW_BOOKING,
+            audience: NotificationAudience.FLEET_OWNER,
+            channels: ownerChannels,
+            bookingId: booking.id,
+            recipients: {
+              [FLEET_OWNER_RECIPIENT_TYPE]: {
+                userId: ownerUserId,
+                email: ownerEmail,
+                phoneNumber: ownerPhone,
+              },
+            },
+            templateData: {
+              templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+              ...bookingDetails,
+              subject: "New Booking Alert",
+            },
+          }
+        : null;
+
+    return { customer, owner };
   }
 
   /**
