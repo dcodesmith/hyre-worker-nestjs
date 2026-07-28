@@ -1,15 +1,7 @@
 import { NotificationOutboxEventType } from "@prisma/client";
 import { z } from "zod";
-import {
-  NotificationAudience,
-  NotificationChannel,
-  NotificationType,
-} from "./notification.interface";
-
-const notificationTypeValues = Object.values(NotificationType) as [
-  NotificationType,
-  ...NotificationType[],
-];
+import { NotificationAudience, NotificationChannel } from "./notification.interface";
+import { notificationTypeSchema, pushNotificationDataSchema } from "./notification-target";
 
 const notificationChannelValues = Object.values(NotificationChannel) as [
   NotificationChannel,
@@ -37,7 +29,7 @@ const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
  */
 export const notificationJobDataSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(notificationTypeValues),
+  type: notificationTypeSchema,
   // Optional while pre-migration jobs/outbox rows remain readable.
   audience: z.enum(notificationAudienceValues).optional(),
   channels: z.array(z.enum(notificationChannelValues)).min(1),
@@ -46,7 +38,7 @@ export const notificationJobDataSchema = z.object({
     .object({
       title: z.string(),
       body: z.string(),
-      data: z.record(z.string(), z.string()).optional(),
+      data: pushNotificationDataSchema,
     })
     .optional(),
   recipients: z.record(

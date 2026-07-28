@@ -3,6 +3,7 @@ import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus } from "@prisma/c
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
+import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
@@ -44,8 +45,18 @@ describe("BookingUpdateService", () => {
     buildEvents: vi.fn(),
   };
 
+  const bookingUpdatedHandlerMock = {
+    eventType: "BOOKING_LIFECYCLE" as const,
+    buildEvents: vi.fn(),
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$transaction.mockImplementation(
+      (callback: (tx: { booking: typeof databaseServiceMock.booking }) => Promise<unknown>) =>
+        callback({ booking: databaseServiceMock.booking }),
+    );
+    notificationOutboxServiceMock.create.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -54,6 +65,7 @@ describe("BookingUpdateService", () => {
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
         { provide: ChauffeurAssignedHandler, useValue: chauffeurAssignedHandlerMock },
+        { provide: BookingUpdatedHandler, useValue: bookingUpdatedHandlerMock },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -87,6 +99,14 @@ describe("BookingUpdateService", () => {
           pickupLocation: "New pickup",
         }),
       }),
+    );
+    expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
+      bookingUpdatedHandlerMock,
+      {
+        booking: { id: "booking-1" },
+        actor: { type: "user", userId: "user-1" },
+      },
+      { booking: databaseServiceMock.booking },
     );
   });
 
@@ -164,6 +184,26 @@ describe("BookingUpdateService", () => {
 
   it("throws booking update failed for unexpected errors", async () => {
     databaseServiceMock.booking.findFirst.mockRejectedValueOnce(new Error("DB unavailable"));
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
+    ).rejects.toBeInstanceOf(BookingUpdateFailedException);
+  });
+
+  it("fails the update transaction when durable notification creation fails", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 36 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    notificationOutboxServiceMock.create.mockRejectedValueOnce(new Error("Outbox unavailable"));
 
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),

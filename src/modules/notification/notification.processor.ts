@@ -30,6 +30,7 @@ import {
 } from "./notification.interface";
 import { NotificationDispatchError } from "./notification.processor.error";
 import { getSucceededChannels } from "./notification.processor.helper";
+import { createBookingNotificationData } from "./notification-target";
 import { PushService } from "./push.service";
 import { PushTokenService } from "./push-token.service";
 import {
@@ -345,6 +346,7 @@ export class NotificationProcessor extends WorkerHost {
         return this.buildFleetOwnerNewBookingEmailHtml(templateData);
       case NotificationType.BOOKING_CANCELLED:
         return this.buildBookingCancelledEmailHtml(templateData, recipient);
+      case NotificationType.BOOKING_UPDATED:
       case NotificationType.BOOKING_STATUS_CHANGE:
       case NotificationType.CHAUFFEUR_ASSIGNED:
         return this.buildBookingStatusEmailHtml(templateData);
@@ -589,10 +591,7 @@ export class NotificationProcessor extends WorkerHost {
         type === NotificationType.CHAUFFEUR_ASSIGNED
           ? "Your chauffeur has been assigned."
           : "You have a new update for your booking.",
-      data: {
-        bookingId,
-        type,
-      },
+      data: createBookingNotificationData(type, bookingId),
     };
 
     const result = await this.pushService.sendPushNotifications({

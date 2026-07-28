@@ -2,7 +2,7 @@ export interface SendPushNotificationsInput {
   tokens: string[];
   title: string;
   body: string;
-  data?: Record<string, string>;
+  data?: Record<string, unknown>;
 }
 
 export interface SendPushNotificationsResult {

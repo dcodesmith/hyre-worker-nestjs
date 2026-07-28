@@ -10,6 +10,7 @@ import { BookingConfirmedHandler } from "./handlers/booking-confirmed.handler";
 import { BookingExtensionConfirmedHandler } from "./handlers/booking-extension-confirmed.handler";
 import { BookingReminderHandler } from "./handlers/booking-reminder.handler";
 import { BookingStatusChangedHandler } from "./handlers/booking-status-changed.handler";
+import { BookingUpdatedHandler } from "./handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "./handlers/chauffeur-assigned.handler";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
@@ -58,6 +59,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingCancellationHandler,
     BookingConfirmedHandler,
     BookingExtensionConfirmedHandler,
+    BookingUpdatedHandler,
   ],
   exports: [
     NotificationService,
@@ -71,6 +73,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingCancellationHandler,
     BookingConfirmedHandler,
     BookingExtensionConfirmedHandler,
+    BookingUpdatedHandler,
     BullModule,
   ],
 })

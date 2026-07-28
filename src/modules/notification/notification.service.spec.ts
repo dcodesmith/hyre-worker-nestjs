@@ -224,6 +224,58 @@ describe("NotificationService", () => {
     });
   });
 
+  describe("buildBookingUpdatedJobData", () => {
+    const booking = createBooking({
+      id: "booking-updated-1",
+      userId: "customer-1",
+      user: createUser({ id: "customer-1" }),
+      car: createCar({ owner: createOwner() }),
+      updatedAt: new Date("2026-07-28T18:00:00.000Z"),
+    });
+
+    it("uses email and WhatsApp without push for the customer's own update", async () => {
+      const jobData = await service.buildBookingUpdatedJobData(booking, false);
+
+      expect(jobData).toMatchObject({
+        type: NotificationType.BOOKING_UPDATED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        bookingId: "booking-updated-1",
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            phoneNumber: "1234567890",
+          }),
+        },
+        pushPayload: {
+          title: "Booking updated",
+          data: {
+            type: NotificationType.BOOKING_UPDATED,
+            target: {
+              kind: "booking",
+              bookingId: "booking-updated-1",
+            },
+          },
+        },
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+          subject: "Booking Updated",
+          title: "been updated",
+          status: "updated",
+        }),
+      });
+    });
+
+    it("adds push for a system or another-user update", async () => {
+      const jobData = await service.buildBookingUpdatedJobData(booking, true);
+
+      expect(jobData?.channels).toEqual([
+        NotificationChannel.EMAIL,
+        NotificationChannel.WHATSAPP,
+        NotificationChannel.PUSH,
+      ]);
+    });
+  });
+
   describe("buildBookingConfirmedJobData", () => {
     it("builds customer push/email/whatsapp and fleet-owner email jobs", async () => {
       const booking = createBooking({
@@ -251,6 +303,16 @@ describe("NotificationService", () => {
         ],
         recipients: {
           [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({ userId: "customer-1" }),
+        },
+        pushPayload: {
+          title: "Booking confirmed",
+          data: {
+            type: NotificationType.BOOKING_CONFIRMED,
+            target: {
+              kind: "booking",
+              bookingId: "booking-confirmed-1",
+            },
+          },
         },
         templateData: expect.objectContaining({
           templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
@@ -327,9 +389,11 @@ describe("NotificationService", () => {
           title: "Booking extension confirmed",
           body: "Your booking has been extended by 2 hours.",
           data: {
-            bookingId: "booking-1",
-            extensionId: "extension-1",
             type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+            target: {
+              kind: "booking",
+              bookingId: "booking-1",
+            },
           },
         },
         templateData: expect.objectContaining({

@@ -7,7 +7,8 @@ export class BookingStatusMapper extends BaseTemplateMapper {
   canHandle(type: NotificationType): boolean {
     return (
       type === NotificationType.BOOKING_STATUS_CHANGE ||
-      type === NotificationType.CHAUFFEUR_ASSIGNED
+      type === NotificationType.CHAUFFEUR_ASSIGNED ||
+      type === NotificationType.BOOKING_UPDATED
     );
   }
 

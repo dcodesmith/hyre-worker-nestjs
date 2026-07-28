@@ -8,11 +8,13 @@ import { AppModule } from "../src/app.module";
 import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingConfirmationService } from "../src/modules/booking/booking-confirmation.service";
+import { BookingUpdateService } from "../src/modules/booking/booking-update.service";
 import { ExtensionConfirmationService } from "../src/modules/booking/extension-confirmation.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { BookingConfirmedHandler } from "../src/modules/notification/handlers/booking-confirmed.handler";
 import { BookingExtensionConfirmedHandler } from "../src/modules/notification/handlers/booking-extension-confirmed.handler";
 import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
+import { BookingUpdatedHandler } from "../src/modules/notification/handlers/booking-updated.handler";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { PaymentReconciliationService } from "../src/modules/payment/payment-reconciliation.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -31,7 +33,9 @@ describe("Notification outbox round-trip (e2e)", () => {
   let statusChangedHandler: BookingStatusChangedHandler;
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
+  let bookingUpdatedHandler: BookingUpdatedHandler;
   let bookingConfirmationService: BookingConfirmationService;
+  let bookingUpdateService: BookingUpdateService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let reconciliationService: PaymentReconciliationService;
   let notificationsQueue: Queue;
@@ -98,7 +102,9 @@ describe("Notification outbox round-trip (e2e)", () => {
     statusChangedHandler = app.get(BookingStatusChangedHandler);
     bookingConfirmedHandler = app.get(BookingConfirmedHandler);
     bookingExtensionConfirmedHandler = app.get(BookingExtensionConfirmedHandler);
+    bookingUpdatedHandler = app.get(BookingUpdatedHandler);
     bookingConfirmationService = app.get(BookingConfirmationService);
+    bookingUpdateService = app.get(BookingUpdateService);
     extensionConfirmationService = app.get(ExtensionConfirmationService);
     reconciliationService = app.get(PaymentReconciliationService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
@@ -230,6 +236,114 @@ describe("Notification outbox round-trip (e2e)", () => {
     expect(still.processedAt?.toISOString()).toBe(processedAtSnapshot?.toISOString());
   });
 
+  it("queues a typed booking target without PUSH when the customer updates their own booking", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("booking-update-customer"),
+      name: "Booking Update Customer",
+    });
+    await databaseService.user.update({
+      where: { id: customer.id },
+      data: { phoneNumber: "+2348012345678" },
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+      startDate: new Date(Date.now() + 48 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 60 * 60 * 60 * 1000),
+    });
+
+    await bookingUpdateService.updateBooking(booking.id, customer.id, {
+      pickupAddress: "Updated Pickup Address",
+    });
+
+    const outboxRow = await databaseService.notificationOutboxEvent.findFirstOrThrow({
+      where: {
+        bookingId: booking.id,
+        dedupeKey: { startsWith: `booking-updated:${booking.id}:` },
+      },
+    });
+    expect(outboxRow.status).toBe(NotificationOutboxStatus.PENDING);
+
+    const inboxRow = await databaseService.notificationInbox.findFirstOrThrow({
+      where: {
+        userId: customer.id,
+        dedupeKey: outboxRow.dedupeKey,
+      },
+    });
+    expect(inboxRow.title).toBe("Booking updated");
+
+    for (let i = 0; i < 10; i++) {
+      await outboxService.processPendingEvents();
+      const row = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
+        where: { id: outboxRow.id },
+      });
+      if (row.status === NotificationOutboxStatus.DISPATCHED) {
+        break;
+      }
+    }
+
+    const job = await notificationsQueue.getJob(`notification-outbox-${outboxRow.id}`);
+    expect(job?.data).toMatchObject({
+      type: "booking-updated",
+      bookingId: booking.id,
+      channels: ["email", "whatsapp"],
+      recipients: {
+        client: {
+          phoneNumber: "+2348012345678",
+        },
+      },
+      pushPayload: {
+        data: {
+          type: "booking-updated",
+          target: {
+            kind: "booking",
+            bookingId: booking.id,
+          },
+        },
+      },
+    });
+    expect(job?.data.channels).not.toContain("push");
+  });
+
+  it("rolls back a booking update when its durable notification cannot be built", async () => {
+    const customer = await factory.createUser({
+      email: uniqueEmail("booking-update-rollback-customer"),
+      name: "Booking Update Rollback Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+      pickupLocation: "Original Pickup Address",
+      startDate: new Date(Date.now() + 48 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 60 * 60 * 60 * 1000),
+    });
+    const buildEventsSpy = vi
+      .spyOn(bookingUpdatedHandler, "buildEvents")
+      .mockRejectedValueOnce(new Error("outbox build failed"));
+
+    await expect(
+      bookingUpdateService.updateBooking(booking.id, customer.id, {
+        pickupAddress: "Should Roll Back",
+      }),
+    ).rejects.toThrow();
+    buildEventsSpy.mockRestore();
+
+    const unchangedBooking = await databaseService.booking.findUniqueOrThrow({
+      where: { id: booking.id },
+    });
+    expect(unchangedBooking.pickupLocation).toBe("Original Pickup Address");
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      databaseService.notificationInbox.count({ where: { userId: customer.id } }),
+    ).resolves.toBe(0);
+  });
+
   it("atomically confirms a booking and writes customer and owner outbox events", async () => {
     const customer = await factory.createUser({
       email: uniqueEmail("confirmation-outbox-customer"),
@@ -295,6 +409,15 @@ describe("Notification outbox round-trip (e2e)", () => {
       const job = await notificationsQueue.getJob(`notification-outbox-${row.id}`);
       expect(job?.data.bookingId).toBe(booking.id);
       expect(["booking-confirmed", "fleet-owner-new-booking"]).toContain(job?.data.type);
+      if (row.dedupeKey.includes(":client:")) {
+        expect(job?.data.pushPayload?.data).toEqual({
+          type: "booking-confirmed",
+          target: {
+            kind: "booking",
+            bookingId: booking.id,
+          },
+        });
+      }
     }
   });
 

@@ -23,6 +23,7 @@ import {
   NotificationType,
   QueueReviewReceivedNotificationParams,
 } from "./notification.interface";
+import { createBookingNotificationData } from "./notification-target";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
@@ -97,10 +98,10 @@ export class NotificationService {
       pushPayload: {
         title: this.getStatusChangeSubject(newStatus),
         body: `Your booking is now ${newStatus.toLowerCase()}.`,
-        data: {
-          bookingId: bookingDetails.id,
-          type: NotificationType.BOOKING_STATUS_CHANGE,
-        },
+        data: createBookingNotificationData(
+          NotificationType.BOOKING_STATUS_CHANGE,
+          bookingDetails.id,
+        ),
       },
       templateData: {
         templateKind: BOOKING_STATUS_TEMPLATE_KIND,
@@ -109,6 +110,55 @@ export class NotificationService {
         newStatus,
         subject: this.getStatusChangeSubject(newStatus),
         showReviewRequest,
+      },
+    };
+  }
+
+  async buildBookingUpdatedJobData(
+    booking: BookingWithRelations,
+    includePush: boolean,
+  ): Promise<NotificationJobData | null> {
+    const bookingDetails = normaliseBookingDetails(booking);
+    const userId = booking.userId ?? booking.user?.id ?? undefined;
+    const channels = this.recipientChannelResolver
+      .resolve({
+        audience: NotificationAudience.CUSTOMER,
+        email: bookingDetails.customerEmail,
+        phoneNumber: bookingDetails.customerPhone,
+        userId,
+      })
+      .filter((channel) => includePush || channel !== NotificationChannel.PUSH);
+
+    if (channels.length === 0) {
+      return null;
+    }
+
+    return {
+      id: `booking-updated-${booking.id}-${booking.updatedAt.toISOString()}`,
+      type: NotificationType.BOOKING_UPDATED,
+      audience: NotificationAudience.CUSTOMER,
+      channels,
+      bookingId: booking.id,
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          userId,
+          email: bookingDetails.customerEmail,
+          phoneNumber: bookingDetails.customerPhone,
+        },
+      },
+      pushPayload: {
+        title: "Booking updated",
+        body: `Your booking for ${bookingDetails.carName} has been updated.`,
+        data: createBookingNotificationData(NotificationType.BOOKING_UPDATED, booking.id),
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        ...bookingDetails,
+        title: "been updated",
+        status: "updated",
+        oldStatus: booking.status.toLowerCase(),
+        newStatus: booking.status.toLowerCase(),
+        subject: "Booking Updated",
       },
     };
   }
@@ -151,10 +201,7 @@ export class NotificationService {
       pushPayload: {
         title: "Your chauffeur has been assigned",
         body: `Your chauffeur for ${bookingDetails.carName} has been assigned.`,
-        data: {
-          bookingId: bookingDetails.id,
-          type: NotificationType.CHAUFFEUR_ASSIGNED,
-        },
+        data: createBookingNotificationData(NotificationType.CHAUFFEUR_ASSIGNED, bookingDetails.id),
       },
       templateData: {
         templateKind: BOOKING_STATUS_TEMPLATE_KIND,
@@ -205,6 +252,11 @@ export class NotificationService {
                 email: bookingDetails.customerEmail,
                 phoneNumber: bookingDetails.customerPhone,
               },
+            },
+            pushPayload: {
+              title: "Booking confirmed",
+              body: `Your booking for ${bookingDetails.carName} has been confirmed.`,
+              data: createBookingNotificationData(NotificationType.BOOKING_CONFIRMED, booking.id),
             },
             templateData: {
               templateKind: BOOKING_CONFIRMED_TEMPLATE_KIND,
@@ -274,11 +326,10 @@ export class NotificationService {
       pushPayload: {
         title: "Booking extension confirmed",
         body: `Your booking has been extended by ${extensionDetails.extensionHours} hour${extensionDetails.extensionHours === 1 ? "" : "s"}.`,
-        data: {
-          bookingId: booking.id,
-          extensionId: extension.id,
-          type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        },
+        data: createBookingNotificationData(
+          NotificationType.BOOKING_EXTENSION_CONFIRMED,
+          booking.id,
+        ),
       },
       templateData: {
         templateKind: BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
@@ -353,10 +404,10 @@ export class NotificationService {
             pushPayload: {
               title: "Your booking has been cancelled",
               body: "Your booking has been cancelled. A refund is being processed.",
-              data: {
-                bookingId: bookingDetails.id,
-                type: NotificationType.BOOKING_CANCELLED,
-              },
+              data: createBookingNotificationData(
+                NotificationType.BOOKING_CANCELLED,
+                bookingDetails.id,
+              ),
             },
             templateData: baseTemplateData,
           }
@@ -380,10 +431,10 @@ export class NotificationService {
             pushPayload: {
               title: "A booking for your vehicle has been cancelled",
               body: `A booking for ${bookingDetails.carName} has been cancelled.`,
-              data: {
-                bookingId: bookingDetails.id,
-                type: NotificationType.BOOKING_CANCELLED,
-              },
+              data: createBookingNotificationData(
+                NotificationType.BOOKING_CANCELLED,
+                bookingDetails.id,
+              ),
             },
             templateData: {
               ...baseTemplateData,
@@ -551,10 +602,7 @@ export class NotificationService {
           recipientType === CLIENT_RECIPIENT_TYPE
             ? this.getReminderSubject(type)
             : this.getChauffeurReminderSubject(type),
-        data: {
-          bookingId: bookingLegDetails.bookingId,
-          type,
-        },
+        data: createBookingNotificationData(type, bookingLegDetails.bookingId),
       },
       templateData: {
         templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
