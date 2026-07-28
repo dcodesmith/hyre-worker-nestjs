@@ -1,8 +1,10 @@
+import type { PushNotificationData } from "./notification-target";
+
 export interface SendPushNotificationsInput {
   tokens: string[];
   title: string;
   body: string;
-  data?: Record<string, unknown>;
+  data?: PushNotificationData;
 }
 
 export interface SendPushNotificationsResult {

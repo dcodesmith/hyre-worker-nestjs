@@ -2,6 +2,8 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { NotificationType } from "./notification.interface";
+import { createBookingNotificationData } from "./notification-target";
 import { PushService } from "./push.service";
 
 const { chunkPushNotificationsMock, sendPushNotificationsAsyncMock, isExpoPushTokenMock } =
@@ -57,7 +59,7 @@ describe("PushService", () => {
       tokens: ["ExponentPushToken[a]", "ExponentPushToken[b]"],
       title: "Title",
       body: "Body",
-      data: { bookingId: "booking-1" },
+      data: createBookingNotificationData(NotificationType.BOOKING_UPDATED, "booking-1"),
     });
 
     expect(result).toEqual({
