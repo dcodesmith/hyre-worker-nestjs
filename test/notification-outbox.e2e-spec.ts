@@ -15,8 +15,10 @@ import { BookingConfirmedHandler } from "../src/modules/notification/handlers/bo
 import { BookingExtensionConfirmedHandler } from "../src/modules/notification/handlers/booking-extension-confirmed.handler";
 import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
 import { BookingUpdatedHandler } from "../src/modules/notification/handlers/booking-updated.handler";
+import { ReviewReceivedHandler } from "../src/modules/notification/handlers/review-received.handler";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { PaymentReconciliationService } from "../src/modules/payment/payment-reconciliation.service";
+import { ReviewsWriteService } from "../src/modules/reviews/reviews-write.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 /**
@@ -34,12 +36,37 @@ describe("Notification outbox round-trip (e2e)", () => {
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
   let bookingUpdatedHandler: BookingUpdatedHandler;
+  let reviewReceivedHandler: ReviewReceivedHandler;
   let bookingConfirmationService: BookingConfirmationService;
   let bookingUpdateService: BookingUpdateService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let reconciliationService: PaymentReconciliationService;
+  let reviewsWriteService: ReviewsWriteService;
   let notificationsQueue: Queue;
   let factory: TestDataFactory;
+
+  async function createReviewBooking(label: string) {
+    const customer = await factory.createUser({
+      email: uniqueEmail(`${label}-customer`),
+      name: "Review Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner({
+      email: uniqueEmail(`${label}-owner`),
+      name: "Review Owner",
+    });
+    const chauffeur = await factory.createChauffeur({
+      email: uniqueEmail(`${label}-chauffeur`),
+      name: "Review Chauffeur",
+    });
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id, {
+      status: "COMPLETED",
+      chauffeurId: chauffeur.id,
+      endDate: new Date(),
+    });
+
+    return { customer, fleetOwner, chauffeur, booking };
+  }
 
   async function createPendingExtensionPayment(label: string, confirmedAt: Date) {
     const customer = await factory.createUser({
@@ -103,10 +130,12 @@ describe("Notification outbox round-trip (e2e)", () => {
     bookingConfirmedHandler = app.get(BookingConfirmedHandler);
     bookingExtensionConfirmedHandler = app.get(BookingExtensionConfirmedHandler);
     bookingUpdatedHandler = app.get(BookingUpdatedHandler);
+    reviewReceivedHandler = app.get(ReviewReceivedHandler);
     bookingConfirmationService = app.get(BookingConfirmationService);
     bookingUpdateService = app.get(BookingUpdateService);
     extensionConfirmationService = app.get(ExtensionConfirmationService);
     reconciliationService = app.get(PaymentReconciliationService);
+    reviewsWriteService = app.get(ReviewsWriteService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
     factory = new TestDataFactory(databaseService, app);
 
@@ -341,6 +370,111 @@ describe("Notification outbox round-trip (e2e)", () => {
     ).resolves.toBe(0);
     await expect(
       databaseService.notificationInbox.count({ where: { userId: customer.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it("atomically creates a review and delivers owner and chauffeur emails through the outbox", async () => {
+    const { customer, fleetOwner, chauffeur, booking } = await createReviewBooking("review-outbox");
+
+    const review = await reviewsWriteService.createReview(customer.id, {
+      bookingId: booking.id,
+      overallRating: 5,
+      carRating: 5,
+      chauffeurRating: 4,
+      serviceRating: 5,
+      comment: "Excellent trip",
+    });
+
+    const outboxRows = await databaseService.notificationOutboxEvent.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { dedupeKey: "asc" },
+    });
+    expect(outboxRows).toHaveLength(2);
+    expect(outboxRows.map((row) => row.dedupeKey)).toEqual([
+      `review-received:${review.id}:chauffeur`,
+      `review-received:${review.id}:fleet-owner`,
+    ]);
+    expect(outboxRows.map((row) => row.userId)).toEqual(
+      expect.arrayContaining([chauffeur.id, fleetOwner.id]),
+    );
+    expect(
+      outboxRows.every(
+        (row) =>
+          row.eventType === NotificationOutboxEventType.BOOKING_LIFECYCLE &&
+          row.status === NotificationOutboxStatus.PENDING,
+      ),
+    ).toBe(true);
+
+    for (let i = 0; i < 10; i++) {
+      await outboxService.processPendingEvents();
+      const pendingCount = await databaseService.notificationOutboxEvent.count({
+        where: {
+          id: { in: outboxRows.map((row) => row.id) },
+          status: { not: NotificationOutboxStatus.DISPATCHED },
+        },
+      });
+      if (pendingCount === 0) {
+        break;
+      }
+    }
+
+    const jobs = await Promise.all(
+      outboxRows.map((row) => notificationsQueue.getJob(`notification-outbox-${row.id}`)),
+    );
+    expect(jobs.map((job) => job?.data)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `review-received-owner-${review.id}`,
+          type: "review-received",
+          audience: "fleet-owner",
+          channels: ["email"],
+          bookingId: booking.id,
+          recipients: {
+            fleetOwner: {
+              userId: fleetOwner.id,
+              email: fleetOwner.email,
+            },
+          },
+        }),
+        expect.objectContaining({
+          id: `review-received-chauffeur-${review.id}`,
+          type: "review-received",
+          audience: "chauffeur",
+          channels: ["email"],
+          bookingId: booking.id,
+          recipients: {
+            chauffeur: {
+              userId: chauffeur.id,
+              email: chauffeur.email,
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("rolls back review creation when its durable notifications cannot be built", async () => {
+    const { customer, booking } = await createReviewBooking("review-rollback");
+    const buildEventsSpy = vi
+      .spyOn(reviewReceivedHandler, "buildEvents")
+      .mockRejectedValueOnce(new Error("review outbox build failed"));
+
+    await expect(
+      reviewsWriteService.createReview(customer.id, {
+        bookingId: booking.id,
+        overallRating: 5,
+        carRating: 5,
+        chauffeurRating: 5,
+        serviceRating: 5,
+      }),
+    ).rejects.toThrow("review outbox build failed");
+    buildEventsSpy.mockRestore();
+
+    await expect(databaseService.review.count({ where: { bookingId: booking.id } })).resolves.toBe(
+      0,
+    );
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
     ).resolves.toBe(0);
   });
 

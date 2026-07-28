@@ -114,7 +114,8 @@ export type NotificationRecipientResult =
       };
     });
 
-export interface QueueReviewReceivedNotificationParams {
+export interface ReviewReceivedNotificationParams {
+  reviewId: string;
   bookingId: string;
   owner: {
     userId: string;
