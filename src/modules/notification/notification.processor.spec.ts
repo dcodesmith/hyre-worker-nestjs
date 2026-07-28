@@ -21,7 +21,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
-import { WhatsAppService } from "./whatsapp.service";
+import { Template, WhatsAppService } from "./whatsapp.service";
 
 describe("NotificationProcessor", () => {
   let processor: NotificationProcessor;
@@ -241,6 +241,34 @@ describe("NotificationProcessor", () => {
       channel: NotificationChannel.WHATSAPP,
       success: true,
       messageId: "whatsapp-sent",
+    });
+  });
+
+  it("uses the booking status WhatsApp template for booking updates", async () => {
+    const job = createJob("job-booking-updated-whatsapp", {
+      id: "notification-booking-updated-whatsapp",
+      type: NotificationType.BOOKING_UPDATED,
+      audience: NotificationAudience.CUSTOMER,
+      channels: [NotificationChannel.WHATSAPP],
+      bookingId: "booking-updated",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          phoneNumber: "+1234567890",
+        },
+      },
+      templateData: pushTemplateData,
+    });
+
+    await processor.process(job);
+
+    expect(whatsAppService.sendMessage).toHaveBeenCalledWith({
+      to: "+1234567890",
+      templateKey: Template.BookingStatusUpdate,
+      variables: expect.objectContaining({
+        "1": "Push Customer",
+        "2": "Car",
+        "3": "Booking update",
+      }),
     });
   });
 
@@ -548,7 +576,7 @@ describe("NotificationProcessor", () => {
     ]);
   });
 
-  it("should process PUSH channel and treat invalid tokens as non-retryable", async () => {
+  it("processes a typed PUSH payload and treats invalid tokens as non-retryable", async () => {
     const job = createJob("job-11", {
       id: "notification-11",
       type: NotificationType.CHAUFFEUR_ASSIGNED,
@@ -557,7 +585,13 @@ describe("NotificationProcessor", () => {
       pushPayload: {
         title: "Your chauffeur has been assigned",
         body: "Your chauffeur for a trip has been assigned.",
-        data: { bookingId: "booking-111", type: NotificationType.CHAUFFEUR_ASSIGNED },
+        data: {
+          type: NotificationType.CHAUFFEUR_ASSIGNED,
+          target: {
+            kind: "booking",
+            bookingId: "booking-111",
+          },
+        },
       },
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {
@@ -626,7 +660,13 @@ describe("NotificationProcessor", () => {
       tokens: ["ExponentPushToken[a]", "ExponentPushToken[b]"],
       title: "Your chauffeur has been assigned",
       body: "Your chauffeur for a trip has been assigned.",
-      data: { bookingId: "booking-111", type: NotificationType.CHAUFFEUR_ASSIGNED },
+      data: {
+        type: NotificationType.CHAUFFEUR_ASSIGNED,
+        target: {
+          kind: "booking",
+          bookingId: "booking-111",
+        },
+      },
     });
     expect(pushTokenService.revokeTokens).toHaveBeenCalledWith(["ExponentPushToken[b]"]);
   });
@@ -864,7 +904,13 @@ describe("NotificationProcessor", () => {
       pushPayload: {
         title: "t",
         body: "b",
-        data: { bookingId: "booking-113", type: NotificationType.CHAUFFEUR_ASSIGNED },
+        data: {
+          type: NotificationType.CHAUFFEUR_ASSIGNED,
+          target: {
+            kind: "booking",
+            bookingId: "booking-113",
+          },
+        },
       },
       recipients: {
         [CLIENT_RECIPIENT_TYPE]: {

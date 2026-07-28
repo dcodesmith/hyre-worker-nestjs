@@ -1,3 +1,4 @@
+import type { PushNotificationData } from "./notification-target";
 import { RecipientType, TemplateData } from "./template-data.interface";
 
 export enum NotificationChannel {
@@ -20,6 +21,7 @@ export enum NotificationType {
   CHAUFFEUR_ASSIGNED = "chauffeur-assigned",
   BOOKING_CANCELLED = "booking-cancelled",
   BOOKING_EXTENSION_CONFIRMED = "booking-extension-confirmed",
+  BOOKING_UPDATED = "booking-updated",
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
   REVIEW_RECEIVED = "review-received",
 }
@@ -51,7 +53,7 @@ export interface NotificationJobData {
   pushPayload?: {
     title: string;
     body: string;
-    data?: Record<string, string>;
+    data: PushNotificationData;
   };
   recipients: Partial<
     Record<
