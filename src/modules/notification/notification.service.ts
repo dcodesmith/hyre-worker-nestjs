@@ -3,8 +3,12 @@ import { Injectable } from "@nestjs/common";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
-import { normaliseBookingDetails } from "../../shared/helper";
-import { BookingWithRelations, NormalisedBookingLegDetails } from "../../types";
+import { normaliseBookingDetails, normaliseExtensionDetails } from "../../shared/helper";
+import {
+  BookingWithRelations,
+  ExtensionWithNotificationRelations,
+  NormalisedBookingLegDetails,
+} from "../../types";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
@@ -23,6 +27,7 @@ import { RecipientChannelResolverService } from "./recipient-channel-resolver.se
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
   BOOKING_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -233,6 +238,58 @@ export class NotificationService {
         : null;
 
     return { customer, owner };
+  }
+
+  async buildBookingExtensionConfirmedJobData(
+    extension: ExtensionWithNotificationRelations,
+  ): Promise<NotificationJobData | null> {
+    const booking = extension.bookingLeg.booking;
+    const bookingDetails = normaliseBookingDetails(booking);
+    const extensionDetails = normaliseExtensionDetails(extension);
+    const userId = booking.userId ?? booking.user?.id ?? undefined;
+    const channels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CUSTOMER,
+      email: bookingDetails.customerEmail,
+      phoneNumber: bookingDetails.customerPhone,
+      userId,
+    });
+
+    if (channels.length === 0) {
+      return null;
+    }
+
+    return {
+      id: `booking-extension-confirmed-${extension.id}`,
+      type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+      audience: NotificationAudience.CUSTOMER,
+      channels,
+      bookingId: booking.id,
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          userId,
+          email: bookingDetails.customerEmail,
+          phoneNumber: bookingDetails.customerPhone,
+        },
+      },
+      pushPayload: {
+        title: "Booking extension confirmed",
+        body: `Your booking has been extended by ${extensionDetails.extensionHours} hour${extensionDetails.extensionHours === 1 ? "" : "s"}.`,
+        data: {
+          bookingId: booking.id,
+          extensionId: extension.id,
+          type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
+        ...bookingDetails,
+        legDate: extensionDetails.legDate,
+        extensionHours: extensionDetails.extensionHours,
+        from: extensionDetails.from,
+        to: extensionDetails.to,
+        subject: "Booking Extension Confirmed",
+      },
+    };
   }
 
   /**

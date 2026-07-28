@@ -8,11 +8,13 @@ import { AppModule } from "../src/app.module";
 import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingConfirmationService } from "../src/modules/booking/booking-confirmation.service";
+import { ExtensionConfirmationService } from "../src/modules/booking/extension-confirmation.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { BookingConfirmedHandler } from "../src/modules/notification/handlers/booking-confirmed.handler";
+import { BookingExtensionConfirmedHandler } from "../src/modules/notification/handlers/booking-extension-confirmed.handler";
 import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
-import { BookingPaymentReconciliationService } from "../src/modules/payment/booking-payment-reconciliation.service";
+import { PaymentReconciliationService } from "../src/modules/payment/payment-reconciliation.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 /**
@@ -28,10 +30,58 @@ describe("Notification outbox round-trip (e2e)", () => {
   let outboxService: NotificationOutboxService;
   let statusChangedHandler: BookingStatusChangedHandler;
   let bookingConfirmedHandler: BookingConfirmedHandler;
+  let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
   let bookingConfirmationService: BookingConfirmationService;
-  let reconciliationService: BookingPaymentReconciliationService;
+  let extensionConfirmationService: ExtensionConfirmationService;
+  let reconciliationService: PaymentReconciliationService;
   let notificationsQueue: Queue;
   let factory: TestDataFactory;
+
+  async function createPendingExtensionPayment(label: string, confirmedAt: Date) {
+    const customer = await factory.createUser({
+      email: uniqueEmail(`${label}-customer`),
+      name: "Extension Customer",
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(customer.id, car.id, {
+      status: "ACTIVE",
+      paymentStatus: "PAID",
+    });
+    const legStartTime = new Date("2026-07-28T10:00:00.000Z");
+    const originalLegEndTime = new Date("2026-07-28T12:00:00.000Z");
+    const extendedLegEndTime = new Date("2026-07-28T13:00:00.000Z");
+    const leg = await factory.createBookingLeg(booking.id, {
+      legStartTime,
+      legEndTime: originalLegEndTime,
+    });
+    const extension = await factory.createExtension(leg.id, {
+      extensionStartTime: originalLegEndTime,
+      extensionEndTime: extendedLegEndTime,
+      totalAmount: 5000,
+    });
+    const payment = await databaseService.payment.create({
+      data: {
+        txRef: `extension-${label}-${Date.now()}`,
+        extensionId: extension.id,
+        amountExpected: 5000,
+        amountCharged: 5000,
+        currency: "NGN",
+        status: "SUCCESSFUL",
+        confirmedAt,
+      },
+    });
+
+    return {
+      customer,
+      booking,
+      leg,
+      extension,
+      payment,
+      originalLegEndTime,
+      extendedLegEndTime,
+    };
+  }
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -47,8 +97,10 @@ describe("Notification outbox round-trip (e2e)", () => {
     outboxService = app.get(NotificationOutboxService);
     statusChangedHandler = app.get(BookingStatusChangedHandler);
     bookingConfirmedHandler = app.get(BookingConfirmedHandler);
+    bookingExtensionConfirmedHandler = app.get(BookingExtensionConfirmedHandler);
     bookingConfirmationService = app.get(BookingConfirmationService);
-    reconciliationService = app.get(BookingPaymentReconciliationService);
+    extensionConfirmationService = app.get(ExtensionConfirmationService);
+    reconciliationService = app.get(PaymentReconciliationService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
     factory = new TestDataFactory(databaseService, app);
 
@@ -297,7 +349,7 @@ describe("Notification outbox round-trip (e2e)", () => {
       confirmedAt: new Date(Date.now() - 10 * 60 * 1000),
     });
 
-    await expect(reconciliationService.reconcilePendingBookings()).resolves.toBeGreaterThanOrEqual(
+    await expect(reconciliationService.reconcilePendingPayments()).resolves.toBeGreaterThanOrEqual(
       1,
     );
 
@@ -309,5 +361,108 @@ describe("Notification outbox round-trip (e2e)", () => {
     await expect(
       databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
     ).resolves.toBe(2);
+  });
+
+  it("atomically activates an extension and delivers its outbox event to BullMQ", async () => {
+    const { customer, booking, leg, extension, payment, extendedLegEndTime } =
+      await createPendingExtensionPayment(
+        "extension-outbox",
+        new Date(Date.now() - 10 * 60 * 1000),
+      );
+
+    await expect(extensionConfirmationService.confirmFromPayment(payment)).resolves.toBe(true);
+
+    const activeExtension = await databaseService.extension.findUniqueOrThrow({
+      where: { id: extension.id },
+    });
+    expect(activeExtension.status).toBe("ACTIVE");
+    expect(activeExtension.paymentStatus).toBe("PAID");
+    await expect(
+      databaseService.bookingLeg.findUniqueOrThrow({ where: { id: leg.id } }),
+    ).resolves.toMatchObject({ legEndTime: extendedLegEndTime });
+
+    const outboxRows = await databaseService.notificationOutboxEvent.findMany({
+      where: { bookingId: booking.id },
+    });
+    expect(outboxRows).toHaveLength(1);
+    expect(outboxRows[0].dedupeKey).toBe(`booking-extension-confirmed:${extension.id}:client`);
+
+    const inboxRows = await databaseService.notificationInbox.findMany({
+      where: { userId: customer.id, payload: { path: ["extensionId"], equals: extension.id } },
+    });
+    expect(inboxRows).toHaveLength(1);
+    expect(inboxRows[0].title).toBe("Booking extension confirmed");
+
+    await expect(extensionConfirmationService.confirmFromPayment(payment)).resolves.toBe(true);
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(1);
+
+    for (let i = 0; i < 10; i++) {
+      await outboxService.processPendingEvents();
+      const row = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
+        where: { id: outboxRows[0].id },
+      });
+      if (row.status === NotificationOutboxStatus.DISPATCHED) {
+        break;
+      }
+    }
+
+    const job = await notificationsQueue.getJob(`notification-outbox-${outboxRows[0].id}`);
+    expect(job?.data).toMatchObject({
+      bookingId: booking.id,
+      type: "booking-extension-confirmed",
+      audience: "customer",
+      recipients: {
+        client: {
+          userId: customer.id,
+        },
+      },
+    });
+  });
+
+  it("rolls back extension activation when its outbox event cannot be built", async () => {
+    const { booking, leg, extension, payment, originalLegEndTime } =
+      await createPendingExtensionPayment("extension-rollback", new Date());
+    const buildEventsSpy = vi
+      .spyOn(bookingExtensionConfirmedHandler, "buildEvents")
+      .mockRejectedValueOnce(new Error("extension outbox build failed"));
+
+    await expect(extensionConfirmationService.confirmFromPayment(payment)).rejects.toThrow(
+      "extension outbox build failed",
+    );
+    buildEventsSpy.mockRestore();
+
+    const unchangedExtension = await databaseService.extension.findUniqueOrThrow({
+      where: { id: extension.id },
+    });
+    expect(unchangedExtension.status).toBe("PENDING");
+    expect(unchangedExtension.paymentStatus).toBe("UNPAID");
+    await expect(
+      databaseService.bookingLeg.findUniqueOrThrow({ where: { id: leg.id } }),
+    ).resolves.toMatchObject({ legEndTime: originalLegEndTime });
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it("recovers a stale successful extension payment that remains pending", async () => {
+    const { booking, extension } = await createPendingExtensionPayment(
+      "extension-reconcile",
+      new Date(Date.now() - 10 * 60 * 1000),
+    );
+
+    await expect(reconciliationService.reconcilePendingPayments()).resolves.toBeGreaterThanOrEqual(
+      1,
+    );
+
+    const recoveredExtension = await databaseService.extension.findUniqueOrThrow({
+      where: { id: extension.id },
+    });
+    expect(recoveredExtension.status).toBe("ACTIVE");
+    expect(recoveredExtension.paymentStatus).toBe("PAID");
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(1);
   });
 });

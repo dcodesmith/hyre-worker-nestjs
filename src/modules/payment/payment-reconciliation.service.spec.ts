@@ -5,18 +5,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
+import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
-import { BookingPaymentReconciliationService } from "./booking-payment-reconciliation.service";
+import { PaymentReconciliationService } from "./payment-reconciliation.service";
 
-describe("BookingPaymentReconciliationService", () => {
-  let service: BookingPaymentReconciliationService;
+describe("PaymentReconciliationService", () => {
+  let service: PaymentReconciliationService;
   let databaseService: DatabaseService;
   let bookingConfirmationService: BookingConfirmationService;
+  let extensionConfirmationService: ExtensionConfirmationService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        BookingPaymentReconciliationService,
+        PaymentReconciliationService,
         {
           provide: DatabaseService,
           useValue: {
@@ -31,14 +33,21 @@ describe("BookingPaymentReconciliationService", () => {
             confirmFromPayment: vi.fn(),
           },
         },
+        {
+          provide: ExtensionConfirmationService,
+          useValue: {
+            confirmFromPayment: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
 
-    service = module.get(BookingPaymentReconciliationService);
+    service = module.get(PaymentReconciliationService);
     databaseService = module.get(DatabaseService);
     bookingConfirmationService = module.get(BookingConfirmationService);
+    extensionConfirmationService = module.get(ExtensionConfirmationService);
   });
 
   it("retries eligible successful payments for pending bookings", async () => {
@@ -48,30 +57,68 @@ describe("BookingPaymentReconciliationService", () => {
       amountExpected: new Decimal(10000),
       amountCharged: new Decimal(10000),
       currency: "NGN",
-      confirmedAt: new Date("2026-07-27T12:00:00.000Z"),
     });
     vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
     vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
 
-    await expect(service.reconcilePendingBookings()).resolves.toBe(1);
+    await expect(service.reconcilePendingPayments()).resolves.toBe(1);
 
     expect(databaseService.payment.findMany).toHaveBeenCalledWith({
       where: {
         status: PaymentAttemptStatus.SUCCESSFUL,
-        bookingId: { not: null },
         confirmedAt: { lte: expect.any(Date) },
-        booking: {
-          is: {
-            status: BookingStatus.PENDING,
-            paymentStatus: PaymentStatus.UNPAID,
-            deletedAt: null,
+        OR: [
+          {
+            bookingId: { not: null },
+            extensionId: null,
+            booking: {
+              is: {
+                status: BookingStatus.PENDING,
+                paymentStatus: PaymentStatus.UNPAID,
+                deletedAt: null,
+              },
+            },
           },
-        },
+          {
+            bookingId: null,
+            extensionId: { not: null },
+            extension: {
+              is: {
+                status: "PENDING",
+                paymentStatus: PaymentStatus.UNPAID,
+                bookingLeg: {
+                  booking: {
+                    deletedAt: null,
+                  },
+                },
+              },
+            },
+          },
+        ],
       },
       orderBy: { confirmedAt: "asc" },
       take: 50,
     });
     expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(payment);
+    expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("retries eligible successful payments for pending extensions", async () => {
+    const payment = createPaymentRecord({
+      status: PaymentAttemptStatus.SUCCESSFUL,
+      bookingId: null,
+      extensionId: "extension-1",
+      amountExpected: new Decimal(5000),
+      amountCharged: new Decimal(5000),
+      currency: "NGN",
+    });
+    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
+    vi.mocked(extensionConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await expect(service.reconcilePendingPayments()).resolves.toBe(1);
+
+    expect(extensionConfirmationService.confirmFromPayment).toHaveBeenCalledWith(payment);
+    expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -100,36 +147,43 @@ describe("BookingPaymentReconciliationService", () => {
     });
     vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
 
-    await expect(service.reconcilePendingBookings()).resolves.toBe(0);
+    await expect(service.reconcilePendingPayments()).resolves.toBe(0);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 
-  it("continues reconciling after one booking fails", async () => {
-    const first = createPaymentRecord({
+  it("continues reconciling after one payment fails", async () => {
+    const bookingPayment = createPaymentRecord({
       id: "payment-1",
       bookingId: "booking-1",
       status: PaymentAttemptStatus.SUCCESSFUL,
       amountCharged: new Decimal(10000),
     });
-    const second = createPaymentRecord({
+    const extensionPayment = createPaymentRecord({
       id: "payment-2",
-      bookingId: "booking-2",
+      bookingId: null,
+      extensionId: "extension-2",
       status: PaymentAttemptStatus.SUCCESSFUL,
       amountCharged: new Decimal(10000),
     });
-    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([first, second]);
-    vi.mocked(bookingConfirmationService.confirmFromPayment)
-      .mockRejectedValueOnce(new Error("outbox unavailable"))
-      .mockResolvedValueOnce(true);
+    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([
+      bookingPayment,
+      extensionPayment,
+    ]);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockRejectedValueOnce(
+      new Error("outbox unavailable"),
+    );
+    vi.mocked(extensionConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
 
-    await expect(service.reconcilePendingBookings()).resolves.toBe(1);
-    expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledTimes(2);
+    await expect(service.reconcilePendingPayments()).resolves.toBe(1);
+    expect(extensionConfirmationService.confirmFromPayment).toHaveBeenCalledWith(extensionPayment);
   });
 
   it("returns zero when loading candidates fails", async () => {
     vi.mocked(databaseService.payment.findMany).mockRejectedValueOnce(new Error("database down"));
 
-    await expect(service.reconcilePendingBookings()).resolves.toBe(0);
+    await expect(service.reconcilePendingPayments()).resolves.toBe(0);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 });
