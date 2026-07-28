@@ -11,9 +11,11 @@ import {
   createBookingLeg,
   createCar,
   createChauffeur,
+  createExtension,
   createOwner,
   createUser,
 } from "../../shared/helper.fixtures";
+import type { ExtensionWithNotificationRelations } from "../../types";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
@@ -29,6 +31,7 @@ import { NotificationService } from "./notification.service";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
@@ -288,6 +291,84 @@ describe("NotificationService", () => {
       await expect(service.buildBookingConfirmedJobData(booking)).resolves.toEqual({
         customer: null,
         owner: null,
+      });
+    });
+  });
+
+  describe("buildBookingExtensionConfirmedJobData", () => {
+    it("builds email, WhatsApp and push delivery for a registered customer", async () => {
+      const booking = createBooking({
+        id: "booking-1",
+        userId: "customer-1",
+        user: createUser({ id: "customer-1" }),
+        car: createCar({ owner: createOwner() }),
+      });
+      const extension = {
+        ...createExtension({ id: "extension-1" }),
+        bookingLeg: { ...createBookingLeg(), booking },
+      } as ExtensionWithNotificationRelations;
+
+      const jobData = await service.buildBookingExtensionConfirmedJobData(extension);
+
+      expect(jobData).toMatchObject({
+        id: "booking-extension-confirmed-extension-1",
+        type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        bookingId: "booking-1",
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({ userId: "customer-1" }),
+        },
+        pushPayload: {
+          title: "Booking extension confirmed",
+          body: "Your booking has been extended by 2 hours.",
+          data: {
+            bookingId: "booking-1",
+            extensionId: "extension-1",
+            type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
+          },
+        },
+        templateData: expect.objectContaining({
+          templateKind: BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
+          subject: "Booking Extension Confirmed",
+        }),
+      });
+    });
+
+    it("builds WhatsApp-only delivery for a WhatsApp-agent guest", async () => {
+      const booking = createBooking({
+        id: "booking-2",
+        userId: null,
+        user: null,
+        guestUser: {
+          name: "WhatsApp Guest",
+          email: "whatsapp.2348012345678@tripdly.com",
+          phoneNumber: "+2348012345678",
+          guestContactSource: "WHATSAPP_AGENT",
+          preferredNotificationChannel: "WHATSAPP_ONLY",
+        },
+        car: createCar({ owner: createOwner() }),
+      });
+      const extension = {
+        ...createExtension({ id: "extension-2" }),
+        bookingLeg: { ...createBookingLeg(), booking },
+      } as ExtensionWithNotificationRelations;
+
+      const jobData = await service.buildBookingExtensionConfirmedJobData(extension);
+
+      expect(jobData).toMatchObject({
+        channels: [NotificationChannel.WHATSAPP],
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: expect.objectContaining({
+            userId: undefined,
+            email: undefined,
+            phoneNumber: "+2348012345678",
+          }),
+        },
       });
     });
   });

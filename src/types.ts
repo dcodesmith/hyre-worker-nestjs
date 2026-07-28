@@ -88,6 +88,23 @@ export type ExtensionWithBookingLeg = Prisma.ExtensionGetPayload<{
   include: { bookingLeg: { select: { booking: { select: { userId: true; status: true } } } } };
 }>;
 
+export type ExtensionWithNotificationRelations = Prisma.ExtensionGetPayload<{
+  include: {
+    bookingLeg: {
+      include: {
+        booking: {
+          include: {
+            user: true;
+            car: { include: { owner: true } };
+            chauffeur: true;
+            legs: { include: { extensions: true } };
+          };
+        };
+      };
+    };
+  };
+}>;
+
 export type PaymentWithRelations = Prisma.PaymentGetPayload<{
   include: {
     booking: { select: { id: true; status: true; userId: true } };

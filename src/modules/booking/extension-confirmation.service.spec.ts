@@ -1,21 +1,17 @@
-import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
-import {
-  NotificationAudience,
-  NotificationChannel,
-  NotificationType,
-} from "../notification/notification.interface";
-import { RecipientChannelResolverService } from "../notification/recipient-channel-resolver.service";
+import { BookingExtensionConfirmedHandler } from "../notification/handlers/booking-extension-confirmed.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
 
 describe("ExtensionConfirmationService", () => {
   let service: ExtensionConfirmationService;
-  const queueMock = { add: vi.fn() };
+  let notificationOutboxService: NotificationOutboxService;
+  let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
+  const outboxMock = { create: vi.fn() };
   const txMock = {
     extension: {
       updateMany: vi.fn(),
@@ -35,21 +31,23 @@ describe("ExtensionConfirmationService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExtensionConfirmationService,
-        RecipientChannelResolverService,
         {
           provide: DatabaseService,
           useValue: databaseServiceMock,
         },
         {
-          provide: getQueueToken(NOTIFICATIONS_QUEUE),
-          useValue: queueMock,
+          provide: NotificationOutboxService,
+          useValue: outboxMock,
         },
+        { provide: BookingExtensionConfirmedHandler, useValue: {} },
       ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
 
     service = module.get<ExtensionConfirmationService>(ExtensionConfirmationService);
+    notificationOutboxService = module.get(NotificationOutboxService);
+    bookingExtensionConfirmedHandler = module.get(BookingExtensionConfirmedHandler);
   });
 
   it("confirms pending extension and queues confirmation email", async () => {
@@ -89,7 +87,6 @@ describe("ExtensionConfirmationService", () => {
       },
     });
     txMock.bookingLeg.updateMany.mockResolvedValueOnce({ count: 1 });
-    queueMock.add.mockResolvedValueOnce(undefined);
 
     const result = await service.confirmFromPayment({
       id: "payment-1",
@@ -115,29 +112,14 @@ describe("ExtensionConfirmationService", () => {
       },
       data: { legEndTime: new Date("2026-02-20T12:00:00.000Z") },
     });
-    expect(queueMock.add).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        audience: NotificationAudience.CUSTOMER,
-        channels: [
-          NotificationChannel.EMAIL,
-          NotificationChannel.WHATSAPP,
-          NotificationChannel.PUSH,
-        ],
-        recipients: expect.objectContaining({
-          client: expect.objectContaining({
-            userId: "customer-1",
-          }),
-        }),
-      }),
-      expect.objectContaining({
-        jobId: "booking-extension-confirmed-extension-1",
-      }),
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      bookingExtensionConfirmedHandler,
+      { extension: expect.objectContaining({ id: "extension-1" }) },
+      txMock,
     );
   });
 
-  it("queues WhatsApp-only extension confirmation for WhatsApp-agent guest", async () => {
+  it("writes a guest extension confirmation to the outbox transaction", async () => {
     txMock.extension.updateMany.mockResolvedValueOnce({ count: 1 });
     txMock.extension.findUnique.mockResolvedValueOnce({
       id: "extension-2",
@@ -179,7 +161,6 @@ describe("ExtensionConfirmationService", () => {
       },
     });
     txMock.bookingLeg.updateMany.mockResolvedValueOnce({ count: 1 });
-    queueMock.add.mockResolvedValueOnce(undefined);
 
     const result = await service.confirmFromPayment({
       id: "payment-2",
@@ -188,15 +169,10 @@ describe("ExtensionConfirmationService", () => {
     } as never);
 
     expect(result).toBe(true);
-    expect(queueMock.add).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        type: NotificationType.BOOKING_EXTENSION_CONFIRMED,
-        channels: [NotificationChannel.WHATSAPP],
-      }),
-      expect.objectContaining({
-        jobId: "booking-extension-confirmed-extension-2",
-      }),
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      bookingExtensionConfirmedHandler,
+      { extension: expect.objectContaining({ id: "extension-2" }) },
+      txMock,
     );
   });
 
@@ -238,8 +214,6 @@ describe("ExtensionConfirmationService", () => {
         },
       },
     });
-    queueMock.add.mockResolvedValueOnce(undefined);
-
     const result = await service.confirmFromPayment({
       id: "payment-2",
       txRef: "tx-2",
@@ -254,7 +228,7 @@ describe("ExtensionConfirmationService", () => {
       },
       data: { legEndTime: shorterExtensionEnd },
     });
-    expect(queueMock.add).toHaveBeenCalled();
+    expect(notificationOutboxService.create).toHaveBeenCalled();
   });
 
   it("continues idempotently when extension is already active", async () => {
@@ -302,15 +276,37 @@ describe("ExtensionConfirmationService", () => {
     } as never);
 
     expect(result).toBe(true);
-    expect(queueMock.add).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        id: "booking-extension-confirmed-extension-1",
-      }),
-      expect.objectContaining({
-        jobId: "booking-extension-confirmed-extension-1",
-      }),
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      bookingExtensionConfirmedHandler,
+      { extension: expect.objectContaining({ id: "extension-1" }) },
+      txMock,
     );
+  });
+
+  it("propagates outbox failures so the extension transaction can roll back", async () => {
+    txMock.extension.updateMany.mockResolvedValueOnce({ count: 1 });
+    txMock.extension.findUnique.mockResolvedValueOnce({
+      id: "extension-1",
+      bookingLegId: "leg-1",
+      status: "ACTIVE",
+      extensionEndTime: new Date("2026-02-20T12:00:00.000Z"),
+      bookingLeg: {
+        booking: {
+          id: "booking-1",
+          userId: "customer-1",
+        },
+      },
+    });
+    txMock.bookingLeg.updateMany.mockResolvedValueOnce({ count: 1 });
+    outboxMock.create.mockRejectedValueOnce(new Error("Outbox write failed"));
+
+    await expect(
+      service.confirmFromPayment({
+        id: "payment-1",
+        txRef: "tx-1",
+        extensionId: "extension-1",
+      } as never),
+    ).rejects.toThrow("Outbox write failed");
   });
 
   it("returns false when payment has no extension", async () => {
