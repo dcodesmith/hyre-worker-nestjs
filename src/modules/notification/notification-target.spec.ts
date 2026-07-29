@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { NotificationType } from "./notification.interface";
-import { createBookingNotificationData, pushNotificationDataSchema } from "./notification-target";
+import {
+  createBookingNotificationData,
+  createReferralsNotificationData,
+  pushNotificationDataSchema,
+} from "./notification-target";
 
 describe("notification target contract", () => {
   it("builds the typed booking target", () => {
@@ -9,6 +13,15 @@ describe("notification target contract", () => {
       target: {
         kind: "booking",
         bookingId: "booking-1",
+      },
+    });
+  });
+
+  it("builds the typed referrals target", () => {
+    expect(createReferralsNotificationData(NotificationType.REFERRAL_REWARD_RELEASED)).toEqual({
+      type: NotificationType.REFERRAL_REWARD_RELEASED,
+      target: {
+        kind: "referrals",
       },
     });
   });
@@ -24,6 +37,12 @@ describe("notification target contract", () => {
       pushNotificationDataSchema.safeParse({
         type: NotificationType.BOOKING_CONFIRMED,
         target: { kind: "booking", bookingId: "" },
+      }).success,
+    ).toBe(false);
+    expect(
+      pushNotificationDataSchema.safeParse({
+        type: NotificationType.REFERRAL_REWARD_RELEASED,
+        target: { kind: "referrals", bookingId: "booking-2" },
       }).success,
     ).toBe(false);
   });

@@ -11,6 +11,7 @@ import {
   BookingNotFoundException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
+import { BookingEligibilityService } from "./booking-eligibility.service";
 
 describe("BookingCancellationService", () => {
   let service: BookingCancellationService;
@@ -35,6 +36,9 @@ describe("BookingCancellationService", () => {
     eventType: "BOOKING_LIFECYCLE" as const,
     buildEvents: vi.fn(),
   };
+  const bookingEligibilityServiceMock = {
+    reversePendingReferralRewards: vi.fn(),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -48,6 +52,7 @@ describe("BookingCancellationService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
         { provide: BookingCancellationHandler, useValue: bookingCancellationHandlerMock },
+        { provide: BookingEligibilityService, useValue: bookingEligibilityServiceMock },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -98,6 +103,11 @@ describe("BookingCancellationService", () => {
       where: { id: "car-1" },
       data: { status: "AVAILABLE" },
     });
+    expect(bookingEligibilityServiceMock.reversePendingReferralRewards).toHaveBeenCalledWith(
+      txMock,
+      "booking-1",
+      "BOOKING_CANCELLED",
+    );
     expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
       bookingCancellationHandlerMock,
       { booking: expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }) },

@@ -1,11 +1,16 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { BookingReferralStatus } from "@prisma/client";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import type { EnvConfig } from "../../config/env.config";
-import { normaliseBookingDetails, normaliseExtensionDetails } from "../../shared/helper";
+import {
+  formatCurrency,
+  normaliseBookingDetails,
+  normaliseExtensionDetails,
+} from "../../shared/helper";
 import {
   BookingWithRelations,
   ExtensionWithNotificationRelations,
@@ -24,9 +29,13 @@ import {
   NotificationJobData,
   NotificationResult,
   NotificationType,
+  ReferralRewardReleasedNotificationParams,
   ReviewReceivedNotificationParams,
 } from "./notification.interface";
-import { createBookingNotificationData } from "./notification-target";
+import {
+  createBookingNotificationData,
+  createReferralsNotificationData,
+} from "./notification-target";
 import { RecipientChannelResolverService } from "./recipient-channel-resolver.service";
 import {
   BOOKING_CANCELLED_TEMPLATE_KIND,
@@ -36,6 +45,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
+  PUSH_ONLY_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
 } from "./template-data.interface";
@@ -234,6 +244,11 @@ export class NotificationService {
     const ownerUserId = booking.car?.owner?.id ?? undefined;
     const ownerEmail = booking.car?.owner?.email ?? undefined;
     const ownerPhone = booking.car?.owner?.phoneNumber ?? undefined;
+    const referralDiscount =
+      booking.referralStatus === BookingReferralStatus.APPLIED &&
+      booking.referralDiscountAmount.gt(0)
+        ? formatCurrency(booking.referralDiscountAmount.toNumber())
+        : null;
 
     const customerChannels = this.recipientChannelResolver.resolve({
       audience: NotificationAudience.CUSTOMER,
@@ -265,7 +280,9 @@ export class NotificationService {
             },
             pushPayload: {
               title: "Booking confirmed",
-              body: `Your booking for ${bookingDetails.carName} has been confirmed.`,
+              body: referralDiscount
+                ? `Your booking is confirmed. You saved ${referralDiscount} with your referral discount.`
+                : `Your booking for ${bookingDetails.carName} has been confirmed.`,
               data: createBookingNotificationData(NotificationType.BOOKING_CONFIRMED, booking.id),
             },
             templateData: {
@@ -300,6 +317,37 @@ export class NotificationService {
         : null;
 
     return { customer, owner };
+  }
+
+  buildReferralRewardReleasedJobData({
+    rewardId,
+    bookingId,
+    referrerUserId,
+    amount,
+  }: ReferralRewardReleasedNotificationParams): NotificationJobData {
+    const formattedAmount = formatCurrency(amount);
+
+    return {
+      id: `referral-reward-released-${rewardId}`,
+      type: NotificationType.REFERRAL_REWARD_RELEASED,
+      audience: NotificationAudience.CUSTOMER,
+      channels: [NotificationChannel.PUSH],
+      bookingId,
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          userId: referrerUserId,
+        },
+      },
+      pushPayload: {
+        title: "Referral reward earned",
+        body: `${formattedAmount} has been added to your referral balance.`,
+        data: createReferralsNotificationData(NotificationType.REFERRAL_REWARD_RELEASED),
+      },
+      templateData: {
+        templateKind: PUSH_ONLY_TEMPLATE_KIND,
+        subject: "Referral reward earned",
+      },
+    };
   }
 
   async buildBookingExtensionConfirmedJobData(

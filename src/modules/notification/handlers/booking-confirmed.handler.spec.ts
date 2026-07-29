@@ -11,6 +11,14 @@ const customerJobData = {
   channels: ["push" as const],
   bookingId: "booking-1",
   recipients: { client: { userId: "user-1" } },
+  pushPayload: {
+    title: "Booking confirmed",
+    body: "Your booking has been confirmed.",
+    data: {
+      type: "booking-confirmed" as const,
+      target: { kind: "booking" as const, bookingId: "booking-1" },
+    },
+  },
   templateData: {},
 };
 
@@ -93,6 +101,30 @@ describe("BookingConfirmedHandler", () => {
     expect(events).toHaveLength(1);
     expect(events[0].inbox).toBeDefined();
     expect(events[0].jobData).toBeUndefined();
+  });
+
+  it("uses the referral savings copy in the existing confirmation inbox event", async () => {
+    notificationService.buildBookingConfirmedJobData.mockResolvedValueOnce({
+      customer: {
+        ...customerJobData,
+        pushPayload: {
+          ...customerJobData.pushPayload,
+          body: "Your booking is confirmed. You saved ₦5,000.00 with your referral discount.",
+        },
+      },
+      owner: null,
+    });
+    const booking = createBooking({
+      id: "booking-1",
+      userId: "user-1",
+      user: createUser({ id: "user-1" }),
+    });
+
+    const events = await handler.buildEvents({ booking });
+
+    expect(events[0].inbox?.body).toBe(
+      "Your booking is confirmed. You saved ₦5,000.00 with your referral discount.",
+    );
   });
 
   it("omits customer events for guests without delivery channels", async () => {

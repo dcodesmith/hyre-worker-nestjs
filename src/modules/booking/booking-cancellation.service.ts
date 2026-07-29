@@ -10,6 +10,9 @@ import {
   BookingNotCancellableException,
   BookingNotFoundException,
 } from "./booking.error";
+import { BookingEligibilityService } from "./booking-eligibility.service";
+
+const CANCELLED_BOOKING_REFERRAL_REASON = "BOOKING_CANCELLED";
 
 @Injectable()
 export class BookingCancellationService {
@@ -17,6 +20,7 @@ export class BookingCancellationService {
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingCancellationHandler: BookingCancellationHandler,
+    private readonly bookingEligibilityService: BookingEligibilityService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCancellationService.name);
@@ -65,6 +69,12 @@ export class BookingCancellationService {
             car: { include: { owner: { include: { chauffeurs: true } } } },
           },
         });
+
+        await this.bookingEligibilityService.reversePendingReferralRewards(
+          tx,
+          bookingId,
+          CANCELLED_BOOKING_REFERRAL_REASON,
+        );
 
         await tx.car.update({
           where: { id: existingBooking.carId },

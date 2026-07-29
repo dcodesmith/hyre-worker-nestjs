@@ -206,8 +206,22 @@ export class BookingEligibilityService {
       return { released: false };
     }
 
-    // Capture referrer + amount before flipping the rows: `updateMany` returns a
-    // count only, but we need this data to decrement the matching stats counters.
+    const reversedRewards = await this.reversePendingReferralRewards(
+      tx,
+      bookingId,
+      RELEASED_RESERVATION_REASON,
+    );
+
+    this.logger.info({ bookingId, reversedRewards }, "Released referral reservation");
+
+    return { released: true };
+  }
+
+  async reversePendingReferralRewards(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    reason: string,
+  ): Promise<number> {
     const pendingRewards = await tx.referralReward.findMany({
       where: { bookingId, status: ReferralRewardStatus.PENDING },
       select: { id: true, referrerUserId: true, amount: true },
@@ -226,19 +240,14 @@ export class BookingEligibilityService {
         data: {
           status: ReferralRewardStatus.REVERSED,
           processedAt: new Date(),
-          reason: RELEASED_RESERVATION_REASON,
+          reason,
         },
       });
 
       await this.decrementReferralStatsForReversedRewards(tx, pendingRewards);
     }
 
-    this.logger.info(
-      { bookingId, reversedRewards: pendingRewards.length },
-      "Released referral reservation",
-    );
-
-    return { released: true };
+    return pendingRewards.length;
   }
 
   /**

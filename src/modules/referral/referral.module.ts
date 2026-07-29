@@ -6,11 +6,13 @@ import { ThrottlerModule } from "@nestjs/throttler";
 import { REFERRAL_QUEUE } from "../../config/constants";
 import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
+import { NotificationModule } from "../notification/notification.module";
 import { ReferralController } from "./referral.controller";
 import { ReferralProcessor } from "./referral.processor";
 import { ReferralService } from "./referral.service";
 import { ReferralApiService } from "./referral-api.service";
 import { ReferralProcessingService } from "./referral-processing.service";
+import { ReferralReconciliationScheduler } from "./referral-reconciliation.scheduler";
 import { ReferralThrottlerGuard } from "./referral-throttler.guard";
 import { REFERRAL_THROTTLE_CONFIG } from "./referral-throttling.config";
 
@@ -18,6 +20,7 @@ import { REFERRAL_THROTTLE_CONFIG } from "./referral-throttling.config";
   imports: [
     AuthModule,
     DatabaseModule,
+    NotificationModule,
     ThrottlerModule.forRoot([
       {
         name: REFERRAL_THROTTLE_CONFIG.name,
@@ -52,6 +55,7 @@ import { REFERRAL_THROTTLE_CONFIG } from "./referral-throttling.config";
     ReferralService,
     ReferralApiService,
     ReferralProcessingService,
+    ReferralReconciliationScheduler,
     ReferralProcessor,
     ReferralThrottlerGuard,
   ],
