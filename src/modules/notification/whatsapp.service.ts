@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
-import twilio, { Twilio } from "twilio";
+import twilio, { type Twilio } from "twilio";
 import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 
 export enum Template {
@@ -15,9 +15,10 @@ export enum Template {
   BookingCancellationFleetOwner = "bookingCancellationFleetOwner",
   FleetOwnerBookingNotification = "fleetOwnerBookingNotification",
   BookingExtensionConfirmation = "bookingExtensionConfirmation",
+  FlightOperationalUpdate = "flightOperationalUpdate",
 }
 
-const contentSidMap: Record<Template, string> = {
+const STATIC_CONTENT_SID_MAP: Omit<Record<Template, string>, Template.FlightOperationalUpdate> = {
   [Template.BookingStatusUpdate]: "HX199f51dda921d5a781b2424b82b931a5",
   [Template.ClientBookingLegStartReminder]: "HX862149f716a87ae25ce34151140bfc60",
   [Template.ChauffeurBookingLegStartReminder]: "HX8d44b0747c995713d129d77f4cc3c860",
@@ -34,6 +35,7 @@ const contentSidMap: Record<Template, string> = {
 export class WhatsAppService {
   private readonly twilioClient: Twilio;
   private readonly whatsAppNumber: string;
+  private readonly contentSidMap: Partial<Record<Template, string>>;
 
   constructor(
     private readonly configService: ConfigService,
@@ -43,6 +45,12 @@ export class WhatsAppService {
     const accountSid = this.configService.get<string>("TWILIO_ACCOUNT_SID");
     const authToken = this.configService.get<string>("TWILIO_AUTH_TOKEN");
     this.whatsAppNumber = this.configService.get<string>("TWILIO_WHATSAPP_NUMBER");
+    this.contentSidMap = {
+      ...STATIC_CONTENT_SID_MAP,
+      [Template.FlightOperationalUpdate]: this.configService.get<string>(
+        "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID",
+      ),
+    };
 
     try {
       this.twilioClient = twilio(accountSid, authToken);
@@ -65,12 +73,12 @@ export class WhatsAppService {
     variables: Record<string, string | number>;
     templateKey: Template;
   }): Promise<MessageInstance | null> {
-    const contentSid = contentSidMap[templateKey];
+    const contentSid = this.contentSidMap[templateKey];
     const maskedRecipient = this.maskPhone(to);
 
     if (!contentSid) {
       this.logger.error({ templateKey }, "Could not find SID for template key");
-      return null;
+      throw new Error(`WhatsApp template is not configured: ${templateKey}`);
     }
 
     this.logger.info(
@@ -108,7 +116,7 @@ export class WhatsAppService {
         "Error sending WhatsApp message",
       );
 
-      return null;
+      throw error;
     }
   }
 

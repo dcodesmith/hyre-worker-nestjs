@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { LoggerModule } from "nestjs-pino";
+import { stripQueryString } from "../../../common/http/request-url.helper";
 import { RequestIdMiddleware } from "../../../common/middlewares/request-id.middleware";
 import { type EnvConfig } from "../../../config/env.config";
 import { parseOtlpHeaders } from "../../../config/tracing.config";
@@ -69,6 +70,15 @@ import { parseOtlpHeaders } from "../../../config/tracing.config";
             customProps: (req) => ({
               requestId: req.headers["x-request-id"],
             }),
+            serializers: {
+              req: (req) => ({
+                id: req.id,
+                method: req.method,
+                url: stripQueryString(req.url),
+                remoteAddress: req.remoteAddress,
+                remotePort: req.remotePort,
+              }),
+            },
           },
         };
       },

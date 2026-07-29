@@ -2,7 +2,10 @@ import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
 import { PinoLogger } from "nestjs-pino";
-import { timingSafeSecretMatch } from "src/common/security/webhook-signature.helper";
+import {
+  createHmacSignature,
+  timingSafeSecretMatch,
+} from "src/common/security/webhook-signature.helper";
 import type { EnvConfig } from "src/config/env.config";
 
 @Injectable()
@@ -25,28 +28,26 @@ export class FlightAwareWebhookGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    const providedSecret = this.readSecretFromQuery(request);
+    const flightId = this.readQueryValue(request, "flightId");
+    const providedSignature = this.readQueryValue(request, "signature");
 
-    if (!providedSecret) {
-      this.logger.warn("Missing FlightAware webhook secret");
+    if (!flightId || !providedSignature) {
+      this.logger.warn("Missing FlightAware webhook signature");
       return false;
     }
 
-    const isValid = this.verifySecret(providedSecret, this.webhookSecret);
+    const expectedSignature = createHmacSignature(flightId, this.webhookSecret);
+    const isValid = timingSafeSecretMatch(providedSignature, expectedSignature, this.hmacKey);
 
     if (!isValid) {
-      this.logger.warn("Invalid FlightAware webhook secret");
+      this.logger.warn("Invalid FlightAware webhook signature");
     }
 
     return isValid;
   }
 
-  private readSecretFromQuery(request: Request): string | null {
-    const secretValue = request.query?.secret;
-    return typeof secretValue === "string" ? secretValue : null;
-  }
-
-  private verifySecret(received: string, expected: string): boolean {
-    return timingSafeSecretMatch(received, expected, this.hmacKey);
+  private readQueryValue(request: Request, key: string): string | null {
+    const value = request.query?.[key];
+    return typeof value === "string" ? value : null;
   }
 }

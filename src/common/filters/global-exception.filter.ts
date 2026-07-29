@@ -9,6 +9,7 @@ import {
 import { HttpAdapterHost } from "@nestjs/core";
 import { AppException } from "../errors/app.exception";
 import type { ProblemDetails } from "../errors/problem-details.interface";
+import { stripQueryString } from "../http/request-url.helper";
 
 /**
  * Global exception filter that catches all exceptions in the application.
@@ -39,7 +40,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const httpStatus =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    const instance = httpAdapter.getRequestUrl(request);
+    const instance = stripQueryString(httpAdapter.getRequestUrl(request)) ?? "unknown";
     const problem = this.toProblemDetails(exception, httpStatus, instance);
 
     this.logError(exception, request, httpStatus, problem.errorCode);
@@ -197,7 +198,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     httpStatus: number,
     errorCode?: string,
   ): void {
-    const url = request.url || "unknown";
+    const url = stripQueryString(request.url) || "unknown";
     const method = request.method || "unknown";
 
     // Include error code in log message if present

@@ -1,3 +1,4 @@
+import { getQueueToken } from "@nestjs/bullmq";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { Test, TestingModule } from "@nestjs/testing";
 import type { Payment } from "@prisma/client";
@@ -11,6 +12,7 @@ import {
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
@@ -60,6 +62,15 @@ function createMockBookingWithRelations(
   });
 }
 
+type FlightAlertRecord = {
+  id: string;
+  flightNumber: string;
+  scheduledDeparture: Date | null;
+  originCode: string;
+  originTimezone: string | null;
+  destinationCodeIATA: string | null;
+};
+
 describe("BookingConfirmationService", () => {
   let service: BookingConfirmationService;
   let databaseService: DatabaseService;
@@ -67,8 +78,13 @@ describe("BookingConfirmationService", () => {
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let eventEmitter: EventEmitter2;
   let eventEmitterReadinessWatcher: EventEmitterReadinessWatcher;
+  let flightAlertQueue: { add: ReturnType<typeof vi.fn> };
+  let findFlightForAlert: ReturnType<
+    typeof vi.fn<(args: unknown) => Promise<FlightAlertRecord | null>>
+  >;
 
   beforeEach(async () => {
+    findFlightForAlert = vi.fn();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingConfirmationService,
@@ -87,6 +103,9 @@ describe("BookingConfirmationService", () => {
             car: {
               update: vi.fn(),
             },
+            flight: {
+              findUnique: findFlightForAlert,
+            },
           },
         },
         {
@@ -96,6 +115,10 @@ describe("BookingConfirmationService", () => {
           },
         },
         { provide: BookingConfirmedHandler, useValue: {} },
+        {
+          provide: getQueueToken(FLIGHT_ALERTS_QUEUE),
+          useValue: { add: vi.fn() },
+        },
         {
           provide: EventEmitter2,
           useValue: {
@@ -121,6 +144,7 @@ describe("BookingConfirmationService", () => {
     eventEmitterReadinessWatcher = module.get<EventEmitterReadinessWatcher>(
       EventEmitterReadinessWatcher,
     );
+    flightAlertQueue = module.get(getQueueToken(FLIGHT_ALERTS_QUEUE));
   });
   describe("confirmFromPayment", () => {
     it("should confirm a PENDING booking and update to CONFIRMED", async () => {
@@ -365,6 +389,7 @@ describe("BookingConfirmationService", () => {
       const mockBooking = createMockBookingWithRelations({
         id: "booking-airport-1",
         type: "AIRPORT_PICKUP",
+        flightId: "flight-1",
         status: BookingStatus.CONFIRMED,
         paymentStatus: PaymentStatus.PAID,
         legs: [
@@ -406,6 +431,15 @@ describe("BookingConfirmationService", () => {
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+      findFlightForAlert.mockResolvedValueOnce({
+        id: "flight-1",
+        flightNumber: "BA74",
+        scheduledDeparture: new Date("2030-01-01T08:00:00.000Z"),
+        originCode: "EGLL",
+        originTimezone: "Europe/London",
+        destinationCodeIATA: "LOS",
+      });
+      flightAlertQueue.add.mockReturnValueOnce(new Promise(() => undefined));
 
       await service.confirmFromPayment(mockPayment);
 
@@ -413,6 +447,20 @@ describe("BookingConfirmationService", () => {
         bookingId: "booking-airport-1",
         bookingType: "AIRPORT_PICKUP",
         activationAt: activationAt.toISOString(),
+      });
+      await vi.waitFor(() => {
+        expect(flightAlertQueue.add).toHaveBeenCalledWith(
+          CREATE_FLIGHT_ALERT_JOB,
+          {
+            flightId: "flight-1",
+            flightNumber: "BA74",
+            departureTime: "2030-01-01T08:00:00.000Z",
+            originCode: "EGLL",
+            originTimezone: "Europe/London",
+            destinationIATA: "LOS",
+          },
+          { jobId: "flight-alert-flight-1" },
+        );
       });
     });
 

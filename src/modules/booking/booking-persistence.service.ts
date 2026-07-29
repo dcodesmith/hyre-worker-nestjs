@@ -21,6 +21,13 @@ import type {
 import type { BookingFinancials } from "./booking-calculation.interface";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 
+type FlightRecordWriter = {
+  flight: {
+    upsert(args: Prisma.FlightUpsertArgs): Promise<{ id: string }>;
+    updateMany(args: Prisma.FlightUpdateManyArgs): Promise<{ count: number }>;
+  };
+};
+
 @Injectable()
 export class BookingPersistenceService {
   constructor(
@@ -58,7 +65,7 @@ export class BookingPersistenceService {
   }
 
   async createFlightRecordIfNeeded(
-    tx: Prisma.TransactionClient,
+    tx: FlightRecordWriter,
     booking: CreateBookingInput,
     flightData: FlightDataForBooking | null,
   ): Promise<string | null> {
@@ -75,21 +82,34 @@ export class BookingPersistenceService {
       create: {
         id: flightData.flightId,
         flightNumber: flightData.flightNumber.toUpperCase(),
-        flightDate: flightData.arrivalTime,
+        flightDate: flightData.departureTime,
         faFlightId: flightData.flightId,
         originCode: flightData.originCode ?? "UNKNOWN",
         originCodeIATA: flightData.originCodeIATA,
+        originTimezone: flightData.originTimezone,
         originName: flightData.originName,
         destinationCode: flightData.destinationCode ?? defaultDestinationCode,
         destinationCodeIATA: flightData.destinationIATA,
         destinationName: flightData.destinationName,
         destinationCity: flightData.destinationCity,
+        scheduledDeparture: flightData.departureTime,
         scheduledArrival: flightData.arrivalTime,
         status: FlightStatus.SCHEDULED,
         alertEnabled: false,
       },
       update: {},
       select: { id: true },
+    });
+    await tx.flight.updateMany({
+      where: {
+        id: flightRecord.id,
+        scheduledDeparture: null,
+      },
+      data: {
+        flightDate: flightData.departureTime,
+        scheduledDeparture: flightData.departureTime,
+        originTimezone: flightData.originTimezone,
+      },
     });
 
     return flightRecord.id;

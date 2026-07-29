@@ -1,5 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+export function createHmacSignature(value: string, secret: string): string {
+  return createHmac("sha256", secret).update(value).digest("base64url");
+}
+
 /**
  * Performs timing-safe string comparison by hashing both values first.
  * This avoids length-based timing leaks when comparing secrets.

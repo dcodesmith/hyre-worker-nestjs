@@ -19,6 +19,7 @@ import { PushTokenService } from "./push-token.service";
 import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
+  FLIGHT_UPDATE_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -82,6 +83,9 @@ describe("NotificationProcessor", () => {
     );
     vi.spyOn(emailTemplates, "renderReviewReceivedEmailForChauffeur").mockResolvedValue(
       "<html>Chauffeur review email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderFlightOperationalUpdateEmail").mockResolvedValue(
+      "<html>Flight update email</html>",
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -241,6 +245,65 @@ describe("NotificationProcessor", () => {
       channel: NotificationChannel.WHATSAPP,
       success: true,
       messageId: "whatsapp-sent",
+    });
+  });
+
+  it("renders operational flight updates for email and WhatsApp", async () => {
+    const templateData: NotificationJobData["templateData"] = {
+      templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
+      subject: "Pickup flight delayed",
+      recipientName: "Fleet Owner",
+      flightNumber: "BA74",
+      bookingReference: "HYR-001",
+      updateTitle: "Pickup flight delayed",
+      updateBody: "BA74 is delayed by 45 minutes.",
+      expectedArrival: "29 Jul 2026, 4:00 PM WAT",
+      pickupActivationTime: "29 Jul 2026, 4:40 PM WAT",
+      arrivalLocation: "LOS, Terminal 2, Gate G2",
+    };
+    const job = createJob("flight-job", {
+      id: "flight-notification-1",
+      type: NotificationType.FLIGHT_DELAYED,
+      audience: NotificationAudience.FLEET_OWNER,
+      channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+      bookingId: "booking-1",
+      recipients: {
+        [FLEET_OWNER_RECIPIENT_TYPE]: {
+          userId: "owner-1",
+          email: "owner@example.com",
+          phoneNumber: "+2348012345678",
+        },
+      },
+      templateData,
+    });
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-flight-1" },
+      error: null,
+      headers: {},
+    });
+    vi.mocked(whatsAppService.sendMessage).mockResolvedValueOnce(undefined);
+
+    await processor.process(job);
+
+    expect(emailTemplates.renderFlightOperationalUpdateEmail).toHaveBeenCalledWith(templateData);
+    expect(emailService.sendEmail).toHaveBeenCalledWith({
+      to: "owner@example.com",
+      subject: "Pickup flight delayed",
+      html: "<html>Flight update email</html>",
+    });
+    expect(whatsAppService.sendMessage).toHaveBeenCalledWith({
+      to: "+2348012345678",
+      templateKey: Template.FlightOperationalUpdate,
+      variables: {
+        "1": "Fleet Owner",
+        "2": "BA74",
+        "3": "HYR-001",
+        "4": "Pickup flight delayed",
+        "5": "BA74 is delayed by 45 minutes.",
+        "6": "29 Jul 2026, 4:00 PM WAT",
+        "7": "29 Jul 2026, 4:40 PM WAT",
+        "8": "LOS, Terminal 2, Gate G2",
+      },
     });
   });
 

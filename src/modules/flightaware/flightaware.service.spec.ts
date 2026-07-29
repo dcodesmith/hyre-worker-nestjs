@@ -119,6 +119,7 @@ describe("FlightAwareService", () => {
         flightId: "BA74-123",
         origin: "LHR",
         destination: "LOS",
+        scheduledDeparture: "2025-12-25T08:00:00Z",
         scheduledArrival: "2025-12-25T14:00:00Z",
         arrivalTime: "2025-12-25T14:30:00Z",
         arrivalTimeSource: "estimated",
@@ -177,8 +178,13 @@ describe("FlightAwareService", () => {
             {
               ident: "DAL54",
               fa_flight_id: "DAL54-20260720",
-              origin: { code: "KATL", code_iata: "ATL" },
+              origin: {
+                code: "KATL",
+                code_iata: "ATL",
+                timezone: "America/New_York",
+              },
               destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2026-07-19T21:00:00Z",
               scheduled_on: "2026-07-20T08:12:00Z",
               scheduled_in: "2026-07-20T08:45:00Z",
               estimated_on: "2026-07-20T09:00:00Z",
@@ -196,6 +202,8 @@ describe("FlightAwareService", () => {
       const result = await service.validateFlight("DL54", "2026-07-20");
 
       expect(result).toMatchObject({
+        originTimezone: "America/New_York",
+        scheduledDeparture: "2026-07-19T21:00:00Z",
         scheduledArrival: "2026-07-20T08:45:00Z",
         estimatedArrival: "2026-07-20T09:11:00Z",
         arrivalTime: "2026-07-20T09:11:00Z",
@@ -213,6 +221,7 @@ describe("FlightAwareService", () => {
               fa_flight_id: "DAL54-20260720",
               origin: { code: "KATL", code_iata: "ATL" },
               destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2026-07-19T21:00:00Z",
               scheduled_on: "2026-07-20T08:12:00Z",
               scheduled_in: "2026-07-20T08:45:00Z",
               estimated_in: "2026-07-20T09:05:00Z",
@@ -285,11 +294,12 @@ describe("FlightAwareService", () => {
             {
               ident: "BA74",
               ident_iata: "BA74",
-              fa_flight_id: "BA74-scheduled",
+              fa_flight_id: null,
               origin: "LHR",
               origin_iata: "LHR",
               destination: "LOS",
               destination_iata: "LOS",
+              scheduled_out: "2025-12-30T07:00:00Z",
               scheduled_on: "2025-12-30T13:30:00Z",
               scheduled_in: "2025-12-30T14:00:00Z",
               estimated_in: "2025-12-30T14:20:00Z",
@@ -302,12 +312,17 @@ describe("FlightAwareService", () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: { name: "Lagos Airport", city: "Lagos" },
       });
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: { name: "London Heathrow", timezone: "Europe/London" },
+      });
 
       vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
 
       const result = await service.validateFlight("BA74", "2025-12-30");
-      expect(result.flightId).toBe("BA74-scheduled");
+      expect(result.flightId).toBe("BA74-20251230070000");
+      expect(result.scheduledDeparture).toBe("2025-12-30T07:00:00Z");
       expect(result.scheduledArrival).toBe("2025-12-30T14:00:00Z");
+      expect(result.originTimezone).toBe("Europe/London");
       expect(result.estimatedArrival).toBe("2025-12-30T14:20:00Z");
       expect(result.arrivalTime).toBe("2025-12-30T14:20:00Z");
       expect(result.arrivalTimeSource).toBe("estimated");
@@ -328,6 +343,8 @@ describe("FlightAwareService", () => {
               origin_iata: "LHR",
               destination: "LOS",
               destination_iata: "LOS",
+              scheduled_out: null,
+              scheduled_off: "2025-12-30T07:15:00Z",
               scheduled_in: "2025-12-30T14:00:00Z",
               estimated_on: "2025-12-30T14:10:00Z",
               actual_on: "2025-12-30T14:15:00Z",
@@ -343,12 +360,34 @@ describe("FlightAwareService", () => {
       const result = await service.validateFlight("BA74", "2025-12-30");
 
       expect(result).toMatchObject({
+        scheduledDeparture: "2025-12-30T07:15:00Z",
         scheduledArrival: "2025-12-30T14:00:00Z",
         estimatedArrival: "2025-12-30T14:10:00Z",
         actualArrival: "2025-12-30T14:15:00Z",
         arrivalTime: "2025-12-30T14:15:00Z",
         arrivalTimeSource: "actual",
       });
+    });
+
+    it("rejects a scheduled flight without a gate or runway departure time", async () => {
+      const flightWithoutDeparture = {
+        ident: "BA74",
+        ident_iata: "BA74",
+        fa_flight_id: null,
+        origin: "LHR",
+        destination: "LOS",
+        scheduled_out: null,
+        scheduled_off: null,
+        scheduled_in: "2025-12-30T14:00:00Z",
+      };
+      mockHttpClient.get
+        .mockResolvedValueOnce({ data: { scheduled: [flightWithoutDeparture] } })
+        .mockResolvedValueOnce({ data: { scheduled: [flightWithoutDeparture] } });
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      await expect(service.validateFlight("BA74", "2025-12-30")).rejects.toThrow(
+        FlightNotFoundException,
+      );
     });
 
     it("should handle undefined destination name and city", async () => {
@@ -414,6 +453,7 @@ describe("FlightAwareService", () => {
               origin_iata: "LHR",
               destination: "LOS",
               destination_iata: "LOS",
+              scheduled_out: "2025-12-30T07:00:00Z",
               scheduled_in: "2025-12-30T14:00:00Z",
             },
           ],

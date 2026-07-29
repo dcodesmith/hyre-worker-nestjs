@@ -1,7 +1,21 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import {
+  BookingType,
+  type Flight,
+  FlightDataSource,
+  FlightStatus,
+  NotificationInboxType,
+  NotificationOutboxEventType,
+} from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking, createCar, createOwner, createUser } from "../../../shared/helper.fixtures";
+import {
+  createBooking,
+  createCar,
+  createChauffeur,
+  createOwner,
+  createUser,
+} from "../../../shared/helper.fixtures";
+import { NotificationType } from "../notification.interface";
 import { NotificationService } from "../notification.service";
 import { ChauffeurAssignedHandler } from "./chauffeur-assigned.handler";
 
@@ -16,10 +30,16 @@ const sampleJobData = {
 
 describe("ChauffeurAssignedHandler", () => {
   let handler: ChauffeurAssignedHandler;
-  let notificationService: { buildChauffeurAssignedJobData: ReturnType<typeof vi.fn> };
+  let notificationService: {
+    buildChauffeurAssignedJobData: ReturnType<typeof vi.fn>;
+    buildFlightUpdateJobData: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
-    notificationService = { buildChauffeurAssignedJobData: vi.fn() };
+    notificationService = {
+      buildChauffeurAssignedJobData: vi.fn(),
+      buildFlightUpdateJobData: vi.fn(),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChauffeurAssignedHandler,
@@ -107,5 +127,83 @@ describe("ChauffeurAssignedHandler", () => {
     const events = await handler.buildEvents({ booking, chauffeurId: "chauffeur-x" });
 
     expect(events).toEqual([]);
+  });
+
+  it("sends the current flight snapshot to a newly assigned airport chauffeur", async () => {
+    notificationService.buildChauffeurAssignedJobData.mockResolvedValueOnce(null);
+    notificationService.buildFlightUpdateJobData.mockReturnValueOnce({
+      ...sampleJobData,
+      id: "flight-briefing",
+      type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+    });
+    const flight: Flight = {
+      id: "flight-1",
+      flightNumber: "BA74",
+      flightDate: new Date("2030-01-01"),
+      faFlightId: "fa-1",
+      originCode: "EGLL",
+      originCodeIATA: "LHR",
+      originTimezone: "Europe/London",
+      originName: null,
+      originCity: null,
+      destinationCode: "DNMM",
+      destinationCodeIATA: "LOS",
+      destinationName: null,
+      destinationCity: null,
+      scheduledDeparture: new Date("2030-01-01T04:00:00Z"),
+      scheduledArrival: new Date("2030-01-01T10:00:00Z"),
+      estimatedDeparture: null,
+      estimatedArrival: new Date("2030-01-01T10:45:00Z"),
+      actualDeparture: null,
+      actualArrival: null,
+      status: FlightStatus.EN_ROUTE,
+      delayMinutes: 45,
+      aircraftType: null,
+      registration: null,
+      departureGate: null,
+      arrivalGate: "G2",
+      arrivalTerminal: "2",
+      alertId: "alert-1",
+      alertEnabled: true,
+      alertCreatedAt: new Date("2030-01-01T00:00:00Z"),
+      alertDisabledAt: null,
+      alertProvisioningAt: null,
+      alertLastAttemptAt: new Date("2030-01-01T00:00:00Z"),
+      lastUpdated: new Date("2030-01-01T09:00:00Z"),
+      createdAt: new Date("2029-12-01T00:00:00Z"),
+      dataSource: FlightDataSource.FLIGHTAWARE,
+      isLive: true,
+    };
+    const booking = {
+      ...createBooking({
+        id: "booking-airport",
+        type: BookingType.AIRPORT_PICKUP,
+        userId: null,
+        user: null,
+        chauffeur: createChauffeur({ id: "chauffeur-9" }),
+        car: createCar({ owner: createOwner() }),
+      }),
+      flight,
+    };
+
+    const events = await handler.buildEvents({ booking, chauffeurId: "chauffeur-9" });
+
+    expect(notificationService.buildFlightUpdateJobData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        booking,
+        recipientType: "chauffeur",
+        type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+        flightNumber: "BA74",
+        body: "BA74 is en route, currently delayed by 45 minutes. Review the live flight details before pickup.",
+        arrivalLocation: "LOS, Terminal 2, Gate G2",
+      }),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({
+        jobData: expect.objectContaining({ id: "flight-briefing" }),
+        userId: "chauffeur-9",
+        subtype: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+      }),
+    ]);
   });
 });

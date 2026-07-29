@@ -1,4 +1,5 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
@@ -35,6 +36,7 @@ import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  FLIGHT_UPDATE_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 
@@ -59,6 +61,12 @@ describe("NotificationService", () => {
         {
           provide: RecipientChannelResolverService,
           useClass: RecipientChannelResolverService,
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn().mockReturnValue("HX1234567890abcdef1234567890abcdef"),
+          },
         },
       ],
     })
@@ -857,6 +865,130 @@ describe("NotificationService", () => {
         },
       });
       expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("buildFlightUpdateJobData", () => {
+    const booking = createBooking({
+      id: "booking-1",
+      bookingReference: "HYR-001",
+      userId: "user-1",
+      user: createUser({ id: "user-1", name: "Customer" }),
+      chauffeur: createChauffeur({ id: "chauffeur-1" }),
+      car: createCar({
+        owner: createOwner({
+          id: "owner-1",
+          name: "Fleet Owner",
+          email: "owner@example.com",
+          phoneNumber: "+2348012345678",
+        }),
+      }),
+    });
+    const flightDetails = {
+      flightNumber: "BA74",
+      expectedArrival: "29 Jul 2026, 4:00 PM WAT",
+      pickupActivationTime: "29 Jul 2026, 4:40 PM WAT",
+      arrivalLocation: "LOS, Terminal 2, Gate G2",
+    };
+
+    it("builds a deterministic customer push job targeting the booking", () => {
+      const job = service.buildFlightUpdateJobData({
+        statusEventId: "event-1",
+        booking,
+        recipientType: CLIENT_RECIPIENT_TYPE,
+        type: NotificationType.FLIGHT_DELAYED,
+        title: "Flight delayed",
+        body: "BA74 is delayed by 45 minutes.",
+        ...flightDetails,
+      });
+
+      expect(job).toEqual({
+        id: "flight-delayed-event-1-booking-1-customer-user-1",
+        type: NotificationType.FLIGHT_DELAYED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [NotificationChannel.PUSH],
+        bookingId: "booking-1",
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: {
+            userId: "user-1",
+            name: "Customer",
+          },
+        },
+        pushPayload: {
+          title: "Flight delayed",
+          body: "BA74 is delayed by 45 minutes.",
+          data: {
+            type: NotificationType.FLIGHT_DELAYED,
+            target: {
+              kind: "booking",
+              bookingId: "booking-1",
+            },
+          },
+        },
+        templateData: {
+          templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
+          subject: "Flight delayed",
+          recipientName: "Customer",
+          bookingReference: "HYR-001",
+          updateTitle: "Flight delayed",
+          updateBody: "BA74 is delayed by 45 minutes.",
+          ...flightDetails,
+        },
+      });
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("builds operational email and WhatsApp delivery for the fleet owner", () => {
+      const job = service.buildFlightUpdateJobData({
+        statusEventId: "event-1",
+        booking,
+        recipientType: FLEET_OWNER_RECIPIENT_TYPE,
+        type: NotificationType.FLIGHT_GATE_CHANGED,
+        title: "Arrival gate updated",
+        body: "BA74 will arrive at gate G2.",
+        ...flightDetails,
+      });
+
+      expect(job).toMatchObject({
+        id: "flight-gate-changed-event-1-booking-1-fleet-owner-owner-1",
+        audience: NotificationAudience.FLEET_OWNER,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            userId: "owner-1",
+            name: "Fleet Owner",
+            email: "owner@example.com",
+            phoneNumber: "+2348012345678",
+          },
+        },
+      });
+      expect(job?.pushPayload).toBeUndefined();
+    });
+
+    it("omits WhatsApp when the operational flight template is not configured", async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          NotificationService,
+          { provide: getQueueToken(NOTIFICATIONS_QUEUE), useValue: mockQueue },
+          RecipientChannelResolverService,
+          { provide: ConfigService, useValue: { get: vi.fn() } },
+        ],
+      })
+        .useMocker(mockPinoLoggerToken)
+        .compile();
+      const emailOnlyService = module.get(NotificationService);
+
+      const job = emailOnlyService.buildFlightUpdateJobData({
+        statusEventId: "event-1",
+        booking,
+        recipientType: FLEET_OWNER_RECIPIENT_TYPE,
+        type: NotificationType.FLIGHT_GATE_CHANGED,
+        title: "Arrival gate updated",
+        body: "BA74 will arrive at gate G2.",
+        ...flightDetails,
+      });
+
+      expect(job?.channels).toEqual([NotificationChannel.EMAIL]);
     });
   });
 });

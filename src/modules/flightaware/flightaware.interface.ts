@@ -14,6 +14,7 @@ export interface ValidatedFlight {
   flightId: string;
   origin: string;
   originIATA?: string;
+  originTimezone?: string;
   /** Origin airport name (e.g., "London Heathrow") */
   originName?: string;
   destination: string;
@@ -24,6 +25,8 @@ export interface ValidatedFlight {
   destinationCity?: string;
   /** Scheduled gate arrival, falling back to runway arrival when unavailable. */
   scheduledArrival: string;
+  /** Scheduled gate departure, falling back to runway departure when unavailable. */
+  scheduledDeparture: string;
   /** Latest estimated gate arrival, falling back to runway arrival when unavailable. */
   estimatedArrival?: string;
   /** Actual gate arrival, falling back to runway arrival when unavailable. */
@@ -50,12 +53,14 @@ export interface FlightAwareFlightLeg {
   estimated_off?: string | null;
   estimated_on?: string | null;
   estimated_in?: string | null;
+  scheduled_out?: string | null;
   scheduled_off: string;
   scheduled_on: string;
   scheduled_in?: string | null;
   origin: {
     code: string;
     code_iata?: string;
+    timezone?: string;
     name?: string;
   };
   destination: {
@@ -91,8 +96,8 @@ export interface FlightAwareScheduledFlight {
   origin_iata?: string | null;
   destination: string;
   destination_iata?: string | null;
-  scheduled_out: string;
-  scheduled_in: string;
+  scheduled_out?: string | null;
+  scheduled_in?: string | null;
   scheduled_off?: string | null;
   scheduled_on?: string | null;
   estimated_in?: string | null;
@@ -110,24 +115,14 @@ export interface FlightAwareSchedulesResponse {
 }
 
 /**
- * FlightAware alert response
- */
-export interface FlightAwareAlertResponse {
-  alert_id: string;
-  ident: string;
-  enabled: boolean;
-  events: string[];
-  created_at: string;
-}
-
-/**
  * Parameters for creating a flight alert
  */
 export interface CreateAlertParams {
   flightNumber: string;
-  flightDate: Date;
+  departureTime: Date;
+  originCode?: string;
+  originTimezone?: string;
   destinationIATA?: string;
-  events?: string[];
 }
 
 export type SearchFlightResult = {
@@ -140,12 +135,4 @@ export type FlightAwareWebhookResult = {
   flightId: string;
   bookingCount: number;
   newStatus: FlightStatus;
-};
-
-export type MapEventTypeToStatus = {
-  eventType: string;
-  flightStatus?: string;
-  flightId?: string;
-  callSign?: string;
-  eventTime?: Date;
 };

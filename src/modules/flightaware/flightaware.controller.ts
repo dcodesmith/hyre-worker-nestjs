@@ -1,4 +1,13 @@
-import { Controller, Get, Header, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { ZodBody, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import type { FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
 import { flightAwareWebhookSchema } from "./dto/flightaware-webhook.dto";
@@ -29,7 +38,8 @@ export class FlightAwareController {
   @UseGuards(FlightAwareWebhookGuard)
   async handleFlightAwareWebhook(
     @ZodBody(flightAwareWebhookSchema) payload: FlightAwareWebhookDto,
+    @Query("flightId") flightId: string,
   ): Promise<FlightAwareWebhookResult> {
-    return this.flightAwareWebhookService.handleWebhook(payload);
+    return this.flightAwareWebhookService.handleWebhook(payload, flightId);
   }
 }

@@ -27,11 +27,14 @@ export interface ReferralEligibility {
 export interface FlightDataForBooking {
   flightId: string;
   arrivalTime: Date;
+  departureTime: Date;
   flightNumber: string;
   /** Origin airport ICAO code (e.g., "EGLL") */
   originCode: string | undefined;
   /** Origin airport IATA code (e.g., "LHR") */
   originCodeIATA: string | undefined;
+  /** Origin airport timezone in TZ database format. */
+  originTimezone: string | undefined;
   /** Origin airport name (e.g., "London Heathrow") */
   originName: string | undefined;
   /** Destination airport ICAO code (e.g., "DNMM") */

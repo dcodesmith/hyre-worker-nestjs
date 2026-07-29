@@ -183,6 +183,7 @@ model Flight {
   faFlightId          String?
   originCode          String
   originCodeIATA      String?
+  originTimezone      String?
   originName          String?
   originCity          String?
   destinationCode     String
@@ -201,10 +202,13 @@ model Flight {
   registration        String?
   departureGate       String?
   arrivalGate         String?
+  arrivalTerminal     String?
   alertId             String?             @unique
   alertEnabled        Boolean             @default(false)
   alertCreatedAt      DateTime?
   alertDisabledAt     DateTime?
+  alertProvisioningAt DateTime?
+  alertLastAttemptAt  DateTime?
   lastUpdated         DateTime            @updatedAt
   createdAt           DateTime            @default(now())
   dataSource          FlightDataSource    @default(FLIGHTAWARE)
@@ -216,12 +220,14 @@ model Flight {
   @@index([flightNumber, flightDate])
   @@index([status])
   @@index([alertId])
+  @@index([alertEnabled, alertLastAttemptAt])
   @@index([destinationCodeIATA, flightDate])
   @@index([scheduledArrival])
 }
 
 model FlightStatusEvent {
   id                String        @id @default(cuid())
+  eventKey          String?       @unique
   flightId          String
   eventType         String
   eventTime         DateTime

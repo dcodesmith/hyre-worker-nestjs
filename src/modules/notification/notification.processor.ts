@@ -10,6 +10,7 @@ import {
   renderBookingStatusUpdateEmail,
   renderFleetOwnerBookingCancellationEmail,
   renderFleetOwnerNewBookingEmail,
+  renderFlightOperationalUpdateEmail,
   renderReviewReceivedEmailForChauffeur,
   renderReviewReceivedEmailForOwner,
   renderUserBookingCancellationEmail,
@@ -40,6 +41,7 @@ import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  FLIGHT_UPDATE_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
   type ReviewReceivedTemplateData,
@@ -54,6 +56,7 @@ import {
   BookingStatusMapper,
   FallbackTemplateMapper,
   FleetOwnerNewBookingMapper,
+  FlightUpdateMapper,
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -79,6 +82,7 @@ export class NotificationProcessor extends WorkerHost {
       new BookingExtensionConfirmedMapper(),
       new BookingCancelledMapper(),
       new FleetOwnerNewBookingMapper(),
+      new FlightUpdateMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
       new BookingReminderEndMapper(),
@@ -355,6 +359,17 @@ export class NotificationProcessor extends WorkerHost {
         return this.buildBookingReminderEmailHtml(type, templateData, recipient);
       case NotificationType.REVIEW_RECEIVED:
         return this.buildReviewReceivedEmailHtml(templateData, recipient);
+      case NotificationType.FLIGHT_ARRIVED:
+      case NotificationType.FLIGHT_DEPARTED:
+      case NotificationType.FLIGHT_DELAYED:
+      case NotificationType.FLIGHT_CANCELLED:
+      case NotificationType.FLIGHT_DIVERTED:
+      case NotificationType.FLIGHT_GATE_CHANGED:
+      case NotificationType.FLIGHT_TERMINAL_CHANGED:
+      case NotificationType.FLIGHT_DELAY_RECOVERED:
+      case NotificationType.FLIGHT_REINSTATED:
+      case NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT:
+        return this.buildFlightUpdateEmailHtml(templateData);
       default:
         throw new Error(`Unknown notification type: ${type}`);
     }
@@ -388,6 +403,13 @@ export class NotificationProcessor extends WorkerHost {
     // Status email currently targets the client. If chauffeur delivery is desired,
     // a recipient-specific template should be introduced.
     return renderBookingStatusUpdateEmail(templateData);
+  }
+
+  private buildFlightUpdateEmailHtml(templateData: TemplateData): Promise<string> {
+    if (templateData.templateKind !== FLIGHT_UPDATE_TEMPLATE_KIND) {
+      throw new Error("Invalid template data for flight update");
+    }
+    return renderFlightOperationalUpdateEmail(templateData);
   }
 
   private buildBookingCancelledEmailHtml(

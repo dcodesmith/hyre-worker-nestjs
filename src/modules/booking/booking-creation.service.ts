@@ -1,18 +1,14 @@
-import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import { Booking } from "@prisma/client";
-import { Queue } from "bullmq";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
-import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
-import { FlightAwareException } from "../flightaware/flightaware.error";
+import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
-import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
@@ -74,8 +70,6 @@ export class BookingCreationService {
     private readonly paymentService: BookingPaymentService,
     private readonly persistenceService: BookingPersistenceService,
     private readonly logger: PinoLogger,
-    @InjectQueue(FLIGHT_ALERTS_QUEUE)
-    private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {
     this.logger.setContext(BookingCreationService.name);
   }
@@ -260,13 +254,19 @@ export class BookingCreationService {
     }
 
     const arrivalTime = new Date(flight.arrivalTime);
+    const departureTime = new Date(flight.scheduledDeparture);
+    if (Number.isNaN(arrivalTime.getTime()) || Number.isNaN(departureTime.getTime())) {
+      throw new FlightAwareApiException("FlightAware returned invalid flight timing data");
+    }
 
     return {
       flightId: flight.flightId,
       arrivalTime,
+      departureTime,
       flightNumber: flight.flightNumber,
       originCode: flight.origin,
       originCodeIATA: flight.originIATA,
+      originTimezone: flight.originTimezone,
       originName: flight.originName,
       destinationCode: flight.destination,
       destinationIATA: flight.destinationIATA,
@@ -358,9 +358,6 @@ export class BookingCreationService {
           preferredNotificationChannel,
         };
 
-    // Track flight record ID for post-transaction alert creation
-    let flightRecordIdForAlert: string | null = null;
-
     let createdBooking: Booking;
     let finalizedFinancials = financials;
 
@@ -424,8 +421,6 @@ export class BookingCreationService {
           flightData,
         );
 
-        flightRecordIdForAlert = flightRecordId;
-
         const bookingRecord = await this.persistenceService.createBookingRecord(tx, {
           bookingReference,
           car,
@@ -472,8 +467,6 @@ export class BookingCreationService {
       customerDetails,
       booking.callbackUrl,
     );
-
-    await this.queueFlightAlertIfNeeded(flightRecordIdForAlert, booking, flightData);
 
     return {
       bookingId: createdBooking.id,
@@ -576,49 +569,6 @@ export class BookingCreationService {
         "Payment created but booking update failed; manual reconciliation required",
       );
       throw new BookingPaymentSyncFailedException();
-    }
-  }
-
-  /**
-   * Queue flight alert creation if this is an airport pickup.
-   */
-  private async queueFlightAlertIfNeeded(
-    flightRecordId: string | null,
-    booking: CreateBookingInput,
-    flightData: FlightDataForBooking | null,
-  ): Promise<void> {
-    if (!flightRecordId || !flightData || booking.bookingType !== "AIRPORT_PICKUP") {
-      return;
-    }
-
-    try {
-      const jobData: FlightAlertJobData = {
-        flightId: flightRecordId,
-        flightNumber: flightData.flightNumber,
-        flightDate: flightData.arrivalTime.toISOString(),
-        destinationIATA: flightData.destinationIATA,
-      };
-
-      await this.flightAlertQueue.add(CREATE_FLIGHT_ALERT_JOB, jobData, {
-        jobId: `flight-alert-${flightRecordId}`,
-      });
-
-      this.logger.info(
-        {
-          flightId: flightRecordId,
-          flightNumber: flightData.flightNumber,
-        },
-        "Queued flight alert creation",
-      );
-    } catch (error) {
-      this.logger.error(
-        {
-          flightId: flightRecordId,
-          flightNumber: flightData.flightNumber,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue flight alert creation",
-      );
     }
   }
 }

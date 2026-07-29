@@ -14,7 +14,9 @@ describe("FlightAlertProcessor", () => {
   const mockJobData: FlightAlertJobData = {
     flightId: "flight-123",
     flightNumber: "BA74",
-    flightDate: "2025-12-25T10:00:00.000Z",
+    departureTime: "2025-12-25T10:00:00.000Z",
+    originCode: "EGLL",
+    originTimezone: "Europe/London",
     destinationIATA: "LOS",
   };
 
@@ -51,7 +53,9 @@ describe("FlightAlertProcessor", () => {
       expect(result).toEqual({ success: true });
       expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-123", {
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25T10:00:00.000Z"),
+        departureTime: new Date("2025-12-25T10:00:00.000Z"),
+        originCode: "EGLL",
+        originTimezone: "Europe/London",
         destinationIATA: "LOS",
       });
     });
@@ -60,7 +64,7 @@ describe("FlightAlertProcessor", () => {
       const jobData: FlightAlertJobData = {
         flightId: "flight-789",
         flightNumber: "AA100",
-        flightDate: "2025-12-25T10:00:00.000Z",
+        departureTime: "2025-12-25T10:00:00.000Z",
       };
 
       const job = {
@@ -76,7 +80,9 @@ describe("FlightAlertProcessor", () => {
       expect(result).toEqual({ success: true });
       expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-789", {
         flightNumber: "AA100",
-        flightDate: new Date("2025-12-25T10:00:00.000Z"),
+        departureTime: new Date("2025-12-25T10:00:00.000Z"),
+        originCode: undefined,
+        originTimezone: undefined,
         destinationIATA: undefined,
       });
     });

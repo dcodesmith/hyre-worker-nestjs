@@ -82,6 +82,77 @@ describe("BookingPersistenceService", () => {
     await expect(service.fetchCarWithPricing("car-404")).rejects.toThrow(CarNotFoundException);
   });
 
+  it("persists the departure date and origin timezone used by FlightAware alerts", async () => {
+    const upsert = vi.fn().mockResolvedValue({ id: "flight-1" });
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: {} },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    const departureTime = new Date("2030-01-01T22:00:00.000Z");
+    const arrivalTime = new Date("2030-01-02T05:30:00.000Z");
+
+    await expect(
+      service.createFlightRecordIfNeeded(
+        { flight: { upsert, updateMany } },
+        {
+          carId: "car-1",
+          bookingType: "AIRPORT_PICKUP",
+          startDate: new Date("2030-01-02T06:10:00.000Z"),
+          endDate: new Date("2030-01-02T18:10:00.000Z"),
+          pickupAddress: "Murtala Muhammed International Airport",
+          pickupTime: "6:10 AM",
+          dropOffAddress: "Victoria Island, Lagos",
+          flightNumber: "BA74",
+          sameLocation: false,
+          includeSecurityDetail: false,
+          requiresFullTank: false,
+          useCredits: 0,
+        },
+        {
+          flightId: "flight-1",
+          flightNumber: "BA74",
+          departureTime,
+          arrivalTime,
+          originCode: "EGLL",
+          originCodeIATA: "LHR",
+          originTimezone: "Europe/London",
+          originName: "London Heathrow",
+          destinationCode: "DNMM",
+          destinationIATA: "LOS",
+          destinationName: "Murtala Muhammed International Airport",
+          destinationCity: "Lagos",
+        },
+      ),
+    ).resolves.toBe("flight-1");
+    expect(upsert).toHaveBeenCalledWith({
+      where: { id: "flight-1" },
+      create: expect.objectContaining({
+        flightDate: departureTime,
+        scheduledDeparture: departureTime,
+        scheduledArrival: arrivalTime,
+        originTimezone: "Europe/London",
+      }),
+      update: {},
+      select: { id: true },
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "flight-1",
+        scheduledDeparture: null,
+      },
+      data: {
+        flightDate: departureTime,
+        scheduledDeparture: departureTime,
+        originTimezone: "Europe/London",
+      },
+    });
+  });
+
   it("throws BookingCreationFailedException when number of legs is zero", async () => {
     const databaseService = {
       car: { findUnique: vi.fn() },
