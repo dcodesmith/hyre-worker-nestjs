@@ -1,16 +1,21 @@
+import { getQueueToken } from "@nestjs/bullmq";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { FlightStatus } from "@prisma/client";
+import { BookingStatus, BookingType, FlightStatus, PaymentStatus } from "@prisma/client";
+import type { Queue } from "bullmq";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
+import { createHmacSignature } from "../src/common/security/webhook-signature.helper";
+import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlightAwareService } from "../src/modules/flightaware/flightaware.service";
 import { FlightAwareCacheService } from "../src/modules/flightaware/flightaware-cache.service";
+import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("FlightAware E2E Tests", () => {
@@ -19,9 +24,13 @@ describe("FlightAware E2E Tests", () => {
   let factory: TestDataFactory;
   let flightAwareService: FlightAwareService;
   let flightAwareCacheService: FlightAwareCacheService;
-  let webhookPath: string;
+  let notificationOutboxService: NotificationOutboxService;
+  let notificationsQueue: Queue;
+  let webhookSecret: string;
 
   const upcomingDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const buildWebhookPath = (flightId: string) =>
+    `/api/webhooks/flightaware?flightId=${encodeURIComponent(flightId)}&signature=${createHmacSignature(flightId, webhookSecret)}`;
 
   beforeAll(async () => {
     const mockSendOtpEmail = vi.fn().mockResolvedValue(undefined);
@@ -46,9 +55,10 @@ describe("FlightAware E2E Tests", () => {
     factory = new TestDataFactory(databaseService, app);
     flightAwareService = moduleFixture.get(FlightAwareService);
     flightAwareCacheService = moduleFixture.get(FlightAwareCacheService);
+    notificationOutboxService = moduleFixture.get(NotificationOutboxService);
+    notificationsQueue = moduleFixture.get(getQueueToken(NOTIFICATIONS_QUEUE));
     const configService = app.get(ConfigService);
-    const configuredWebhookSecret = configService.getOrThrow("FLIGHTAWARE_WEBHOOK_SECRET");
-    webhookPath = `/api/webhooks/flightaware?secret=${configuredWebhookSecret}`;
+    webhookSecret = configService.getOrThrow("FLIGHTAWARE_WEBHOOK_SECRET");
 
     await app.init();
   });
@@ -116,27 +126,38 @@ describe("FlightAware E2E Tests", () => {
     await expect(flightAwareCacheService.get("dl54", "2030-01-01")).resolves.toEqual(flight);
   });
 
-  it("POST /api/webhooks/flightaware rejects invalid secret", async () => {
+  it("POST /api/webhooks/flightaware rejects an invalid signature", async () => {
     const response = await request(app.getHttpServer())
-      .post("/api/webhooks/flightaware?secret=wrong-secret")
+      .post("/api/webhooks/flightaware?flightId=flight-1&signature=wrong-signature")
       .send({
-        alert_id: "alert-1",
-        event_type: "arrival",
-        event_time: "2030-01-01T10:00:00.000Z",
+        alert_id: 1,
+        event_code: "arrival",
+        long_description: "BA74 has arrived.",
+        short_description: "BA74 arrived",
+        summary: "Arrival",
         flight: {
           ident: "BA74",
           fa_flight_id: "fa-1",
-          origin: { code: "EGLL" },
-          destination: { code: "DNMM" },
+          origin: "EGLL",
+          destination: "DNMM",
         },
       });
 
     expect(response.status).toBe(HttpStatus.FORBIDDEN);
   });
 
-  it("POST /api/webhooks/flightaware processes event for known alert", async () => {
+  it("POST /api/webhooks/flightaware alerts the owner and assigned chauffeur for arrival", async () => {
     const user = await factory.createUser({ email: uniqueEmail("flight-webhook-user") });
-    const owner = await factory.createFleetOwner();
+    const owner = await factory.createFleetOwner({ phoneNumber: "+2348011111111" });
+    const chauffeur = await factory.createChauffeur({ phoneNumber: "+2348022222222" });
+    await databaseService.user.update({
+      where: { id: owner.id },
+      data: { phoneNumber: "+2348011111111" },
+    });
+    await databaseService.user.update({
+      where: { id: chauffeur.id },
+      data: { phoneNumber: "+2348022222222" },
+    });
     const car = await factory.createCar(owner.id);
 
     const flight = await databaseService.flight.create({
@@ -150,7 +171,7 @@ describe("FlightAware E2E Tests", () => {
         destinationCodeIATA: "LOS",
         scheduledArrival: new Date("2030-01-01T10:30:00.000Z"),
         status: FlightStatus.SCHEDULED,
-        alertId: "alert-known",
+        alertId: "98765",
         alertEnabled: true,
       },
     });
@@ -158,28 +179,42 @@ describe("FlightAware E2E Tests", () => {
     const booking = await factory.createBooking(user.id, car.id, {
       startDate: new Date("2030-01-01T08:00:00.000Z"),
       endDate: new Date("2030-01-01T13:00:00.000Z"),
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      chauffeurId: chauffeur.id,
     });
 
     await databaseService.booking.update({
       where: { id: booking.id },
-      data: { flightId: flight.id },
+      data: { flightId: flight.id, type: BookingType.AIRPORT_PICKUP },
     });
 
-    const response = await request(app.getHttpServer())
-      .post(webhookPath)
-      .send({
-        alert_id: "alert-known",
-        event_type: "arrival",
-        event_time: "2030-01-01T10:45:00.000Z",
-        flight: {
-          ident: "BA74",
-          fa_flight_id: "fa-1",
-          estimated_in: "2030-01-01T10:40:00.000Z",
-          actual_in: "2030-01-01T10:44:00.000Z",
-          origin: { code: "EGLL", code_iata: "LHR" },
-          destination: { code: "DNMM", code_iata: "LOS" },
-        },
-      });
+    const payload = {
+      alert_id: 98765,
+      event_code: "arrival",
+      long_description: "BA74 has arrived.",
+      short_description: "BA74 arrived",
+      summary: "Arrival",
+      flight: {
+        ident: "BA74",
+        fa_flight_id: "fa-1",
+        estimated_in: "2030-01-01T10:40:00.000Z",
+        actual_in: "2030-01-01T10:44:00.000Z",
+        arrival_delay: 840,
+        gate_destination: "G2",
+        origin: "EGLL",
+        origin_iata: "LHR",
+        destination: "DNMM",
+        destination_iata: "LOS",
+      },
+    };
+    const mismatchedResponse = await request(app.getHttpServer())
+      .post(buildWebhookPath("another-flight"))
+      .send(payload);
+    expect(mismatchedResponse.status).toBe(HttpStatus.NOT_FOUND);
+
+    const webhookPath = buildWebhookPath(flight.id);
+    const response = await request(app.getHttpServer()).post(webhookPath).send(payload);
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(response.body).toMatchObject({
@@ -196,5 +231,87 @@ describe("FlightAware E2E Tests", () => {
       where: { flightId: flight.id, eventType: "arrival" },
     });
     expect(storedEvent?.processed).toBe(true);
+
+    const ownerOutboxRow = await databaseService.notificationOutboxEvent.findUnique({
+      where: {
+        dedupeKey: `flight-update:${storedEvent?.id}:flight-arrived:${booking.id}:fleetOwner`,
+      },
+    });
+    expect(ownerOutboxRow).toMatchObject({
+      bookingId: booking.id,
+      userId: owner.id,
+      eventType: "BOOKING_LIFECYCLE",
+    });
+    expect(ownerOutboxRow?.payload).toMatchObject({
+      subtype: "flight-arrived",
+    });
+
+    const chauffeurOutboxRow = await databaseService.notificationOutboxEvent.findUnique({
+      where: {
+        dedupeKey: `flight-update:${storedEvent?.id}:flight-arrived:${booking.id}:chauffeur`,
+      },
+    });
+    expect(chauffeurOutboxRow).toMatchObject({
+      bookingId: booking.id,
+      userId: chauffeur.id,
+      eventType: "BOOKING_LIFECYCLE",
+    });
+    await expect(
+      databaseService.notificationInbox.count({
+        where: { userId: user.id, type: "BOOKING_LIFECYCLE" },
+      }),
+    ).resolves.toBe(0);
+
+    await notificationOutboxService.processPendingEvents();
+    const ownerNotificationJob = await notificationsQueue.getJob(
+      `notification-outbox-${ownerOutboxRow?.id}`,
+    );
+    expect(ownerNotificationJob?.data).toMatchObject({
+      id: `flight-arrived-${storedEvent?.id}-${booking.id}-fleet-owner-${owner.id}`,
+      type: "flight-arrived",
+      audience: "fleet-owner",
+      channels: ["email"],
+      bookingId: booking.id,
+      recipients: {
+        fleetOwner: {
+          userId: owner.id,
+          email: owner.email,
+        },
+      },
+      templateData: {
+        templateKind: "flightUpdate",
+        flightNumber: "BA74",
+        bookingReference: booking.bookingReference,
+        updateTitle: "Pickup flight arrived",
+      },
+    });
+    const chauffeurNotificationJob = await notificationsQueue.getJob(
+      `notification-outbox-${chauffeurOutboxRow?.id}`,
+    );
+    expect(chauffeurNotificationJob?.data).toMatchObject({
+      audience: "chauffeur",
+      recipients: {
+        chauffeur: {
+          userId: chauffeur.id,
+          email: chauffeur.email,
+        },
+      },
+    });
+
+    const duplicateResponse = await request(app.getHttpServer()).post(webhookPath).send(payload);
+    expect(duplicateResponse.status).toBe(HttpStatus.OK);
+    expect(duplicateResponse.body.duplicate).toBe(true);
+    await expect(
+      databaseService.flightStatusEvent.count({
+        where: { flightId: flight.id, eventType: "arrival" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      databaseService.notificationOutboxEvent.count({
+        where: {
+          bookingId: booking.id,
+        },
+      }),
+    ).resolves.toBe(2);
   }, 60_000);
 });

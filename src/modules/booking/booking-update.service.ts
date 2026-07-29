@@ -96,6 +96,7 @@ export class BookingUpdateService {
           select: {
             id: true,
             chauffeurId: true,
+            flightId: true,
             status: true,
           },
         });
@@ -146,6 +147,10 @@ export class BookingUpdateService {
           throw new BookingUpdateNotAllowedException(
             "Booking changed during assignment. Please retry",
           );
+        }
+
+        if (booking.flightId) {
+          await tx.$executeRaw`SELECT 1 FROM "Flight" WHERE "id" = ${booking.flightId} FOR UPDATE`;
         }
 
         const updatedBooking = await tx.booking.findUniqueOrThrow({

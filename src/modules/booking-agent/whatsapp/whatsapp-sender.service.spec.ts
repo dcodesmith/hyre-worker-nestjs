@@ -8,9 +8,17 @@ import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
-type SenderTestInternals = {
-  sendViaTwilio: (toPhoneE164: string, outbox: Record<string, unknown>) => Promise<unknown>;
-};
+const twilioMocks = vi.hoisted(() => ({
+  createMessage: vi.fn(),
+}));
+
+vi.mock("twilio", () => ({
+  default: vi.fn(() => ({
+    messages: {
+      create: twilioMocks.createMessage,
+    },
+  })),
+}));
 
 describe("WhatsAppSenderService", () => {
   let moduleRef: TestingModule;
@@ -27,6 +35,7 @@ describe("WhatsAppSenderService", () => {
   let whatsappAgentQueue: { add: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
+    twilioMocks.createMessage.mockReset();
     persistenceService = {
       createOutboundOutbox: vi.fn(),
       deleteOutbox: vi.fn(),
@@ -109,13 +118,11 @@ describe("WhatsAppSenderService", () => {
       nextAttemptAt: null,
     });
 
-    const sendSpy = vi
-      .spyOn(service as unknown as SenderTestInternals, "sendViaTwilio")
-      .mockRejectedValueOnce(new Error("twilio down"));
+    twilioMocks.createMessage.mockRejectedValueOnce(new Error("twilio down"));
 
     await service.processOutbox("outbox-1");
 
-    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(twilioMocks.createMessage).toHaveBeenCalledTimes(1);
     expect(persistenceService.markOutboxFailed).toHaveBeenCalledWith(
       "outbox-1",
       WhatsAppOutboxStatus.DEAD_LETTER,
@@ -139,7 +146,7 @@ describe("WhatsAppSenderService", () => {
       maxAttempts: 3,
       nextAttemptAt: null,
     });
-    vi.spyOn(service as unknown as SenderTestInternals, "sendViaTwilio").mockResolvedValueOnce({
+    twilioMocks.createMessage.mockResolvedValueOnce({
       sid: "SM123",
       status: "queued",
       errorCode: null,
@@ -160,7 +167,7 @@ describe("WhatsAppSenderService", () => {
   });
 
   it("sends template messages with expected payload", async () => {
-    const twilioCreateMock = vi.fn().mockResolvedValue({
+    twilioMocks.createMessage.mockResolvedValue({
       sid: "SM_TEMPLATE_1",
       status: "queued",
       errorCode: null,
@@ -168,16 +175,10 @@ describe("WhatsAppSenderService", () => {
       dateCreated: new Date("2026-03-01T00:00:00.000Z"),
       dateUpdated: new Date("2026-03-01T00:00:00.000Z"),
     });
-    Object.defineProperty(service as object, "twilioClient", {
-      value: {
-        messages: {
-          create: twilioCreateMock,
-        },
-      },
-    });
-
-    await (service as unknown as SenderTestInternals).sendViaTwilio("+2348012345678", {
+    persistenceService.claimOutboxForProcessing.mockResolvedValue(true);
+    persistenceService.getOutboxForDispatch.mockResolvedValue({
       id: "outbox-template-1",
+      conversationId: "conv-template-1",
       mode: "TEMPLATE",
       textBody: null,
       mediaUrl: null,
@@ -186,9 +187,15 @@ describe("WhatsAppSenderService", () => {
         "1": "John Doe",
         "2": "Ikeja",
       },
+      conversation: { phoneE164: "+2348012345678" },
+      attempts: 1,
+      maxAttempts: 3,
+      nextAttemptAt: null,
     });
 
-    expect(twilioCreateMock).toHaveBeenCalledWith(
+    await service.processOutbox("outbox-template-1");
+
+    expect(twilioMocks.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "whatsapp:+2348012345678",
         contentSid: "HX123456",

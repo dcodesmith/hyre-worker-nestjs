@@ -482,11 +482,13 @@ export class FlightAwareService {
         flightId: flight.fa_flight_id,
         origin: flight.origin.code,
         originIATA: flight.origin.code_iata,
+        originTimezone: flight.origin.timezone,
         originName: flight.origin.name,
         destination: flight.destination.code,
         destinationIATA: flight.destination.code_iata,
         destinationName: flight.destination.name,
         destinationCity: flight.destination.city,
+        scheduledDeparture: flight.scheduled_out ?? flight.scheduled_off,
         scheduledArrival: arrival.scheduledArrival,
         estimatedArrival: arrival.estimatedArrival,
         actualArrival: arrival.actualArrival,
@@ -519,12 +521,15 @@ export class FlightAwareService {
     let destinationName: string | undefined;
     let destinationCity: string | undefined;
     let originName: string | undefined;
+    let originTimezone: string | undefined;
 
     const [destinationResult, originResult] = await Promise.allSettled([
       this.httpClient.get<{ name?: string; city?: string }>(
         `/airports/${scheduledFlight.destination}`,
       ),
-      this.httpClient.get<{ name?: string }>(`/airports/${scheduledFlight.origin}`),
+      this.httpClient.get<{ name?: string; timezone?: string }>(
+        `/airports/${scheduledFlight.origin}`,
+      ),
     ]);
 
     if (destinationResult.status === "fulfilled") {
@@ -533,20 +538,24 @@ export class FlightAwareService {
     }
     if (originResult.status === "fulfilled") {
       originName = originResult.value?.data?.name;
+      originTimezone = originResult.value?.data?.timezone;
     }
+    const fallbackFlightId = `${flightNumber}-${scheduledFlight.scheduled_out.replace(/\D/g, "")}`;
 
     return {
       type: "success",
       flight: {
         flightNumber,
-        flightId: scheduledFlight.fa_flight_id || `${flightNumber}-scheduled`,
+        flightId: scheduledFlight.fa_flight_id || fallbackFlightId,
         origin: scheduledFlight.origin,
         originIATA: scheduledFlight.origin_iata ?? undefined,
+        originTimezone,
         originName,
         destination: scheduledFlight.destination,
         destinationIATA: scheduledFlight.destination_iata ?? undefined,
         destinationName,
         destinationCity,
+        scheduledDeparture: scheduledFlight.scheduled_out,
         scheduledArrival,
         estimatedArrival,
         actualArrival,

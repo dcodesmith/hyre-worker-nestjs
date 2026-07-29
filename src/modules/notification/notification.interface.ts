@@ -24,7 +24,29 @@ export enum NotificationType {
   BOOKING_UPDATED = "booking-updated",
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
   REVIEW_RECEIVED = "review-received",
+  FLIGHT_ARRIVED = "flight-arrived",
+  FLIGHT_DEPARTED = "flight-departed",
+  FLIGHT_DELAYED = "flight-delayed",
+  FLIGHT_CANCELLED = "flight-cancelled",
+  FLIGHT_DIVERTED = "flight-diverted",
+  FLIGHT_GATE_CHANGED = "flight-gate-changed",
+  FLIGHT_TERMINAL_CHANGED = "flight-terminal-changed",
+  FLIGHT_DELAY_RECOVERED = "flight-delay-recovered",
+  FLIGHT_REINSTATED = "flight-reinstated",
+  FLIGHT_ASSIGNMENT_SNAPSHOT = "flight-assignment-snapshot",
 }
+
+export type FlightNotificationType =
+  | NotificationType.FLIGHT_ARRIVED
+  | NotificationType.FLIGHT_DEPARTED
+  | NotificationType.FLIGHT_DELAYED
+  | NotificationType.FLIGHT_CANCELLED
+  | NotificationType.FLIGHT_DIVERTED
+  | NotificationType.FLIGHT_GATE_CHANGED
+  | NotificationType.FLIGHT_TERMINAL_CHANGED
+  | NotificationType.FLIGHT_DELAY_RECOVERED
+  | NotificationType.FLIGHT_REINSTATED
+  | NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT;
 
 export interface EmailNotificationData {
   to: string;

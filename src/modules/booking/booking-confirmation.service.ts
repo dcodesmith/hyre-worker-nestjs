@@ -1,3 +1,4 @@
+import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import {
@@ -7,10 +8,13 @@ import {
   PaymentStatus,
   Status,
 } from "@prisma/client";
+import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
+import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
@@ -31,6 +35,8 @@ export class BookingConfirmationService {
     private readonly logger: PinoLogger,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingConfirmedHandler: BookingConfirmedHandler,
+    @InjectQueue(FLIGHT_ALERTS_QUEUE)
+    private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {
     this.logger.setContext(BookingConfirmationService.name);
   }
@@ -141,6 +147,7 @@ export class BookingConfirmationService {
     // Update car status to BOOKED to prevent double-booking
     await this.updateCarStatusToBooked(updatedBooking.carId, bookingId);
 
+    await this.queuePaidBookingFlightAlert(updatedBooking);
     await this.emitBookingConfirmedEvent(updatedBooking);
 
     return true;
@@ -175,6 +182,55 @@ export class BookingConfirmationService {
           error: error instanceof Error ? error.message : String(error),
         },
         "Failed to update car status to BOOKED",
+      );
+    }
+  }
+
+  private async queuePaidBookingFlightAlert(booking: BookingWithRelations): Promise<void> {
+    if (booking.type !== "AIRPORT_PICKUP" || !booking.flightId) {
+      return;
+    }
+
+    try {
+      const flight = await this.databaseService.flight.findUnique({
+        where: { id: booking.flightId },
+        select: {
+          id: true,
+          flightNumber: true,
+          scheduledDeparture: true,
+          originCode: true,
+          originTimezone: true,
+          destinationCodeIATA: true,
+        },
+      });
+      if (!flight?.scheduledDeparture) {
+        this.logger.warn(
+          { bookingId: booking.id, flightId: booking.flightId },
+          "Paid airport booking has no schedulable flight alert",
+        );
+        return;
+      }
+
+      await this.flightAlertQueue.add(
+        CREATE_FLIGHT_ALERT_JOB,
+        {
+          flightId: flight.id,
+          flightNumber: flight.flightNumber,
+          departureTime: flight.scheduledDeparture.toISOString(),
+          originCode: flight.originCode,
+          originTimezone: flight.originTimezone ?? undefined,
+          destinationIATA: flight.destinationCodeIATA ?? undefined,
+        },
+        { jobId: `flight-alert-${flight.id}` },
+      );
+    } catch (error) {
+      this.logger.error(
+        {
+          bookingId: booking.id,
+          flightId: booking.flightId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to queue paid booking flight alert; scheduler will reconcile",
       );
     }
   }

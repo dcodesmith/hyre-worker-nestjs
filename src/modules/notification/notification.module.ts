@@ -2,6 +2,7 @@ import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
 import { AuthModule } from "../auth/auth.module";
 import { EmailModule } from "../email/email.module";
@@ -12,6 +13,7 @@ import { BookingReminderHandler } from "./handlers/booking-reminder.handler";
 import { BookingStatusChangedHandler } from "./handlers/booking-status-changed.handler";
 import { BookingUpdatedHandler } from "./handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "./handlers/chauffeur-assigned.handler";
+import { FlightStatusUpdatedHandler } from "./handlers/flight-status-updated.handler";
 import { ReviewReceivedHandler } from "./handlers/review-received.handler";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
@@ -25,6 +27,7 @@ import { WhatsAppService } from "./whatsapp.service";
 
 @Module({
   imports: [
+    ConfigModule,
     BullModule.registerQueue({
       name: NOTIFICATIONS_QUEUE,
       defaultJobOptions: {
@@ -62,6 +65,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingExtensionConfirmedHandler,
     BookingUpdatedHandler,
     ReviewReceivedHandler,
+    FlightStatusUpdatedHandler,
   ],
   exports: [
     NotificationService,
@@ -77,6 +81,7 @@ import { WhatsAppService } from "./whatsapp.service";
     BookingExtensionConfirmedHandler,
     BookingUpdatedHandler,
     ReviewReceivedHandler,
+    FlightStatusUpdatedHandler,
     BullModule,
   ],
 })

@@ -183,6 +183,7 @@ model Flight {
   faFlightId          String?
   originCode          String
   originCodeIATA      String?
+  originTimezone      String?
   originName          String?
   originCity          String?
   destinationCode     String
@@ -201,6 +202,7 @@ model Flight {
   registration        String?
   departureGate       String?
   arrivalGate         String?
+  arrivalTerminal     String?
   alertId             String?             @unique
   alertEnabled        Boolean             @default(false)
   alertCreatedAt      DateTime?
@@ -222,6 +224,7 @@ model Flight {
 
 model FlightStatusEvent {
   id                String        @id @default(cuid())
+  eventKey          String?       @unique
   flightId          String
   eventType         String
   eventTime         DateTime

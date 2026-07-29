@@ -4,7 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
-import twilio, { Twilio } from "twilio";
+import twilio, { type Twilio } from "twilio";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { PROCESS_WHATSAPP_OUTBOX_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import type { EnvConfig } from "../../../config/env.config";

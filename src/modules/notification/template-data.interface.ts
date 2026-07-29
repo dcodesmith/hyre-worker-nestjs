@@ -15,6 +15,8 @@ export const BOOKING_CANCELLED_TEMPLATE_KIND = "bookingCancelled" as const;
 export const BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND = "bookingExtensionConfirmed" as const;
 export const FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND = "fleetOwnerNewBooking" as const;
 export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
+export const PUSH_ONLY_TEMPLATE_KIND = "pushOnly" as const;
+export const FLIGHT_UPDATE_TEMPLATE_KIND = "flightUpdate" as const;
 export type TemplateKind =
   | typeof BOOKING_STATUS_TEMPLATE_KIND
   | typeof BOOKING_REMINDER_TEMPLATE_KIND
@@ -22,7 +24,9 @@ export type TemplateKind =
   | typeof BOOKING_CANCELLED_TEMPLATE_KIND
   | typeof BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND
   | typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
-  | typeof REVIEW_RECEIVED_TEMPLATE_KIND;
+  | typeof REVIEW_RECEIVED_TEMPLATE_KIND
+  | typeof PUSH_ONLY_TEMPLATE_KIND
+  | typeof FLIGHT_UPDATE_TEMPLATE_KIND;
 
 /**
  * Template data specific to booking status updates (includes email template fields)
@@ -90,6 +94,24 @@ export interface ReviewReceivedTemplateData {
   subject: string;
 }
 
+export interface PushOnlyTemplateData {
+  templateKind: typeof PUSH_ONLY_TEMPLATE_KIND;
+  subject: string;
+}
+
+export interface FlightUpdateTemplateData {
+  templateKind: typeof FLIGHT_UPDATE_TEMPLATE_KIND;
+  subject: string;
+  recipientName: string;
+  flightNumber: string;
+  bookingReference: string;
+  updateTitle: string;
+  updateBody: string;
+  expectedArrival: string;
+  pickupActivationTime: string;
+  arrivalLocation: string;
+}
+
 /**
  * Union type for all possible template data structures
  */
@@ -100,4 +122,6 @@ export type TemplateData =
   | BookingCancelledTemplateData
   | BookingExtensionConfirmedTemplateData
   | FleetOwnerNewBookingTemplateData
-  | ReviewReceivedTemplateData;
+  | ReviewReceivedTemplateData
+  | PushOnlyTemplateData
+  | FlightUpdateTemplateData;

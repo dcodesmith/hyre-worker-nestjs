@@ -62,6 +62,7 @@ describe("FlightAwareController", () => {
         originIATA: "LHR",
         destination: "DNMM",
         destinationIATA: "LOS",
+        scheduledDeparture: "2030-01-01T06:00:00.000Z",
         scheduledArrival: "2030-01-01T13:00:00.000Z",
         arrivalTime: "2030-01-01T13:00:00.000Z",
         arrivalTimeSource: "scheduled",
@@ -102,20 +103,22 @@ describe("FlightAwareController", () => {
     });
 
     const payload = {
-      alert_id: "alert-1",
-      event_type: "arrival",
-      event_time: "2030-01-01T12:00:00.000Z",
+      alert_id: 1,
+      event_code: "arrival" as const,
+      long_description: "BA74 has arrived.",
+      short_description: "BA74 arrived",
+      summary: "Arrival",
       flight: {
         ident: "BA74",
         fa_flight_id: "fa-1",
-        origin: { code: "EGLL" },
-        destination: { code: "DNMM" },
+        origin: "EGLL",
+        destination: "DNMM",
       },
     };
 
-    const result = await controller.handleFlightAwareWebhook(payload);
+    const result = await controller.handleFlightAwareWebhook(payload, "flight-1");
 
-    expect(webhookService.handleWebhook).toHaveBeenCalledWith(payload);
+    expect(webhookService.handleWebhook).toHaveBeenCalledWith(payload, "flight-1");
     expect(result).toEqual({
       duplicate: false,
       flightId: "flight-1",

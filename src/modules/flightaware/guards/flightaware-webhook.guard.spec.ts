@@ -4,6 +4,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import type { EnvConfig } from "src/config/env.config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { createHmacSignature } from "../../../common/security/webhook-signature.helper";
 import { FlightAwareWebhookGuard } from "./flightaware-webhook.guard";
 
 describe("FlightAwareWebhookGuard", () => {
@@ -31,26 +32,26 @@ describe("FlightAwareWebhookGuard", () => {
     guard = module.get<FlightAwareWebhookGuard>(FlightAwareWebhookGuard);
   });
 
-  const createContext = (secret?: string): ExecutionContext =>
+  const createContext = (flightId?: string, signature?: string): ExecutionContext =>
     ({
       switchToHttp: () => ({
         getRequest: () => ({
-          query: secret ? { secret } : {},
+          query: flightId && signature ? { flightId, signature } : {},
         }),
       }),
     }) as ExecutionContext;
 
-  it("allows request with valid query secret", () => {
-    const context = createContext("secret-123");
+  it("allows request with a valid flight-scoped signature", () => {
+    const context = createContext("flight-1", createHmacSignature("flight-1", "secret-123"));
     expect(guard.canActivate(context)).toBe(true);
   });
 
-  it("rejects request with invalid query secret", () => {
-    const context = createContext("wrong");
+  it("rejects a signature created for another flight", () => {
+    const context = createContext("flight-2", createHmacSignature("flight-1", "secret-123"));
     expect(guard.canActivate(context)).toBe(false);
   });
 
-  it("rejects request when query secret is missing", () => {
+  it("rejects request when the signature is missing", () => {
     const context = createContext();
     expect(guard.canActivate(context)).toBe(false);
   });

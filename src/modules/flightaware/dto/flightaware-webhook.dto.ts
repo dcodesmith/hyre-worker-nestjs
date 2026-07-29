@@ -3,52 +3,83 @@ import { z } from "zod";
 const optionalIsoDateTime = z
   .string()
   .trim()
-  .refine((value) => !Number.isNaN(Date.parse(value)), {
+  .nullish()
+  .refine((value) => !value || !Number.isNaN(Date.parse(value)), {
     message: "Invalid datetime format",
   })
-  .optional();
+  .transform((value) => value || undefined);
+
+const optionalString = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((value) => value || undefined);
+
+const nullableOptionalString = z
+  .string()
+  .trim()
+  .nullable()
+  .optional()
+  .transform((value) => (value === "" ? null : value));
+
+export const flightAwareEventCodeSchema = z.enum([
+  "filed",
+  "departure",
+  "arrival",
+  "out",
+  "off",
+  "on",
+  "in",
+  "diverted",
+  "cancelled",
+  "position_only_arrival",
+  "position_only_departure",
+  "fru_arrival",
+  "nonairport_arrival",
+  "nonairport_departure",
+  "nonairport_filed",
+  "minutes_out",
+  "power_on",
+  "change",
+]);
 
 export const flightAwareWebhookSchema = z.object({
-  alert_id: z.string().trim().min(1, "alert_id is required"),
-  event_type: z.string().trim().min(1, "event_type is required"),
-  event_time: z
-    .string()
-    .trim()
-    .min(1, "event_time is required")
-    .refine((value) => !Number.isNaN(Date.parse(value)), {
-      message: "event_time must be a valid ISO datetime",
-    }),
+  alert_id: z.number().int().nonnegative(),
+  event_code: flightAwareEventCodeSchema,
+  long_description: z.string(),
+  short_description: z.string(),
+  summary: z.string(),
   flight: z.object({
-    ident: z.string().trim().min(1, "flight.ident is required"),
     fa_flight_id: z.string().trim().min(1, "flight.fa_flight_id is required"),
-    registration: z.string().trim().optional(),
-    aircraft_type: z.string().trim().optional(),
-    origin: z.object({
-      code: z.string().trim().min(1, "flight.origin.code is required"),
-      code_iata: z.string().trim().optional(),
-      name: z.string().trim().optional(),
-      city: z.string().trim().optional(),
-    }),
-    destination: z.object({
-      code: z.string().trim().min(1, "flight.destination.code is required"),
-      code_iata: z.string().trim().optional(),
-      name: z.string().trim().optional(),
-      city: z.string().trim().optional(),
-    }),
+    ident: optionalString,
+    registration: optionalString,
+    aircraft_type: optionalString,
+    origin: optionalString,
+    origin_icao: optionalString,
+    origin_iata: optionalString,
+    destination: optionalString,
+    destination_icao: optionalString,
+    destination_iata: optionalString,
+    cancelled: z.boolean().optional(),
+    diverted: z.boolean().optional(),
+    scheduled_out: optionalIsoDateTime,
     scheduled_off: optionalIsoDateTime,
     scheduled_on: optionalIsoDateTime,
     scheduled_in: optionalIsoDateTime,
+    estimated_out: optionalIsoDateTime,
     estimated_off: optionalIsoDateTime,
     estimated_on: optionalIsoDateTime,
     estimated_in: optionalIsoDateTime,
+    actual_out: optionalIsoDateTime,
     actual_off: optionalIsoDateTime,
     actual_on: optionalIsoDateTime,
     actual_in: optionalIsoDateTime,
-    status: z.string().trim().optional(),
-    delay_minutes: z.number().int().nonnegative().optional(),
-    gate_origin: z.string().trim().optional(),
-    gate_destination: z.string().trim().optional(),
+    gate_origin: nullableOptionalString,
+    gate_destination: nullableOptionalString,
+    terminal_origin: nullableOptionalString,
+    terminal_destination: nullableOptionalString,
   }),
 });
 
 export type FlightAwareWebhookDto = z.infer<typeof flightAwareWebhookSchema>;
+export type FlightAwareEventCode = z.infer<typeof flightAwareEventCodeSchema>;

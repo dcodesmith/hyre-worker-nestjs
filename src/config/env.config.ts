@@ -59,6 +59,10 @@ export const envSchema = z
     TWILIO_SECRET: z.string().min(1, "TWILIO_SECRET is required"),
     TWILIO_WHATSAPP_NUMBER: z.string().min(1, "TWILIO_WHATSAPP_NUMBER is required"),
     TWILIO_WEBHOOK_URL: z.url("TWILIO_WEBHOOK_URL must be a valid URL").optional(),
+    TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: z
+      .string()
+      .regex(/^HX[a-fA-F0-9]{32}$/, "Invalid Twilio Content SID")
+      .optional(),
 
     FLUTTERWAVE_SECRET_KEY: z.string().min(1, "FLUTTERWAVE_SECRET_KEY is required"),
     FLUTTERWAVE_PUBLIC_KEY: z.string().min(1, "FLUTTERWAVE_PUBLIC_KEY is required"),

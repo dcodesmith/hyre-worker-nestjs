@@ -8,9 +8,11 @@ import { PinoLogger } from "nestjs-pino";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseModule } from "../database/database.module";
+import { NotificationModule } from "../notification/notification.module";
 import { FlightAwareController } from "./flightaware.controller";
 import { FlightAwareService } from "./flightaware.service";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
+import { FlightAwareAlertScheduler } from "./flightaware-alert.scheduler";
 import { FlightAwareAlertService } from "./flightaware-alert.service";
 import { FLIGHTAWARE_REDIS_CLIENT, FlightAwareCacheService } from "./flightaware-cache.service";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
@@ -20,6 +22,7 @@ import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
   imports: [
     ConfigModule,
     DatabaseModule,
+    NotificationModule,
     BullModule.registerQueue({
       name: FLIGHT_ALERTS_QUEUE,
       defaultJobOptions: {
@@ -63,6 +66,7 @@ import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
     FlightAwareService,
     FlightAwareAlertService,
     FlightAlertProcessor,
+    FlightAwareAlertScheduler,
     FlightAwareWebhookService,
     FlightAwareWebhookGuard,
   ],

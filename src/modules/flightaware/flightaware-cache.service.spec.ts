@@ -22,6 +22,7 @@ describe("FlightAwareCacheService", () => {
     flightId: "DAL54-20260720",
     origin: "KATL",
     destination: "DNMM",
+    scheduledDeparture: "2026-07-19T20:00:00Z",
     scheduledArrival: "2026-07-20T08:45:00Z",
     estimatedArrival: "2026-07-20T09:11:00Z",
     arrivalTime: "2026-07-20T09:11:00Z",

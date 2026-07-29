@@ -1,8 +1,10 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Job, JobsOptions, Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "src/config/constants";
+import type { EnvConfig } from "../../config/env.config";
 import { normaliseBookingDetails, normaliseExtensionDetails } from "../../shared/helper";
 import {
   BookingWithRelations,
@@ -16,6 +18,7 @@ import {
   SEND_NOTIFICATION_JOB_NAME,
 } from "./notification.const";
 import {
+  FlightNotificationType,
   NotificationAudience,
   NotificationChannel,
   NotificationJobData,
@@ -32,6 +35,7 @@ import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  FLIGHT_UPDATE_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
 } from "./template-data.interface";
@@ -50,12 +54,18 @@ export type ReminderRecipientContext = {
 
 @Injectable()
 export class NotificationService {
+  private readonly flightWhatsAppEnabled: boolean;
+
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
     private readonly notificationQueue: Queue<NotificationJobData>,
     private readonly recipientChannelResolver: RecipientChannelResolverService,
+    configService: ConfigService<EnvConfig>,
     private readonly logger: PinoLogger,
   ) {
+    this.flightWhatsAppEnabled = Boolean(
+      configService.get("TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID", { infer: true }),
+    );
     this.logger.setContext(NotificationService.name);
   }
 
@@ -536,6 +546,119 @@ export class NotificationService {
     };
 
     return { owner: ownerJobData, chauffeur: chauffeurJobData };
+  }
+
+  buildFlightUpdateJobData({
+    statusEventId,
+    booking,
+    recipientType,
+    type,
+    title,
+    body,
+    flightNumber,
+    expectedArrival,
+    pickupActivationTime,
+    arrivalLocation,
+  }: {
+    statusEventId: string;
+    booking: BookingWithRelations;
+    recipientType: RecipientType;
+    type: FlightNotificationType;
+    title: string;
+    body: string;
+    flightNumber: string;
+    expectedArrival: string;
+    pickupActivationTime: string;
+    arrivalLocation: string;
+  }): NotificationJobData | null {
+    const recipient = this.getFlightUpdateRecipient(booking, recipientType);
+    if (!recipient) {
+      return null;
+    }
+
+    let audience = NotificationAudience.CHAUFFEUR;
+    if (recipientType === CLIENT_RECIPIENT_TYPE) {
+      audience = NotificationAudience.CUSTOMER;
+    } else if (recipientType === FLEET_OWNER_RECIPIENT_TYPE) {
+      audience = NotificationAudience.FLEET_OWNER;
+    }
+    const channels =
+      audience === NotificationAudience.CUSTOMER
+        ? [NotificationChannel.PUSH]
+        : this.recipientChannelResolver
+            .resolve({
+              audience,
+              email: recipient.email,
+              phoneNumber: recipient.phoneNumber,
+              userId: recipient.userId,
+            })
+            .filter(
+              (channel) => channel !== NotificationChannel.WHATSAPP || this.flightWhatsAppEnabled,
+            );
+    if (channels.length === 0) {
+      return null;
+    }
+
+    return {
+      id: `${type}-${statusEventId}-${booking.id}-${audience}-${recipient.userId}`,
+      type,
+      audience,
+      channels,
+      bookingId: booking.id,
+      recipients: {
+        [recipientType]: recipient,
+      },
+      pushPayload:
+        audience === NotificationAudience.CUSTOMER
+          ? {
+              title,
+              body,
+              data: createBookingNotificationData(type, booking.id),
+            }
+          : undefined,
+      templateData: {
+        templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
+        subject: title,
+        recipientName: recipient.name,
+        flightNumber,
+        bookingReference: booking.bookingReference,
+        updateTitle: title,
+        updateBody: body,
+        expectedArrival,
+        pickupActivationTime,
+        arrivalLocation,
+      },
+    };
+  }
+
+  private getFlightUpdateRecipient(
+    booking: BookingWithRelations,
+    recipientType: RecipientType,
+  ): { userId: string; name: string; email?: string; phoneNumber?: string } | null {
+    if (recipientType === CLIENT_RECIPIENT_TYPE) {
+      const userId = booking.userId ?? booking.user?.id;
+      if (!userId) {
+        return null;
+      }
+      return {
+        userId,
+        name: booking.user?.name ?? "Customer",
+      };
+    }
+
+    const user =
+      recipientType === FLEET_OWNER_RECIPIENT_TYPE ? booking.car.owner : booking.chauffeur;
+    if (!user) {
+      return null;
+    }
+
+    return {
+      userId: user.id,
+      name:
+        user.name ?? (recipientType === FLEET_OWNER_RECIPIENT_TYPE ? "Fleet owner" : "Chauffeur"),
+      email: user.email,
+      phoneNumber: user.phoneNumber ?? undefined,
+    };
   }
 
   private async createReminderJobData({

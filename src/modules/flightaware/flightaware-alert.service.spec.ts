@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { createHmacSignature } from "../../common/security/webhook-signature.helper";
 import { DatabaseService } from "../database/database.service";
 import {
   createAxiosErrorWithResponse,
@@ -20,6 +21,8 @@ describe("FlightAwareAlertService", () => {
   const mockConfigService = {
     get: vi.fn((key: string) => {
       if (key === "FLIGHTAWARE_API_KEY") return "test-api-key";
+      if (key === "AUTH_BASE_URL") return "https://api.example.com";
+      if (key === "FLIGHTAWARE_WEBHOOK_SECRET") return "webhook-secret";
       return undefined;
     }),
   };
@@ -58,45 +61,79 @@ describe("FlightAwareAlertService", () => {
   describe("createFlightAlert", () => {
     it("should create an alert and return alert ID", async () => {
       mockHttpClient.post.mockResolvedValueOnce({
-        data: {
-          alert_id: "alert-123",
-          ident: "BA74",
-          enabled: true,
-          events: ["arrival", "departure"],
-        },
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/123" },
       });
 
       const result = await service.createFlightAlert({
+        flightId: "flight-1",
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25"),
+        departureTime: new Date("2025-12-25T01:00:00.000Z"),
+        originTimezone: "America/New_York",
         destinationIATA: "LOS",
       });
 
-      expect(result).toBe("alert-123");
+      expect(result).toBe("123");
+      expect(mockHttpClient.post).toHaveBeenCalledWith("/alerts", {
+        ident: "BA74",
+        destination: "LOS",
+        start: "2025-12-24",
+        end: "2025-12-24",
+        eta: 0,
+        events: {
+          arrival: true,
+          cancelled: true,
+          departure: true,
+          diverted: true,
+          filed: false,
+          out: false,
+          off: false,
+          on: false,
+          in: true,
+        },
+        target_url: `https://api.example.com/api/webhooks/flightaware?flightId=flight-1&signature=${createHmacSignature("flight-1", "webhook-secret")}`,
+      });
+    });
+
+    it("resolves a missing origin timezone before calculating the alert date", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: { timezone: "America/New_York" },
+      });
+      mockHttpClient.post.mockResolvedValueOnce({
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/124" },
+      });
+
+      await service.createFlightAlert({
+        flightId: "flight-1",
+        flightNumber: "BA74",
+        departureTime: new Date("2025-12-25T01:00:00.000Z"),
+        originCode: "KJFK",
+        destinationIATA: "LOS",
+      });
+
+      expect(mockHttpClient.get).toHaveBeenCalledWith("/airports/KJFK");
       expect(mockHttpClient.post).toHaveBeenCalledWith(
         "/alerts",
         expect.objectContaining({
-          ident: "BA74",
-          enabled: true,
+          start: "2025-12-24",
+          end: "2025-12-24",
         }),
       );
     });
 
     it("should include destination in request body when provided", async () => {
       mockHttpClient.post.mockResolvedValueOnce({
-        data: {
-          alert_id: "alert-123",
-          ident: "BA74",
-          enabled: true,
-          events: ["arrival"],
-        },
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/123" },
       });
 
       await service.createFlightAlert({
+        flightId: "flight-1",
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25"),
+        departureTime: new Date("2025-12-25"),
+        originTimezone: "UTC",
         destinationIATA: "LOS",
-        events: ["arrival"],
       });
 
       expect(mockHttpClient.post).toHaveBeenCalledWith(
@@ -107,6 +144,22 @@ describe("FlightAwareAlertService", () => {
       );
     });
 
+    it("rejects a create response without an alert location", async () => {
+      mockHttpClient.post.mockResolvedValueOnce({
+        data: undefined,
+        headers: {},
+      });
+
+      await expect(
+        service.createFlightAlert({
+          flightId: "flight-1",
+          flightNumber: "BA74",
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
+        }),
+      ).rejects.toThrow("did not include an alert Location");
+    });
+
     it("should throw on authentication error", async () => {
       const axiosError = createAxiosErrorWithResponse(HttpStatus.UNAUTHORIZED, {
         message: "Invalid API key",
@@ -115,8 +168,10 @@ describe("FlightAwareAlertService", () => {
 
       await expect(
         service.createFlightAlert({
+          flightId: "flight-1",
           flightNumber: "BA74",
-          flightDate: new Date("2025-12-25"),
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
         }),
       ).rejects.toThrow(FlightAwareApiException);
     });
@@ -129,8 +184,10 @@ describe("FlightAwareAlertService", () => {
 
       await expect(
         service.createFlightAlert({
+          flightId: "flight-1",
           flightNumber: "BA74",
-          flightDate: new Date("2025-12-25"),
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
         }),
       ).rejects.toThrow(FlightAwareApiException);
     });
@@ -145,7 +202,8 @@ describe("FlightAwareAlertService", () => {
 
       const result = await service.getOrCreateFlightAlert("flight-id-1", {
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25"),
+        departureTime: new Date("2025-12-25"),
+        originTimezone: "UTC",
       });
 
       expect(result).toBe("existing-alert-123");
@@ -159,25 +217,27 @@ describe("FlightAwareAlertService", () => {
       });
 
       mockHttpClient.post.mockResolvedValueOnce({
-        data: {
-          alert_id: "new-alert-456",
-          ident: "BA74",
-          enabled: true,
-          events: ["arrival"],
-        },
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/456" },
       });
 
       mockDatabaseService.flight.update.mockResolvedValueOnce({});
 
       const result = await service.getOrCreateFlightAlert("flight-id-1", {
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25"),
+        departureTime: new Date("2025-12-25"),
+        originTimezone: "UTC",
       });
 
-      expect(result).toBe("new-alert-456");
+      expect(result).toBe("456");
       expect(mockDatabaseService.flight.update).toHaveBeenCalledWith({
         where: { id: "flight-id-1" },
-        data: { alertId: "new-alert-456", alertEnabled: true },
+        data: {
+          alertId: "456",
+          alertEnabled: true,
+          alertCreatedAt: expect.any(Date),
+          alertDisabledAt: null,
+        },
       });
     });
 
@@ -189,10 +249,34 @@ describe("FlightAwareAlertService", () => {
 
       await service.getOrCreateFlightAlert("flight-id-1", {
         flightNumber: "BA74",
-        flightDate: new Date("2025-12-25"),
+        departureTime: new Date("2025-12-25"),
+        originTimezone: "UTC",
       });
 
-      expect(mockDatabaseService.$executeRaw).toHaveBeenCalledTimes(2);
+      expect(mockDatabaseService.$executeRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("deletes a newly created remote alert when local persistence fails", async () => {
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
+        alertId: null,
+        alertEnabled: false,
+      });
+      mockHttpClient.post.mockResolvedValueOnce({
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/456" },
+      });
+      mockDatabaseService.flight.update.mockRejectedValueOnce(new Error("Database unavailable"));
+      mockHttpClient.delete.mockResolvedValueOnce({});
+
+      await expect(
+        service.getOrCreateFlightAlert("flight-id-1", {
+          flightNumber: "BA74",
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
+        }),
+      ).rejects.toThrow("Database unavailable");
+
+      expect(mockHttpClient.delete).toHaveBeenCalledWith("/alerts/456");
     });
 
     it("should throw error if flight does not exist in database without calling external API", async () => {
@@ -201,7 +285,8 @@ describe("FlightAwareAlertService", () => {
       await expect(
         service.getOrCreateFlightAlert("non-existent-flight-id", {
           flightNumber: "BA74",
-          flightDate: new Date("2025-12-25"),
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
         }),
       ).rejects.toThrow(FlightRecordNotFoundException);
 
@@ -254,7 +339,11 @@ describe("FlightAwareAlertService", () => {
       expect(mockHttpClient.delete).toHaveBeenCalledWith("/alerts/alert-123");
       expect(mockDatabaseService.flight.update).toHaveBeenCalledWith({
         where: { id: "flight-id-1" },
-        data: { alertEnabled: false },
+        data: {
+          alertEnabled: false,
+          alertCreatedAt: null,
+          alertDisabledAt: expect.any(Date),
+        },
       });
     });
 

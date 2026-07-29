@@ -20,6 +20,7 @@ import { getEmailPublicEnv } from "../email-public-env";
 import type {
   BookingCancelledTemplateData,
   BookingExtensionConfirmedTemplateData,
+  FlightUpdateTemplateData,
   ReviewReceivedTemplateData,
 } from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
@@ -649,4 +650,44 @@ export async function renderReviewReceivedEmailForChauffeur(
   return await render(
     <ReviewReceivedEmailForChauffeur chauffeurName={chauffeurName} data={data} />,
   );
+}
+
+export function FlightOperationalUpdateEmail({
+  data,
+}: {
+  readonly data: FlightUpdateTemplateData;
+}) {
+  return (
+    <EmailTemplate previewText={data.updateTitle} pageTitle={data.subject}>
+      <Heading as="h2" className="text-xl font-semibold mb-4 text-[#0B0B0F]">
+        {data.updateTitle}
+      </Heading>
+      <Text className="text-sm text-[#52525B] mb-4">Hi {firstNameFrom(data.recipientName)},</Text>
+      <Text className="text-sm text-[#0B0B0F] mb-5">{data.updateBody}</Text>
+      <Section className="bg-[#F5F5F7] rounded-lg p-4 mb-5">
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Flight:</strong> {data.flightNumber}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Booking:</strong> {data.bookingReference}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Expected arrival:</strong> {data.expectedArrival}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Pickup activation:</strong> {data.pickupActivationTime}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0">
+          <strong>Arrival point:</strong> {data.arrivalLocation}
+        </Text>
+      </Section>
+      <Text className="text-sm text-[#52525B] m-0">
+        Keep the booking assignment and airport pickup plan up to date.
+      </Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderFlightOperationalUpdateEmail(data: FlightUpdateTemplateData) {
+  return await render(<FlightOperationalUpdateEmail data={data} />);
 }

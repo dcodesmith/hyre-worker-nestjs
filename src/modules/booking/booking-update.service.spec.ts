@@ -243,6 +243,7 @@ describe("BookingUpdateService", () => {
           findFirst: vi.fn().mockResolvedValue({
             id: "booking-1",
             chauffeurId: null,
+            flightId: "flight-1",
             status: BookingStatus.CONFIRMED,
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -258,6 +259,7 @@ describe("BookingUpdateService", () => {
             chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           }),
         },
+        $executeRaw: vi.fn().mockResolvedValue(1),
       };
       databaseServiceMock.$transaction.mockImplementationOnce(
         (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
@@ -279,6 +281,7 @@ describe("BookingUpdateService", () => {
         select: {
           id: true,
           chauffeurId: true,
+          flightId: true,
           status: true,
         },
       });
@@ -309,6 +312,7 @@ describe("BookingUpdateService", () => {
           where: { id: "booking-1" },
         }),
       );
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
         chauffeurAssignedHandlerMock,
         { booking: result, chauffeurId: "chauffeur-1" },

@@ -1,11 +1,9 @@
-import { getQueueToken } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { createBookingFinancials, createCar, createUser } from "../../shared/helper.fixtures";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -106,7 +104,7 @@ describe("BookingCreationService", () => {
             car: { findUnique: vi.fn() },
             user: { findUnique: vi.fn(), update: vi.fn() },
             booking: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
-            flight: { upsert: vi.fn() },
+            flight: { upsert: vi.fn(), updateMany: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn() },
             userReferralStats: { upsert: vi.fn() },
@@ -163,12 +161,6 @@ describe("BookingCreationService", () => {
             calculateAirportTripDuration: vi.fn(),
           },
         },
-        {
-          provide: getQueueToken(FLIGHT_ALERTS_QUEUE),
-          useValue: {
-            add: vi.fn(),
-          },
-        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -217,7 +209,10 @@ describe("BookingCreationService", () => {
       // Setup transaction mock to execute the callback
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
@@ -496,7 +491,10 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
@@ -528,6 +526,44 @@ describe("BookingCreationService", () => {
   });
 
   describe("createBooking - Airport Pickup", () => {
+    it("rejects invalid flight timing data before persistence", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+        flight: {
+          flightNumber: "BA74",
+          flightId: "BA74-20250201",
+          origin: "EGLL",
+          destination: "DNMM",
+          scheduledDeparture: "invalid",
+          scheduledArrival: "2025-02-01T14:30:00Z",
+          arrivalTime: "2025-02-01T15:00:00Z",
+          arrivalTimeSource: "estimated",
+          status: "Delayed",
+          isLive: true,
+        },
+      });
+      vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
+        durationMinutes: 60,
+        distanceMeters: 30000,
+        isEstimate: false,
+      });
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({
+            bookingType: "AIRPORT_PICKUP",
+            flightNumber: "BA74",
+            pickupTime: undefined,
+            sameLocation: false,
+            dropOffAddress: "Victoria Island, Lagos",
+          }),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toThrow("FlightAware returned invalid flight timing data");
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
     it("should validate flight for airport pickup bookings", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       // Validation methods now return void
@@ -540,8 +576,10 @@ describe("BookingCreationService", () => {
         flightId: "BA74-20250201",
         origin: "EGLL",
         originIATA: "LHR",
+        originTimezone: "Europe/London",
         destination: "DNMM",
         destinationIATA: "LOS",
+        scheduledDeparture: "2025-02-01T08:00:00Z",
         scheduledArrival: "2025-02-01T14:30:00Z",
         estimatedArrival: "2025-02-01T15:00:00Z",
         arrivalTime: "2025-02-01T15:00:00Z",
@@ -579,7 +617,10 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "BA74-20250201" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "BA74-20250201" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
@@ -721,7 +762,10 @@ describe("BookingCreationService", () => {
             .mockResolvedValue([
               { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
             ]),
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             findFirst: vi.fn().mockResolvedValue(null),
             findMany: vi.fn().mockResolvedValue([]),
@@ -819,7 +863,10 @@ describe("BookingCreationService", () => {
             .mockResolvedValue([
               { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
             ]),
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             findFirst: vi.fn().mockResolvedValue(null),
             findMany: vi.fn().mockResolvedValue([]),
@@ -909,7 +956,7 @@ describe("BookingCreationService", () => {
             .mockResolvedValue([
               { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: true },
             ]),
-          flight: { upsert: vi.fn() },
+          flight: { upsert: vi.fn(), updateMany: vi.fn() },
           booking: { create: vi.fn(), update: vi.fn() },
           referralProgramConfig: { findMany: vi.fn() },
           referralReward: { create: vi.fn() },
@@ -957,7 +1004,10 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             create: vi.fn().mockResolvedValue({
               id: "booking-123",
@@ -1028,7 +1078,10 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
-          flight: { upsert: vi.fn().mockResolvedValue({ id: "flight-123" }) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
           booking: {
             create: vi.fn().mockResolvedValue({
               id: "booking-123",

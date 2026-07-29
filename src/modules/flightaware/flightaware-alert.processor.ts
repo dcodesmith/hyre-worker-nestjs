@@ -33,7 +33,9 @@ export class FlightAlertProcessor extends WorkerHost {
           job.data.flightId,
           {
             flightNumber: job.data.flightNumber,
-            flightDate: new Date(job.data.flightDate),
+            departureTime: new Date(job.data.departureTime),
+            originCode: job.data.originCode,
+            originTimezone: job.data.originTimezone,
             destinationIATA: job.data.destinationIATA,
           },
         );
