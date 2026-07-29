@@ -10,6 +10,7 @@ import type { FlightAlertJobData } from "./flightaware-alert.interface";
 
 const RECONCILIATION_WINDOW_MS = 5 * 60 * 1000;
 const DEPARTURE_RECOVERY_WINDOW_MS = 48 * 60 * 60 * 1000;
+const ALERT_RETRY_BACKOFF_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class FlightAwareAlertScheduler {
@@ -27,9 +28,11 @@ export class FlightAwareAlertScheduler {
     const now = new Date();
 
     try {
+      const retryBefore = new Date(now.getTime() - ALERT_RETRY_BACKOFF_MS);
       const flights = await this.databaseService.flight.findMany({
         where: {
           alertEnabled: false,
+          OR: [{ alertLastAttemptAt: null }, { alertLastAttemptAt: { lte: retryBefore } }],
           scheduledDeparture: {
             gte: new Date(now.getTime() - DEPARTURE_RECOVERY_WINDOW_MS),
           },
@@ -56,9 +59,13 @@ export class FlightAwareAlertScheduler {
         take: 100,
       });
       const reconciliationBucket = Math.floor(now.getTime() / RECONCILIATION_WINDOW_MS);
+      let enqueued = 0;
+      let failed = 0;
+      let skipped = 0;
 
       for (const flight of flights) {
         if (!flight.scheduledDeparture) {
+          skipped += 1;
           continue;
         }
 
@@ -77,7 +84,9 @@ export class FlightAwareAlertScheduler {
               jobId: `flight-alert-reconcile-${flight.id}-${reconciliationBucket}`,
             },
           );
+          enqueued += 1;
         } catch (error) {
+          failed += 1;
           this.logger.error(
             {
               flightId: flight.id,
@@ -87,6 +96,11 @@ export class FlightAwareAlertScheduler {
           );
         }
       }
+
+      this.logger.info(
+        { found: flights.length, enqueued, failed, skipped },
+        "Reconciled missing FlightAware alerts",
+      );
     } catch (error) {
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },

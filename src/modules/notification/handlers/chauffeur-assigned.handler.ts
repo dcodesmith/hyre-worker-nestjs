@@ -5,7 +5,11 @@ import {
   NotificationInboxType,
   NotificationOutboxEventType,
 } from "@prisma/client";
-import { formatInTimeZone } from "date-fns-tz";
+import {
+  buildFlightArrivalLocation,
+  calculatePickupActivationTime,
+  formatFlightOperationalTime,
+} from "../../../shared/flight-notification.helper";
 import type { BookingWithRelations } from "../../../types";
 import { CHAUFFEUR_RECIPIENT_TYPE } from "../notification.const";
 import { NotificationType } from "../notification.interface";
@@ -13,8 +17,6 @@ import { NotificationService } from "../notification.service";
 import type { HandlerEvent, OutboxEventHandler } from "./outbox-event-handler.interface";
 
 const SUBTYPE = "CHAUFFEUR_ASSIGNED";
-const AIRPORT_BOOKING_BUFFER_MINUTES = 40;
-const OPERATIONS_TIME_ZONE = "Africa/Lagos";
 
 export type ChauffeurAssignedInput = {
   booking: BookingWithRelations & { flight?: Flight | null };
@@ -72,16 +74,12 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
 
     const expectedArrival =
       flight.actualArrival ?? flight.estimatedArrival ?? flight.scheduledArrival;
-    const pickupActivationTime = new Date(
-      expectedArrival.getTime() + AIRPORT_BOOKING_BUFFER_MINUTES * 60 * 1000,
-    );
-    const arrivalLocation = [
+    const pickupActivationTime = calculatePickupActivationTime(expectedArrival);
+    const arrivalLocation = buildFlightArrivalLocation(
       flight.destinationCodeIATA ?? flight.destinationCode,
-      flight.arrivalTerminal ? `Terminal ${flight.arrivalTerminal}` : null,
-      flight.arrivalGate ? `Gate ${flight.arrivalGate}` : null,
-    ]
-      .filter(Boolean)
-      .join(", ");
+      flight.arrivalTerminal,
+      flight.arrivalGate,
+    );
     const delay =
       flight.delayMinutes && flight.delayMinutes > 0
         ? `, currently delayed by ${flight.delayMinutes} minutes`
@@ -94,8 +92,8 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
       title: "Airport pickup flight briefing",
       body: `${flight.flightNumber} is ${flight.status.toLowerCase()}${delay}. Review the live flight details before pickup.`,
       flightNumber: flight.flightNumber,
-      expectedArrival: this.formatOperationalTime(expectedArrival),
-      pickupActivationTime: this.formatOperationalTime(pickupActivationTime),
+      expectedArrival: formatFlightOperationalTime(expectedArrival),
+      pickupActivationTime: formatFlightOperationalTime(pickupActivationTime),
       arrivalLocation,
     });
     if (!jobData) {
@@ -108,9 +106,5 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
       userId: chauffeurId,
       subtype: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
     };
-  }
-
-  private formatOperationalTime(value: Date): string {
-    return formatInTimeZone(value, OPERATIONS_TIME_ZONE, "d MMM yyyy, h:mm a zzz");
   }
 }

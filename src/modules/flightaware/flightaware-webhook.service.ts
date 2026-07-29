@@ -2,9 +2,13 @@ import { createHash } from "node:crypto";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitter";
 import { BookingStatus, BookingType, FlightStatus, PaymentStatus, Prisma } from "@prisma/client";
-import { formatInTimeZone } from "date-fns-tz";
 import { PinoLogger } from "nestjs-pino";
 import { FLIGHT_ARRIVAL_UPDATED_EVENT } from "../../shared/events/airport-activation.events";
+import {
+  buildFlightArrivalLocation,
+  calculatePickupActivationTime,
+  formatFlightOperationalTime,
+} from "../../shared/flight-notification.helper";
 import { DatabaseService } from "../database/database.service";
 import type { FlightStatusUpdatedInput } from "../notification/handlers/flight-status-updated.handler";
 import { FlightStatusUpdatedHandler } from "../notification/handlers/flight-status-updated.handler";
@@ -13,11 +17,9 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import type { FlightAwareEventCode, FlightAwareWebhookDto } from "./dto/flightaware-webhook.dto";
 import type { FlightAwareWebhookResult } from "./flightaware.interface";
 
-const AIRPORT_BOOKING_BUFFER_MINUTES = 40;
 const MIN_CUSTOMER_DELAY_MINUTES = 30;
 const MIN_OPERATIONAL_DELAY_MINUTES = 10;
 const MIN_DELAY_CHANGE_MINUTES = 10;
-const OPERATIONS_TIME_ZONE = "Africa/Lagos";
 const AUTHORITATIVE_ARRIVAL_EVENT_CODES = new Set<FlightAwareEventCode>(["arrival", "on", "in"]);
 const AUTHORITATIVE_DEPARTURE_EVENT_CODES = new Set<FlightAwareEventCode>([
   "departure",
@@ -98,26 +100,15 @@ export class FlightAwareWebhookService {
         },
       });
       const arrivalDelayMinutes = this.resolveArrivalDelayMinutes(flight, currentFlight);
-      const delayMinutes = arrivalDelayMinutes;
       const oldStatus = currentFlight.status;
       const newStatus = this.mapEventCodeToStatus(
         event_code,
         currentFlight.status,
         flight.cancelled,
       );
-      const flightUpdateData = this.buildFlightUpdateData(flight, newStatus, delayMinutes);
+      const flightUpdateData = this.buildFlightUpdateData(flight, newStatus, arrivalDelayMinutes);
       const expectedArrival = this.resolveExpectedArrivalTime(flight, currentFlight);
-      const activationAt = expectedArrival
-        ? new Date(expectedArrival.getTime() + AIRPORT_BOOKING_BUFFER_MINUTES * 60 * 1000)
-        : null;
-      const notifications = this.buildNotifications(
-        event_code,
-        flight,
-        currentFlight,
-        delayMinutes,
-        arrivalDelayMinutes,
-        newStatus,
-      );
+      const activationAt = calculatePickupActivationTime(expectedArrival);
       const created = await tx.flightStatusEvent.createMany({
         data: [
           {
@@ -128,7 +119,7 @@ export class FlightAwareWebhookService {
             eventData: payload,
             oldStatus,
             newStatus,
-            delayChange: delayMinutes,
+            delayChange: arrivalDelayMinutes,
             processed: false,
             notificationsSent: false,
           },
@@ -142,14 +133,35 @@ export class FlightAwareWebhookService {
           processed: true,
         },
       });
+      const eligibleBookingWhere: Prisma.BookingWhereInput = {
+        flightId: flightRecord.id,
+        type: BookingType.AIRPORT_PICKUP,
+        status: { in: [...NOTIFIABLE_BOOKING_STATUSES] },
+        paymentStatus: PaymentStatus.PAID,
+        deletedAt: null,
+      };
+
+      if (created.count === 0 && statusEvent.processed) {
+        const bookingCount = await tx.booking.count({ where: eligibleBookingWhere });
+        return {
+          duplicate: true as const,
+          statusEventId: statusEvent.id,
+          oldStatus: currentFlight.status,
+          resolvedStatus: currentFlight.status,
+          bookingCount,
+          activationAt: null,
+        };
+      }
+
+      const notifications = this.buildNotifications(
+        event_code,
+        flight,
+        currentFlight,
+        arrivalDelayMinutes,
+        newStatus,
+      );
       const bookings = await tx.booking.findMany({
-        where: {
-          flightId: flightRecord.id,
-          type: BookingType.AIRPORT_PICKUP,
-          status: { in: [...NOTIFIABLE_BOOKING_STATUSES] },
-          paymentStatus: PaymentStatus.PAID,
-          deletedAt: null,
-        },
+        where: eligibleBookingWhere,
         include: {
           user: true,
           chauffeur: true,
@@ -157,17 +169,6 @@ export class FlightAwareWebhookService {
           legs: { include: { extensions: true } },
         },
       });
-
-      if (created.count === 0 && statusEvent.processed) {
-        return {
-          duplicate: true as const,
-          statusEventId: statusEvent.id,
-          oldStatus: currentFlight.status,
-          resolvedStatus: currentFlight.status,
-          bookingCount: bookings.length,
-          activationAt: null,
-        };
-      }
 
       await tx.flight.update({
         where: { id: flightRecord.id },
@@ -180,8 +181,8 @@ export class FlightAwareWebhookService {
           statusEventId: statusEvent.id,
           flightId: flightRecord.id,
           flightNumber: currentFlight.flightNumber,
-          expectedArrival: this.formatOperationalTime(expectedArrival),
-          pickupActivationTime: this.formatOperationalTime(activationAt),
+          expectedArrival: formatFlightOperationalTime(expectedArrival),
+          pickupActivationTime: formatFlightOperationalTime(activationAt),
           arrivalLocation: this.buildArrivalLocation(flight, currentFlight),
           bookings,
           notifications,
@@ -194,7 +195,7 @@ export class FlightAwareWebhookService {
         data: {
           oldStatus,
           newStatus,
-          delayChange: delayMinutes,
+          delayChange: arrivalDelayMinutes,
           eventData: payload,
           processed: true,
         },
@@ -327,8 +328,7 @@ export class FlightAwareWebhookService {
     eventCode: FlightAwareEventCode,
     flight: FlightAwareWebhookDto["flight"],
     previous: FlightNotificationSnapshot,
-    operationalDelayMinutes: number | null,
-    customerDelayMinutes: number | null,
+    delayMinutes: number | null,
     newStatus: FlightStatus,
   ): FlightStatusUpdatedInput["notifications"] {
     const statusNotification = this.buildStatusNotification(eventCode, flight, previous, newStatus);
@@ -340,12 +340,7 @@ export class FlightAwareWebhookService {
       return [];
     }
 
-    return this.buildChangeNotifications(
-      flight,
-      previous,
-      operationalDelayMinutes,
-      customerDelayMinutes,
-    );
+    return this.buildChangeNotifications(flight, previous, delayMinutes);
   }
 
   private buildStatusNotification(
@@ -433,15 +428,10 @@ export class FlightAwareWebhookService {
   private buildChangeNotifications(
     flight: FlightAwareWebhookDto["flight"],
     previous: FlightNotificationSnapshot,
-    operationalDelayMinutes: number | null,
-    customerDelayMinutes: number | null,
+    delayMinutes: number | null,
   ): FlightStatusUpdatedInput["notifications"] {
     const notifications: FlightUpdateNotification[] = [];
-    const delayNotification = this.buildDelayNotification(
-      previous,
-      operationalDelayMinutes,
-      customerDelayMinutes,
-    );
+    const delayNotification = this.buildDelayNotification(previous, delayMinutes);
     if (delayNotification) {
       notifications.push(delayNotification);
     }
@@ -459,7 +449,6 @@ export class FlightAwareWebhookService {
   private buildDelayNotification(
     previous: FlightNotificationSnapshot,
     delayMinutes: number | null,
-    customerDelayMinutes: number | null,
   ): FlightUpdateNotification | null {
     if (delayMinutes === null) {
       return null;
@@ -475,9 +464,7 @@ export class FlightAwareWebhookService {
     const flightNumber = previous.flightNumber;
     if (delayMinutes >= MIN_OPERATIONAL_DELAY_MINUTES) {
       const customerNeedsUpdate =
-        customerDelayMinutes !== null &&
-        (customerDelayMinutes >= MIN_CUSTOMER_DELAY_MINUTES ||
-          previousDelay >= MIN_CUSTOMER_DELAY_MINUTES);
+        delayMinutes >= MIN_CUSTOMER_DELAY_MINUTES || previousDelay >= MIN_CUSTOMER_DELAY_MINUTES;
       return {
         type: NotificationType.FLIGHT_DELAYED,
         operationalTitle:
@@ -485,7 +472,7 @@ export class FlightAwareWebhookService {
         operationalBody: `${flightNumber} is delayed by ${this.formatMinutes(delayMinutes)}. Pickup timing has been recalculated.`,
         customerTitle: customerNeedsUpdate ? "Your pickup flight timing changed" : undefined,
         customerBody: customerNeedsUpdate
-          ? `${flightNumber} is delayed by ${this.formatMinutes(customerDelayMinutes)}. We are tracking it and have adjusted your pickup timing.`
+          ? `${flightNumber} is delayed by ${this.formatMinutes(delayMinutes)}. We are tracking it and have adjusted your pickup timing.`
           : undefined,
       };
     }
@@ -493,15 +480,15 @@ export class FlightAwareWebhookService {
     if (previousDelay < MIN_OPERATIONAL_DELAY_MINUTES) {
       return null;
     }
-    const customerNeedsUpdate =
-      customerDelayMinutes !== null && previousDelay >= MIN_CUSTOMER_DELAY_MINUTES;
+    const customerNeedsUpdate = previousDelay >= MIN_CUSTOMER_DELAY_MINUTES;
+    const recoveredDelayMinutes = Math.max(delayMinutes, 0);
     return {
       type: NotificationType.FLIGHT_DELAY_RECOVERED,
       operationalTitle: "Pickup flight delay cleared",
-      operationalBody: `${flightNumber}'s reported delay is now ${this.formatMinutes(delayMinutes)}. Pickup timing has been recalculated.`,
+      operationalBody: `${flightNumber}'s reported delay is now ${this.formatMinutes(recoveredDelayMinutes)}. Pickup timing has been recalculated.`,
       customerTitle: customerNeedsUpdate ? "Your pickup flight delay improved" : undefined,
       customerBody: customerNeedsUpdate
-        ? `${flightNumber}'s reported delay is now ${this.formatMinutes(customerDelayMinutes)}. We have updated your pickup timing.`
+        ? `${flightNumber}'s reported delay is now ${this.formatMinutes(recoveredDelayMinutes)}. We have updated your pickup timing.`
         : undefined,
     };
   }
@@ -620,14 +607,6 @@ export class FlightAwareWebhookService {
     );
   }
 
-  private formatOperationalTime(value: Date | null): string {
-    if (!value) {
-      return "Not currently available";
-    }
-
-    return formatInTimeZone(value, OPERATIONS_TIME_ZONE, "d MMM yyyy, h:mm a zzz");
-  }
-
   private buildArrivalLocation(
     flight: FlightAwareWebhookDto["flight"],
     previous: FlightNotificationSnapshot,
@@ -636,13 +615,6 @@ export class FlightAwareWebhookService {
     const terminal =
       "terminal_destination" in flight ? flight.terminal_destination : previous.arrivalTerminal;
     const gate = "gate_destination" in flight ? flight.gate_destination : previous.arrivalGate;
-    const parts = [destination];
-    if (terminal) {
-      parts.push(`Terminal ${terminal}`);
-    }
-    if (gate) {
-      parts.push(`Gate ${gate}`);
-    }
-    return parts.join(", ");
+    return buildFlightArrivalLocation(destination, terminal, gate);
   }
 }

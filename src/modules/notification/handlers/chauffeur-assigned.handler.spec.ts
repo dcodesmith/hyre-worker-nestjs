@@ -167,6 +167,8 @@ describe("ChauffeurAssignedHandler", () => {
       alertEnabled: true,
       alertCreatedAt: new Date("2030-01-01T00:00:00Z"),
       alertDisabledAt: null,
+      alertProvisioningAt: null,
+      alertLastAttemptAt: new Date("2030-01-01T00:00:00Z"),
       lastUpdated: new Date("2030-01-01T09:00:00Z"),
       createdAt: new Date("2029-12-01T00:00:00Z"),
       dataSource: FlightDataSource.FLIGHTAWARE,

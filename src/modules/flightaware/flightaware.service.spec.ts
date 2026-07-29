@@ -343,7 +343,8 @@ describe("FlightAwareService", () => {
               origin_iata: "LHR",
               destination: "LOS",
               destination_iata: "LOS",
-              scheduled_out: "2025-12-30T07:00:00Z",
+              scheduled_out: null,
+              scheduled_off: "2025-12-30T07:15:00Z",
               scheduled_in: "2025-12-30T14:00:00Z",
               estimated_on: "2025-12-30T14:10:00Z",
               actual_on: "2025-12-30T14:15:00Z",
@@ -359,12 +360,34 @@ describe("FlightAwareService", () => {
       const result = await service.validateFlight("BA74", "2025-12-30");
 
       expect(result).toMatchObject({
+        scheduledDeparture: "2025-12-30T07:15:00Z",
         scheduledArrival: "2025-12-30T14:00:00Z",
         estimatedArrival: "2025-12-30T14:10:00Z",
         actualArrival: "2025-12-30T14:15:00Z",
         arrivalTime: "2025-12-30T14:15:00Z",
         arrivalTimeSource: "actual",
       });
+    });
+
+    it("rejects a scheduled flight without a gate or runway departure time", async () => {
+      const flightWithoutDeparture = {
+        ident: "BA74",
+        ident_iata: "BA74",
+        fa_flight_id: null,
+        origin: "LHR",
+        destination: "LOS",
+        scheduled_out: null,
+        scheduled_off: null,
+        scheduled_in: "2025-12-30T14:00:00Z",
+      };
+      mockHttpClient.get
+        .mockResolvedValueOnce({ data: { scheduled: [flightWithoutDeparture] } })
+        .mockResolvedValueOnce({ data: { scheduled: [flightWithoutDeparture] } });
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      await expect(service.validateFlight("BA74", "2025-12-30")).rejects.toThrow(
+        FlightNotFoundException,
+      );
     });
 
     it("should handle undefined destination name and city", async () => {

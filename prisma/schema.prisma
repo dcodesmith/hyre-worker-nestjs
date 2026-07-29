@@ -207,6 +207,8 @@ model Flight {
   alertEnabled        Boolean             @default(false)
   alertCreatedAt      DateTime?
   alertDisabledAt     DateTime?
+  alertProvisioningAt DateTime?
+  alertLastAttemptAt  DateTime?
   lastUpdated         DateTime            @updatedAt
   createdAt           DateTime            @default(now())
   dataSource          FlightDataSource    @default(FLIGHTAWARE)
@@ -218,6 +220,7 @@ model Flight {
   @@index([flightNumber, flightDate])
   @@index([status])
   @@index([alertId])
+  @@index([alertEnabled, alertLastAttemptAt])
   @@index([destinationCodeIATA, flightDate])
   @@index([scheduledArrival])
 }

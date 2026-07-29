@@ -10,6 +10,12 @@ import { HttpClientService } from "../http-client/http-client.service";
 import { FlightAwareApiException, FlightRecordNotFoundException } from "./flightaware.error";
 import type { CreateAlertParams } from "./flightaware.interface";
 
+const ALERT_PROVISIONING_STALE_MS = 2 * 60 * 1000;
+
+type FlightAlertClaim =
+  | { kind: "existing"; alertId: string }
+  | { kind: "claimed"; claimedAt: Date };
+
 @Injectable()
 export class FlightAwareAlertService {
   private readonly apiKey: string;
@@ -169,42 +175,72 @@ export class FlightAwareAlertService {
       0,
     );
 
-    let createdAlertId: string | null = null;
-
-    try {
-      return await this.databaseService.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockId})`;
-        const flight = await tx.flight.findUnique({
-          where: { id: flightId },
-          select: { alertId: true, alertEnabled: true },
-        });
-
-        if (!flight) {
-          throw new FlightRecordNotFoundException(flightId);
-        }
-
-        if (flight.alertId && flight.alertEnabled) {
-          this.logger.info(
-            { flightId, alertId: flight.alertId },
-            "Flight already has active alert, reusing",
-          );
-          return flight.alertId;
-        }
-
-        createdAlertId = await this.createFlightAlert({ ...params, flightId });
-
-        await tx.flight.update({
-          where: { id: flightId },
-          data: {
-            alertId: createdAlertId,
-            alertEnabled: true,
-            alertCreatedAt: new Date(),
-            alertDisabledAt: null,
-          },
-        });
-
-        return createdAlertId;
+    const claim = await this.databaseService.$transaction<FlightAlertClaim>(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockId})`;
+      const flight = await tx.flight.findUnique({
+        where: { id: flightId },
+        select: {
+          alertId: true,
+          alertEnabled: true,
+          alertProvisioningAt: true,
+        },
       });
+
+      if (!flight) {
+        throw new FlightRecordNotFoundException(flightId);
+      }
+
+      if (flight.alertId && flight.alertEnabled) {
+        return { kind: "existing", alertId: flight.alertId };
+      }
+
+      const claimedAt = new Date();
+      const staleBefore = claimedAt.getTime() - ALERT_PROVISIONING_STALE_MS;
+      if (flight.alertProvisioningAt && flight.alertProvisioningAt.getTime() > staleBefore) {
+        throw new Error(`Flight alert provisioning is already in progress for ${flightId}`);
+      }
+
+      await tx.flight.update({
+        where: { id: flightId },
+        data: {
+          alertProvisioningAt: claimedAt,
+          alertLastAttemptAt: claimedAt,
+        },
+      });
+
+      return { kind: "claimed", claimedAt };
+    });
+
+    if (claim.kind === "existing") {
+      this.logger.info(
+        { flightId, alertId: claim.alertId },
+        "Flight already has active alert, reusing",
+      );
+      return claim.alertId;
+    }
+
+    let createdAlertId: string | null = null;
+    try {
+      createdAlertId = await this.createFlightAlert({ ...params, flightId });
+      const persisted = await this.databaseService.flight.updateMany({
+        where: {
+          id: flightId,
+          alertEnabled: false,
+          alertProvisioningAt: claim.claimedAt,
+        },
+        data: {
+          alertId: createdAlertId,
+          alertEnabled: true,
+          alertCreatedAt: new Date(),
+          alertDisabledAt: null,
+          alertProvisioningAt: null,
+        },
+      });
+      if (persisted.count !== 1) {
+        throw new Error(`Flight alert provisioning claim was lost for ${flightId}`);
+      }
+
+      return createdAlertId;
     } catch (error) {
       if (createdAlertId) {
         try {
@@ -221,7 +257,25 @@ export class FlightAwareAlertService {
         }
       }
 
+      await this.releaseFlightAlertClaim(flightId, claim.claimedAt);
       throw error;
+    }
+  }
+
+  private async releaseFlightAlertClaim(flightId: string, claimedAt: Date): Promise<void> {
+    try {
+      await this.databaseService.flight.updateMany({
+        where: { id: flightId, alertProvisioningAt: claimedAt },
+        data: { alertProvisioningAt: null },
+      });
+    } catch (error) {
+      this.logger.error(
+        {
+          flightId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to release FlightAware alert provisioning claim",
+      );
     }
   }
 
@@ -274,6 +328,7 @@ export class FlightAwareAlertService {
         alertEnabled: false,
         alertCreatedAt: null,
         alertDisabledAt: new Date(),
+        alertProvisioningAt: null,
       },
     });
 

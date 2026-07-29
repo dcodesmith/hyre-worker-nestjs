@@ -96,8 +96,8 @@ export interface FlightAwareScheduledFlight {
   origin_iata?: string | null;
   destination: string;
   destination_iata?: string | null;
-  scheduled_out: string;
-  scheduled_in: string;
+  scheduled_out?: string | null;
+  scheduled_in?: string | null;
   scheduled_off?: string | null;
   scheduled_on?: string | null;
   estimated_in?: string | null;

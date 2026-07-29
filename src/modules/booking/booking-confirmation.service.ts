@@ -147,7 +147,7 @@ export class BookingConfirmationService {
     // Update car status to BOOKED to prevent double-booking
     await this.updateCarStatusToBooked(updatedBooking.carId, bookingId);
 
-    await this.queuePaidBookingFlightAlert(updatedBooking);
+    void this.queuePaidBookingFlightAlert(updatedBooking);
     await this.emitBookingConfirmedEvent(updatedBooking);
 
     return true;

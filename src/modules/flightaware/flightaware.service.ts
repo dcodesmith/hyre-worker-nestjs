@@ -355,7 +355,7 @@ export class FlightAwareService {
         }
 
         const scheduledFlight = this.findScheduledFlight(data.scheduled, flightNum);
-        return this.buildScheduledSuccessResult(scheduledFlight, flightNumber);
+        return await this.buildScheduledSuccessResult(scheduledFlight, flightNumber);
       } catch (error) {
         return this.handleApiError(error, flightNum, "fetchScheduledFlight");
       }
@@ -507,8 +507,9 @@ export class FlightAwareService {
     flightNumber: string,
   ): Promise<InternalFlightResult> {
     const scheduledArrival = scheduledFlight.scheduled_in ?? scheduledFlight.scheduled_on;
+    const scheduledDeparture = scheduledFlight.scheduled_out ?? scheduledFlight.scheduled_off;
 
-    if (!scheduledArrival) {
+    if (!scheduledArrival || !scheduledDeparture) {
       return { type: "notFound" };
     }
 
@@ -540,13 +541,14 @@ export class FlightAwareService {
       originName = originResult.value?.data?.name;
       originTimezone = originResult.value?.data?.timezone;
     }
-    const fallbackFlightId = `${flightNumber}-${scheduledFlight.scheduled_out.replace(/\D/g, "")}`;
+    const flightId =
+      scheduledFlight.fa_flight_id || `${flightNumber}-${scheduledDeparture.replace(/\D/g, "")}`;
 
     return {
       type: "success",
       flight: {
         flightNumber,
-        flightId: scheduledFlight.fa_flight_id || fallbackFlightId,
+        flightId,
         origin: scheduledFlight.origin,
         originIATA: scheduledFlight.origin_iata ?? undefined,
         originTimezone,
@@ -555,7 +557,7 @@ export class FlightAwareService {
         destinationIATA: scheduledFlight.destination_iata ?? undefined,
         destinationName,
         destinationCity,
-        scheduledDeparture: scheduledFlight.scheduled_out,
+        scheduledDeparture,
         scheduledArrival,
         estimatedArrival,
         actualArrival,

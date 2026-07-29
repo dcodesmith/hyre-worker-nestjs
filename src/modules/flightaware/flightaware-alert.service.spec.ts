@@ -31,6 +31,7 @@ describe("FlightAwareAlertService", () => {
     flight: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     $transaction: vi.fn((callback) => callback(mockDatabaseService)),
     $executeRaw: vi.fn(),
@@ -198,6 +199,7 @@ describe("FlightAwareAlertService", () => {
       mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
         alertId: "existing-alert-123",
         alertEnabled: true,
+        alertProvisioningAt: null,
       });
 
       const result = await service.getOrCreateFlightAlert("flight-id-1", {
@@ -214,14 +216,13 @@ describe("FlightAwareAlertService", () => {
       mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
         alertId: null,
         alertEnabled: false,
+        alertProvisioningAt: null,
       });
 
       mockHttpClient.post.mockResolvedValueOnce({
         data: undefined,
         headers: { location: "/aeroapi/alerts/456" },
       });
-
-      mockDatabaseService.flight.update.mockResolvedValueOnce({});
 
       const result = await service.getOrCreateFlightAlert("flight-id-1", {
         flightNumber: "BA74",
@@ -230,21 +231,70 @@ describe("FlightAwareAlertService", () => {
       });
 
       expect(result).toBe("456");
-      expect(mockDatabaseService.flight.update).toHaveBeenCalledWith({
-        where: { id: "flight-id-1" },
+      expect(mockDatabaseService.flight.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "flight-id-1",
+          alertEnabled: false,
+          alertProvisioningAt: expect.any(Date),
+        },
         data: {
           alertId: "456",
           alertEnabled: true,
           alertCreatedAt: expect.any(Date),
           alertDisabledAt: null,
+          alertProvisioningAt: null,
         },
       });
+    });
+
+    it("creates the remote alert after releasing the claim transaction", async () => {
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
+        alertId: null,
+        alertEnabled: false,
+        alertProvisioningAt: null,
+      });
+      mockHttpClient.post.mockResolvedValueOnce({
+        data: undefined,
+        headers: { location: "/aeroapi/alerts/456" },
+      });
+      mockDatabaseService.$transaction.mockImplementationOnce(async (callback) => {
+        const result = await callback(mockDatabaseService);
+        expect(mockHttpClient.post).not.toHaveBeenCalled();
+        return result;
+      });
+
+      await service.getOrCreateFlightAlert("flight-id-1", {
+        flightNumber: "BA74",
+        departureTime: new Date("2025-12-25"),
+        originTimezone: "UTC",
+      });
+
+      expect(mockHttpClient.post).toHaveBeenCalledOnce();
+    });
+
+    it("does not create a second alert while provisioning is active", async () => {
+      mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
+        alertId: null,
+        alertEnabled: false,
+        alertProvisioningAt: new Date(),
+      });
+
+      await expect(
+        service.getOrCreateFlightAlert("flight-id-1", {
+          flightNumber: "BA74",
+          departureTime: new Date("2025-12-25"),
+          originTimezone: "UTC",
+        }),
+      ).rejects.toThrow("provisioning is already in progress");
+
+      expect(mockHttpClient.post).not.toHaveBeenCalled();
     });
 
     it("should use advisory lock to prevent race conditions", async () => {
       mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
         alertId: "existing-alert",
         alertEnabled: true,
+        alertProvisioningAt: null,
       });
 
       await service.getOrCreateFlightAlert("flight-id-1", {
@@ -260,12 +310,15 @@ describe("FlightAwareAlertService", () => {
       mockDatabaseService.flight.findUnique.mockResolvedValueOnce({
         alertId: null,
         alertEnabled: false,
+        alertProvisioningAt: null,
       });
       mockHttpClient.post.mockResolvedValueOnce({
         data: undefined,
         headers: { location: "/aeroapi/alerts/456" },
       });
-      mockDatabaseService.flight.update.mockRejectedValueOnce(new Error("Database unavailable"));
+      mockDatabaseService.flight.updateMany.mockRejectedValueOnce(
+        new Error("Database unavailable"),
+      );
       mockHttpClient.delete.mockResolvedValueOnce({});
 
       await expect(
@@ -343,6 +396,7 @@ describe("FlightAwareAlertService", () => {
           alertEnabled: false,
           alertCreatedAt: null,
           alertDisabledAt: expect.any(Date),
+          alertProvisioningAt: null,
         },
       });
     });

@@ -24,6 +24,7 @@ type TransactionClient = {
   };
   booking: {
     findMany: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -98,6 +99,7 @@ describe("FlightAwareWebhookService", () => {
         update: vi.fn(),
       },
       booking: {
+        count: vi.fn().mockResolvedValue(1),
         findMany: vi.fn().mockResolvedValue([
           {
             id: "booking-1",
@@ -370,7 +372,7 @@ describe("FlightAwareWebhookService", () => {
     await handleWebhook(
       createPayload({
         event_code: "change",
-        flight: { estimated_in: "2030-01-01T10:00:00.000Z" },
+        flight: { estimated_in: "2030-01-01T09:48:00.000Z" },
       }),
     );
 
@@ -380,7 +382,11 @@ describe("FlightAwareWebhookService", () => {
         notifications: [
           expect.objectContaining({
             type: NotificationType.FLIGHT_DELAY_RECOVERED,
+            operationalBody:
+              "BA74's reported delay is now 0 minutes. Pickup timing has been recalculated.",
             customerTitle: "Your pickup flight delay improved",
+            customerBody:
+              "BA74's reported delay is now 0 minutes. We have updated your pickup timing.",
           }),
         ],
       }),
@@ -662,6 +668,8 @@ describe("FlightAwareWebhookService", () => {
 
     expect(transactionClient.flight.update).not.toHaveBeenCalled();
     expect(notificationOutboxService.create).not.toHaveBeenCalled();
+    expect(transactionClient.booking.findMany).not.toHaveBeenCalled();
+    expect(transactionClient.booking.count).toHaveBeenCalledOnce();
     expect(eventEmitter.emit).not.toHaveBeenCalled();
     expect(result).toEqual({
       duplicate: true,

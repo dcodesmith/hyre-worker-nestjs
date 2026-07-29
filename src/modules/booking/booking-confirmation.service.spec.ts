@@ -439,6 +439,7 @@ describe("BookingConfirmationService", () => {
         originTimezone: "Europe/London",
         destinationCodeIATA: "LOS",
       });
+      flightAlertQueue.add.mockReturnValueOnce(new Promise(() => undefined));
 
       await service.confirmFromPayment(mockPayment);
 
@@ -447,18 +448,20 @@ describe("BookingConfirmationService", () => {
         bookingType: "AIRPORT_PICKUP",
         activationAt: activationAt.toISOString(),
       });
-      expect(flightAlertQueue.add).toHaveBeenCalledWith(
-        CREATE_FLIGHT_ALERT_JOB,
-        {
-          flightId: "flight-1",
-          flightNumber: "BA74",
-          departureTime: "2030-01-01T08:00:00.000Z",
-          originCode: "EGLL",
-          originTimezone: "Europe/London",
-          destinationIATA: "LOS",
-        },
-        { jobId: "flight-alert-flight-1" },
-      );
+      await vi.waitFor(() => {
+        expect(flightAlertQueue.add).toHaveBeenCalledWith(
+          CREATE_FLIGHT_ALERT_JOB,
+          {
+            flightId: "flight-1",
+            flightNumber: "BA74",
+            departureTime: "2030-01-01T08:00:00.000Z",
+            originCode: "EGLL",
+            originTimezone: "Europe/London",
+            destinationIATA: "LOS",
+          },
+          { jobId: "flight-alert-flight-1" },
+        );
+      });
     });
 
     it("should not fail confirmation if booking confirmed event emission fails", async () => {

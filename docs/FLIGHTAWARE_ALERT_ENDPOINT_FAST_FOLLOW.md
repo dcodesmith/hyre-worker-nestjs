@@ -73,12 +73,12 @@ Do not automatically update the account-wide endpoint during application startup
 
 ## Proposed rollout order
 
-1. Confirm whether the AeroAPI account already has active alerts using the old `?secret=` callback URL.
-2. Recreate any old alerts with signed target URLs before removing their old callback path.
-3. Deploy the callback endpoint.
-4. Configure `PUT /alerts/endpoint` for the production AeroAPI account.
-5. Create a test flight alert and verify a real callback is accepted.
-6. Confirm fleet-owner/chauffeur delivery and customer-impact policy.
+1. Inspect `GET /alerts` and `GET /alerts/endpoint` before deployment.
+2. If legacy `?secret=` alerts exist, deploy a temporary compatibility release that accepts both legacy and signed callbacks. Do not deploy the HMAC-only guard first.
+3. Deploy the signed callback and configure `PUT /alerts/endpoint` for the production AeroAPI account before creating or recreating alerts.
+4. Recreate legacy alerts with signed target URLs and verify their callbacks.
+5. Remove temporary legacy callback support after all legacy alerts are gone. If no legacy alerts existed, skip the compatibility release.
+6. Create a test flight alert and verify fleet-owner/chauffeur delivery and the customer-impact policy.
 
 ## Acceptance criteria
 
