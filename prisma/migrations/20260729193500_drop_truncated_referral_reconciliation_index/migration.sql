@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS "ReferralReward_status_releaseCondition_reconciliationLastAttemp";

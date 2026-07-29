@@ -642,7 +642,7 @@ model ReferralReward {
   @@index([status, createdAt])
   @@index([status, bookingId])
   @@index([status, processedAt])
-  @@index([status, releaseCondition, reconciliationLastAttemptAt, createdAt])
+  @@index([status, releaseCondition, reconciliationLastAttemptAt, createdAt], map: "ReferralReward_reconciliation_pending_idx")
 }
 
 model ReferralProgramConfig {
