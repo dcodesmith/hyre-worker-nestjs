@@ -12,7 +12,6 @@ import {
 } from "./referral.error";
 import type { ReferralUserSummaryResponse } from "./referral.interface";
 import { ReferralApiService } from "./referral-api.service";
-import { ReferralProcessingService } from "./referral-processing.service";
 
 @Injectable()
 export class ReferralService {
@@ -28,7 +27,6 @@ export class ReferralService {
 
   constructor(
     private readonly referralApiService: ReferralApiService,
-    private readonly referralProcessingService: ReferralProcessingService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ReferralService.name);
@@ -70,14 +68,6 @@ export class ReferralService {
         break;
       }
     }
-  }
-
-  async queueReferralProcessing(bookingId: string): Promise<void> {
-    return this.referralProcessingService.queueReferralProcessing(bookingId);
-  }
-
-  async processReferralCompletionForBooking(bookingId: string) {
-    return this.referralProcessingService.processReferralCompletionForBooking(bookingId);
   }
 
   async validateReferralCode(code: string, query: ValidateReferralQueryDto) {

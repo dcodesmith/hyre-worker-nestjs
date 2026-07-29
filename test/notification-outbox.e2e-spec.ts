@@ -20,7 +20,6 @@ import { ReviewReceivedHandler } from "../src/modules/notification/handlers/revi
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { PaymentReconciliationService } from "../src/modules/payment/payment-reconciliation.service";
 import { ReferralProcessingService } from "../src/modules/referral/referral-processing.service";
-import { ReferralReconciliationScheduler } from "../src/modules/referral/referral-reconciliation.scheduler";
 import { ReviewsWriteService } from "../src/modules/reviews/reviews-write.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -46,7 +45,6 @@ describe("Notification outbox round-trip (e2e)", () => {
   let extensionConfirmationService: ExtensionConfirmationService;
   let reconciliationService: PaymentReconciliationService;
   let referralProcessingService: ReferralProcessingService;
-  let referralReconciliationScheduler: ReferralReconciliationScheduler;
   let reviewsWriteService: ReviewsWriteService;
   let notificationsQueue: Queue;
   let factory: TestDataFactory;
@@ -223,7 +221,6 @@ describe("Notification outbox round-trip (e2e)", () => {
     extensionConfirmationService = app.get(ExtensionConfirmationService);
     reconciliationService = app.get(PaymentReconciliationService);
     referralProcessingService = app.get(ReferralProcessingService);
-    referralReconciliationScheduler = app.get(ReferralReconciliationScheduler);
     reviewsWriteService = app.get(ReviewsWriteService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
     factory = new TestDataFactory(databaseService, app);
@@ -814,30 +811,6 @@ describe("Notification outbox round-trip (e2e)", () => {
         },
       },
     });
-  });
-
-  it("reconciles a completed booking whose referral enqueue was missed", async () => {
-    const { booking, reward } = await createCompletedReferralReward("referral-reconcile");
-
-    await referralReconciliationScheduler.reconcilePendingRewards();
-
-    await vi.waitFor(
-      async () => {
-        const updatedReward = await databaseService.referralReward.findUniqueOrThrow({
-          where: { id: reward.id },
-        });
-        expect(updatedReward.status).toBe("RELEASED");
-      },
-      { timeout: 5000, interval: 50 },
-    );
-    await expect(
-      databaseService.notificationOutboxEvent.count({
-        where: {
-          bookingId: booking.id,
-          dedupeKey: { startsWith: `referral-reward-released:${reward.id}:` },
-        },
-      }),
-    ).resolves.toBe(1);
   });
 
   it("rolls back a reward release when its durable notification cannot be built", async () => {

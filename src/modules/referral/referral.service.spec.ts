@@ -11,12 +11,10 @@ import {
 } from "./referral.error";
 import { ReferralService } from "./referral.service";
 import { ReferralApiService } from "./referral-api.service";
-import { ReferralProcessingService } from "./referral-processing.service";
 
 describe("ReferralService", () => {
   let service: ReferralService;
   let referralApiService: ReferralApiService;
-  let referralProcessingService: ReferralProcessingService;
   const buildRequest = (origin = "localhost:3000") =>
     ({
       headers: {},
@@ -36,13 +34,6 @@ describe("ReferralService", () => {
             getUserReferralSummary: vi.fn(),
           },
         },
-        {
-          provide: ReferralProcessingService,
-          useValue: {
-            queueReferralProcessing: vi.fn(),
-            processReferralCompletionForBooking: vi.fn(),
-          },
-        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -50,12 +41,6 @@ describe("ReferralService", () => {
 
     service = module.get<ReferralService>(ReferralService);
     referralApiService = module.get<ReferralApiService>(ReferralApiService);
-    referralProcessingService = module.get<ReferralProcessingService>(ReferralProcessingService);
-  });
-
-  it("delegates queue referral processing", async () => {
-    await service.queueReferralProcessing("booking-1");
-    expect(referralProcessingService.queueReferralProcessing).toHaveBeenCalledWith("booking-1");
   });
 
   it("returns normalized validate payload", async () => {

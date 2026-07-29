@@ -1,31 +1,23 @@
-import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   BookingReferralStatus,
   ReferralReleaseCondition,
   ReferralRewardStatus,
 } from "@prisma/client";
-import { Queue } from "bullmq";
-import { REFERRAL_QUEUE } from "src/config/constants";
 import { createBooking } from "src/shared/helper.fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { ReferralRewardReleasedHandler } from "../notification/handlers/referral-reward-released.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 import { ReferralProcessingService } from "./referral-processing.service";
 
 describe("ReferralProcessingService", () => {
   let service: ReferralProcessingService;
   let databaseService: DatabaseService;
   let notificationOutboxService: NotificationOutboxService;
-  let mockQueue: Partial<Queue<ReferralJobData>>;
 
   beforeEach(async () => {
-    mockQueue = {
-      add: vi.fn().mockResolvedValue({ id: "job-123" }),
-    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReferralProcessingService,
@@ -53,10 +45,6 @@ describe("ReferralProcessingService", () => {
               upsert: vi.fn(),
             },
           },
-        },
-        {
-          provide: getQueueToken(REFERRAL_QUEUE),
-          useValue: mockQueue,
         },
         {
           provide: NotificationOutboxService,
@@ -926,46 +914,6 @@ describe("ReferralProcessingService", () => {
       );
 
       expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-  });
-
-  describe("queueReferralProcessing", () => {
-    it("should successfully queue a referral processing job", async () => {
-      const bookingId = "booking-123";
-
-      await service.queueReferralProcessing(bookingId);
-
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        PROCESS_REFERRAL_COMPLETION,
-        {
-          bookingId,
-          timestamp: expect.any(String),
-        },
-        undefined,
-      );
-    });
-
-    it("uses a supplied reconciliation job ID", async () => {
-      await service.queueReferralProcessing("booking-123", "referral-reconcile-booking-123-1");
-
-      expect(mockQueue.add).toHaveBeenCalledWith(
-        PROCESS_REFERRAL_COMPLETION,
-        {
-          bookingId: "booking-123",
-          timestamp: expect.any(String),
-        },
-        { jobId: "referral-reconcile-booking-123-1" },
-      );
-    });
-
-    it("should throw error when queue fails", async () => {
-      const bookingId = "booking-123";
-      const queueError = new Error("Redis connection failed");
-      vi.mocked(mockQueue.add).mockRejectedValue(queueError);
-
-      await expect(service.queueReferralProcessing(bookingId)).rejects.toThrow(
-        "Redis connection failed",
-      );
     });
   });
 });

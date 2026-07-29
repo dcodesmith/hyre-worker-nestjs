@@ -1,13 +1,22 @@
-import { InjectQueue } from "@nestjs/bullmq";
+import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { PayoutTransaction } from "@prisma/client";
-import { Queue } from "bullmq";
+import { BookingStatus, PayoutTransaction, PayoutTransactionStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { PAYOUTS_QUEUE } from "../../config/constants";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
+import type { PayoutResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
-import { PayoutJobData, PROCESS_PAYOUT_FOR_BOOKING } from "./payment.interface";
+import {
+  PayoutBankDetailsRequiredException,
+  PayoutBookingNotCompletedException,
+  PayoutBookingNotFoundException,
+  PayoutInitiationFailedException,
+  PayoutProcessingClaimLostException,
+  PayoutProcessingInProgressException,
+  PayoutTransactionRecoveryFailedException,
+} from "./payment.error";
+
+const PAYOUT_PROCESSING_LEASE_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class PaymentService {
@@ -15,8 +24,6 @@ export class PaymentService {
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly logger: PinoLogger,
-    @InjectQueue(PAYOUTS_QUEUE)
-    private readonly payoutsQueue: Queue<PayoutJobData>,
   ) {
     this.logger.setContext(PaymentService.name);
   }
@@ -104,7 +111,7 @@ export class PaymentService {
       });
 
       if (!existingTransaction) {
-        throw new Error("Failed to fetch existing payout transaction after constraint violation");
+        throw new PayoutTransactionRecoveryFailedException(booking.id);
       }
 
       try {
@@ -138,11 +145,15 @@ export class PaymentService {
     }
   }
 
-  private async evaluatePayoutTransactionRetriability(
+  private async claimPayoutProcessing(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
-  ) {
-    if (payoutTransaction.status === "PROCESSING" || payoutTransaction.status === "PAID_OUT") {
+  ): Promise<string | null> {
+    if (
+      payoutTransaction.status === PayoutTransactionStatus.PAID_OUT ||
+      (payoutTransaction.status === PayoutTransactionStatus.PROCESSING &&
+        !payoutTransaction.processingLeaseId)
+    ) {
       this.logger.info(
         {
           bookingId,
@@ -150,14 +161,43 @@ export class PaymentService {
         },
         "Payout already processed or in progress for booking",
       );
-      return "NON_RETRIABLE";
+      return null;
     }
 
-    if (payoutTransaction.status === "FAILED") {
+    if (payoutTransaction.status === PayoutTransactionStatus.FAILED) {
       this.logger.info({ bookingId }, "Retrying failed payout for booking");
     }
 
-    return "RETRIABLE";
+    const now = new Date();
+    const processingLeaseId = randomUUID();
+    const claimed = await this.databaseService.payoutTransaction.updateMany({
+      where: {
+        id: payoutTransaction.id,
+        OR: [
+          {
+            status: {
+              in: [PayoutTransactionStatus.PENDING_DISBURSEMENT, PayoutTransactionStatus.FAILED],
+            },
+          },
+          {
+            status: PayoutTransactionStatus.PROCESSING,
+            processingLeaseExpiresAt: { lte: now },
+          },
+        ],
+      },
+      data: {
+        status: PayoutTransactionStatus.PROCESSING,
+        initiatedAt: now,
+        processingLeaseId,
+        processingLeaseExpiresAt: new Date(now.getTime() + PAYOUT_PROCESSING_LEASE_MS),
+      },
+    });
+
+    if (claimed.count === 0) {
+      throw new PayoutProcessingInProgressException(bookingId);
+    }
+
+    return processingLeaseId;
   }
 
   private extractTransferId(data: unknown): string | null {
@@ -173,28 +213,38 @@ export class PaymentService {
     bookingId: string,
     payoutTransaction: PayoutTransaction,
     payoutResultData: unknown,
-  ) {
+    processingLeaseId: string,
+  ): Promise<void> {
     const transferId = this.extractTransferId(payoutResultData);
 
-    const updatedTransaction = await this.databaseService.$transaction(async (tx) => {
-      const updated = await tx.payoutTransaction.update({
-        where: { id: payoutTransaction.id },
+    await this.databaseService.$transaction(async (tx) => {
+      const updated = await tx.payoutTransaction.updateMany({
+        where: {
+          id: payoutTransaction.id,
+          status: PayoutTransactionStatus.PROCESSING,
+          processingLeaseId,
+        },
         data: {
-          status: "PROCESSING",
+          status: PayoutTransactionStatus.PROCESSING,
           payoutProviderReference: transferId,
+          processingLeaseId: null,
+          processingLeaseExpiresAt: null,
         },
       });
+      if (updated.count === 0) {
+        throw new PayoutProcessingClaimLostException(bookingId);
+      }
+
       await tx.booking.update({
         where: { id: bookingId },
         data: { overallPayoutStatus: "PROCESSING" },
       });
-      return updated;
     });
 
     this.logger.info(
       {
         bookingId,
-        transactionId: updatedTransaction.id,
+        transactionId: payoutTransaction.id,
       },
       "Payout for booking initiated successfully",
     );
@@ -214,15 +264,27 @@ export class PaymentService {
   private async handleFailedPayout(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
-    payoutResultData: unknown,
-  ) {
-    const errorMessage = this.extractErrorMessage(payoutResultData);
-
+    errorMessage: string,
+    processingLeaseId: string,
+  ): Promise<void> {
     await this.databaseService.$transaction(async (tx) => {
-      await tx.payoutTransaction.update({
-        where: { id: payoutTransaction.id },
-        data: { status: "FAILED", notes: `Flutterwave initiation failed: ${errorMessage}` },
+      const updated = await tx.payoutTransaction.updateMany({
+        where: {
+          id: payoutTransaction.id,
+          status: PayoutTransactionStatus.PROCESSING,
+          processingLeaseId,
+        },
+        data: {
+          status: PayoutTransactionStatus.FAILED,
+          notes: `Flutterwave initiation failed: ${errorMessage}`,
+          processingLeaseId: null,
+          processingLeaseExpiresAt: null,
+        },
       });
+      if (updated.count === 0) {
+        return;
+      }
+
       await tx.booking.update({
         where: { id: bookingId },
         data: { overallPayoutStatus: "FAILED" },
@@ -242,7 +304,7 @@ export class PaymentService {
    * Initiates a payout for a completed booking.
    * It creates a PayoutTransaction record and triggers the actual payout via Flutterwave.
    */
-  async initiatePayout(booking: BookingWithRelations) {
+  async initiatePayout(booking: BookingWithRelations): Promise<void> {
     try {
       if (this.hasNoPayoutAmount(booking)) {
         this.logger.info(
@@ -253,7 +315,9 @@ export class PaymentService {
       }
 
       const bankDetails = await this.getVerifiedBankDetails(booking);
-      if (!bankDetails) return;
+      if (!bankDetails) {
+        throw new PayoutBankDetailsRequiredException(booking.id);
+      }
 
       const payoutAmount = booking.fleetOwnerPayoutAmountNet.toNumber();
 
@@ -263,11 +327,8 @@ export class PaymentService {
         payoutAmount,
       );
 
-      const statusHandlingResult = await this.evaluatePayoutTransactionRetriability(
-        booking.id,
-        payoutTransaction,
-      );
-      if (statusHandlingResult === "NON_RETRIABLE") {
+      const processingLeaseId = await this.claimPayoutProcessing(booking.id, payoutTransaction);
+      if (!processingLeaseId) {
         return;
       }
 
@@ -275,22 +336,36 @@ export class PaymentService {
       // retries for the same logical payout use the same Flutterwave reference.
       const reference = `payout_${payoutTransaction.id}`;
 
-      const payoutResult = await this.flutterwaveService.initiatePayout({
-        bankDetails: {
-          bankCode: bankDetails.bankCode,
-          accountNumber: bankDetails.accountNumber,
-          bankName: bankDetails.bankName,
-        },
-        amount: payoutAmount,
-        reference,
-        bookingId: booking.id,
-        bookingReference: booking.bookingReference,
-      });
+      let payoutResult: PayoutResponse;
+      try {
+        payoutResult = await this.flutterwaveService.initiatePayout({
+          bankDetails: {
+            bankCode: bankDetails.bankCode,
+            accountNumber: bankDetails.accountNumber,
+            bankName: bankDetails.bankName,
+          },
+          amount: payoutAmount,
+          reference,
+          bookingId: booking.id,
+          bookingReference: booking.bookingReference,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await this.handleFailedPayout(booking.id, payoutTransaction, reason, processingLeaseId);
+        throw new PayoutInitiationFailedException(booking.id, reason);
+      }
 
       if (payoutResult.success) {
-        await this.handleSuccessfulPayout(booking.id, payoutTransaction, payoutResult.data);
+        await this.handleSuccessfulPayout(
+          booking.id,
+          payoutTransaction,
+          payoutResult.data,
+          processingLeaseId,
+        );
       } else {
-        await this.handleFailedPayout(booking.id, payoutTransaction, payoutResult.data);
+        const reason = this.extractErrorMessage(payoutResult.data);
+        await this.handleFailedPayout(booking.id, payoutTransaction, reason, processingLeaseId);
+        throw new PayoutInitiationFailedException(booking.id, reason);
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -305,38 +380,29 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Queue payout processing for a completed booking.
-   * This allows payouts to be processed asynchronously via BullMQ.
-   */
-  async queuePayoutForBooking(bookingId: string) {
-    try {
-      await this.payoutsQueue.add(
-        PROCESS_PAYOUT_FOR_BOOKING,
-        {
-          bookingId,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          jobId: `payout-${bookingId}`,
-          attempts: 3,
-          backoff: {
-            type: "exponential",
-            delay: 5000,
+  async processPayoutForBooking(bookingId: string): Promise<void> {
+    const booking = await this.databaseService.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        chauffeur: true,
+        user: true,
+        car: { include: { owner: true } },
+        legs: {
+          include: {
+            extensions: true,
           },
         },
-      );
+      },
+    });
 
-      this.logger.info(`Queued payout processing for booking ${bookingId}`);
-    } catch (error) {
-      this.logger.error(
-        {
-          bookingId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue payout processing",
-      );
-      throw error;
+    if (!booking) {
+      throw new PayoutBookingNotFoundException(bookingId);
     }
+
+    if (booking.status !== BookingStatus.COMPLETED) {
+      throw new PayoutBookingNotCompletedException(bookingId);
+    }
+
+    await this.initiatePayout(booking);
   }
 }

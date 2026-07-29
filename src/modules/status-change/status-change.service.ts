@@ -1,15 +1,20 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, BookingType, PaymentStatus, Status } from "@prisma/client";
+import {
+  BookingStatus,
+  BookingType,
+  DomainOutboxEventType,
+  PaymentStatus,
+  Status,
+} from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
+import { DomainOutboxService } from "../domain-outbox/domain-outbox.service";
 import { BookingStatusChangedHandler } from "../notification/handlers/booking-status-changed.handler";
 import {
   NotificationOutboxService,
   type NotificationOutboxTransactionClient,
 } from "../notification/notification-outbox.service";
-import { PaymentService } from "../payment/payment.service";
-import { ReferralService } from "../referral/referral.service";
 import {
   ActiveToCompletedUpdateFailedException,
   AirportBookingActivationFailedException,
@@ -23,8 +28,7 @@ export class StatusChangeService {
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingStatusChangedHandler: BookingStatusChangedHandler,
-    private readonly paymentService: PaymentService,
-    private readonly referralService: ReferralService,
+    private readonly domainOutboxService: DomainOutboxService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(StatusChangeService.name);
@@ -228,7 +232,7 @@ export class StatusChangeService {
       }
 
       for (const booking of bookingsToUpdate) {
-        await this.completeActiveBooking(booking);
+        await this.completeBookingTransaction(booking);
       }
 
       return `Updated ${bookingsToUpdate.length} bookings from active to completed`;
@@ -241,16 +245,6 @@ export class StatusChangeService {
       this.logger.error({ error: wrappedError.message }, "Active to completed update failed");
       throw wrappedError;
     }
-  }
-
-  private async completeActiveBooking(booking: {
-    id: string;
-    status: BookingStatus;
-    carId: string;
-    endDate: Date;
-  }): Promise<void> {
-    await this.completeBookingTransaction(booking);
-    await this.queuePostCompletionTasks(booking.id);
   }
 
   private async completeBookingTransaction(booking: {
@@ -314,38 +308,20 @@ export class StatusChangeService {
         showReviewRequest,
         tx,
       );
-    });
-  }
-
-  private async queuePostCompletionTasks(bookingId: string): Promise<void> {
-    await this.runNonBlockingPostCompletionTask(
-      bookingId,
-      "Failed to queue referral processing",
-      () => this.referralService.queueReferralProcessing(bookingId),
-    );
-    await this.runNonBlockingPostCompletionTask(
-      bookingId,
-      "Failed to queue payout processing",
-      () => this.paymentService.queuePayoutForBooking(bookingId),
-    );
-  }
-
-  private async runNonBlockingPostCompletionTask(
-    bookingId: string,
-    errorMessage: string,
-    operation: () => Promise<void>,
-  ): Promise<void> {
-    try {
-      await operation();
-    } catch (error) {
-      this.logger.error(
-        {
-          bookingId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        errorMessage,
+      await this.domainOutboxService.createMany(
+        [
+          {
+            eventType: DomainOutboxEventType.REFERRAL_COMPLETION,
+            aggregateId: booking.id,
+          },
+          {
+            eventType: DomainOutboxEventType.PAYOUT_PROCESSING,
+            aggregateId: booking.id,
+          },
+        ],
+        tx,
       );
-    }
+    });
   }
 
   private async queueStatusNotification(
