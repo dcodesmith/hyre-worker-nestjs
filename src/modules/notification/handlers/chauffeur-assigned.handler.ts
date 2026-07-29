@@ -90,7 +90,7 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
       recipientType: CHAUFFEUR_RECIPIENT_TYPE,
       type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
       title: "Airport pickup flight briefing",
-      body: `${flight.flightNumber} is ${flight.status.toLowerCase()}${delay}. Review the live flight details before pickup.`,
+      body: `${flight.flightNumber} is ${flight.status.toLowerCase().replaceAll("_", " ")}${delay}. Review the live flight details before pickup.`,
       flightNumber: flight.flightNumber,
       expectedArrival: formatFlightOperationalTime(expectedArrival),
       pickupActivationTime: formatFlightOperationalTime(pickupActivationTime),

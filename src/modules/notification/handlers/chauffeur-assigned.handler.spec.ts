@@ -194,6 +194,7 @@ describe("ChauffeurAssignedHandler", () => {
         recipientType: "chauffeur",
         type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
         flightNumber: "BA74",
+        body: "BA74 is en route, currently delayed by 45 minutes. Review the live flight details before pickup.",
         arrivalLocation: "LOS, Terminal 2, Gate G2",
       }),
     );
