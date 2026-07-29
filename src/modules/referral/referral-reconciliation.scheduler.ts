@@ -12,6 +12,7 @@ import { DatabaseService } from "../database/database.service";
 import { ReferralProcessingService } from "./referral-processing.service";
 
 const RECONCILIATION_WINDOW_MS = 5 * 60 * 1000;
+const RECONCILIATION_BATCH_SIZE = 100;
 
 @Injectable()
 export class ReferralReconciliationScheduler {
@@ -76,8 +77,14 @@ export class ReferralReconciliationScheduler {
         select: { bookingId: true },
         distinct: ["bookingId"],
         orderBy: { createdAt: "asc" },
-        take: 100,
+        take: RECONCILIATION_BATCH_SIZE,
       });
+      if (rewards.length === RECONCILIATION_BATCH_SIZE) {
+        this.logger.warn(
+          { batchSize: RECONCILIATION_BATCH_SIZE },
+          "Referral reward reconciliation batch is saturated",
+        );
+      }
       const reconciliationBucket = Math.floor(now.getTime() / RECONCILIATION_WINDOW_MS);
       let enqueued = 0;
       let failed = 0;

@@ -92,6 +92,19 @@ describe("ReferralReconciliationScheduler", () => {
     );
   });
 
+  it("warns when the reconciliation batch is saturated", async () => {
+    databaseService.referralReward.findMany.mockResolvedValueOnce(
+      Array.from({ length: 100 }, (_, index) => ({ bookingId: `booking-${index}` })),
+    );
+
+    await scheduler.reconcilePendingRewards();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { batchSize: 100 },
+      "Referral reward reconciliation batch is saturated",
+    );
+  });
+
   it("does not enqueue when completion release is disabled", async () => {
     databaseService.referralProgramConfig.findMany.mockResolvedValueOnce([
       { key: "REFERRAL_ENABLED", value: false },

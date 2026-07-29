@@ -222,32 +222,21 @@ export class BookingEligibilityService {
     bookingId: string,
     reason: string,
   ): Promise<number> {
-    const pendingRewards = await tx.referralReward.findMany({
+    const reversedRewards = await tx.referralReward.updateManyAndReturn({
       where: { bookingId, status: ReferralRewardStatus.PENDING },
-      select: { id: true, referrerUserId: true, amount: true },
+      data: {
+        status: ReferralRewardStatus.REVERSED,
+        processedAt: new Date(),
+        reason,
+      },
+      select: { referrerUserId: true, amount: true },
     });
 
-    if (pendingRewards.length > 0) {
-      // Soft-delete: tombstone the row with status REVERSED + processedAt + reason
-      // so we keep an auditable record of every reservation attempt. The re-check
-      // on `status: PENDING` is a guard against a concurrent writer transitioning
-      // the same row in between our findMany and updateMany.
-      await tx.referralReward.updateMany({
-        where: {
-          id: { in: pendingRewards.map((r) => r.id) },
-          status: ReferralRewardStatus.PENDING,
-        },
-        data: {
-          status: ReferralRewardStatus.REVERSED,
-          processedAt: new Date(),
-          reason,
-        },
-      });
-
-      await this.decrementReferralStatsForReversedRewards(tx, pendingRewards);
+    if (reversedRewards.length > 0) {
+      await this.decrementReferralStatsForReversedRewards(tx, reversedRewards);
     }
 
-    return pendingRewards.length;
+    return reversedRewards.length;
   }
 
   /**
