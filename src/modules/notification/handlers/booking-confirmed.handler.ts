@@ -35,7 +35,7 @@ export class BookingConfirmedHandler implements OutboxEventHandler<BookingConfir
         userId: booking.userId,
         type: NotificationInboxType.BOOKING_LIFECYCLE,
         title: "Booking confirmed",
-        body: "Your booking has been confirmed.",
+        body: customer?.pushPayload?.body ?? "Your booking has been confirmed.",
         payload: { bookingId: booking.id, status: "CONFIRMED" },
       };
     }

@@ -1,16 +1,25 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
-import { BookingReferralStatus, Prisma, ReferralRewardStatus } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  Prisma,
+  ReferralReleaseCondition,
+  ReferralRewardStatus,
+} from "@prisma/client";
 import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { REFERRAL_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
+import { ReferralRewardReleasedHandler } from "../notification/handlers/referral-reward-released.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 
 @Injectable()
 export class ReferralProcessingService {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly referralRewardReleasedHandler: ReferralRewardReleasedHandler,
     private readonly logger: PinoLogger,
     @InjectQueue(REFERRAL_QUEUE)
     private readonly referralQueue: Queue<ReferralJobData>,
@@ -21,12 +30,14 @@ export class ReferralProcessingService {
   /**
    * Queue a referral completion job for async processing
    */
-  async queueReferralProcessing(bookingId: string): Promise<void> {
+  async queueReferralProcessing(bookingId: string, jobId?: string): Promise<void> {
     try {
-      await this.referralQueue.add(PROCESS_REFERRAL_COMPLETION, {
+      const jobData = {
         bookingId,
         timestamp: new Date().toISOString(),
-      });
+      };
+      const options = jobId ? { jobId } : undefined;
+      await this.referralQueue.add(PROCESS_REFERRAL_COMPLETION, jobData, options);
 
       this.logger.info(`Queued referral processing for booking ${bookingId}`);
     } catch (error) {
@@ -176,7 +187,11 @@ export class ReferralProcessingService {
 
         // Release pending reward
         const pendingReward = await tx.referralReward.findFirst({
-          where: { bookingId: booking.id, status: ReferralRewardStatus.PENDING },
+          where: {
+            bookingId: booking.id,
+            status: ReferralRewardStatus.PENDING,
+            releaseCondition: ReferralReleaseCondition.COMPLETED,
+          },
         });
 
         if (!pendingReward) {
@@ -189,10 +204,18 @@ export class ReferralProcessingService {
           return;
         }
 
-        await tx.referralReward.update({
-          where: { id: pendingReward.id },
-          data: { status: ReferralRewardStatus.RELEASED, processedAt: new Date() },
+        const releasedAt = new Date();
+        const released = await tx.referralReward.updateMany({
+          where: {
+            id: pendingReward.id,
+            status: ReferralRewardStatus.PENDING,
+            releaseCondition: ReferralReleaseCondition.COMPLETED,
+          },
+          data: { status: ReferralRewardStatus.RELEASED, processedAt: releasedAt },
         });
+        if (released.count === 0) {
+          return;
+        }
 
         await tx.booking.update({
           where: { id: booking.id },
@@ -223,6 +246,18 @@ export class ReferralProcessingService {
           },
         });
 
+        await this.notificationOutboxService.create(
+          this.referralRewardReleasedHandler,
+          {
+            rewardId: pendingReward.id,
+            bookingId: booking.id,
+            referrerUserId: pendingReward.referrerUserId,
+            amount: Number(pendingReward.amount),
+            releasedAt,
+          },
+          tx,
+        );
+
         this.logger.info(
           {
             bookingId: booking.id,
@@ -241,7 +276,7 @@ export class ReferralProcessingService {
         },
         "Failed to process referral completion",
       );
-      // Don't throw - allow graceful degradation
+      throw error;
     }
   }
 }

@@ -30,6 +30,7 @@ lerna-debug.log*
 *.md
 !README.md
 !docs/FLIGHTAWARE_ALERT_ENDPOINT_FAST_FOLLOW.md
+!docs/GENERIC_DOMAIN_OUTBOX_FAST_FOLLOW.md
 
 scripts/deploy-secrets.sh
 scripts/set-preview-secrets.sh

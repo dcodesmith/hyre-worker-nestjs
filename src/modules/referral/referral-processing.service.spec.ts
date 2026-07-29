@@ -1,18 +1,25 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingReferralStatus, ReferralRewardStatus } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  ReferralReleaseCondition,
+  ReferralRewardStatus,
+} from "@prisma/client";
 import { Queue } from "bullmq";
 import { REFERRAL_QUEUE } from "src/config/constants";
 import { createBooking } from "src/shared/helper.fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
+import { ReferralRewardReleasedHandler } from "../notification/handlers/referral-reward-released.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 import { ReferralProcessingService } from "./referral-processing.service";
 
 describe("ReferralProcessingService", () => {
   let service: ReferralProcessingService;
   let databaseService: DatabaseService;
+  let notificationOutboxService: NotificationOutboxService;
   let mockQueue: Partial<Queue<ReferralJobData>>;
 
   beforeEach(async () => {
@@ -38,7 +45,7 @@ describe("ReferralProcessingService", () => {
             },
             referralReward: {
               findFirst: vi.fn(),
-              update: vi.fn(),
+              updateMany: vi.fn(),
             },
             $transaction: vi.fn(),
             userReferralStats: {
@@ -51,6 +58,19 @@ describe("ReferralProcessingService", () => {
           provide: getQueueToken(REFERRAL_QUEUE),
           useValue: mockQueue,
         },
+        {
+          provide: NotificationOutboxService,
+          useValue: {
+            create: vi.fn().mockResolvedValue(1),
+          },
+        },
+        {
+          provide: ReferralRewardReleasedHandler,
+          useValue: {
+            eventType: "BOOKING_LIFECYCLE",
+            buildEvents: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -58,6 +78,7 @@ describe("ReferralProcessingService", () => {
 
     service = module.get<ReferralProcessingService>(ReferralProcessingService);
     databaseService = module.get<DatabaseService>(DatabaseService);
+    notificationOutboxService = module.get<NotificationOutboxService>(NotificationOutboxService);
   });
 
   describe("processReferralCompletionForBooking - Configuration-Based Early Returns", () => {
@@ -295,7 +316,7 @@ describe("ReferralProcessingService", () => {
                 amount: 1000,
                 status: ReferralRewardStatus.PENDING,
               }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -347,7 +368,7 @@ describe("ReferralProcessingService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -386,7 +407,7 @@ describe("ReferralProcessingService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -527,7 +548,7 @@ describe("ReferralProcessingService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -571,7 +592,7 @@ describe("ReferralProcessingService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -610,7 +631,7 @@ describe("ReferralProcessingService", () => {
               amount: 1000,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue(null),
@@ -656,7 +677,7 @@ describe("ReferralProcessingService", () => {
     });
 
     it("should successfully release reward and create new referrer stats", async () => {
-      const mockRewardUpdate = vi.fn().mockResolvedValue({});
+      const mockRewardUpdate = vi.fn().mockResolvedValue({ count: 1 });
       const mockBookingUpdate = vi.fn().mockResolvedValue({});
       const mockStatsUpsert = vi.fn().mockResolvedValue({});
 
@@ -674,7 +695,7 @@ describe("ReferralProcessingService", () => {
                 amount: 1000,
                 status: ReferralRewardStatus.PENDING,
               }),
-            update: mockRewardUpdate,
+            updateMany: mockRewardUpdate,
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -700,7 +721,11 @@ describe("ReferralProcessingService", () => {
       await service.processReferralCompletionForBooking("booking-123");
 
       expect(mockRewardUpdate).toHaveBeenCalledWith({
-        where: { id: "reward-123" },
+        where: {
+          id: "reward-123",
+          status: ReferralRewardStatus.PENDING,
+          releaseCondition: ReferralReleaseCondition.COMPLETED,
+        },
         data: expect.objectContaining({
           status: ReferralRewardStatus.RELEASED,
           processedAt: expect.any(Date),
@@ -730,6 +755,17 @@ describe("ReferralProcessingService", () => {
 
       const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
       expect(firstCall.update.totalRewardsPending.toString()).toBe("0");
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
+        {
+          rewardId: "reward-123",
+          bookingId: expect.any(String),
+          referrerUserId: "referrer-123",
+          amount: 1000,
+          releasedAt: expect.any(Date),
+        },
+        expect.any(Object),
+      );
     });
 
     it("should successfully release reward and update existing referrer stats", async () => {
@@ -745,7 +781,7 @@ describe("ReferralProcessingService", () => {
               amount: 500,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -797,7 +833,7 @@ describe("ReferralProcessingService", () => {
               amount: 500,
               status: ReferralRewardStatus.PENDING,
             }),
-            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           },
           user: {
             findUnique: vi.fn().mockResolvedValue({
@@ -850,31 +886,33 @@ describe("ReferralProcessingService", () => {
       );
     });
 
-    it("should rollback all changes if any database operation fails", async () => {
+    it("should rollback and rethrow if any database operation fails", async () => {
       const mockTransaction = vi.fn(async () => {
         throw new Error("Database constraint violation");
       });
 
       vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
 
-      await service.processReferralCompletionForBooking("booking-123");
+      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
+        "Database constraint violation",
+      );
 
       expect(databaseService.$transaction).toHaveBeenCalled();
     });
 
-    it("should catch and log errors without throwing", async () => {
+    it("should rethrow errors so BullMQ can retry", async () => {
       const mockTransaction = vi.fn(async () => {
         throw new Error("Unexpected database error");
       });
 
       vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
 
-      await expect(
-        service.processReferralCompletionForBooking("booking-123"),
-      ).resolves.not.toThrow();
+      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
+        "Unexpected database error",
+      );
     });
 
-    it("should handle database connection errors gracefully", async () => {
+    it("should rethrow database connection errors", async () => {
       const mockTransaction = vi.fn(async () => {
         const error = new Error("Connection timeout");
         error.name = "DatabaseConnectionError";
@@ -883,9 +921,9 @@ describe("ReferralProcessingService", () => {
 
       vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
 
-      await expect(
-        service.processReferralCompletionForBooking("booking-123"),
-      ).resolves.not.toThrow();
+      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
+        "Connection timeout",
+      );
 
       expect(databaseService.$transaction).toHaveBeenCalled();
     });
@@ -897,10 +935,27 @@ describe("ReferralProcessingService", () => {
 
       await service.queueReferralProcessing(bookingId);
 
-      expect(mockQueue.add).toHaveBeenCalledWith(PROCESS_REFERRAL_COMPLETION, {
-        bookingId,
-        timestamp: expect.any(String),
-      });
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        PROCESS_REFERRAL_COMPLETION,
+        {
+          bookingId,
+          timestamp: expect.any(String),
+        },
+        undefined,
+      );
+    });
+
+    it("uses a supplied reconciliation job ID", async () => {
+      await service.queueReferralProcessing("booking-123", "referral-reconcile-booking-123-1");
+
+      expect(mockQueue.add).toHaveBeenCalledWith(
+        PROCESS_REFERRAL_COMPLETION,
+        {
+          bookingId: "booking-123",
+          timestamp: expect.any(String),
+        },
+        { jobId: "referral-reconcile-booking-123-1" },
+      );
     });
 
     it("should throw error when queue fails", async () => {

@@ -338,6 +338,34 @@ describe("Bookings E2E Tests", () => {
         status: "CONFIRMED",
         paymentStatus: "PAID",
       });
+      const referrer = await factory.createUser({
+        email: uniqueEmail("cancelled-booking-referrer"),
+      });
+      await databaseService.booking.update({
+        where: { id: booking.id },
+        data: {
+          referralReferrerUserId: referrer.id,
+          referralStatus: "APPLIED",
+          referralDiscountAmount: 5000,
+        },
+      });
+      const reward = await databaseService.referralReward.create({
+        data: {
+          referrerUserId: referrer.id,
+          refereeUserId: testUserId,
+          bookingId: booking.id,
+          amount: 2500,
+          status: "PENDING",
+          releaseCondition: "COMPLETED",
+        },
+      });
+      await databaseService.userReferralStats.create({
+        data: {
+          userId: referrer.id,
+          totalReferrals: 1,
+          totalRewardsPending: 2500,
+        },
+      });
 
       const response = await request(app.getHttpServer())
         .patch(`/api/bookings/${booking.id}/cancel`)
@@ -348,6 +376,19 @@ describe("Bookings E2E Tests", () => {
 
       const cancelled = await factory.getBookingById(booking.id);
       expect(cancelled?.status).toBe("CANCELLED");
+      expect(cancelled?.referralStatus).toBe("APPLIED");
+      await expect(
+        databaseService.referralReward.findUniqueOrThrow({ where: { id: reward.id } }),
+      ).resolves.toMatchObject({
+        status: "REVERSED",
+        reason: "BOOKING_CANCELLED",
+        processedAt: expect.any(Date),
+      });
+      const stats = await databaseService.userReferralStats.findUniqueOrThrow({
+        where: { userId: referrer.id },
+      });
+      expect(stats.totalReferrals).toBe(0);
+      expect(stats.totalRewardsPending.toString()).toBe("0");
     });
 
     it("should return 404 when cancelling another user's booking", async () => {

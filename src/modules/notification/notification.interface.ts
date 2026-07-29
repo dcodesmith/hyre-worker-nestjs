@@ -24,6 +24,7 @@ export enum NotificationType {
   BOOKING_UPDATED = "booking-updated",
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
   REVIEW_RECEIVED = "review-received",
+  REFERRAL_REWARD_RELEASED = "referral-reward-released",
   FLIGHT_ARRIVED = "flight-arrived",
   FLIGHT_DEPARTED = "flight-departed",
   FLIGHT_DELAYED = "flight-delayed",
@@ -160,4 +161,12 @@ export interface ReviewReceivedNotificationParams {
     comment: string | null;
     reviewDate: Date;
   };
+}
+
+export interface ReferralRewardReleasedNotificationParams {
+  rewardId: string;
+  bookingId: string;
+  referrerUserId: string;
+  amount: number;
+  releasedAt: Date;
 }

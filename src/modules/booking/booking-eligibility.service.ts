@@ -206,39 +206,37 @@ export class BookingEligibilityService {
       return { released: false };
     }
 
-    // Capture referrer + amount before flipping the rows: `updateMany` returns a
-    // count only, but we need this data to decrement the matching stats counters.
-    const pendingRewards = await tx.referralReward.findMany({
-      where: { bookingId, status: ReferralRewardStatus.PENDING },
-      select: { id: true, referrerUserId: true, amount: true },
-    });
-
-    if (pendingRewards.length > 0) {
-      // Soft-delete: tombstone the row with status REVERSED + processedAt + reason
-      // so we keep an auditable record of every reservation attempt. The re-check
-      // on `status: PENDING` is a guard against a concurrent writer transitioning
-      // the same row in between our findMany and updateMany.
-      await tx.referralReward.updateMany({
-        where: {
-          id: { in: pendingRewards.map((r) => r.id) },
-          status: ReferralRewardStatus.PENDING,
-        },
-        data: {
-          status: ReferralRewardStatus.REVERSED,
-          processedAt: new Date(),
-          reason: RELEASED_RESERVATION_REASON,
-        },
-      });
-
-      await this.decrementReferralStatsForReversedRewards(tx, pendingRewards);
-    }
-
-    this.logger.info(
-      { bookingId, reversedRewards: pendingRewards.length },
-      "Released referral reservation",
+    const reversedRewards = await this.reversePendingReferralRewards(
+      tx,
+      bookingId,
+      RELEASED_RESERVATION_REASON,
     );
 
+    this.logger.info({ bookingId, reversedRewards }, "Released referral reservation");
+
     return { released: true };
+  }
+
+  async reversePendingReferralRewards(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    reason: string,
+  ): Promise<number> {
+    const reversedRewards = await tx.referralReward.updateManyAndReturn({
+      where: { bookingId, status: ReferralRewardStatus.PENDING },
+      data: {
+        status: ReferralRewardStatus.REVERSED,
+        processedAt: new Date(),
+        reason,
+      },
+      select: { referrerUserId: true, amount: true },
+    });
+
+    if (reversedRewards.length > 0) {
+      await this.decrementReferralStatsForReversedRewards(tx, reversedRewards);
+    }
+
+    return reversedRewards.length;
   }
 
   /**

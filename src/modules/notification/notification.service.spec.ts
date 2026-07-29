@@ -1,8 +1,9 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus } from "@prisma/client";
+import { BookingReferralStatus, BookingStatus } from "@prisma/client";
 import { Queue } from "bullmq";
+import Decimal from "decimal.js";
 import { normaliseBookingLegDetails } from "src/shared/helper";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -315,6 +316,7 @@ describe("NotificationService", () => {
         },
         pushPayload: {
           title: "Booking confirmed",
+          body: "Your booking for BMW X5 (2023) has been confirmed.",
           data: {
             type: NotificationType.BOOKING_CONFIRMED,
             target: {
@@ -343,6 +345,40 @@ describe("NotificationService", () => {
       });
     });
 
+    it("includes an applied referral discount in the existing customer confirmation", async () => {
+      const booking = createBooking({
+        id: "booking-confirmed-referral",
+        referralStatus: BookingReferralStatus.APPLIED,
+        referralDiscountAmount: new Decimal(5000),
+        userId: "customer-1",
+        user: createUser({ id: "customer-1" }),
+        car: createCar({ owner: createOwner() }),
+      });
+
+      const { customer } = await service.buildBookingConfirmedJobData(booking);
+
+      expect(customer?.pushPayload?.body).toBe(
+        "Your booking is confirmed. You saved ₦5,000.00 with your referral discount.",
+      );
+    });
+
+    it("does not mention a discount before it is applied", async () => {
+      const booking = createBooking({
+        id: "booking-confirmed-reserved",
+        referralStatus: BookingReferralStatus.RESERVED,
+        referralDiscountAmount: new Decimal(5000),
+        userId: "customer-1",
+        user: createUser({ id: "customer-1" }),
+        car: createCar({ owner: createOwner() }),
+      });
+
+      const { customer } = await service.buildBookingConfirmedJobData(booking);
+
+      expect(customer?.pushPayload?.body).toBe(
+        "Your booking for BMW X5 (2023) has been confirmed.",
+      );
+    });
+
     it("returns null jobs when a guest and fleet owner have no delivery channels", async () => {
       const booking = createBooking({
         userId: null,
@@ -362,6 +398,45 @@ describe("NotificationService", () => {
       await expect(service.buildBookingConfirmedJobData(booking)).resolves.toEqual({
         customer: null,
         owner: null,
+      });
+    });
+  });
+
+  describe("buildReferralRewardReleasedJobData", () => {
+    it("builds a push-only customer job targeting referrals", () => {
+      expect(
+        service.buildReferralRewardReleasedJobData({
+          rewardId: "reward-1",
+          bookingId: "booking-1",
+          referrerUserId: "referrer-1",
+          amount: 2500,
+          releasedAt: new Date("2026-07-29T12:00:00.000Z"),
+        }),
+      ).toEqual({
+        id: "referral-reward-released-reward-1",
+        type: NotificationType.REFERRAL_REWARD_RELEASED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [NotificationChannel.PUSH],
+        bookingId: "booking-1",
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: {
+            userId: "referrer-1",
+          },
+        },
+        pushPayload: {
+          title: "Referral reward earned",
+          body: "₦2,500.00 has been added to your referral balance.",
+          data: {
+            type: NotificationType.REFERRAL_REWARD_RELEASED,
+            target: {
+              kind: "referrals",
+            },
+          },
+        },
+        templateData: {
+          templateKind: "pushOnly",
+          subject: "Referral reward earned",
+        },
       });
     });
   });

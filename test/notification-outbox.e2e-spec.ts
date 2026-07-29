@@ -15,9 +15,12 @@ import { BookingConfirmedHandler } from "../src/modules/notification/handlers/bo
 import { BookingExtensionConfirmedHandler } from "../src/modules/notification/handlers/booking-extension-confirmed.handler";
 import { BookingStatusChangedHandler } from "../src/modules/notification/handlers/booking-status-changed.handler";
 import { BookingUpdatedHandler } from "../src/modules/notification/handlers/booking-updated.handler";
+import { ReferralRewardReleasedHandler } from "../src/modules/notification/handlers/referral-reward-released.handler";
 import { ReviewReceivedHandler } from "../src/modules/notification/handlers/review-received.handler";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { PaymentReconciliationService } from "../src/modules/payment/payment-reconciliation.service";
+import { ReferralProcessingService } from "../src/modules/referral/referral-processing.service";
+import { ReferralReconciliationScheduler } from "../src/modules/referral/referral-reconciliation.scheduler";
 import { ReviewsWriteService } from "../src/modules/reviews/reviews-write.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -36,14 +39,33 @@ describe("Notification outbox round-trip (e2e)", () => {
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
   let bookingUpdatedHandler: BookingUpdatedHandler;
+  let referralRewardReleasedHandler: ReferralRewardReleasedHandler;
   let reviewReceivedHandler: ReviewReceivedHandler;
   let bookingConfirmationService: BookingConfirmationService;
   let bookingUpdateService: BookingUpdateService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let reconciliationService: PaymentReconciliationService;
+  let referralProcessingService: ReferralProcessingService;
+  let referralReconciliationScheduler: ReferralReconciliationScheduler;
   let reviewsWriteService: ReviewsWriteService;
   let notificationsQueue: Queue;
   let factory: TestDataFactory;
+
+  async function dispatchOutboxEvents(ids: string[]): Promise<void> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await outboxService.processPendingEvents();
+      const pendingCount = await databaseService.notificationOutboxEvent.count({
+        where: {
+          id: { in: ids },
+          status: { not: NotificationOutboxStatus.DISPATCHED },
+        },
+      });
+      if (pendingCount === 0) {
+        return;
+      }
+    }
+    throw new Error(`Outbox events were not dispatched: ${ids.join(", ")}`);
+  }
 
   async function createReviewBooking(label: string) {
     const customer = await factory.createUser({
@@ -114,6 +136,70 @@ describe("Notification outbox round-trip (e2e)", () => {
     };
   }
 
+  async function configureCompletedReferralRelease(): Promise<void> {
+    await Promise.all([
+      databaseService.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_ENABLED" },
+        create: { key: "REFERRAL_ENABLED", value: true },
+        update: { value: true },
+      }),
+      databaseService.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_RELEASE_CONDITION" },
+        create: { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
+        update: { value: "COMPLETED" },
+      }),
+      databaseService.referralProgramConfig.upsert({
+        where: { key: "REFERRAL_EXPIRY_DAYS" },
+        create: { key: "REFERRAL_EXPIRY_DAYS", value: 0 },
+        update: { value: 0 },
+      }),
+    ]);
+  }
+
+  async function createCompletedReferralReward(label: string) {
+    const referrer = await factory.createUser({
+      email: uniqueEmail(`${label}-referrer`),
+    });
+    const referee = await factory.createUser({
+      email: uniqueEmail(`${label}-referee`),
+    });
+    const fleetOwner = await factory.createFleetOwner();
+    const car = await factory.createCar(fleetOwner.id);
+    const booking = await factory.createBooking(referee.id, car.id, {
+      status: "COMPLETED",
+      paymentStatus: "PAID",
+    });
+    await databaseService.booking.update({
+      where: { id: booking.id },
+      data: {
+        referralReferrerUserId: referrer.id,
+        referralStatus: "APPLIED",
+        referralDiscountAmount: 5000,
+      },
+    });
+    const reward = await databaseService.referralReward.create({
+      data: {
+        referrerUserId: referrer.id,
+        refereeUserId: referee.id,
+        bookingId: booking.id,
+        amount: 2500,
+        status: "PENDING",
+        releaseCondition: "COMPLETED",
+      },
+    });
+    await databaseService.userReferralStats.create({
+      data: {
+        userId: referrer.id,
+        totalReferrals: 1,
+        totalRewardsGranted: 0,
+        totalRewardsPending: 2500,
+      },
+    });
+    await configureCompletedReferralRelease();
+
+    return { booking, referrer, reward };
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -130,11 +216,14 @@ describe("Notification outbox round-trip (e2e)", () => {
     bookingConfirmedHandler = app.get(BookingConfirmedHandler);
     bookingExtensionConfirmedHandler = app.get(BookingExtensionConfirmedHandler);
     bookingUpdatedHandler = app.get(BookingUpdatedHandler);
+    referralRewardReleasedHandler = app.get(ReferralRewardReleasedHandler);
     reviewReceivedHandler = app.get(ReviewReceivedHandler);
     bookingConfirmationService = app.get(BookingConfirmationService);
     bookingUpdateService = app.get(BookingUpdateService);
     extensionConfirmationService = app.get(ExtensionConfirmationService);
     reconciliationService = app.get(PaymentReconciliationService);
+    referralProcessingService = app.get(ReferralProcessingService);
+    referralReconciliationScheduler = app.get(ReferralReconciliationScheduler);
     reviewsWriteService = app.get(ReviewsWriteService);
     notificationsQueue = app.get(getQueueToken(NOTIFICATIONS_QUEUE));
     factory = new TestDataFactory(databaseService, app);
@@ -210,26 +299,11 @@ describe("Notification outbox round-trip (e2e)", () => {
     expect(inboxRows[0].title).toBe("Booking status updated");
     expect(inboxRows[0].dedupeKey).toBe(outboxRow.dedupeKey);
 
-    // Step 3 — the dispatcher loop runs. We invoke directly instead of waiting
-    // for the cron so the test stays deterministic.
-    //
+    // Step 3 — invoke the dispatcher directly instead of waiting for the cron.
     // Do not assert on processPendingEvents()'s return value: Vitest pools share
     // one `e2e_w{n}` Postgres schema per worker; a tick may process zero rows
-    // (claim races) or many unrelated rows. We only care that this test's row
-    // reaches DISPATCHED (Step 4 + drain loop below).
-    await outboxService.processPendingEvents();
-
-    // Our row may not have been in the first batch if many older rows exist —
-    // keep draining until this test's row is DISPATCHED (cap iterations).
-    for (let i = 0; i < 10; i++) {
-      const row = await databaseService.notificationOutboxEvent.findUnique({
-        where: { id: outboxRow.id },
-      });
-      if (row?.status === NotificationOutboxStatus.DISPATCHED) {
-        break;
-      }
-      await outboxService.processPendingEvents();
-    }
+    // (claim races) or unrelated rows. We only care that our row is dispatched.
+    await dispatchOutboxEvents([outboxRow.id]);
 
     // Step 4 — the row finalised to DISPATCHED with processedAt set, no error.
     const finalRow = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
@@ -303,15 +377,7 @@ describe("Notification outbox round-trip (e2e)", () => {
     });
     expect(inboxRow.title).toBe("Booking updated");
 
-    for (let i = 0; i < 10; i++) {
-      await outboxService.processPendingEvents();
-      const row = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
-        where: { id: outboxRow.id },
-      });
-      if (row.status === NotificationOutboxStatus.DISPATCHED) {
-        break;
-      }
-    }
+    await dispatchOutboxEvents([outboxRow.id]);
 
     const job = await notificationsQueue.getJob(`notification-outbox-${outboxRow.id}`);
     expect(job?.data).toMatchObject({
@@ -405,18 +471,7 @@ describe("Notification outbox round-trip (e2e)", () => {
       ),
     ).toBe(true);
 
-    for (let i = 0; i < 10; i++) {
-      await outboxService.processPendingEvents();
-      const pendingCount = await databaseService.notificationOutboxEvent.count({
-        where: {
-          id: { in: outboxRows.map((row) => row.id) },
-          status: { not: NotificationOutboxStatus.DISPATCHED },
-        },
-      });
-      if (pendingCount === 0) {
-        break;
-      }
-    }
+    await dispatchOutboxEvents(outboxRows.map((row) => row.id));
 
     const jobs = await Promise.all(
       outboxRows.map((row) => notificationsQueue.getJob(`notification-outbox-${row.id}`)),
@@ -526,18 +581,7 @@ describe("Notification outbox round-trip (e2e)", () => {
       databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
     ).resolves.toBe(2);
 
-    for (let i = 0; i < 10; i++) {
-      await outboxService.processPendingEvents();
-      const pendingCount = await databaseService.notificationOutboxEvent.count({
-        where: {
-          id: { in: outboxRows.map((row) => row.id) },
-          status: { not: NotificationOutboxStatus.DISPATCHED },
-        },
-      });
-      if (pendingCount === 0) {
-        break;
-      }
-    }
+    await dispatchOutboxEvents(outboxRows.map((row) => row.id));
 
     for (const row of outboxRows) {
       const job = await notificationsQueue.getJob(`notification-outbox-${row.id}`);
@@ -655,15 +699,7 @@ describe("Notification outbox round-trip (e2e)", () => {
       databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
     ).resolves.toBe(1);
 
-    for (let i = 0; i < 10; i++) {
-      await outboxService.processPendingEvents();
-      const row = await databaseService.notificationOutboxEvent.findUniqueOrThrow({
-        where: { id: outboxRows[0].id },
-      });
-      if (row.status === NotificationOutboxStatus.DISPATCHED) {
-        break;
-      }
-    }
+    await dispatchOutboxEvents([outboxRows[0].id]);
 
     const job = await notificationsQueue.getJob(`notification-outbox-${outboxRows[0].id}`);
     expect(job?.data).toMatchObject({
@@ -721,5 +757,116 @@ describe("Notification outbox round-trip (e2e)", () => {
     await expect(
       databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
     ).resolves.toBe(1);
+  });
+
+  it("releases a completed referral reward once and dispatches its typed referrals push", async () => {
+    const { booking, referrer, reward } = await createCompletedReferralReward("referral-reward");
+
+    await referralProcessingService.processReferralCompletionForBooking(booking.id);
+    await referralProcessingService.processReferralCompletionForBooking(booking.id);
+
+    await expect(
+      databaseService.referralReward.findUniqueOrThrow({ where: { id: reward.id } }),
+    ).resolves.toMatchObject({ status: "RELEASED", processedAt: expect.any(Date) });
+    await expect(
+      databaseService.booking.findUniqueOrThrow({ where: { id: booking.id } }),
+    ).resolves.toMatchObject({ referralStatus: "REWARDED" });
+    const stats = await databaseService.userReferralStats.findUniqueOrThrow({
+      where: { userId: referrer.id },
+    });
+    expect(stats.totalReferrals).toBe(1);
+    expect(stats.totalRewardsGranted.toString()).toBe("2500");
+    expect(stats.totalRewardsPending.toString()).toBe("0");
+
+    const outboxRows = await databaseService.notificationOutboxEvent.findMany({
+      where: {
+        bookingId: booking.id,
+        dedupeKey: { startsWith: `referral-reward-released:${reward.id}:` },
+      },
+    });
+    expect(outboxRows).toHaveLength(1);
+    const inboxRows = await databaseService.notificationInbox.findMany({
+      where: { userId: referrer.id, dedupeKey: outboxRows[0].dedupeKey },
+    });
+    expect(inboxRows).toHaveLength(1);
+    expect(inboxRows[0]).toMatchObject({
+      title: "Referral reward earned",
+      body: "₦2,500.00 has been added to your referral balance.",
+    });
+
+    await dispatchOutboxEvents([outboxRows[0].id]);
+
+    const job = await notificationsQueue.getJob(`notification-outbox-${outboxRows[0].id}`);
+    expect(job?.data).toMatchObject({
+      type: "referral-reward-released",
+      audience: "customer",
+      channels: ["push"],
+      bookingId: booking.id,
+      recipients: {
+        client: {
+          userId: referrer.id,
+        },
+      },
+      pushPayload: {
+        data: {
+          type: "referral-reward-released",
+          target: { kind: "referrals" },
+        },
+      },
+    });
+  });
+
+  it("reconciles a completed booking whose referral enqueue was missed", async () => {
+    const { booking, reward } = await createCompletedReferralReward("referral-reconcile");
+
+    await referralReconciliationScheduler.reconcilePendingRewards();
+
+    await vi.waitFor(
+      async () => {
+        const updatedReward = await databaseService.referralReward.findUniqueOrThrow({
+          where: { id: reward.id },
+        });
+        expect(updatedReward.status).toBe("RELEASED");
+      },
+      { timeout: 5000, interval: 50 },
+    );
+    await expect(
+      databaseService.notificationOutboxEvent.count({
+        where: {
+          bookingId: booking.id,
+          dedupeKey: { startsWith: `referral-reward-released:${reward.id}:` },
+        },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it("rolls back a reward release when its durable notification cannot be built", async () => {
+    const { booking, referrer, reward } = await createCompletedReferralReward("referral-rollback");
+    const buildEventsSpy = vi
+      .spyOn(referralRewardReleasedHandler, "buildEvents")
+      .mockRejectedValueOnce(new Error("referral outbox build failed"));
+
+    await expect(
+      referralProcessingService.processReferralCompletionForBooking(booking.id),
+    ).rejects.toThrow("referral outbox build failed");
+    buildEventsSpy.mockRestore();
+
+    await expect(
+      databaseService.referralReward.findUniqueOrThrow({ where: { id: reward.id } }),
+    ).resolves.toMatchObject({ status: "PENDING", processedAt: null });
+    await expect(
+      databaseService.booking.findUniqueOrThrow({ where: { id: booking.id } }),
+    ).resolves.toMatchObject({ referralStatus: "APPLIED" });
+    const stats = await databaseService.userReferralStats.findUniqueOrThrow({
+      where: { userId: referrer.id },
+    });
+    expect(stats.totalRewardsGranted.toString()).toBe("0");
+    expect(stats.totalRewardsPending.toString()).toBe("2500");
+    await expect(
+      databaseService.notificationOutboxEvent.count({ where: { bookingId: booking.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      databaseService.notificationInbox.count({ where: { userId: referrer.id } }),
+    ).resolves.toBe(0);
   });
 });
