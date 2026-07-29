@@ -29,6 +29,7 @@ lerna-debug.log*
 
 *.md
 !README.md
+!docs/*.md
 
 scripts/deploy-secrets.sh
 scripts/set-preview-secrets.sh
