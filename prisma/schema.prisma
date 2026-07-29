@@ -631,6 +631,7 @@ model ReferralReward {
   releaseCondition ReferralReleaseCondition
   reason           String?
   processedAt      DateTime?
+  reconciliationLastAttemptAt DateTime?
   booking          Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   referee          User                     @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
   referrer         User                     @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
@@ -641,6 +642,7 @@ model ReferralReward {
   @@index([status, createdAt])
   @@index([status, bookingId])
   @@index([status, processedAt])
+  @@index([status, releaseCondition, reconciliationLastAttemptAt, createdAt])
 }
 
 model ReferralProgramConfig {

@@ -17,7 +17,10 @@ describe("ReferralReconciliationScheduler", () => {
   let scheduler: ReferralReconciliationScheduler;
   let databaseService: {
     referralProgramConfig: { findMany: ReturnType<typeof vi.fn> };
-    referralReward: { findMany: ReturnType<typeof vi.fn> };
+    referralReward: {
+      findMany: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
+    };
   };
   let referralProcessingService: {
     queueReferralProcessing: ReturnType<typeof vi.fn>;
@@ -36,6 +39,7 @@ describe("ReferralReconciliationScheduler", () => {
       },
       referralReward: {
         findMany: vi.fn().mockResolvedValue([{ bookingId: "booking-1" }]),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
     };
     referralProcessingService = {
@@ -67,6 +71,14 @@ describe("ReferralReconciliationScheduler", () => {
       where: {
         status: ReferralRewardStatus.PENDING,
         releaseCondition: ReferralReleaseCondition.COMPLETED,
+        OR: [
+          { reconciliationLastAttemptAt: null },
+          {
+            reconciliationLastAttemptAt: {
+              lte: new Date("2030-01-02T11:47:00.000Z"),
+            },
+          },
+        ],
         booking: {
           is: {
             deletedAt: null,
@@ -78,16 +90,35 @@ describe("ReferralReconciliationScheduler", () => {
       },
       select: { bookingId: true },
       distinct: ["bookingId"],
-      orderBy: { createdAt: "asc" },
+      orderBy: [
+        { reconciliationLastAttemptAt: { sort: "asc", nulls: "first" } },
+        { createdAt: "asc" },
+      ],
       take: 100,
     });
-    const bucket = Math.floor(new Date("2030-01-02T12:02:00.000Z").getTime() / (5 * 60 * 1000));
+    expect(databaseService.referralReward.updateMany).toHaveBeenCalledWith({
+      where: {
+        bookingId: "booking-1",
+        status: ReferralRewardStatus.PENDING,
+        releaseCondition: ReferralReleaseCondition.COMPLETED,
+        OR: [
+          { reconciliationLastAttemptAt: null },
+          {
+            reconciliationLastAttemptAt: {
+              lte: new Date("2030-01-02T11:47:00.000Z"),
+            },
+          },
+        ],
+      },
+      data: { reconciliationLastAttemptAt: new Date("2030-01-02T12:02:00.000Z") },
+    });
+    const bucket = Math.floor(new Date("2030-01-02T12:02:00.000Z").getTime() / (15 * 60 * 1000));
     expect(referralProcessingService.queueReferralProcessing).toHaveBeenCalledWith(
       "booking-1",
       `referral-reconcile-booking-1-${bucket}`,
     );
     expect(logger.info).toHaveBeenCalledWith(
-      { found: 1, enqueued: 1, failed: 0 },
+      { found: 1, enqueued: 1, failed: 0, skipped: 0 },
       "Reconciled pending referral rewards",
     );
   });
@@ -163,7 +194,19 @@ describe("ReferralReconciliationScheduler", () => {
       "Failed to requeue pending referral reward",
     );
     expect(logger.info).toHaveBeenCalledWith(
-      { found: 2, enqueued: 1, failed: 1 },
+      { found: 2, enqueued: 1, failed: 1, skipped: 0 },
+      "Reconciled pending referral rewards",
+    );
+  });
+
+  it("skips a booking claimed by another scheduler instance", async () => {
+    databaseService.referralReward.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await scheduler.reconcilePendingRewards();
+
+    expect(referralProcessingService.queueReferralProcessing).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      { found: 1, enqueued: 0, failed: 0, skipped: 1 },
       "Reconciled pending referral rewards",
     );
   });

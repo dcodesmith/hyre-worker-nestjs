@@ -11,8 +11,8 @@ import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { ReferralProcessingService } from "./referral-processing.service";
 
-const RECONCILIATION_WINDOW_MS = 5 * 60 * 1000;
 const RECONCILIATION_BATCH_SIZE = 100;
+const RECONCILIATION_RETRY_BACKOFF_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class ReferralReconciliationScheduler {
@@ -27,6 +27,13 @@ export class ReferralReconciliationScheduler {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcilePendingRewards(): Promise<void> {
     const now = new Date();
+    const retryBefore = new Date(now.getTime() - RECONCILIATION_RETRY_BACKOFF_MS);
+    const claimableAttempt = {
+      OR: [
+        { reconciliationLastAttemptAt: null },
+        { reconciliationLastAttemptAt: { lte: retryBefore } },
+      ],
+    };
 
     try {
       const configs = await this.databaseService.referralProgramConfig.findMany({
@@ -49,6 +56,7 @@ export class ReferralReconciliationScheduler {
         where: {
           status: ReferralRewardStatus.PENDING,
           releaseCondition: ReferralReleaseCondition.COMPLETED,
+          ...claimableAttempt,
           booking: {
             is: {
               deletedAt: null,
@@ -76,7 +84,10 @@ export class ReferralReconciliationScheduler {
         },
         select: { bookingId: true },
         distinct: ["bookingId"],
-        orderBy: { createdAt: "asc" },
+        orderBy: [
+          { reconciliationLastAttemptAt: { sort: "asc", nulls: "first" } },
+          { createdAt: "asc" },
+        ],
         take: RECONCILIATION_BATCH_SIZE,
       });
       if (rewards.length === RECONCILIATION_BATCH_SIZE) {
@@ -85,11 +96,26 @@ export class ReferralReconciliationScheduler {
           "Referral reward reconciliation batch is saturated",
         );
       }
-      const reconciliationBucket = Math.floor(now.getTime() / RECONCILIATION_WINDOW_MS);
+      const reconciliationBucket = Math.floor(now.getTime() / RECONCILIATION_RETRY_BACKOFF_MS);
       let enqueued = 0;
       let failed = 0;
+      let skipped = 0;
 
       for (const reward of rewards) {
+        const claimed = await this.databaseService.referralReward.updateMany({
+          where: {
+            bookingId: reward.bookingId,
+            status: ReferralRewardStatus.PENDING,
+            releaseCondition: ReferralReleaseCondition.COMPLETED,
+            ...claimableAttempt,
+          },
+          data: { reconciliationLastAttemptAt: now },
+        });
+        if (claimed.count === 0) {
+          skipped += 1;
+          continue;
+        }
+
         try {
           await this.referralProcessingService.queueReferralProcessing(
             reward.bookingId,
@@ -109,7 +135,7 @@ export class ReferralReconciliationScheduler {
       }
 
       this.logger.info(
-        { found: rewards.length, enqueued, failed },
+        { found: rewards.length, enqueued, failed, skipped },
         "Reconciled pending referral rewards",
       );
     } catch (error) {
