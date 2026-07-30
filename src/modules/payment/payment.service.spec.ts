@@ -56,6 +56,7 @@ describe("PaymentService", () => {
           useValue: {
             payoutTransaction: {
               findFirst: vi.fn().mockResolvedValue(null),
+              findMany: vi.fn().mockResolvedValue([]),
               create: vi.fn().mockResolvedValue({ id: "payout-123" }),
               update: vi.fn().mockResolvedValue({ id: "payout-123" }),
               updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -279,6 +280,42 @@ describe("PaymentService", () => {
     });
   });
 
+  it("releases a reclaimed lease when the existing transfer is still pending", async () => {
+    const booking = createBooking({
+      id: "booking-123",
+      fleetOwnerPayoutAmountNet: new Decimal(15000),
+      car: createCar({ owner: createOwner({ id: "owner-1" }) }),
+    });
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: booking.id,
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      processingLeaseId: "expired-lease",
+      processingLeaseExpiresAt: new Date(Date.now() - 1000),
+    });
+    vi.mocked(databaseService.payoutTransaction.create).mockResolvedValueOnce(payout);
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce(
+      createTransfer("payout_payout-123"),
+    );
+
+    await service.initiatePayout(booking);
+
+    expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
+    expect(databaseService.payoutTransaction.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: payout.id,
+        status: PayoutTransactionStatus.PROCESSING,
+        processingLeaseId: expect.any(String),
+      },
+      data: {
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
+      },
+    });
+    expect(databaseService.booking.update).not.toHaveBeenCalled();
+  });
+
   it("throws when the payout lease is lost after provider acceptance", async () => {
     const booking = createBooking({
       id: "booking-123",
@@ -311,6 +348,77 @@ describe("PaymentService", () => {
     );
 
     expect(databaseService.payoutTransaction.updateMany).toHaveBeenCalledTimes(1);
+    expect(databaseService.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a stale processing payout that completed at the provider", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      initiatedAt: new Date(Date.now() - 20 * 60 * 1000),
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(databaseService.payoutTransaction.findMany).mockResolvedValueOnce([payout]);
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce({
+      ...createTransfer("payout_payout-123"),
+      status: "SUCCESSFUL",
+    });
+
+    await expect(service.reconcileProcessingPayouts()).resolves.toBe(1);
+
+    expect(databaseService.payoutTransaction.findMany).toHaveBeenCalledWith({
+      where: {
+        status: PayoutTransactionStatus.PROCESSING,
+        bookingId: { not: null },
+        payoutProviderReference: { not: null },
+        initiatedAt: { lte: expect.any(Date) },
+        OR: [
+          { processingLeaseId: null },
+          {
+            processingLeaseExpiresAt: { lte: expect.any(Date) },
+          },
+        ],
+      },
+      orderBy: { initiatedAt: "asc" },
+      take: 50,
+    });
+    expect(databaseService.booking.update).toHaveBeenCalledWith({
+      where: { id: payout.bookingId },
+      data: { overallPayoutStatus: PayoutTransactionStatus.PAID_OUT },
+    });
+  });
+
+  it("keeps a stale provider-pending payout eligible for later reconciliation", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      initiatedAt: new Date(Date.now() - 20 * 60 * 1000),
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(databaseService.payoutTransaction.findMany).mockResolvedValueOnce([payout]);
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce(
+      createTransfer("payout_payout-123"),
+    );
+
+    await expect(service.reconcileProcessingPayouts()).resolves.toBe(0);
+
+    expect(databaseService.payoutTransaction.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: payout.id,
+        status: PayoutTransactionStatus.PROCESSING,
+        processingLeaseId: expect.any(String),
+      },
+      data: {
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
+      },
+    });
     expect(databaseService.booking.update).not.toHaveBeenCalled();
   });
 

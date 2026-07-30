@@ -7,6 +7,7 @@ import { EVERY_HOUR, TIMEZONE } from "../../config/constants";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
+import { PaymentService } from "./payment.service";
 
 const RECONCILIATION_GRACE_PERIOD_MS = 5 * 60 * 1000;
 const RECONCILIATION_BATCH_SIZE = 50;
@@ -18,6 +19,7 @@ export class PaymentReconciliationService {
     private readonly databaseService: DatabaseService,
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
+    private readonly paymentService: PaymentService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentReconciliationService.name);
@@ -88,6 +90,23 @@ export class PaymentReconciliationService {
     }
 
     return reconciledCount;
+  }
+
+  @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
+  async reconcileProcessingPayouts(): Promise<number> {
+    try {
+      const reconciledCount = await this.paymentService.reconcileProcessingPayouts();
+      if (reconciledCount > 0) {
+        this.logger.info({ reconciledCount }, "Reconciled processing payouts");
+      }
+      return reconciledCount;
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to reconcile processing payouts",
+      );
+      return 0;
+    }
   }
 
   private async reconcilePayment(payment: Payment): Promise<boolean> {

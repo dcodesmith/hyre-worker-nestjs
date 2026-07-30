@@ -28,7 +28,9 @@ lease on the booking's payout transaction. Concurrent or stale-redriven workers
 cannot call the provider while that lease is active, and lease ownership fences
 late success or failure writes. Provider calls retain a deterministic reference,
 and an expired lease is reconciled by that reference before another transfer is
-initiated.
+initiated. Accepted transfers that remain `PROCESSING` are reconciled hourly by
+provider reference after a grace period, so a lost completion webhook cannot
+leave a payout permanently unresolved.
 
 ## Why this is separate from the notification outbox
 

@@ -17,6 +17,8 @@ import {
 } from "./payment.error";
 
 const PAYOUT_PROCESSING_LEASE_MS = 10 * 60 * 1000;
+const PAYOUT_RECONCILIATION_GRACE_PERIOD_MS = 15 * 60 * 1000;
+const PAYOUT_RECONCILIATION_BATCH_SIZE = 50;
 
 @Injectable()
 export class PaymentService {
@@ -241,6 +243,23 @@ export class PaymentService {
     );
   }
 
+  private async releasePayoutProcessingLease(
+    payoutTransactionId: string,
+    processingLeaseId: string,
+  ): Promise<void> {
+    await this.databaseService.payoutTransaction.updateMany({
+      where: {
+        id: payoutTransactionId,
+        status: PayoutTransactionStatus.PROCESSING,
+        processingLeaseId,
+      },
+      data: {
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
+      },
+    });
+  }
+
   private async reconcileExistingPayout(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
@@ -263,15 +282,131 @@ export class PaymentService {
       return true;
     }
 
-    await this.handleSuccessfulPayout(
-      bookingId,
-      payoutTransaction,
-      processingLeaseId,
-      status === "SUCCESSFUL"
-        ? PayoutTransactionStatus.PAID_OUT
-        : PayoutTransactionStatus.PROCESSING,
+    if (status === "SUCCESSFUL") {
+      await this.handleSuccessfulPayout(
+        bookingId,
+        payoutTransaction,
+        processingLeaseId,
+        PayoutTransactionStatus.PAID_OUT,
+      );
+      return true;
+    }
+
+    await this.releasePayoutProcessingLease(payoutTransaction.id, processingLeaseId);
+    this.logger.warn(
+      {
+        bookingId,
+        transactionId: payoutTransaction.id,
+        providerStatus: status,
+      },
+      "Payout remains pending at Flutterwave and will be reconciled later",
     );
     return true;
+  }
+
+  async reconcileProcessingPayouts(): Promise<number> {
+    const now = new Date();
+    const initiatedBefore = new Date(now.getTime() - PAYOUT_RECONCILIATION_GRACE_PERIOD_MS);
+    const payouts = await this.databaseService.payoutTransaction.findMany({
+      where: {
+        status: PayoutTransactionStatus.PROCESSING,
+        bookingId: { not: null },
+        payoutProviderReference: { not: null },
+        initiatedAt: { lte: initiatedBefore },
+        OR: [
+          { processingLeaseId: null },
+          {
+            processingLeaseExpiresAt: { lte: now },
+          },
+        ],
+      },
+      orderBy: { initiatedAt: "asc" },
+      take: PAYOUT_RECONCILIATION_BATCH_SIZE,
+    });
+
+    let reconciledCount = 0;
+    for (const payout of payouts) {
+      try {
+        if (await this.reconcileProcessingPayout(payout)) {
+          reconciledCount += 1;
+        }
+      } catch (error) {
+        this.logger.error(
+          {
+            bookingId: payout.bookingId,
+            transactionId: payout.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to reconcile processing payout",
+        );
+      }
+    }
+
+    return reconciledCount;
+  }
+
+  private async reconcileProcessingPayout(payoutTransaction: PayoutTransaction): Promise<boolean> {
+    const reference = payoutTransaction.payoutProviderReference;
+    const bookingId = payoutTransaction.bookingId;
+    if (!reference || !bookingId) {
+      return false;
+    }
+
+    const now = new Date();
+    const processingLeaseId = randomUUID();
+    const claimed = await this.databaseService.payoutTransaction.updateMany({
+      where: {
+        id: payoutTransaction.id,
+        status: PayoutTransactionStatus.PROCESSING,
+        OR: [
+          { processingLeaseId: null },
+          {
+            processingLeaseExpiresAt: { lte: now },
+          },
+        ],
+      },
+      data: {
+        processingLeaseId,
+        processingLeaseExpiresAt: new Date(now.getTime() + PAYOUT_PROCESSING_LEASE_MS),
+      },
+    });
+    if (claimed.count === 0) {
+      return false;
+    }
+
+    const transfer = await this.flutterwaveService.findTransferByReference(reference);
+    const status = transfer?.status.trim().toUpperCase();
+
+    if (status === "SUCCESSFUL") {
+      await this.handleSuccessfulPayout(
+        bookingId,
+        payoutTransaction,
+        processingLeaseId,
+        PayoutTransactionStatus.PAID_OUT,
+      );
+      return true;
+    }
+
+    if (status === "FAILED") {
+      await this.handleFailedPayout(
+        bookingId,
+        payoutTransaction,
+        transfer.complete_message || "Flutterwave transfer failed",
+        processingLeaseId,
+      );
+      return true;
+    }
+
+    await this.releasePayoutProcessingLease(payoutTransaction.id, processingLeaseId);
+    this.logger.warn(
+      {
+        bookingId: payoutTransaction.bookingId,
+        transactionId: payoutTransaction.id,
+        providerStatus: status ?? "NOT_FOUND",
+      },
+      "Payout remains unresolved after the reconciliation grace period",
+    );
+    return false;
   }
 
   private extractErrorMessage(data: unknown): string {

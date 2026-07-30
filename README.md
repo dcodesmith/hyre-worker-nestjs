@@ -123,14 +123,15 @@ Booking completion transaction
 - **Scheduler**: Hourly cron jobs for status transitions
 - **Jobs**:
   - `confirmed-to-active`: Updates bookings at start time
-  - `active-to-completed`: Updates bookings at end time + initiates payout
-- **Integration**: Calls PaymentModule for fleet owner settlements
+  - `active-to-completed`: Updates bookings at end time and records referral/payout commands
+- **Integration**: Writes durable domain-outbox commands for post-completion work
 
 **PaymentModule** (`src/modules/payment/`)
 - Payout orchestration for completed bookings
 - Validates fleet owner bank details before transfer
 - Creates and tracks `PayoutTransaction` records
 - Handles Flutterwave transfer failures and retries
+- Reconciles stale `PROCESSING` transfers by provider reference when completion webhooks are lost
 
 **ReferralModule** (`src/modules/referral/`)
 - **Command**: `REFERRAL_COMPLETION` - Triggered durably after booking completion
@@ -629,6 +630,7 @@ pnpm run start:prod
       - Create PayoutTransaction (PENDING_DISBURSEMENT)
       - FlutterwaveService.initiatePayout() → Flutterwave API
       - Update transaction status (PROCESSING or FAILED)
+      - Hourly reconciliation resolves stale PROCESSING transfers by provider reference
    Referral:
    - ReferralProcessingService processes referral rewards
    - Check ReferralProgramConfig (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION)

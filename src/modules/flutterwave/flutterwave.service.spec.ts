@@ -1,3 +1,4 @@
+import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
@@ -396,6 +397,34 @@ describe("FlutterwaveService", () => {
         }),
       ).rejects.toMatchObject({ code: "NETWORK_ERROR" });
     });
+
+    it.each([HttpStatus.CONFLICT, HttpStatus.SERVICE_UNAVAILABLE])(
+      "should throw when payout returns uncertain HTTP status %s",
+      async (statusCode) => {
+        mockAxiosInstance.post.mockRejectedValueOnce(
+          createAxiosErrorWithResponse(statusCode, {
+            status: "error",
+            message: "Payout outcome is uncertain",
+          }),
+        );
+
+        await expect(
+          service.initiatePayout({
+            bankDetails: {
+              bankCode: "044",
+              accountNumber: "1234567890",
+            },
+            amount: 15000,
+            reference: "payout-ref-123",
+            bookingId: "booking-123",
+            bookingReference: "BR-123",
+          }),
+        ).rejects.toMatchObject({
+          message: "Payout outcome is uncertain",
+          statusCode,
+        });
+      },
+    );
   });
 
   describe("findTransferByReference", () => {

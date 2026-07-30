@@ -52,11 +52,6 @@ export class DomainOutboxProcessor extends WorkerHost {
         default:
           throw new Error(`Unsupported domain outbox event type: ${event.eventType}`);
       }
-
-      await this.domainOutboxService.markCompleted(
-        job.data.outboxEventId,
-        job.data.dispatchAttempt,
-      );
     } catch (error) {
       if (
         error instanceof PayoutBookingNotFoundException ||
@@ -90,6 +85,8 @@ export class DomainOutboxProcessor extends WorkerHost {
       }
       throw error;
     }
+
+    await this.domainOutboxService.markCompleted(job.data.outboxEventId, job.data.dispatchAttempt);
   }
 
   private isFinalAttempt(job: Job<DomainOutboxJobData>): boolean {

@@ -147,4 +147,17 @@ describe("DomainOutboxProcessor", () => {
 
     expect(domainOutboxService.markFailed).not.toHaveBeenCalled();
   });
+
+  it("does not mark business execution failed when completion persistence fails on final attempt", async () => {
+    domainOutboxService.markCompleted.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(
+      processor.process(createJob(DomainOutboxEventType.REFERRAL_COMPLETION, 2)),
+    ).rejects.toThrow("database unavailable");
+
+    expect(
+      referralProcessingService.processReferralCompletionForBooking,
+    ).toHaveBeenCalledExactlyOnceWith("booking-1");
+    expect(domainOutboxService.markFailed).not.toHaveBeenCalled();
+  });
 });

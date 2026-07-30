@@ -7,6 +7,7 @@ import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
+import { PaymentService } from "./payment.service";
 import { PaymentReconciliationService } from "./payment-reconciliation.service";
 
 describe("PaymentReconciliationService", () => {
@@ -14,6 +15,7 @@ describe("PaymentReconciliationService", () => {
   let databaseService: DatabaseService;
   let bookingConfirmationService: BookingConfirmationService;
   let extensionConfirmationService: ExtensionConfirmationService;
+  let paymentService: PaymentService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -39,6 +41,12 @@ describe("PaymentReconciliationService", () => {
             confirmFromPayment: vi.fn(),
           },
         },
+        {
+          provide: PaymentService,
+          useValue: {
+            reconcileProcessingPayouts: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -48,6 +56,7 @@ describe("PaymentReconciliationService", () => {
     databaseService = module.get(DatabaseService);
     bookingConfirmationService = module.get(BookingConfirmationService);
     extensionConfirmationService = module.get(ExtensionConfirmationService);
+    paymentService = module.get(PaymentService);
   });
 
   it("retries eligible successful payments for pending bookings", async () => {
@@ -185,5 +194,21 @@ describe("PaymentReconciliationService", () => {
     await expect(service.reconcilePendingPayments()).resolves.toBe(0);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("reconciles stale processing payouts", async () => {
+    vi.mocked(paymentService.reconcileProcessingPayouts).mockResolvedValueOnce(2);
+
+    await expect(service.reconcileProcessingPayouts()).resolves.toBe(2);
+
+    expect(paymentService.reconcileProcessingPayouts).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("returns zero when payout reconciliation fails", async () => {
+    vi.mocked(paymentService.reconcileProcessingPayouts).mockRejectedValueOnce(
+      new Error("provider unavailable"),
+    );
+
+    await expect(service.reconcileProcessingPayouts()).resolves.toBe(0);
   });
 });
