@@ -5,6 +5,10 @@ const logger = new Logger("EnvConfig");
 const twilioContentSidSchema = z
   .string()
   .regex(/^HX[a-fA-F0-9]{32}$/, "Invalid Twilio Content SID");
+const optionalTwilioContentSidSchema = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  twilioContentSidSchema.optional(),
+);
 const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
   "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
@@ -104,18 +108,18 @@ export const envSchema = z
     TWILIO_SECRET: z.string().min(1, "TWILIO_SECRET is required"),
     TWILIO_WHATSAPP_NUMBER: z.string().min(1, "TWILIO_WHATSAPP_NUMBER is required"),
     TWILIO_WEBHOOK_URL: z.url("TWILIO_WEBHOOK_URL must be a valid URL").optional(),
-    TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_BOOKING_CONFIRMATION_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: twilioContentSidSchema.optional(),
-    TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: twilioContentSidSchema.optional(),
+    TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CONFIRMATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
 
     FLUTTERWAVE_SECRET_KEY: z.string().min(1, "FLUTTERWAVE_SECRET_KEY is required"),
     FLUTTERWAVE_PUBLIC_KEY: z.string().min(1, "FLUTTERWAVE_PUBLIC_KEY is required"),

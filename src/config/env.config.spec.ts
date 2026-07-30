@@ -64,6 +64,8 @@ describe("envSchema operations email", () => {
       envSchema.safeParse({
         ...productionEnv,
         OPERATIONS_EMAIL: "operations@example.com",
+        TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: "",
+        TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: "",
       }).success,
     ).toBe(true);
   });
