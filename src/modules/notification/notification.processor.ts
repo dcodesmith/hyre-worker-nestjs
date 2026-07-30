@@ -11,6 +11,7 @@ import {
   renderFleetOwnerBookingCancellationEmail,
   renderFleetOwnerNewBookingEmail,
   renderFlightOperationalUpdateEmail,
+  renderPayoutStatusEmail,
   renderReviewReceivedEmailForChauffeur,
   renderReviewReceivedEmailForOwner,
   renderUserBookingCancellationEmail,
@@ -20,6 +21,7 @@ import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
+  OPERATIONS_RECIPIENT_TYPE,
 } from "./notification.const";
 import {
   NotificationAudience,
@@ -42,6 +44,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
+  PAYOUT_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
   type ReviewReceivedTemplateData,
@@ -57,6 +60,7 @@ import {
   FallbackTemplateMapper,
   FleetOwnerNewBookingMapper,
   FlightUpdateMapper,
+  PayoutStatusMapper,
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -83,6 +87,7 @@ export class NotificationProcessor extends WorkerHost {
       new BookingCancelledMapper(),
       new FleetOwnerNewBookingMapper(),
       new FlightUpdateMapper(),
+      new PayoutStatusMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
       new BookingReminderEndMapper(),
@@ -257,6 +262,10 @@ export class NotificationProcessor extends WorkerHost {
         recipient: FLEET_OWNER_RECIPIENT_TYPE,
         email: recipients[FLEET_OWNER_RECIPIENT_TYPE]?.email,
       },
+      {
+        recipient: OPERATIONS_RECIPIENT_TYPE,
+        email: recipients[OPERATIONS_RECIPIENT_TYPE]?.email,
+      },
     ];
 
     if (!recipientEmails.some(({ email }) => Boolean(email))) {
@@ -359,6 +368,8 @@ export class NotificationProcessor extends WorkerHost {
         return this.buildBookingReminderEmailHtml(type, templateData, recipient);
       case NotificationType.REVIEW_RECEIVED:
         return this.buildReviewReceivedEmailHtml(templateData, recipient);
+      case NotificationType.PAYOUT_STATUS_CHANGED:
+        return this.buildPayoutStatusEmailHtml(templateData, recipient);
       case NotificationType.FLIGHT_ARRIVED:
       case NotificationType.FLIGHT_DEPARTED:
       case NotificationType.FLIGHT_DELAYED:
@@ -410,6 +421,23 @@ export class NotificationProcessor extends WorkerHost {
       throw new Error("Invalid template data for flight update");
     }
     return renderFlightOperationalUpdateEmail(templateData);
+  }
+
+  private buildPayoutStatusEmailHtml(
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    if (templateData.templateKind !== PAYOUT_STATUS_TEMPLATE_KIND) {
+      throw new Error("Invalid template data for payout status notification");
+    }
+
+    const expectedRecipient =
+      templateData.status === "PAID_OUT" ? FLEET_OWNER_RECIPIENT_TYPE : OPERATIONS_RECIPIENT_TYPE;
+    if (recipient !== expectedRecipient) {
+      throw new Error(`Payout ${templateData.status} cannot be sent to recipient: ${recipient}`);
+    }
+
+    return renderPayoutStatusEmail(templateData);
   }
 
   private buildBookingCancelledEmailHtml(

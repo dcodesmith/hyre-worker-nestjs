@@ -6,6 +6,8 @@ import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import type { PayoutResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { PayoutStatusChangedHandler } from "../notification/handlers/payout-status-changed.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   PayoutBankDetailsRequiredException,
   PayoutBookingNotCompletedException,
@@ -19,12 +21,15 @@ import {
 const PAYOUT_PROCESSING_LEASE_MS = 10 * 60 * 1000;
 const PAYOUT_RECONCILIATION_GRACE_PERIOD_MS = 15 * 60 * 1000;
 const PAYOUT_RECONCILIATION_BATCH_SIZE = 50;
+type TerminalPayoutStatus = "PAID_OUT" | "FAILED";
 
 @Injectable()
 export class PaymentService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
+    private readonly notificationOutboxService: NotificationOutboxService,
+    private readonly payoutStatusChangedHandler: PayoutStatusChangedHandler,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentService.name);
@@ -210,6 +215,18 @@ export class PaymentService {
     processingLeaseId: string,
     status: PayoutTransactionStatus = PayoutTransactionStatus.PROCESSING,
   ): Promise<void> {
+    if (status === PayoutTransactionStatus.PAID_OUT) {
+      const finalized = await this.finalizePayoutStatus(
+        payoutTransaction,
+        PayoutTransactionStatus.PAID_OUT,
+        { processingLeaseId },
+      );
+      if (!finalized) {
+        throw new PayoutProcessingClaimLostException(bookingId);
+      }
+      return;
+    }
+
     await this.databaseService.$transaction(async (tx) => {
       const updated = await tx.payoutTransaction.updateMany({
         where: {
@@ -221,7 +238,7 @@ export class PaymentService {
           status,
           processingLeaseId: null,
           processingLeaseExpiresAt: null,
-          completedAt: status === PayoutTransactionStatus.PAID_OUT ? new Date() : null,
+          completedAt: null,
         },
       });
       if (updated.count === 0) {
@@ -241,6 +258,84 @@ export class PaymentService {
       },
       "Payout for booking initiated successfully",
     );
+  }
+
+  async finalizePayoutStatus(
+    payoutTransaction: PayoutTransaction,
+    status: TerminalPayoutStatus,
+    options: {
+      processingLeaseId?: string;
+      failureReason?: string;
+    } = {},
+  ): Promise<boolean> {
+    const bookingId = payoutTransaction.bookingId;
+
+    return this.databaseService.$transaction(async (tx) => {
+      const updated = await tx.payoutTransaction.updateMany({
+        where: {
+          id: payoutTransaction.id,
+          status: PayoutTransactionStatus.PROCESSING,
+          ...(options.processingLeaseId ? { processingLeaseId: options.processingLeaseId } : {}),
+        },
+        data: {
+          status,
+          completedAt: new Date(),
+          processingLeaseId: null,
+          processingLeaseExpiresAt: null,
+          ...(status === PayoutTransactionStatus.FAILED
+            ? {
+                notes: `Flutterwave payout failed: ${options.failureReason ?? "Unknown failure"}`,
+              }
+            : {}),
+        },
+      });
+      if (updated.count === 0) {
+        return false;
+      }
+      if (!bookingId) {
+        return true;
+      }
+
+      const booking = await tx.booking.update({
+        where: { id: bookingId },
+        data: { overallPayoutStatus: status },
+        select: { bookingReference: true },
+      });
+      const finalizedPayout = await tx.payoutTransaction.findUniqueOrThrow({
+        where: { id: payoutTransaction.id },
+        include: {
+          fleetOwner: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phoneNumber: true,
+            },
+          },
+        },
+      });
+
+      await this.notificationOutboxService.create(
+        this.payoutStatusChangedHandler,
+        {
+          payoutTransactionId: finalizedPayout.id,
+          bookingId,
+          bookingReference: booking.bookingReference,
+          status,
+          amount: Number(finalizedPayout.amountToPay),
+          failureReason: options.failureReason,
+          fleetOwner: {
+            userId: finalizedPayout.fleetOwner.id,
+            name: finalizedPayout.fleetOwner.name,
+            email: finalizedPayout.fleetOwner.email,
+            phoneNumber: finalizedPayout.fleetOwner.phoneNumber,
+          },
+        },
+        tx,
+      );
+
+      return true;
+    });
   }
 
   private async releasePayoutProcessingLease(
@@ -426,29 +521,17 @@ export class PaymentService {
     errorMessage: string,
     processingLeaseId: string,
   ): Promise<void> {
-    await this.databaseService.$transaction(async (tx) => {
-      const updated = await tx.payoutTransaction.updateMany({
-        where: {
-          id: payoutTransaction.id,
-          status: PayoutTransactionStatus.PROCESSING,
-          processingLeaseId,
-        },
-        data: {
-          status: PayoutTransactionStatus.FAILED,
-          notes: `Flutterwave initiation failed: ${errorMessage}`,
-          processingLeaseId: null,
-          processingLeaseExpiresAt: null,
-        },
-      });
-      if (updated.count === 0) {
-        return;
-      }
-
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { overallPayoutStatus: "FAILED" },
-      });
-    });
+    const finalized = await this.finalizePayoutStatus(
+      payoutTransaction,
+      PayoutTransactionStatus.FAILED,
+      {
+        processingLeaseId,
+        failureReason: errorMessage,
+      },
+    );
+    if (!finalized) {
+      return;
+    }
 
     this.logger.error(
       {

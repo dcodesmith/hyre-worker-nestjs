@@ -20,6 +20,7 @@ import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
+  OPERATIONS_RECIPIENT_TYPE,
   SEND_NOTIFICATION_JOB_NAME,
 } from "./notification.const";
 import {
@@ -29,6 +30,7 @@ import {
   NotificationJobData,
   NotificationResult,
   NotificationType,
+  PayoutStatusChangedNotificationParams,
   ReferralRewardReleasedNotificationParams,
   ReviewReceivedNotificationParams,
 } from "./notification.interface";
@@ -45,6 +47,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
+  PAYOUT_STATUS_TEMPLATE_KIND,
   PUSH_ONLY_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
@@ -65,6 +68,8 @@ export type ReminderRecipientContext = {
 @Injectable()
 export class NotificationService {
   private readonly flightWhatsAppEnabled: boolean;
+  private readonly payoutWhatsAppEnabled: boolean;
+  private readonly operationsEmail: string;
 
   constructor(
     @InjectQueue(NOTIFICATIONS_QUEUE)
@@ -76,6 +81,11 @@ export class NotificationService {
     this.flightWhatsAppEnabled = Boolean(
       configService.get("TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID", { infer: true }),
     );
+    this.payoutWhatsAppEnabled = Boolean(
+      configService.get("TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID", { infer: true }),
+    );
+    this.operationsEmail =
+      configService.get("OPERATIONS_EMAIL", { infer: true }) ?? "support@tripdly.com";
     this.logger.setContext(NotificationService.name);
   }
 
@@ -346,6 +356,67 @@ export class NotificationService {
       templateData: {
         templateKind: PUSH_ONLY_TEMPLATE_KIND,
         subject: "Referral reward earned",
+      },
+    };
+  }
+
+  buildPayoutStatusChangedJobData({
+    payoutTransactionId,
+    bookingId,
+    bookingReference,
+    status,
+    amount,
+    failureReason,
+    fleetOwner,
+  }: PayoutStatusChangedNotificationParams): NotificationJobData | null {
+    const succeeded = status === "PAID_OUT";
+    const recipientName = succeeded ? (fleetOwner.name ?? "Fleet Owner") : "Operations team";
+    const channels = succeeded
+      ? this.recipientChannelResolver
+          .resolve({
+            audience: NotificationAudience.FLEET_OWNER,
+            email: fleetOwner.email,
+            phoneNumber: fleetOwner.phoneNumber ?? undefined,
+          })
+          .filter(
+            (channel) => channel !== NotificationChannel.WHATSAPP || this.payoutWhatsAppEnabled,
+          )
+      : [NotificationChannel.EMAIL];
+
+    if (channels.length === 0) {
+      return null;
+    }
+
+    const recipientType = succeeded ? FLEET_OWNER_RECIPIENT_TYPE : OPERATIONS_RECIPIENT_TYPE;
+
+    return {
+      id: `payout-status-${payoutTransactionId}-${status.toLowerCase()}`,
+      type: NotificationType.PAYOUT_STATUS_CHANGED,
+      audience: succeeded ? NotificationAudience.FLEET_OWNER : NotificationAudience.OPERATIONS,
+      channels,
+      bookingId,
+      recipients: {
+        [recipientType]: succeeded
+          ? {
+              userId: fleetOwner.userId,
+              email: fleetOwner.email,
+              phoneNumber: fleetOwner.phoneNumber ?? undefined,
+            }
+          : {
+              email: this.operationsEmail,
+            },
+      },
+      templateData: {
+        templateKind: PAYOUT_STATUS_TEMPLATE_KIND,
+        subject: succeeded
+          ? `Payout sent for booking ${bookingReference}`
+          : `Payout failed for booking ${bookingReference}`,
+        status,
+        recipientName,
+        amount: formatCurrency(amount),
+        bookingReference,
+        payoutTransactionId,
+        failureReason,
       },
     };
   }

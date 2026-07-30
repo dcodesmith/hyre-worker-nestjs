@@ -3,33 +3,10 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import twilio, { type Twilio } from "twilio";
 import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
+import type { EnvConfig } from "../../config/env.config";
+import { Template } from "./whatsapp.interface";
 
-export enum Template {
-  BookingStatusUpdate = "bookingStatusUpdate",
-  ClientBookingLegStartReminder = "clientBookingLegStartReminder",
-  ChauffeurBookingLegStartReminder = "chauffeurBookingLegStartReminder",
-  ClientBookingLegEndReminder = "clientBookingLegEndReminder",
-  ChauffeurBookingLegEndReminder = "chauffeurBookingLegEndReminder",
-  BookingConfirmation = "bookingConfirmation",
-  BookingCancellationClient = "bookingCancellationClient",
-  BookingCancellationFleetOwner = "bookingCancellationFleetOwner",
-  FleetOwnerBookingNotification = "fleetOwnerBookingNotification",
-  BookingExtensionConfirmation = "bookingExtensionConfirmation",
-  FlightOperationalUpdate = "flightOperationalUpdate",
-}
-
-const STATIC_CONTENT_SID_MAP: Omit<Record<Template, string>, Template.FlightOperationalUpdate> = {
-  [Template.BookingStatusUpdate]: "HX199f51dda921d5a781b2424b82b931a5",
-  [Template.ClientBookingLegStartReminder]: "HX862149f716a87ae25ce34151140bfc60",
-  [Template.ChauffeurBookingLegStartReminder]: "HX8d44b0747c995713d129d77f4cc3c860",
-  [Template.ClientBookingLegEndReminder]: "HX0c8470054c0ff1a0b43c06fe196e2ec3",
-  [Template.ChauffeurBookingLegEndReminder]: "HX9faf29432a18e9f8f8283a5e281e5a3c",
-  [Template.BookingConfirmation]: "HXac9f0b83ee03d47fe2f2969173dac354",
-  [Template.BookingCancellationClient]: "HXd32930f086ad7e2c3ac976e245c314f9",
-  [Template.BookingCancellationFleetOwner]: "HX5ad3e909d6c011f24e00f4706a78a90e",
-  [Template.FleetOwnerBookingNotification]: "HXaeda40fabb6c33f323c1f101e0a10165",
-  [Template.BookingExtensionConfirmation]: "HXaeda40fabb6c33f323c1f101e0a10165",
-};
+export { Template } from "./whatsapp.interface";
 
 @Injectable()
 export class WhatsAppService {
@@ -38,18 +15,61 @@ export class WhatsAppService {
   private readonly contentSidMap: Partial<Record<Template, string>>;
 
   constructor(
-    private readonly configService: ConfigService,
+    private readonly configService: ConfigService<EnvConfig, true>,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(WhatsAppService.name);
-    const accountSid = this.configService.get<string>("TWILIO_ACCOUNT_SID");
-    const authToken = this.configService.get<string>("TWILIO_AUTH_TOKEN");
-    this.whatsAppNumber = this.configService.get<string>("TWILIO_WHATSAPP_NUMBER");
+    const accountSid = this.configService.get("TWILIO_ACCOUNT_SID", { infer: true });
+    const authToken = this.configService.get("TWILIO_AUTH_TOKEN", { infer: true });
+    this.whatsAppNumber = this.configService.get("TWILIO_WHATSAPP_NUMBER", { infer: true });
     this.contentSidMap = {
-      ...STATIC_CONTENT_SID_MAP,
-      [Template.FlightOperationalUpdate]: this.configService.get<string>(
-        "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID",
+      [Template.BookingStatusUpdate]: this.configService.get(
+        "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
+        { infer: true },
       ),
+      [Template.ClientBookingLegStartReminder]: this.configService.get(
+        "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.ChauffeurBookingLegStartReminder]: this.configService.get(
+        "TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.ClientBookingLegEndReminder]: this.configService.get(
+        "TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.ChauffeurBookingLegEndReminder]: this.configService.get(
+        "TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.BookingConfirmation]: this.configService.get(
+        "TWILIO_BOOKING_CONFIRMATION_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.BookingCancellationClient]: this.configService.get(
+        "TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.BookingCancellationFleetOwner]: this.configService.get(
+        "TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.FleetOwnerBookingNotification]: this.configService.get(
+        "TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.BookingExtensionConfirmation]: this.configService.get(
+        "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.FlightOperationalUpdate]: this.configService.get(
+        "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID",
+        { infer: true },
+      ),
+      [Template.PayoutSucceeded]: this.configService.get("TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID", {
+        infer: true,
+      }),
     };
 
     try {

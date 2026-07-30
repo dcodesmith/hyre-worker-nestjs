@@ -7,6 +7,26 @@ import { Template, WhatsAppService } from "./whatsapp.service";
 const twilioMocks = vi.hoisted(() => ({
   createMessage: vi.fn(),
 }));
+const configuredTemplates = [
+  [Template.BookingStatusUpdate, "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID"],
+  [Template.ClientBookingLegStartReminder, "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID"],
+  [
+    Template.ChauffeurBookingLegStartReminder,
+    "TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID",
+  ],
+  [Template.ClientBookingLegEndReminder, "TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID"],
+  [
+    Template.ChauffeurBookingLegEndReminder,
+    "TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID",
+  ],
+  [Template.BookingConfirmation, "TWILIO_BOOKING_CONFIRMATION_CONTENT_SID"],
+  [Template.BookingCancellationClient, "TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID"],
+  [Template.BookingCancellationFleetOwner, "TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID"],
+  [Template.FleetOwnerBookingNotification, "TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID"],
+  [Template.BookingExtensionConfirmation, "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID"],
+  [Template.FlightOperationalUpdate, "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID"],
+  [Template.PayoutSucceeded, "TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID"],
+] as const;
 
 vi.mock("twilio", () => ({
   default: vi.fn(() => ({
@@ -16,7 +36,9 @@ vi.mock("twilio", () => ({
   })),
 }));
 
-async function createService(flightTemplateSid?: string): Promise<WhatsAppService> {
+async function createService(
+  contentSids: Record<string, string | undefined> = {},
+): Promise<WhatsAppService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       WhatsAppService,
@@ -27,10 +49,7 @@ async function createService(flightTemplateSid?: string): Promise<WhatsAppServic
             if (key === "TWILIO_ACCOUNT_SID") return "AC123";
             if (key === "TWILIO_AUTH_TOKEN") return "token";
             if (key === "TWILIO_WHATSAPP_NUMBER") return "+14155238886";
-            if (key === "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID") {
-              return flightTemplateSid;
-            }
-            return undefined;
+            return contentSids[key];
           }),
         },
       },
@@ -49,21 +68,27 @@ describe("WhatsAppService", () => {
   beforeEach(async () => {
     twilioMocks.createMessage.mockReset();
     twilioMocks.createMessage.mockResolvedValue({ sid: "SM123", status: "queued" });
-    service = await createService(flightTemplateSid);
+    service = await createService({
+      TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: flightTemplateSid,
+    });
   });
 
-  it("uses the configured operational flight template", async () => {
-    await service.sendMessage({
+  it.each(configuredTemplates)("uses the configured SID for %s", async (template, envKey) => {
+    const configuredService = await createService({
+      [envKey]: flightTemplateSid,
+    });
+
+    await configuredService.sendMessage({
       to: "+2348012345678",
-      templateKey: Template.FlightOperationalUpdate,
-      variables: { "1": "Fleet Owner", "2": "BA74" },
+      templateKey: template,
+      variables: { "1": "Customer" },
     });
 
     expect(twilioMocks.createMessage).toHaveBeenCalledWith({
       to: "whatsapp:+2348012345678",
       from: "whatsapp:+14155238886",
       contentSid: flightTemplateSid,
-      contentVariables: JSON.stringify({ "1": "Fleet Owner", "2": "BA74" }),
+      contentVariables: JSON.stringify({ "1": "Customer" }),
     });
   });
 

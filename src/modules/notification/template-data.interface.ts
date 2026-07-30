@@ -3,10 +3,12 @@ import type { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../.
 export const CLIENT_RECIPIENT_TYPE = "client" as const;
 export const CHAUFFEUR_RECIPIENT_TYPE = "chauffeur" as const;
 export const FLEET_OWNER_RECIPIENT_TYPE = "fleetOwner" as const;
+export const OPERATIONS_RECIPIENT_TYPE = "operations" as const;
 export type RecipientType =
   | typeof CLIENT_RECIPIENT_TYPE
   | typeof CHAUFFEUR_RECIPIENT_TYPE
-  | typeof FLEET_OWNER_RECIPIENT_TYPE;
+  | typeof FLEET_OWNER_RECIPIENT_TYPE
+  | typeof OPERATIONS_RECIPIENT_TYPE;
 
 export const BOOKING_STATUS_TEMPLATE_KIND = "bookingStatusChange" as const;
 export const BOOKING_REMINDER_TEMPLATE_KIND = "bookingReminder" as const;
@@ -17,6 +19,7 @@ export const FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND = "fleetOwnerNewBooking" as c
 export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
 export const PUSH_ONLY_TEMPLATE_KIND = "pushOnly" as const;
 export const FLIGHT_UPDATE_TEMPLATE_KIND = "flightUpdate" as const;
+export const PAYOUT_STATUS_TEMPLATE_KIND = "payoutStatus" as const;
 export type TemplateKind =
   | typeof BOOKING_STATUS_TEMPLATE_KIND
   | typeof BOOKING_REMINDER_TEMPLATE_KIND
@@ -26,7 +29,8 @@ export type TemplateKind =
   | typeof FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
   | typeof REVIEW_RECEIVED_TEMPLATE_KIND
   | typeof PUSH_ONLY_TEMPLATE_KIND
-  | typeof FLIGHT_UPDATE_TEMPLATE_KIND;
+  | typeof FLIGHT_UPDATE_TEMPLATE_KIND
+  | typeof PAYOUT_STATUS_TEMPLATE_KIND;
 
 /**
  * Template data specific to booking status updates (includes email template fields)
@@ -112,6 +116,17 @@ export interface FlightUpdateTemplateData {
   arrivalLocation: string;
 }
 
+export interface PayoutStatusTemplateData {
+  templateKind: typeof PAYOUT_STATUS_TEMPLATE_KIND;
+  subject: string;
+  status: "PAID_OUT" | "FAILED";
+  recipientName: string;
+  amount: string;
+  bookingReference: string;
+  payoutTransactionId: string;
+  failureReason?: string;
+}
+
 /**
  * Union type for all possible template data structures
  */
@@ -124,4 +139,5 @@ export type TemplateData =
   | FleetOwnerNewBookingTemplateData
   | ReviewReceivedTemplateData
   | PushOnlyTemplateData
-  | FlightUpdateTemplateData;
+  | FlightUpdateTemplateData
+  | PayoutStatusTemplateData;
