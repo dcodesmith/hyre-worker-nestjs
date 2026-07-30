@@ -25,6 +25,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
   PAYOUT_STATUS_TEMPLATE_KIND,
+  REFUND_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -94,6 +95,9 @@ describe("NotificationProcessor", () => {
     );
     vi.spyOn(emailTemplates, "renderPayoutStatusEmail").mockResolvedValue(
       "<html>Payout status email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderRefundStatusEmail").mockResolvedValue(
+      "<html>Refund status email</html>",
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -238,6 +242,47 @@ describe("NotificationProcessor", () => {
       html: "<html>Payout status email</html>",
     });
     expect(whatsAppService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends failed refund notifications only to operations email", async () => {
+    const job = createJob("refund-failed-job", {
+      id: "refund-status-refund-123-refund_failed",
+      type: NotificationType.REFUND_STATUS_CHANGED,
+      audience: NotificationAudience.OPERATIONS,
+      channels: [NotificationChannel.EMAIL],
+      bookingId: "booking-123",
+      recipients: {
+        [OPERATIONS_RECIPIENT_TYPE]: {
+          email: "operations@tripdly.com",
+        },
+      },
+      templateData: {
+        templateKind: REFUND_STATUS_TEMPLATE_KIND,
+        subject: "Refund failed for booking BR-123",
+        status: "REFUND_FAILED",
+        recipientName: "Operations team",
+        amount: "₦15,000.00",
+        bookingReference: "BR-123",
+        paymentId: "payment-123",
+        refundId: "refund-123",
+        failureReason: "Provider rejected refund",
+      },
+    });
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-refund-ops" },
+      error: null,
+      headers: {},
+    });
+
+    await expect(processor.process(job)).resolves.toHaveLength(1);
+
+    expect(emailService.sendEmail).toHaveBeenCalledExactlyOnceWith({
+      to: "operations@tripdly.com",
+      subject: "Refund failed for booking BR-123",
+      html: "<html>Refund status email</html>",
+    });
+    expect(whatsAppService.sendMessage).not.toHaveBeenCalled();
+    expect(pushService.sendPushNotifications).not.toHaveBeenCalled();
   });
 
   it("should process notification job with WHATSAPP channel successfully", async () => {

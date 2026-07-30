@@ -27,6 +27,7 @@ export enum NotificationType {
   REVIEW_RECEIVED = "review-received",
   REFERRAL_REWARD_RELEASED = "referral-reward-released",
   PAYOUT_STATUS_CHANGED = "payout-status-changed",
+  REFUND_STATUS_CHANGED = "refund-status-changed",
   FLIGHT_ARRIVED = "flight-arrived",
   FLIGHT_DEPARTED = "flight-departed",
   FLIGHT_DELAYED = "flight-delayed",
@@ -185,5 +186,21 @@ export interface PayoutStatusChangedNotificationParams {
     name: string | null;
     email: string;
     phoneNumber: string | null;
+  };
+}
+
+export interface RefundStatusChangedNotificationParams {
+  refundId: string;
+  paymentId: string;
+  bookingId: string;
+  bookingReference: string;
+  status: "REFUNDED" | "PARTIALLY_REFUNDED" | "REFUND_FAILED" | "REFUND_REVIEW_REQUIRED";
+  amount: number;
+  failureReason?: string;
+  customer: {
+    userId?: string;
+    name?: string | null;
+    email?: string | null;
+    phoneNumber?: string | null;
   };
 }

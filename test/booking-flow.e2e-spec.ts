@@ -9,8 +9,8 @@ import { GlobalExceptionFilter } from "../src/common/filters/global-exception.fi
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import type { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { FlutterwaveChargeData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
+import type { FlutterwaveChargeWebhookData } from "../src/modules/flutterwave/flutterwave-webhook.schema";
 import type { ClientTypeOption } from "./helpers";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -146,7 +146,7 @@ describe("Booking Flow E2E", () => {
 
     const flwTransactionId = Date.now() + Math.floor(Math.random() * 100000);
 
-    const webhookData: FlutterwaveChargeData = {
+    const webhookData: FlutterwaveChargeWebhookData = {
       id: flwTransactionId,
       tx_ref: txRef,
       status: "successful",
@@ -187,7 +187,7 @@ describe("Booking Flow E2E", () => {
         data: webhookData,
       });
 
-    expect(webhookResponse.status).toBe(HttpStatus.CREATED);
+    expect(webhookResponse.status).toBe(HttpStatus.OK);
     expect(webhookResponse.body.status).toBe("ok");
 
     // Booking should be CONFIRMED with PAID payment status
@@ -260,7 +260,7 @@ describe("Booking Flow E2E", () => {
     const extensionEndTime = new Date(createdExtension.extensionEndTime);
 
     const flwTransactionId = Date.now() + Math.floor(Math.random() * 100000);
-    const webhookData: FlutterwaveChargeData = {
+    const webhookData: FlutterwaveChargeWebhookData = {
       id: flwTransactionId,
       tx_ref: txRef,
       status: "successful",
@@ -301,7 +301,7 @@ describe("Booking Flow E2E", () => {
         data: webhookData,
       });
 
-    expect(webhookResponse.status).toBe(HttpStatus.CREATED);
+    expect(webhookResponse.status).toBe(HttpStatus.OK);
     expect(webhookResponse.body.status).toBe("ok");
 
     const updatedExtension = await databaseService.extension.findUnique({
@@ -504,7 +504,7 @@ describe("Booking Flow E2E", () => {
     expect(statsAfterReserve.totalReferrals).toBe(1);
     expect(statsAfterReserve.totalRewardsPending.toNumber()).toBe(REWARD_AMOUNT);
 
-    const failedChargeData: FlutterwaveChargeData = {
+    const failedChargeData: FlutterwaveChargeWebhookData = {
       id: Date.now() + Math.floor(Math.random() * 100000),
       tx_ref: firstTxRef,
       status: "failed",
@@ -541,7 +541,7 @@ describe("Booking Flow E2E", () => {
       .post("/api/payments/webhook/flutterwave")
       .set("verif-hash", webhookSecret)
       .send({ event: "charge.completed", data: failedChargeData });
-    expect(failedWebhook.status).toBe(HttpStatus.CREATED);
+    expect(failedWebhook.status).toBe(HttpStatus.OK);
 
     // First booking's reservation should be released; user is eligible again.
     const releasedBooking = await factory.getBookingById(firstBookingId);
@@ -628,7 +628,7 @@ describe("Booking Flow E2E", () => {
     if (!retryTxRef) throw new Error("Retry booking has no paymentIntent");
     const retryAmount = retryBooking.totalAmount.toNumber();
 
-    const successData: FlutterwaveChargeData = {
+    const successData: FlutterwaveChargeWebhookData = {
       ...failedChargeData,
       id: Date.now() + Math.floor(Math.random() * 100000),
       tx_ref: retryTxRef,
@@ -649,7 +649,7 @@ describe("Booking Flow E2E", () => {
       .post("/api/payments/webhook/flutterwave")
       .set("verif-hash", webhookSecret)
       .send({ event: "charge.completed", data: successData });
-    expect(successWebhook.status).toBe(HttpStatus.CREATED);
+    expect(successWebhook.status).toBe(HttpStatus.OK);
 
     const confirmedRetryBooking = await factory.getBookingById(retryBookingId);
     if (!confirmedRetryBooking) throw new Error("Confirmed retry booking not found");

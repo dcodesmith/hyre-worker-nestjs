@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PayoutTransactionStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
-import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
+import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 import { PaymentService } from "./payment.service";
 
 @Injectable()
@@ -27,13 +27,6 @@ export class TransferCompletedHandler {
       "Processing transfer.completed webhook",
     );
 
-    if (!reference) {
-      this.logger.warn(
-        "Missing reference in transfer.completed webhook, skipping to prevent data corruption",
-      );
-      return;
-    }
-
     const payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
       where: { payoutProviderReference: reference },
     });
@@ -57,15 +50,7 @@ export class TransferCompletedHandler {
       return;
     }
 
-    const normalizedStatus = typeof status === "string" ? status.trim().toUpperCase() : "";
-    if (!normalizedStatus) {
-      this.logger.warn(
-        {
-          reference,
-        },
-        "Missing or invalid status in transfer.completed webhook, marking as failed",
-      );
-    }
+    const normalizedStatus = status.toUpperCase();
     const newStatus =
       normalizedStatus === "SUCCESSFUL"
         ? PayoutTransactionStatus.PAID_OUT

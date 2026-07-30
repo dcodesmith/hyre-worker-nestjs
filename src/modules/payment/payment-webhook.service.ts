@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
-import type { FlutterwaveWebhookPayload } from "../flutterwave/flutterwave.interface";
+import type { FlutterwaveWebhookPayload } from "../flutterwave/flutterwave-webhook.schema";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { RefundCompletedHandler } from "./refund-completed.handler";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
@@ -45,14 +45,6 @@ export class PaymentWebhookService {
       case "refund.completed":
         await this.refundCompletedHandler.handle(payload.data);
         break;
-
-      default:
-        this.logger.warn(
-          {
-            event: (payload as { event: string }).event,
-          },
-          "Received unknown webhook event",
-        );
     }
   }
 }

@@ -12,6 +12,7 @@ import {
   renderFleetOwnerNewBookingEmail,
   renderFlightOperationalUpdateEmail,
   renderPayoutStatusEmail,
+  renderRefundStatusEmail,
   renderReviewReceivedEmailForChauffeur,
   renderReviewReceivedEmailForOwner,
   renderUserBookingCancellationEmail,
@@ -45,6 +46,7 @@ import {
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
   PAYOUT_STATUS_TEMPLATE_KIND,
+  REFUND_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
   type ReviewReceivedTemplateData,
@@ -61,6 +63,7 @@ import {
   FleetOwnerNewBookingMapper,
   FlightUpdateMapper,
   PayoutStatusMapper,
+  RefundStatusMapper,
   type TemplateVariableMapper,
 } from "./template-mappers";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -88,6 +91,7 @@ export class NotificationProcessor extends WorkerHost {
       new FleetOwnerNewBookingMapper(),
       new FlightUpdateMapper(),
       new PayoutStatusMapper(),
+      new RefundStatusMapper(),
       new BookingStatusMapper(),
       new BookingReminderStartMapper(),
       new BookingReminderEndMapper(),
@@ -370,6 +374,8 @@ export class NotificationProcessor extends WorkerHost {
         return this.buildReviewReceivedEmailHtml(templateData, recipient);
       case NotificationType.PAYOUT_STATUS_CHANGED:
         return this.buildPayoutStatusEmailHtml(templateData, recipient);
+      case NotificationType.REFUND_STATUS_CHANGED:
+        return this.buildRefundStatusEmailHtml(templateData, recipient);
       case NotificationType.FLIGHT_ARRIVED:
       case NotificationType.FLIGHT_DEPARTED:
       case NotificationType.FLIGHT_DELAYED:
@@ -438,6 +444,25 @@ export class NotificationProcessor extends WorkerHost {
     }
 
     return renderPayoutStatusEmail(templateData);
+  }
+
+  private buildRefundStatusEmailHtml(
+    templateData: TemplateData,
+    recipient: RecipientType,
+  ): Promise<string> {
+    if (templateData.templateKind !== REFUND_STATUS_TEMPLATE_KIND) {
+      throw new Error("Invalid template data for refund status notification");
+    }
+
+    const expectedRecipient =
+      templateData.status === "REFUNDED" || templateData.status === "PARTIALLY_REFUNDED"
+        ? CLIENT_RECIPIENT_TYPE
+        : OPERATIONS_RECIPIENT_TYPE;
+    if (recipient !== expectedRecipient) {
+      throw new Error(`Refund ${templateData.status} cannot be sent to recipient: ${recipient}`);
+    }
+
+    return renderRefundStatusEmail(templateData);
   }
 
   private buildBookingCancelledEmailHtml(

@@ -26,6 +26,7 @@ const configuredTemplates = [
   [Template.BookingExtensionConfirmation, "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID"],
   [Template.FlightOperationalUpdate, "TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID"],
   [Template.PayoutSucceeded, "TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID"],
+  [Template.RefundSucceeded, "TWILIO_REFUND_SUCCEEDED_CONTENT_SID"],
 ] as const;
 
 vi.mock("twilio", () => ({

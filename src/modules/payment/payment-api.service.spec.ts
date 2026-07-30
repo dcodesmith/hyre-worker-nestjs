@@ -1,4 +1,3 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
@@ -7,36 +6,66 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import {
+  PaymentAccessForbiddenException,
+  PaymentAmountMismatchException,
+  PaymentBookingNotFoundException,
+  PaymentEntityAccessForbiddenException,
+  PaymentEntityAlreadyPaidException,
+  PaymentEntityNotPayableException,
+  PaymentExtensionNotFoundException,
+  PaymentNotFoundException,
+  RefundAmountExceedsChargeException,
+  RefundChargedAmountMissingException,
+  RefundDomainStateMismatchException,
+  RefundPaymentNotSuccessfulException,
+  RefundProviderReferenceMissingException,
+  RefundReconciliationRequiredException,
+  RefundReservationConflictException,
+} from "./payment.error";
 import { PaymentApiService } from "./payment-api.service";
+import { RefundFinalizationService } from "./refund-finalization.service";
 
 describe("PaymentApiService", () => {
   let service: PaymentApiService;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let refundFinalizationService: RefundFinalizationService;
 
   const mockUserInfo = {
     id: "user-123",
     email: "test@example.com",
     name: "Test User",
   };
+  const transactionClient = {
+    payment: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    booking: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    extension: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+    },
+  };
+
   beforeEach(async () => {
+    vi.clearAllMocks();
+    transactionClient.booking.updateMany.mockResolvedValue({ count: 1 });
+    transactionClient.extension.updateMany.mockResolvedValue({ count: 1 });
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentApiService,
         {
           provide: DatabaseService,
           useValue: {
-            booking: {
-              findUnique: vi.fn(),
-            },
-            extension: {
-              findUnique: vi.fn(),
-            },
-            payment: {
-              findFirst: vi.fn(),
-              update: vi.fn(),
-              updateMany: vi.fn(),
-            },
+            ...transactionClient,
+            $transaction: vi.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+              callback(transactionClient),
+            ),
           },
         },
         {
@@ -47,6 +76,12 @@ describe("PaymentApiService", () => {
             getWebhookUrl: vi.fn().mockReturnValue("https://example.com/webhook"),
           },
         },
+        {
+          provide: RefundFinalizationService,
+          useValue: {
+            finalize: vi.fn().mockResolvedValue(true),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -55,6 +90,7 @@ describe("PaymentApiService", () => {
     service = module.get<PaymentApiService>(PaymentApiService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
+    refundFinalizationService = module.get<RefundFinalizationService>(RefundFinalizationService);
   });
   describe("initializePayment", () => {
     const validBookingDto = {
@@ -131,15 +167,15 @@ describe("PaymentApiService", () => {
       );
     });
 
-    it("should throw NotFoundException when booking not found", async () => {
+    it("throws PaymentBookingNotFoundException when booking is missing", async () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(null);
 
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
-        NotFoundException,
+        PaymentBookingNotFoundException,
       );
     });
 
-    it("should throw BadRequestException when booking belongs to different user", async () => {
+    it("throws PaymentEntityAccessForbiddenException for another user's booking", async () => {
       const booking = createBooking({
         id: "booking-123",
         userId: "different-user",
@@ -149,11 +185,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
 
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
-        BadRequestException,
+        PaymentEntityAccessForbiddenException,
       );
     });
 
-    it("should throw BadRequestException when booking already paid", async () => {
+    it("throws PaymentEntityAlreadyPaidException when booking is paid", async () => {
       const booking = createBooking({
         id: "booking-123",
         userId: mockUserInfo.id,
@@ -163,11 +199,30 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
 
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
-        BadRequestException,
+        PaymentEntityAlreadyPaidException,
       );
     });
 
-    it("should throw BadRequestException when booking is cancelled", async () => {
+    it.each([
+      PaymentStatus.REFUND_PROCESSING,
+      PaymentStatus.REFUNDED,
+      PaymentStatus.PARTIALLY_REFUNDED,
+      PaymentStatus.REFUND_FAILED,
+    ])("rejects booking payment status %s", async (paymentStatus) => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus,
+      });
+
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+    });
+
+    it("throws PaymentEntityNotPayableException when booking is cancelled", async () => {
       const booking = createBooking({
         id: "booking-123",
         userId: mockUserInfo.id,
@@ -178,11 +233,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
 
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
-        /cancelled/i,
+        PaymentEntityNotPayableException,
       );
     });
 
-    it("should throw BadRequestException when booking is rejected", async () => {
+    it("throws PaymentEntityNotPayableException when booking is rejected", async () => {
       const booking = createBooking({
         id: "booking-123",
         userId: mockUserInfo.id,
@@ -193,11 +248,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
 
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
-        /rejected/i,
+        PaymentEntityNotPayableException,
       );
     });
 
-    it("should throw NotFoundException when extension not found", async () => {
+    it("throws PaymentExtensionNotFoundException when extension is missing", async () => {
       const extensionDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -208,11 +263,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(null);
 
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
-        NotFoundException,
+        PaymentExtensionNotFoundException,
       );
     });
 
-    it("should throw BadRequestException when client amount doesn't match server amount for booking", async () => {
+    it("throws PaymentAmountMismatchException for a mismatched booking amount", async () => {
       const mismatchedDto = {
         type: "booking" as const,
         entityId: "booking-123",
@@ -230,11 +285,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
 
       await expect(service.initializePayment(mismatchedDto, mockUserInfo)).rejects.toThrow(
-        /amount mismatch/i,
+        PaymentAmountMismatchException,
       );
     });
 
-    it("should throw BadRequestException when client amount doesn't match server amount for extension", async () => {
+    it("throws PaymentAmountMismatchException for a mismatched extension amount", async () => {
       const mismatchedDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -252,11 +307,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(mismatchedDto, mockUserInfo)).rejects.toThrow(
-        BadRequestException,
+        PaymentAmountMismatchException,
       );
     });
 
-    it("should throw BadRequestException when extension status is CANCELLED", async () => {
+    it("throws PaymentEntityNotPayableException when extension is cancelled", async () => {
       const extensionDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -274,11 +329,36 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
-        /cancelled/i,
+        PaymentEntityNotPayableException,
       );
     });
 
-    it("should throw BadRequestException when extension status is REJECTED", async () => {
+    it.each([
+      PaymentStatus.REFUND_PROCESSING,
+      PaymentStatus.REFUNDED,
+      PaymentStatus.PARTIALLY_REFUNDED,
+      PaymentStatus.REFUND_FAILED,
+    ])("rejects extension payment status %s", async (paymentStatus) => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+      const extension = createExtension({
+        id: "extension-123",
+        paymentStatus,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+    });
+
+    it("throws PaymentEntityNotPayableException when extension is rejected", async () => {
       const extensionDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -296,11 +376,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
-        /rejected/i,
+        PaymentEntityNotPayableException,
       );
     });
 
-    it("should throw BadRequestException when parent booking is cancelled for extension payment", async () => {
+    it("throws PaymentEntityNotPayableException when the parent booking is cancelled", async () => {
       const extensionDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -318,11 +398,11 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
-        /parent booking is cancelled/i,
+        PaymentEntityNotPayableException,
       );
     });
 
-    it("should throw BadRequestException when parent booking is rejected for extension payment", async () => {
+    it("throws PaymentEntityNotPayableException when the parent booking is rejected", async () => {
       const extensionDto = {
         type: "extension" as const,
         entityId: "extension-123",
@@ -340,7 +420,7 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
 
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
-        /parent booking is rejected/i,
+        PaymentEntityNotPayableException,
       );
     });
   });
@@ -369,15 +449,15 @@ describe("PaymentApiService", () => {
       });
     });
 
-    it("should throw NotFoundException when payment not found", async () => {
+    it("throws PaymentNotFoundException when payment is missing", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
       await expect(service.getPaymentStatus("invalid-ref", mockUserInfo.id)).rejects.toThrow(
-        NotFoundException,
+        PaymentNotFoundException,
       );
     });
 
-    it("should throw BadRequestException when user does not own payment", async () => {
+    it("throws PaymentAccessForbiddenException when user does not own payment", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "different-user" },
       });
@@ -385,7 +465,7 @@ describe("PaymentApiService", () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
       await expect(service.getPaymentStatus("tx-ref-123", mockUserInfo.id)).rejects.toThrow(
-        BadRequestException,
+        PaymentAccessForbiddenException,
       );
     });
   });
@@ -393,8 +473,9 @@ describe("PaymentApiService", () => {
   describe("initiateRefund", () => {
     const refundDto = { amount: 5000, reason: "Customer request" };
 
-    it("should initiate refund successfully for booking owner", async () => {
+    it("defers terminal finalization until the provider response is verified", async () => {
       const payment = createPayment({
+        amountCharged: new Decimal(5000),
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
       });
 
@@ -405,13 +486,14 @@ describe("PaymentApiService", () => {
         success: true,
         refundId: 67890,
         amountRefunded: 5000,
-        status: "completed",
+        status: "completed-mpgs",
       });
 
       const result = await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
 
       expect(result.success).toBe(true);
       expect(result.refundId).toBe(67890);
+      expect(refundFinalizationService.finalize).not.toHaveBeenCalled();
 
       // New refund from SUCCESSFUL: WHERE clause must match exactly SUCCESSFUL (not include REFUND_ERROR)
       // This prevents race conditions where a concurrent request could overwrite the idempotency key
@@ -420,19 +502,98 @@ describe("PaymentApiService", () => {
         data: {
           status: "REFUND_PROCESSING",
           refundIdempotencyKey: expect.stringMatching(/^refund_payment-123_[a-f0-9-]+$/),
+          refundRequestedAmount: 5000,
+          refundRequestedAt: expect.any(Date),
+          refundReconciliationAttempts: 0,
+          refundVerificationFailures: 0,
+          refundManualReviewNotifiedAt: null,
+        },
+      });
+      expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "booking-123",
+          paymentStatus: {
+            in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
+          },
+        },
+        data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+      });
+    });
+
+    it("keeps an accepted but pending refund silent and in processing", async () => {
+      const payment = createPayment({
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
+        success: true,
+        refundId: 67890,
+        amountRefunded: 5000,
+        status: "completed",
+      });
+
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).resolves.toMatchObject({ success: true, status: "completed" });
+
+      expect(refundFinalizationService.finalize).not.toHaveBeenCalled();
+      expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "payment-123",
+          status: "REFUND_PROCESSING",
+        },
+        data: {
+          refundProviderId: "67890",
+          refundProviderStatus: "completed",
+          refundLastCheckedAt: expect.any(Date),
         },
       });
     });
 
-    it("should throw NotFoundException when payment not found", async () => {
+    it("preserves the provider refund ID when local persistence becomes uncertain", async () => {
+      const payment = createPayment({
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockRejectedValueOnce(new Error("Database unavailable"))
+        .mockResolvedValueOnce({ count: 1 });
+      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
+        success: true,
+        refundId: 67890,
+        amountRefunded: 5000,
+        status: "completed",
+      });
+
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow("Database unavailable");
+
+      expect(databaseService.payment.updateMany).toHaveBeenLastCalledWith({
+        where: {
+          id: "payment-123",
+          status: "REFUND_PROCESSING",
+        },
+        data: {
+          status: "REFUND_ERROR",
+          refundProviderId: "67890",
+          refundProviderStatus: "completed",
+          refundLastCheckedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it("throws PaymentNotFoundException when refund payment is missing", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
 
       await expect(
         service.initiateRefund("invalid-ref", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(PaymentNotFoundException);
     });
 
-    it("should throw BadRequestException when user does not own payment", async () => {
+    it("throws PaymentAccessForbiddenException when user does not own refund payment", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "different-user" },
       });
@@ -441,10 +602,10 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(PaymentAccessForbiddenException);
     });
 
-    it("should throw BadRequestException when payment is not successful", async () => {
+    it("throws RefundPaymentNotSuccessfulException when payment is not successful", async () => {
       const payment = createPayment({
         status: "PENDING",
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
@@ -454,10 +615,10 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(RefundPaymentNotSuccessfulException);
     });
 
-    it("should throw BadRequestException when refund amount exceeds amount charged", async () => {
+    it("throws RefundAmountExceedsChargeException when refund exceeds the charge", async () => {
       const payment = createPayment({
         amountCharged: new Decimal(1000), // Amount charged is less than refund request of 5000
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
@@ -467,10 +628,10 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(/cannot exceed the amount charged/i);
+      ).rejects.toThrow(RefundAmountExceedsChargeException);
     });
 
-    it("should throw BadRequestException when payment has no charged amount", async () => {
+    it("throws RefundChargedAmountMissingException when charged amount is missing", async () => {
       const payment = createPayment({
         amountCharged: null,
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
@@ -480,10 +641,10 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(/no charged amount/i);
+      ).rejects.toThrow(RefundChargedAmountMissingException);
     });
 
-    it("should throw BadRequestException when payment has no provider reference", async () => {
+    it("throws RefundProviderReferenceMissingException when provider reference is missing", async () => {
       const payment = createPayment({
         flutterwaveTransactionId: null,
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
@@ -493,7 +654,7 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(RefundProviderReferenceMissingException);
     });
 
     it("should set payment status to REFUND_FAILED when provider rejects refund", async () => {
@@ -512,10 +673,12 @@ describe("PaymentApiService", () => {
       const result = await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
 
       expect(result.success).toBe(false);
-      // Provider explicitly rejected - should mark as REFUND_FAILED
-      expect(databaseService.payment.update).toHaveBeenCalledWith({
-        where: { id: "payment-123" },
-        data: { status: "REFUND_FAILED" },
+      expect(refundFinalizationService.finalize).toHaveBeenCalledWith({
+        paymentId: "payment-123",
+        refundId: expect.stringMatching(/^idempotency:refund_payment-123_[a-f0-9-]+$/),
+        status: "REFUND_FAILED",
+        amount: 5000,
+        failureReason: "Insufficient funds",
       });
     });
 
@@ -535,15 +698,16 @@ describe("PaymentApiService", () => {
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
       ).rejects.toThrow("Network timeout");
 
-      // Network error - set to REFUND_ERROR for reconciliation via webhook
-      // The idempotency key is preserved so retries can safely use the same key
-      expect(databaseService.payment.update).toHaveBeenCalledWith({
-        where: { id: "payment-123" },
+      expect(databaseService.payment.updateMany).toHaveBeenLastCalledWith({
+        where: {
+          id: "payment-123",
+          status: "REFUND_PROCESSING",
+        },
         data: { status: "REFUND_ERROR" },
       });
     });
 
-    it("should throw BadRequestException when refund already in progress", async () => {
+    it("throws RefundReservationConflictException when refund reservation loses the race", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
       });
@@ -553,10 +717,25 @@ describe("PaymentApiService", () => {
 
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
-      ).rejects.toThrow(/already in progress/i);
+      ).rejects.toThrow(RefundReservationConflictException);
     });
 
-    it("should reuse existing idempotency key when retrying from REFUND_ERROR state", async () => {
+    it("does not call Flutterwave when the booking refund state cannot be reserved", async () => {
+      const payment = createPayment({
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+      transactionClient.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(RefundDomainStateMismatchException);
+
+      expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+    });
+
+    it("requires reconciliation instead of retrying an uncertain refund", async () => {
       const existingIdempotencyKey = "refund_payment-123_existing-uuid";
       const payment = createPayment({
         status: "REFUND_ERROR",
@@ -565,35 +744,12 @@ describe("PaymentApiService", () => {
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(RefundReconciliationRequiredException);
 
-      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
-        success: true,
-        refundId: 67890,
-        amountRefunded: 5000,
-        status: "completed",
-      });
-
-      const result = await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
-
-      expect(result.success).toBe(true);
-
-      // Retry from REFUND_ERROR: WHERE clause must match exactly REFUND_ERROR (not include SUCCESSFUL)
-      // This prevents race conditions where a concurrent request could overwrite the idempotency key
-      expect(databaseService.payment.updateMany).toHaveBeenCalledWith({
-        where: { id: "payment-123", status: "REFUND_ERROR" },
-        data: {
-          status: "REFUND_PROCESSING",
-          refundIdempotencyKey: existingIdempotencyKey,
-        },
-      });
-
-      // Flutterwave should be called with the same idempotency key
-      expect(flutterwaveService.initiateRefund).toHaveBeenCalledWith(
-        expect.objectContaining({
-          idempotencyKey: existingIdempotencyKey,
-        }),
-      );
+      expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
+      expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
     });
   });
 });

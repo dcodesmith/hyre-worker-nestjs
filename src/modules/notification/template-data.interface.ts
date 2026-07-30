@@ -20,6 +20,7 @@ export const REVIEW_RECEIVED_TEMPLATE_KIND = "reviewReceived" as const;
 export const PUSH_ONLY_TEMPLATE_KIND = "pushOnly" as const;
 export const FLIGHT_UPDATE_TEMPLATE_KIND = "flightUpdate" as const;
 export const PAYOUT_STATUS_TEMPLATE_KIND = "payoutStatus" as const;
+export const REFUND_STATUS_TEMPLATE_KIND = "refundStatus" as const;
 export type TemplateKind =
   | typeof BOOKING_STATUS_TEMPLATE_KIND
   | typeof BOOKING_REMINDER_TEMPLATE_KIND
@@ -30,7 +31,8 @@ export type TemplateKind =
   | typeof REVIEW_RECEIVED_TEMPLATE_KIND
   | typeof PUSH_ONLY_TEMPLATE_KIND
   | typeof FLIGHT_UPDATE_TEMPLATE_KIND
-  | typeof PAYOUT_STATUS_TEMPLATE_KIND;
+  | typeof PAYOUT_STATUS_TEMPLATE_KIND
+  | typeof REFUND_STATUS_TEMPLATE_KIND;
 
 /**
  * Template data specific to booking status updates (includes email template fields)
@@ -127,6 +129,18 @@ export interface PayoutStatusTemplateData {
   failureReason?: string;
 }
 
+export interface RefundStatusTemplateData {
+  templateKind: typeof REFUND_STATUS_TEMPLATE_KIND;
+  subject: string;
+  status: "REFUNDED" | "PARTIALLY_REFUNDED" | "REFUND_FAILED" | "REFUND_REVIEW_REQUIRED";
+  recipientName: string;
+  amount: string;
+  bookingReference: string;
+  paymentId: string;
+  refundId: string;
+  failureReason?: string;
+}
+
 /**
  * Union type for all possible template data structures
  */
@@ -140,4 +154,5 @@ export type TemplateData =
   | ReviewReceivedTemplateData
   | PushOnlyTemplateData
   | FlightUpdateTemplateData
-  | PayoutStatusTemplateData;
+  | PayoutStatusTemplateData
+  | RefundStatusTemplateData;

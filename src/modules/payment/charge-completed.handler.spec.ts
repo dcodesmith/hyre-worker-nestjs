@@ -8,8 +8,8 @@ import { BookingConfirmationService } from "../booking/booking-confirmation.serv
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
-import type { FlutterwaveChargeData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 
 describe("ChargeCompletedHandler", () => {
@@ -29,7 +29,7 @@ describe("ChargeCompletedHandler", () => {
   const mockBookingEligibilityService = {
     releaseReferralReservation: vi.fn(),
   };
-  const mockChargeData: FlutterwaveChargeData = {
+  const mockChargeData: FlutterwaveChargeWebhookData = {
     id: 12345,
     tx_ref: "tx-ref-123",
     flw_ref: "FLW-REF-123",
@@ -324,13 +324,6 @@ describe("ChargeCompletedHandler", () => {
     expect(databaseService.payment.upsert).not.toHaveBeenCalled();
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
-  });
-
-  it("skips processing when tx_ref is missing", async () => {
-    await handler.handle({ ...mockChargeData, tx_ref: undefined as unknown as string });
-
-    expect(flutterwaveService.verifyTransaction).not.toHaveBeenCalled();
-    expect(databaseService.payment.upsert).not.toHaveBeenCalled();
   });
 
   it("releases referral reservation and skips confirmation when verified charge is not successful", async () => {

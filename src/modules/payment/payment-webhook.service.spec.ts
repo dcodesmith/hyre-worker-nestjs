@@ -2,10 +2,10 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import type {
-  FlutterwaveChargeData,
+  FlutterwaveChargeWebhookData,
   FlutterwaveRefundWebhookData,
   FlutterwaveTransferWebhookData,
-} from "../flutterwave/flutterwave.interface";
+} from "../flutterwave/flutterwave-webhook.schema";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { PaymentWebhookService } from "./payment-webhook.service";
 import { RefundCompletedHandler } from "./refund-completed.handler";
@@ -16,7 +16,7 @@ describe("PaymentWebhookService", () => {
   const chargeCompletedHandler = { handle: vi.fn() };
   const transferCompletedHandler = { handle: vi.fn() };
   const refundCompletedHandler = { handle: vi.fn() };
-  const chargeData: FlutterwaveChargeData = {
+  const chargeData: FlutterwaveChargeWebhookData = {
     id: 12345,
     tx_ref: "tx-ref-123",
     flw_ref: "FLW-REF-123",
@@ -117,16 +117,5 @@ describe("PaymentWebhookService", () => {
     expect(refundCompletedHandler.handle).toHaveBeenCalledWith(refundData);
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
     expect(transferCompletedHandler.handle).not.toHaveBeenCalled();
-  });
-
-  it("ignores unknown events without calling handlers", async () => {
-    await service.handleWebhook({
-      event: "something.unknown",
-      data: {} as FlutterwaveChargeData,
-    } as never);
-
-    expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
-    expect(transferCompletedHandler.handle).not.toHaveBeenCalled();
-    expect(refundCompletedHandler.handle).not.toHaveBeenCalled();
   });
 });

@@ -103,7 +103,7 @@ Booking completion transaction
   - `NotificationService`: Queues multi-channel notifications
   - `EmailService`: Resend API integration with React Email templates
   - `WhatsAppService`: Twilio WhatsApp Business API integration
-- **Processor**: `NotificationProcessor` - Handles email/WhatsApp delivery
+- **Processor**: `NotificationProcessor` - Handles email, WhatsApp, and push delivery
 - **Template Mappers**: Dynamic content generation for different notification types
   - `BookingStatusMapper` - Status change notifications
   - `BookingReminderStartMapper` - Trip start reminders
@@ -132,6 +132,12 @@ Booking completion transaction
 - Creates and tracks `PayoutTransaction` records
 - Handles Flutterwave transfer failures and retries
 - Reconciles stale `PROCESSING` transfers by provider reference when completion webhooks are lost
+- Re-queries Flutterwave before finalizing refunds and reconciles pending refunds hourly by provider ID
+- Treats Flutterwave V3 `completed` as pending; only documented channel-specific completion statuses
+  notify customers
+- Sends explicit failures and one-time unresolved/SLA-expired final handoffs to operations
+  through the notification outbox
+- Operational thresholds and handoff steps: `docs/REFUND_RECONCILIATION.md`
 
 **ReferralModule** (`src/modules/referral/`)
 - **Command**: `REFERRAL_COMPLETION` - Triggered durably after booking completion
@@ -348,6 +354,7 @@ TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
 TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
+TWILIO_REFUND_SUCCEEDED_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
 
 # Payments (Flutterwave)
 FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxx

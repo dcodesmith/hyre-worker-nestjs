@@ -510,7 +510,7 @@ describe("FlutterwaveService", () => {
       );
     });
 
-    it("should include callback_url when provided", async () => {
+    it("should include Flutterwave V3 callbackurl when provided", async () => {
       const optionsWithCallback: RefundOptions = {
         ...validRefundOptions,
         callbackUrl: "https://example.com/refund-callback",
@@ -543,7 +543,7 @@ describe("FlutterwaveService", () => {
         "/v3/transactions/12345/refund",
         {
           amount: 5000,
-          callback_url: "https://example.com/refund-callback",
+          callbackurl: "https://example.com/refund-callback",
         },
         {
           headers: {
@@ -644,6 +644,52 @@ describe("FlutterwaveService", () => {
       expect(result).toEqual({
         success: false,
         error: "Transaction not found",
+      });
+    });
+
+    it.each([409, 503])("should throw uncertain HTTP status %s", async (statusCode) => {
+      const httpError = createAxiosErrorWithResponse(statusCode, {
+        status: "error",
+        message: "Refund outcome uncertain",
+      });
+      mockAxiosInstance.post.mockRejectedValueOnce(httpError);
+
+      await expect(service.initiateRefund(validRefundOptions)).rejects.toMatchObject({
+        statusCode,
+      });
+    });
+  });
+
+  describe("fetchRefund", () => {
+    it("fetches a refund by its Flutterwave V3 refund ID", async () => {
+      const refund = {
+        id: 67890,
+        amount_refunded: 5000,
+        status: "completed-mpgs",
+        flw_ref: "FLW-MOCK-REF",
+        comment: null,
+        settlement_id: "123",
+        meta: {},
+        created_at: "2024-01-15T10:00:00.000Z",
+        account_id: 123,
+        transaction_id: 12345,
+      };
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: refund });
+
+      await expect(service.fetchRefund("67890")).resolves.toEqual(refund);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/refunds/67890");
+    });
+
+    it("throws provider lookup failures", async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(
+        createAxiosErrorWithResponse(503, {
+          status: "error",
+          message: "Service unavailable",
+        }),
+      );
+
+      await expect(service.fetchRefund("67890")).rejects.toMatchObject({
+        statusCode: 503,
       });
     });
   });

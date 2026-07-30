@@ -66,6 +66,7 @@ describe("envSchema operations email", () => {
         OPERATIONS_EMAIL: "operations@example.com",
         TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: "",
         TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: "",
+        TWILIO_REFUND_SUCCEEDED_CONTENT_SID: "",
       }).success,
     ).toBe(true);
   });

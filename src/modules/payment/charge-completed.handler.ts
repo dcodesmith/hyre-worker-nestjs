@@ -7,8 +7,8 @@ import { BookingConfirmationService } from "../booking/booking-confirmation.serv
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
-import type { FlutterwaveChargeData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 
 const MONEY_TOLERANCE = 0.01;
 
@@ -25,7 +25,7 @@ export class ChargeCompletedHandler {
     this.logger.setContext(ChargeCompletedHandler.name);
   }
 
-  async handle(data: FlutterwaveChargeData): Promise<void> {
+  async handle(data: FlutterwaveChargeWebhookData): Promise<void> {
     const { tx_ref, id: transactionId, status, charged_amount } = data;
 
     this.logger.info(
@@ -37,10 +37,6 @@ export class ChargeCompletedHandler {
       },
       "Processing charge.completed webhook",
     );
-
-    if (!this.validateChargeWebhookFields(tx_ref, transactionId)) {
-      return;
-    }
 
     try {
       await this.processVerifiedCharge(data);
@@ -57,29 +53,7 @@ export class ChargeCompletedHandler {
     }
   }
 
-  private validateChargeWebhookFields(
-    txRef: string | undefined,
-    transactionId: number | undefined,
-  ): txRef is string {
-    if (!txRef) {
-      this.logger.warn(
-        "Missing tx_ref in charge.completed webhook, skipping to prevent data corruption",
-      );
-      return false;
-    }
-
-    if (transactionId == null) {
-      this.logger.warn(
-        { txRef },
-        "Missing id in charge.completed webhook, skipping to prevent data corruption",
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  private async processVerifiedCharge(data: FlutterwaveChargeData): Promise<void> {
+  private async processVerifiedCharge(data: FlutterwaveChargeWebhookData): Promise<void> {
     const {
       tx_ref: txRef,
       id: transactionId,
@@ -325,7 +299,7 @@ export class ChargeCompletedHandler {
   }
 
   private async findOrCreatePayment(
-    data: FlutterwaveChargeData,
+    data: FlutterwaveChargeWebhookData,
     status: PaymentAttemptStatus,
   ): Promise<(Payment & { booking: Booking | null }) | null> {
     const {

@@ -1,16 +1,19 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentAttemptStatus } from "@prisma/client";
-import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import type { FlutterwaveRefundWebhookData } from "../flutterwave/flutterwave.interface";
+import type { FlutterwaveRefundWebhookData } from "../flutterwave/flutterwave-webhook.schema";
+import { RefundWebhookPaymentNotFoundException } from "./payment.error";
 import { RefundCompletedHandler } from "./refund-completed.handler";
+import { RefundReconciliationService } from "./refund-reconciliation.service";
 
 describe("RefundCompletedHandler", () => {
   let handler: RefundCompletedHandler;
   let databaseService: DatabaseService;
+  let refundReconciliationService: RefundReconciliationService;
+
   const mockRefundData: FlutterwaveRefundWebhookData = {
     id: 11111,
     AmountRefunded: 10000,
@@ -35,9 +38,14 @@ describe("RefundCompletedHandler", () => {
           provide: DatabaseService,
           useValue: {
             payment: {
-              findFirst: vi.fn(),
-              update: vi.fn(),
+              findUnique: vi.fn(),
             },
+          },
+        },
+        {
+          provide: RefundReconciliationService,
+          useValue: {
+            reconcileWebhookRefund: vi.fn().mockResolvedValue(true),
           },
         },
       ],
@@ -45,80 +53,66 @@ describe("RefundCompletedHandler", () => {
       .useMocker(mockPinoLoggerToken)
       .compile();
 
-    handler = module.get<RefundCompletedHandler>(RefundCompletedHandler);
-    databaseService = module.get<DatabaseService>(DatabaseService);
-    vi.clearAllMocks();
+    handler = module.get(RefundCompletedHandler);
+    databaseService = module.get(DatabaseService);
+    refundReconciliationService = module.get(RefundReconciliationService);
   });
 
-  it("marks payment as REFUNDED for full refund", async () => {
-    const payment = createPaymentRecord({
-      id: "payment-123",
-      flutterwaveTransactionId: "12345",
-      status: PaymentAttemptStatus.REFUND_PROCESSING,
-      amountCharged: new Decimal(10000),
-    });
-    vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+  it("re-queries Flutterwave before applying a refund webhook", async () => {
+    vi.mocked(databaseService.payment.findUnique).mockResolvedValueOnce(
+      createPaymentRecord({
+        id: "payment-123",
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+      }),
+    );
 
     await handler.handle(mockRefundData);
 
-    expect(databaseService.payment.update).toHaveBeenCalledWith({
-      where: { id: "payment-123" },
-      data: expect.objectContaining({ status: "REFUNDED" }),
-    });
+    expect(refundReconciliationService.reconcileWebhookRefund).toHaveBeenCalledWith(
+      "payment-123",
+      "11111",
+    );
   });
 
-  it("marks payment as PARTIALLY_REFUNDED for partial refund", async () => {
-    const payment = createPaymentRecord({
-      id: "payment-123",
-      flutterwaveTransactionId: "12345",
-      status: PaymentAttemptStatus.REFUND_PROCESSING,
-      amountCharged: new Decimal(10000),
-    });
-    vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-
-    await handler.handle({ ...mockRefundData, AmountRefunded: 5000 });
-
-    expect(databaseService.payment.update).toHaveBeenCalledWith({
-      where: { id: "payment-123" },
-      data: expect.objectContaining({ status: "PARTIALLY_REFUNDED" }),
-    });
-  });
-
-  it("marks payment as REFUND_FAILED when webhook reports failed", async () => {
-    const payment = createPaymentRecord({
-      id: "payment-123",
-      flutterwaveTransactionId: "12345",
-      status: PaymentAttemptStatus.REFUND_PROCESSING,
-      amountCharged: new Decimal(10000),
-    });
-    vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-
-    await handler.handle({ ...mockRefundData, status: "failed" });
-
-    expect(databaseService.payment.update).toHaveBeenCalledWith({
-      where: { id: "payment-123" },
-      data: expect.objectContaining({ status: "REFUND_FAILED" }),
-    });
-  });
-
-  it("skips update when payment is not in REFUND_PROCESSING", async () => {
-    const payment = createPaymentRecord({
-      id: "payment-123",
-      flutterwaveTransactionId: "12345",
-      status: PaymentAttemptStatus.REFUNDED,
-      amountCharged: new Decimal(10000),
-    });
-    vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+  it("accepts a webhook after an uncertain refund request", async () => {
+    vi.mocked(databaseService.payment.findUnique).mockResolvedValueOnce(
+      createPaymentRecord({
+        id: "payment-123",
+        status: PaymentAttemptStatus.REFUND_ERROR,
+      }),
+    );
 
     await handler.handle(mockRefundData);
 
-    expect(databaseService.payment.update).not.toHaveBeenCalled();
+    expect(refundReconciliationService.reconcileWebhookRefund).toHaveBeenCalledWith(
+      "payment-123",
+      "11111",
+    );
   });
 
-  it("skips processing when AmountRefunded is invalid", async () => {
-    await handler.handle({ ...mockRefundData, AmountRefunded: undefined as unknown as number });
+  it("delegates duplicate detection to reconciliation", async () => {
+    vi.mocked(databaseService.payment.findUnique).mockResolvedValueOnce(
+      createPaymentRecord({
+        id: "payment-123",
+        status: PaymentAttemptStatus.REFUNDED,
+      }),
+    );
 
-    expect(databaseService.payment.findFirst).not.toHaveBeenCalled();
-    expect(databaseService.payment.update).not.toHaveBeenCalled();
+    await handler.handle(mockRefundData);
+
+    expect(refundReconciliationService.reconcileWebhookRefund).toHaveBeenCalledWith(
+      "payment-123",
+      "11111",
+    );
+  });
+
+  it("rejects unknown payments so Flutterwave can retry delivery", async () => {
+    vi.mocked(databaseService.payment.findUnique).mockResolvedValueOnce(null);
+
+    await expect(handler.handle(mockRefundData)).rejects.toThrow(
+      RefundWebhookPaymentNotFoundException,
+    );
+
+    expect(refundReconciliationService.reconcileWebhookRefund).not.toHaveBeenCalled();
   });
 });

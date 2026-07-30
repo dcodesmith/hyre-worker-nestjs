@@ -11,6 +11,8 @@ import { PaymentApiService } from "./payment-api.service";
 import { PaymentReconciliationService } from "./payment-reconciliation.service";
 import { PaymentWebhookService } from "./payment-webhook.service";
 import { RefundCompletedHandler } from "./refund-completed.handler";
+import { RefundFinalizationService } from "./refund-finalization.service";
+import { RefundReconciliationService } from "./refund-reconciliation.service";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
 
 @Module({
@@ -24,6 +26,8 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
     ChargeCompletedHandler,
     TransferCompletedHandler,
     RefundCompletedHandler,
+    RefundFinalizationService,
+    RefundReconciliationService,
   ],
   exports: [PaymentService, PaymentApiService, PaymentWebhookService],
 })
