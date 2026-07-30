@@ -1,3 +1,4 @@
+import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import axios from "axios";
@@ -376,6 +377,87 @@ describe("FlutterwaveService", () => {
 
       expect(result.success).toBe(false);
       expect(result.data).toEqual({ message: "Insufficient funds" });
+    });
+
+    it("should throw when payout outcome is unknown", async () => {
+      const networkError = new axios.AxiosError("Network Error");
+      networkError.request = {};
+      mockAxiosInstance.post.mockRejectedValueOnce(networkError);
+
+      await expect(
+        service.initiatePayout({
+          bankDetails: {
+            bankCode: "044",
+            accountNumber: "1234567890",
+          },
+          amount: 15000,
+          reference: "payout-ref-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+        }),
+      ).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+    });
+
+    it.each([HttpStatus.CONFLICT, HttpStatus.SERVICE_UNAVAILABLE])(
+      "should throw when payout returns uncertain HTTP status %s",
+      async (statusCode) => {
+        mockAxiosInstance.post.mockRejectedValueOnce(
+          createAxiosErrorWithResponse(statusCode, {
+            status: "error",
+            message: "Payout outcome is uncertain",
+          }),
+        );
+
+        await expect(
+          service.initiatePayout({
+            bankDetails: {
+              bankCode: "044",
+              accountNumber: "1234567890",
+            },
+            amount: 15000,
+            reference: "payout-ref-123",
+            bookingId: "booking-123",
+            bookingReference: "BR-123",
+          }),
+        ).rejects.toMatchObject({
+          message: "Payout outcome is uncertain",
+          statusCode,
+        });
+      },
+    );
+  });
+
+  describe("findTransferByReference", () => {
+    it("should return the matching transfer", async () => {
+      const transfer = {
+        id: 12345,
+        reference: "payout-ref-123",
+        status: "NEW",
+      };
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          message: "Transfers fetched",
+          data: [transfer],
+        },
+      });
+
+      await expect(service.findTransferByReference("payout-ref-123")).resolves.toEqual(transfer);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/transfers", {
+        params: { reference: "payout-ref-123" },
+      });
+    });
+
+    it("should return null when the transfer does not exist", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          message: "Transfers fetched",
+          data: [],
+        },
+      });
+
+      await expect(service.findTransferByReference("missing")).resolves.toBeNull();
     });
   });
 

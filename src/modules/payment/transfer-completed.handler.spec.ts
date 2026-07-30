@@ -68,7 +68,12 @@ describe("TransferCompletedHandler", () => {
     });
     expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
       where: { id: "payout-123" },
-      data: { status: PayoutTransactionStatus.PAID_OUT, completedAt: expect.any(Date) },
+      data: {
+        status: PayoutTransactionStatus.PAID_OUT,
+        completedAt: expect.any(Date),
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
+      },
     });
   });
 
@@ -87,7 +92,12 @@ describe("TransferCompletedHandler", () => {
     });
     expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
       where: { id: "payout-123" },
-      data: { status: PayoutTransactionStatus.FAILED, completedAt: expect.any(Date) },
+      data: {
+        status: PayoutTransactionStatus.FAILED,
+        completedAt: expect.any(Date),
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
+      },
     });
   });
 

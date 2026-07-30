@@ -49,23 +49,34 @@ A production-ready NestJS worker service for automated booking management, handl
 │                    Cron Schedulers                      │
 │  (Every hour: Reminders, Status Updates, Payouts)       │
 └──────────────────┬──────────────────────────────────────┘
-                   │ Enqueue Jobs
+                   │ Enqueue scheduled jobs
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │              BullMQ Queues (Redis-backed)               │
 │  • reminders-queue         (Booking reminders)          │
 │  • status-updates-queue    (Status transitions)         │
 │  • notifications-queue     (Email/WhatsApp delivery)    │
-│  • referral-queue          (Referral reward processing) │
 └──────────────────┬──────────────────────────────────────┘
                    │ Process Jobs
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    Job Processors                       │
 │  • ReminderProcessor       (Fetch & queue reminders)    │
-│  • StatusChangeProcessor   (Update statuses + payouts)  │
+│  • StatusChangeProcessor   (Update booking statuses)    │
 │  • NotificationProcessor   (Send emails/WhatsApp)       │
-│  • ReferralProcessor       (Process referral rewards)   │
+└─────────────────────────────────────────────────────────┘
+
+Booking completion transaction
+           │ Write referral + payout commands
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│              DomainOutboxEvent (PostgreSQL)             │
+└──────────────────┬──────────────────────────────────────┘
+                   │ DomainOutboxScheduler dispatches
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│ domain-outbox-queue → DomainOutboxProcessor             │
+│                       (Referral + payout commands)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -112,25 +123,25 @@ A production-ready NestJS worker service for automated booking management, handl
 - **Scheduler**: Hourly cron jobs for status transitions
 - **Jobs**:
   - `confirmed-to-active`: Updates bookings at start time
-  - `active-to-completed`: Updates bookings at end time + initiates payout
-- **Integration**: Calls PaymentModule for fleet owner settlements
+  - `active-to-completed`: Updates bookings at end time and records referral/payout commands
+- **Integration**: Writes durable domain-outbox commands for post-completion work
 
 **PaymentModule** (`src/modules/payment/`)
 - Payout orchestration for completed bookings
 - Validates fleet owner bank details before transfer
 - Creates and tracks `PayoutTransaction` records
 - Handles Flutterwave transfer failures and retries
+- Reconciles stale `PROCESSING` transfers by provider reference when completion webhooks are lost
 
 **ReferralModule** (`src/modules/referral/`)
-- **Queue**: `referral-queue` (concurrency: 1)
-- **Job**: `process-referral-completion` - Triggered after booking completion
+- **Command**: `REFERRAL_COMPLETION` - Triggered durably after booking completion
 - **Features**:
   - Configurable release conditions (PAID or COMPLETED)
   - Optional expiry window validation
   - Idempotent reward release (prevents duplicate processing)
   - Automatic referee discount marking
   - Updates referrer stats (total rewards granted/pending)
-- **Integration**: Queued by StatusChangeModule when bookings transition to COMPLETED
+- **Integration**: Executed by DomainOutboxModule when bookings transition to COMPLETED
 - **Configuration**: Driven by `ReferralProgramConfig` table (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION, REFERRAL_EXPIRY_DAYS)
 
 **HealthModule** (`src/modules/health/`)
@@ -181,16 +192,14 @@ A production-ready NestJS worker service for automated booking management, handl
 }
 ```
 
-**referral-queue**
+**domain-outbox-queue**
 ```typescript
 {
-  name: "referral-queue",
-  concurrency: 1,
+  name: "domain-outbox-queue",
+  jobTypes: ["REFERRAL_COMPLETION", "PAYOUT_PROCESSING"],
   defaultJobOptions: {
     attempts: 3,
-    backoff: { type: "exponential", delay: 2000 },
-    removeOnComplete: 100,  // Keep last 100 successful jobs
-    removeOnFail: 50        // Keep last 50 failed jobs
+    backoff: { type: "exponential", delay: 5000 }
   }
 }
 ```
@@ -611,18 +620,19 @@ pnpm run start:prod
 2. StatusChangeProcessor → StatusChangeService.updateBookingsFromActiveToCompleted()
 3. Query: SELECT bookings WHERE status=ACTIVE AND endTime IN current_hour
 4. For each booking:
-   a. Update booking.status = COMPLETED
-   b. PaymentService.initiatePayout()
+   a. Atomically update booking.status = COMPLETED and write referral + payout outbox events
+   b. Update car.status = AVAILABLE
+   c. Queue booking completion notifications
+5. DomainOutboxScheduler independently dispatches each due outbox event to BullMQ
+6. DomainOutboxProcessor asynchronously executes payout or referral work with no relative ordering guarantee
+   Payout:
       - Validate fleet owner bank details
       - Create PayoutTransaction (PENDING_DISBURSEMENT)
       - FlutterwaveService.initiatePayout() → Flutterwave API
       - Update transaction status (PROCESSING or FAILED)
-   c. Update car.status = AVAILABLE
-   d. NotificationService.queueBookingStatusNotifications()
-   e. ReferralService.queueReferralProcessing()
-      - Queue "process-referral-completion" job
-5. NotificationProcessor → Send completion notifications
-6. ReferralProcessor → Process referral rewards
+      - Hourly reconciliation resolves stale PROCESSING transfers by provider reference
+   Referral:
+   - ReferralProcessingService processes referral rewards
    - Check ReferralProgramConfig (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION)
    - Validate booking has referral applied (referralStatus = APPLIED)
    - Optional: Validate expiry window (REFERRAL_EXPIRY_DAYS)
@@ -630,6 +640,7 @@ pnpm run start:prod
    - Release pending reward (PENDING → RELEASED)
    - Update UserReferralStats (totalRewardsGranted, totalRewardsPending)
    - Update booking.referralStatus = REWARDED
+7. NotificationProcessor independently sends completion notifications
 ```
 
 ## Contributing

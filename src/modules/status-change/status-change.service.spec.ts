@@ -1,14 +1,14 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
+import { BookingStatus, DomainOutboxEventType, PaymentStatus, Status } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
+import { DomainOutboxService } from "../domain-outbox/domain-outbox.service";
 import { BookingStatusChangedHandler } from "../notification/handlers/booking-status-changed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { PaymentService } from "../payment/payment.service";
-import { ReferralService } from "../referral/referral.service";
 import {
+  ActiveToCompletedUpdateFailedException,
   AirportBookingActivationFailedException,
   ConfirmedToActiveUpdateFailedException,
 } from "./status-change.error";
@@ -18,8 +18,7 @@ describe("StatusChangeService", () => {
   let service: StatusChangeService;
   let mockDatabaseService: DatabaseService;
   let mockNotificationOutboxService: NotificationOutboxService;
-  let mockPaymentService: PaymentService;
-  let mockReferralService: ReferralService;
+  let mockDomainOutboxService: DomainOutboxService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -58,15 +57,9 @@ describe("StatusChangeService", () => {
           },
         },
         {
-          provide: ReferralService,
+          provide: DomainOutboxService,
           useValue: {
-            queueReferralProcessing: vi.fn(),
-          },
-        },
-        {
-          provide: PaymentService,
-          useValue: {
-            queuePayoutForBooking: vi.fn(),
+            createMany: vi.fn().mockResolvedValue(2),
           },
         },
       ],
@@ -78,8 +71,7 @@ describe("StatusChangeService", () => {
     mockDatabaseService = module.get<DatabaseService>(DatabaseService);
     mockNotificationOutboxService =
       module.get<NotificationOutboxService>(NotificationOutboxService);
-    mockPaymentService = module.get<PaymentService>(PaymentService);
-    mockReferralService = module.get<ReferralService>(ReferralService);
+    mockDomainOutboxService = module.get<DomainOutboxService>(DomainOutboxService);
   });
   it("should not update bookings from confirmed to active when no bookings found", async () => {
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([]);
@@ -249,8 +241,19 @@ describe("StatusChangeService", () => {
       }),
       mockDatabaseService,
     );
-    expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("2");
-    expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("2");
+    expect(mockDomainOutboxService.createMany).toHaveBeenCalledExactlyOnceWith(
+      [
+        {
+          eventType: DomainOutboxEventType.REFERRAL_COMPLETION,
+          aggregateId: "2",
+        },
+        {
+          eventType: DomainOutboxEventType.PAYOUT_PROCESSING,
+          aggregateId: "2",
+        },
+      ],
+      mockDatabaseService,
+    );
     expect(result).toBe("Updated 1 bookings from active to completed");
   });
 
@@ -291,7 +294,7 @@ describe("StatusChangeService", () => {
     expect(result).toBe("Updated 1 bookings from active to completed");
   });
 
-  it("should continue when referral or payout queueing fails", async () => {
+  it("should fail completion when durable domain deliveries cannot be recorded", async () => {
     const mockCar = createCar({
       id: "car-3",
       status: Status.BOOKED,
@@ -319,18 +322,13 @@ describe("StatusChangeService", () => {
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
         callback(mockDatabaseService),
     );
-    vi.mocked(mockReferralService.queueReferralProcessing).mockRejectedValueOnce(
-      new Error("Referral queue error"),
-    );
-    vi.mocked(mockPaymentService.queuePayoutForBooking).mockRejectedValueOnce(
-      new Error("Payout queue error"),
+    vi.mocked(mockDomainOutboxService.createMany).mockRejectedValueOnce(
+      new Error("Domain outbox unavailable"),
     );
 
-    const result = await service.updateBookingsFromActiveToCompleted();
-
-    expect(mockReferralService.queueReferralProcessing).toHaveBeenCalledExactlyOnceWith("4");
-    expect(mockPaymentService.queuePayoutForBooking).toHaveBeenCalledExactlyOnceWith("4");
-    expect(result).toBe("Updated 1 bookings from active to completed");
+    await expect(service.updateBookingsFromActiveToCompleted()).rejects.toThrow(
+      ActiveToCompletedUpdateFailedException,
+    );
   });
 
   it("should activate a single eligible airport booking", async () => {

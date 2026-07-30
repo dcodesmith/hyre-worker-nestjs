@@ -1,4 +1,3 @@
-import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import {
   BookingReferralStatus,
@@ -6,13 +5,10 @@ import {
   ReferralReleaseCondition,
   ReferralRewardStatus,
 } from "@prisma/client";
-import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
-import { REFERRAL_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { ReferralRewardReleasedHandler } from "../notification/handlers/referral-reward-released.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { PROCESS_REFERRAL_COMPLETION, ReferralJobData } from "./referral.interface";
 
 @Injectable()
 export class ReferralProcessingService {
@@ -21,35 +17,8 @@ export class ReferralProcessingService {
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly referralRewardReleasedHandler: ReferralRewardReleasedHandler,
     private readonly logger: PinoLogger,
-    @InjectQueue(REFERRAL_QUEUE)
-    private readonly referralQueue: Queue<ReferralJobData>,
   ) {
     this.logger.setContext(ReferralProcessingService.name);
-  }
-
-  /**
-   * Queue a referral completion job for async processing
-   */
-  async queueReferralProcessing(bookingId: string, jobId?: string): Promise<void> {
-    try {
-      const jobData = {
-        bookingId,
-        timestamp: new Date().toISOString(),
-      };
-      const options = jobId ? { jobId } : undefined;
-      await this.referralQueue.add(PROCESS_REFERRAL_COMPLETION, jobData, options);
-
-      this.logger.info(`Queued referral processing for booking ${bookingId}`);
-    } catch (error) {
-      this.logger.error(
-        {
-          bookingId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to queue referral processing",
-      );
-      throw error;
-    }
   }
 
   /**

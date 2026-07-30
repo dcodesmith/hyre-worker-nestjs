@@ -370,6 +370,8 @@ export function createPayoutTransaction(
     status: PayoutTransactionStatus.PROCESSING,
     payoutProviderReference: null,
     payoutMethodDetails: null,
+    processingLeaseId: null,
+    processingLeaseExpiresAt: null,
     initiatedAt: new Date("2024-01-01T00:00:00Z"),
     processedAt: null,
     completedAt: null,

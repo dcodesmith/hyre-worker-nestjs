@@ -167,6 +167,24 @@ model NotificationOutboxEvent {
   @@index([userId])
 }
 
+model DomainOutboxEvent {
+  id            String                @id @default(cuid())
+  eventType     DomainOutboxEventType
+  status        DomainOutboxStatus    @default(PENDING)
+  aggregateId   String
+  dedupeKey     String                @unique
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime              @default(now())
+  lastError     String?
+  processedAt   DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([status, nextAttemptAt, createdAt], map: "DomainOutbox_status_retry_created_idx")
+  @@index([status, updatedAt], map: "DomainOutbox_status_updated_idx")
+  @@index([aggregateId])
+}
+
 model Role {
   id          String   @id @default(cuid())
   name        String   @unique
@@ -423,7 +441,7 @@ model Payment {
 model PayoutTransaction {
   id                      String                  @id @default(cuid())
   fleetOwnerId            String
-  bookingId               String?
+  bookingId               String?                 @unique(map: "PayoutTransaction_bookingId_key")
   extensionId             String?
   amountToPay             Decimal                 @db.Decimal(10, 2)
   amountPaid              Decimal?                @db.Decimal(10, 2)
@@ -431,6 +449,8 @@ model PayoutTransaction {
   status                  PayoutTransactionStatus
   payoutProviderReference String?
   payoutMethodDetails     String?
+  processingLeaseId       String?
+  processingLeaseExpiresAt DateTime?
   initiatedAt             DateTime                @default(now())
   processedAt             DateTime?
   completedAt             DateTime?
@@ -441,7 +461,6 @@ model PayoutTransaction {
 
   @@index([fleetOwnerId])
   @@index([status])
-  @@index([bookingId])
   @@index([extensionId])
 }
 
@@ -631,7 +650,6 @@ model ReferralReward {
   releaseCondition ReferralReleaseCondition
   reason           String?
   processedAt      DateTime?
-  reconciliationLastAttemptAt DateTime?
   booking          Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   referee          User                     @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
   referrer         User                     @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
@@ -642,7 +660,6 @@ model ReferralReward {
   @@index([status, createdAt])
   @@index([status, bookingId])
   @@index([status, processedAt])
-  @@index([status, releaseCondition, reconciliationLastAttemptAt, createdAt], map: "ReferralReward_reconciliation_pending_idx")
 }
 
 model ReferralProgramConfig {
@@ -1046,6 +1063,20 @@ enum NotificationOutboxStatus {
   PENDING
   PROCESSING
   DISPATCHED
+  FAILED
+  DEAD_LETTER
+}
+
+enum DomainOutboxEventType {
+  REFERRAL_COMPLETION
+  PAYOUT_PROCESSING
+}
+
+enum DomainOutboxStatus {
+  PENDING
+  PROCESSING
+  DISPATCHED
+  COMPLETED
   FAILED
   DEAD_LETTER
 }

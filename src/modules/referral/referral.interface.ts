@@ -1,10 +1,3 @@
-export interface ReferralJobData {
-  bookingId: string;
-  timestamp: string;
-}
-
-export const PROCESS_REFERRAL_COMPLETION = "process-referral-completion";
-
 export interface ReferralConfig {
   REFERRAL_ENABLED: boolean;
   REFERRAL_DISCOUNT_AMOUNT: number;
