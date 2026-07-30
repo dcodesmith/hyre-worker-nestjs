@@ -279,7 +279,7 @@ jobs:
 
       - name: Run Prisma migrations on preview branch
         env:
-          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
         run: pnpm exec prisma migrate deploy
 
       - name: Build app
