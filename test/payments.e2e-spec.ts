@@ -589,47 +589,76 @@ describe("Payments E2E Tests", () => {
         fleetOwnerId = fleetOwner.id;
       });
 
-      it("should update payout transaction status to PAID_OUT when transfer is successful", async () => {
+      it("should finalize a successful transfer and emit one payout notification", async () => {
         const payoutReference = `payout-${Date.now()}`;
         const payoutTransaction = await factory.createPayoutTransaction(fleetOwnerId, {
           bookingId: testBookingId,
           status: "PROCESSING",
           payoutProviderReference: payoutReference,
         });
+        const transferData = {
+          id: 77777,
+          reference: payoutReference,
+          status: "SUCCESSFUL",
+          account_number: "1234567890",
+          bank_code: "044",
+          full_name: "Test Fleet Owner",
+          created_at: new Date().toISOString(),
+          currency: "NGN",
+          debit_currency: "NGN",
+          amount: 45000,
+          fee: 50,
+          meta: {},
+          narration: "Payout for booking",
+          complete_message: "Transfer completed",
+          requires_approval: 0,
+          is_approved: 1,
+          bank_name: "Access Bank",
+        };
 
         const response = await request(app.getHttpServer())
           .post("/api/payments/webhook/flutterwave")
           .set("verif-hash", webhookSecret)
           .send({
             event: "transfer.completed",
-            data: {
-              id: 77777,
-              reference: payoutReference,
-              status: "SUCCESSFUL", // Flutterwave uses uppercase for transfer statuses
-              account_number: "1234567890",
-              bank_code: "044",
-              full_name: "Test Fleet Owner",
-              created_at: new Date().toISOString(),
-              currency: "NGN",
-              debit_currency: "NGN",
-              amount: 45000,
-              fee: 50,
-              meta: {},
-              narration: "Payout for booking",
-              complete_message: "Transfer completed",
-              requires_approval: 0,
-              is_approved: 1,
-              bank_name: "Access Bank",
-            },
+            data: transferData,
           });
 
         expect(response.status).toBe(HttpStatus.CREATED);
         expect(response.body.status).toBe("ok");
+        const duplicateResponse = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "transfer.completed",
+            data: transferData,
+          });
+        expect(duplicateResponse.status).toBe(HttpStatus.CREATED);
 
         // Verify payout transaction was updated
         const updatedPayout = await factory.getPayoutTransactionById(payoutTransaction.id);
         expect(updatedPayout?.status).toBe("PAID_OUT");
         expect(updatedPayout?.completedAt).toBeDefined();
+
+        const notificationEvent = await databaseService.notificationOutboxEvent.findUnique({
+          where: {
+            dedupeKey: `payout-status:${payoutTransaction.id}:PAID_OUT`,
+          },
+        });
+        expect(notificationEvent).toMatchObject({
+          bookingId: testBookingId,
+          status: "PENDING",
+        });
+        expect(notificationEvent?.payload).toMatchObject({
+          subtype: "PAYOUT_PAID_OUT",
+        });
+        await expect(
+          databaseService.notificationOutboxEvent.count({
+            where: {
+              dedupeKey: `payout-status:${payoutTransaction.id}:PAID_OUT`,
+            },
+          }),
+        ).resolves.toBe(1);
       });
     });
 

@@ -8,3 +8,4 @@ export { BookingStatusMapper } from "./booking-status-mapper";
 export { FallbackTemplateMapper } from "./fallback-template-mapper";
 export { FleetOwnerNewBookingMapper } from "./fleet-owner-new-booking.mapper";
 export { FlightUpdateMapper } from "./flight-update.mapper";
+export { PayoutStatusMapper } from "./payout-status.mapper";

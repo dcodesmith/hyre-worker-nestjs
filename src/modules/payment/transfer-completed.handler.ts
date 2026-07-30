@@ -3,11 +3,13 @@ import { PayoutTransactionStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
+import { PaymentService } from "./payment.service";
 
 @Injectable()
 export class TransferCompletedHandler {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly paymentService: PaymentService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(TransferCompletedHandler.name);
@@ -69,15 +71,22 @@ export class TransferCompletedHandler {
         ? PayoutTransactionStatus.PAID_OUT
         : PayoutTransactionStatus.FAILED;
 
-    await this.databaseService.payoutTransaction.update({
-      where: { id: payoutTransaction.id },
-      data: {
-        status: newStatus,
-        completedAt: new Date(),
-        processingLeaseId: null,
-        processingLeaseExpiresAt: null,
-      },
-    });
+    const finalized = await this.paymentService.finalizePayoutStatus(
+      payoutTransaction,
+      newStatus,
+      normalizedStatus === "SUCCESSFUL"
+        ? undefined
+        : {
+            failureReason: data.complete_message || "Flutterwave transfer failed",
+          },
+    );
+    if (!finalized) {
+      this.logger.info(
+        { reference, payoutTransactionId: payoutTransaction.id },
+        "Payout transaction was already finalized by another worker",
+      );
+      return;
+    }
 
     this.logger.info(
       {

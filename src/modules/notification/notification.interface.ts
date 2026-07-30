@@ -11,6 +11,7 @@ export enum NotificationAudience {
   CUSTOMER = "customer",
   FLEET_OWNER = "fleet-owner",
   CHAUFFEUR = "chauffeur",
+  OPERATIONS = "operations",
 }
 
 export enum NotificationType {
@@ -25,6 +26,7 @@ export enum NotificationType {
   FLEET_OWNER_NEW_BOOKING = "fleet-owner-new-booking",
   REVIEW_RECEIVED = "review-received",
   REFERRAL_REWARD_RELEASED = "referral-reward-released",
+  PAYOUT_STATUS_CHANGED = "payout-status-changed",
   FLIGHT_ARRIVED = "flight-arrived",
   FLIGHT_DEPARTED = "flight-departed",
   FLIGHT_DELAYED = "flight-delayed",
@@ -169,4 +171,19 @@ export interface ReferralRewardReleasedNotificationParams {
   referrerUserId: string;
   amount: number;
   releasedAt: Date;
+}
+
+export interface PayoutStatusChangedNotificationParams {
+  payoutTransactionId: string;
+  bookingId: string;
+  bookingReference: string;
+  status: "PAID_OUT" | "FAILED";
+  amount: number;
+  failureReason?: string;
+  fleetOwner: {
+    userId: string;
+    name: string | null;
+    email: string;
+    phoneNumber: string | null;
+  };
 }

@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import * as emailTemplates from "../../templates/emails";
 import { EmailService } from "../email/email.service";
-import { CLIENT_RECIPIENT_TYPE, FLEET_OWNER_RECIPIENT_TYPE } from "./notification.const";
+import {
+  CLIENT_RECIPIENT_TYPE,
+  FLEET_OWNER_RECIPIENT_TYPE,
+  OPERATIONS_RECIPIENT_TYPE,
+} from "./notification.const";
 import {
   NotificationAudience,
   NotificationChannel,
@@ -20,6 +24,7 @@ import {
   BOOKING_REMINDER_TEMPLATE_KIND,
   BOOKING_STATUS_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
+  PAYOUT_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 import { Template, WhatsAppService } from "./whatsapp.service";
@@ -86,6 +91,9 @@ describe("NotificationProcessor", () => {
     );
     vi.spyOn(emailTemplates, "renderFlightOperationalUpdateEmail").mockResolvedValue(
       "<html>Flight update email</html>",
+    );
+    vi.spyOn(emailTemplates, "renderPayoutStatusEmail").mockResolvedValue(
+      "<html>Payout status email</html>",
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -191,6 +199,45 @@ describe("NotificationProcessor", () => {
         },
       ],
     });
+  });
+
+  it("sends failed payout notifications only to operations email", async () => {
+    const job = createJob("payout-failed-job", {
+      id: "payout-status-payout-123-failed",
+      type: NotificationType.PAYOUT_STATUS_CHANGED,
+      audience: NotificationAudience.OPERATIONS,
+      channels: [NotificationChannel.EMAIL],
+      bookingId: "booking-123",
+      recipients: {
+        [OPERATIONS_RECIPIENT_TYPE]: {
+          email: "operations@tripdly.com",
+        },
+      },
+      templateData: {
+        templateKind: PAYOUT_STATUS_TEMPLATE_KIND,
+        subject: "Payout failed for booking BR-123",
+        status: "FAILED",
+        recipientName: "Operations team",
+        amount: "₦15,000.00",
+        bookingReference: "BR-123",
+        payoutTransactionId: "payout-123",
+        failureReason: "Account blocked",
+      },
+    });
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-msg-ops" },
+      error: null,
+      headers: {},
+    });
+
+    await expect(processor.process(job)).resolves.toHaveLength(1);
+
+    expect(emailService.sendEmail).toHaveBeenCalledExactlyOnceWith({
+      to: "operations@tripdly.com",
+      subject: "Payout failed for booking BR-123",
+      html: "<html>Payout status email</html>",
+    });
+    expect(whatsAppService.sendMessage).not.toHaveBeenCalled();
   });
 
   it("should process notification job with WHATSAPP channel successfully", async () => {

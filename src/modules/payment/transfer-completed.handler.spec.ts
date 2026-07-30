@@ -5,11 +5,13 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPayoutTransaction } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
+import { PaymentService } from "./payment.service";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
 
 describe("TransferCompletedHandler", () => {
   let handler: TransferCompletedHandler;
   let databaseService: DatabaseService;
+  let paymentService: PaymentService;
   const mockTransferData: FlutterwaveTransferWebhookData = {
     id: 67890,
     account_number: "1234567890",
@@ -39,8 +41,13 @@ describe("TransferCompletedHandler", () => {
           useValue: {
             payoutTransaction: {
               findFirst: vi.fn(),
-              update: vi.fn(),
             },
+          },
+        },
+        {
+          provide: PaymentService,
+          useValue: {
+            finalizePayoutStatus: vi.fn().mockResolvedValue(true),
           },
         },
       ],
@@ -50,6 +57,7 @@ describe("TransferCompletedHandler", () => {
 
     handler = module.get<TransferCompletedHandler>(TransferCompletedHandler);
     databaseService = module.get<DatabaseService>(DatabaseService);
+    paymentService = module.get<PaymentService>(PaymentService);
     vi.clearAllMocks();
   });
 
@@ -66,15 +74,11 @@ describe("TransferCompletedHandler", () => {
     expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
       where: { payoutProviderReference: mockTransferData.reference },
     });
-    expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
-      where: { id: "payout-123" },
-      data: {
-        status: PayoutTransactionStatus.PAID_OUT,
-        completedAt: expect.any(Date),
-        processingLeaseId: null,
-        processingLeaseExpiresAt: null,
-      },
-    });
+    expect(paymentService.finalizePayoutStatus).toHaveBeenCalledWith(
+      payout,
+      PayoutTransactionStatus.PAID_OUT,
+      undefined,
+    );
   });
 
   it("updates payout to FAILED for failed transfer", async () => {
@@ -90,15 +94,11 @@ describe("TransferCompletedHandler", () => {
     expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
       where: { payoutProviderReference: mockTransferData.reference },
     });
-    expect(databaseService.payoutTransaction.update).toHaveBeenCalledWith({
-      where: { id: "payout-123" },
-      data: {
-        status: PayoutTransactionStatus.FAILED,
-        completedAt: expect.any(Date),
-        processingLeaseId: null,
-        processingLeaseExpiresAt: null,
-      },
-    });
+    expect(paymentService.finalizePayoutStatus).toHaveBeenCalledWith(
+      payout,
+      PayoutTransactionStatus.FAILED,
+      { failureReason: "Transfer completed" },
+    );
   });
 
   it("skips update when payout already finalized", async () => {
@@ -111,13 +111,13 @@ describe("TransferCompletedHandler", () => {
 
     await handler.handle(mockTransferData);
 
-    expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    expect(paymentService.finalizePayoutStatus).not.toHaveBeenCalled();
   });
 
   it("skips processing when reference is missing", async () => {
     await handler.handle({ ...mockTransferData, reference: "" });
 
     expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
-    expect(databaseService.payoutTransaction.update).not.toHaveBeenCalled();
+    expect(paymentService.finalizePayoutStatus).not.toHaveBeenCalled();
   });
 });

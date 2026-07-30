@@ -3,6 +3,7 @@ import { AuthModule } from "../auth/auth.module";
 import { BookingModule } from "../booking/booking.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
+import { NotificationModule } from "../notification/notification.module";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { PaymentController } from "./payment.controller";
 import { PaymentService } from "./payment.service";
@@ -13,7 +14,7 @@ import { RefundCompletedHandler } from "./refund-completed.handler";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
 
 @Module({
-  imports: [FlutterwaveModule, DatabaseModule, AuthModule, BookingModule],
+  imports: [FlutterwaveModule, DatabaseModule, AuthModule, BookingModule, NotificationModule],
   controllers: [PaymentController],
   providers: [
     PaymentService,

@@ -2,6 +2,54 @@ import { Logger } from "@nestjs/common";
 import { z } from "zod";
 
 const logger = new Logger("EnvConfig");
+const twilioContentSidSchema = z
+  .string()
+  .regex(/^HX[a-fA-F0-9]{32}$/, "Invalid Twilio Content SID");
+const optionalTwilioContentSidSchema = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  twilioContentSidSchema.optional(),
+);
+const requiredTwilioContentSidKeys = [
+  "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
+  "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
+  "TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID",
+  "TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID",
+  "TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID",
+  "TWILIO_BOOKING_CONFIRMATION_CONTENT_SID",
+  "TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID",
+  "TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID",
+  "TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID",
+  "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID",
+] as const;
+
+function validateProductionConfiguration(
+  env: Record<string, unknown>,
+  ctx: {
+    addIssue(issue: { code: "custom"; path: string[]; message: string }): void;
+  },
+): void {
+  if (env.NODE_ENV !== "production") {
+    return;
+  }
+
+  if (!env.OPERATIONS_EMAIL) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OPERATIONS_EMAIL"],
+      message: "OPERATIONS_EMAIL is required in production",
+    });
+  }
+
+  for (const key of requiredTwilioContentSidKeys) {
+    if (!env[key]) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: `${key} is required in production`,
+      });
+    }
+  }
+}
 
 export const envSchema = z
   .object({
@@ -17,6 +65,7 @@ export const envSchema = z
 
     EMAIL_PROVIDER: z.enum(["resend", "smtp"]).optional(),
     EMAIL_FROM: z.email("EMAIL_FROM must be a valid email").optional(),
+    OPERATIONS_EMAIL: z.email("OPERATIONS_EMAIL must be a valid email").optional(),
     RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required").optional(),
     RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email").optional(),
     SMTP_HOST: z.string().default("127.0.0.1"),
@@ -59,10 +108,18 @@ export const envSchema = z
     TWILIO_SECRET: z.string().min(1, "TWILIO_SECRET is required"),
     TWILIO_WHATSAPP_NUMBER: z.string().min(1, "TWILIO_WHATSAPP_NUMBER is required"),
     TWILIO_WEBHOOK_URL: z.url("TWILIO_WEBHOOK_URL must be a valid URL").optional(),
-    TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: z
-      .string()
-      .regex(/^HX[a-fA-F0-9]{32}$/, "Invalid Twilio Content SID")
-      .optional(),
+    TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CLIENT_BOOKING_LEG_END_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CHAUFFEUR_BOOKING_LEG_END_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CONFIRMATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CANCELLATION_CLIENT_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
 
     FLUTTERWAVE_SECRET_KEY: z.string().min(1, "FLUTTERWAVE_SECRET_KEY is required"),
     FLUTTERWAVE_PUBLIC_KEY: z.string().min(1, "FLUTTERWAVE_PUBLIC_KEY is required"),
@@ -169,6 +226,8 @@ export const envSchema = z
         });
       }
     }
+
+    validateProductionConfiguration(env, ctx);
   });
 
 export type EnvConfig = z.infer<typeof envSchema>;

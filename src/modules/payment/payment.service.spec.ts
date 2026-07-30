@@ -12,6 +12,8 @@ import {
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveTransferData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { PayoutStatusChangedHandler } from "../notification/handlers/payout-status-changed.handler";
+import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   PayoutBankDetailsRequiredException,
   PayoutBookingNotCompletedException,
@@ -47,6 +49,7 @@ describe("PaymentService", () => {
   let service: PaymentService;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let notificationOutboxService: NotificationOutboxService;
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -60,6 +63,18 @@ describe("PaymentService", () => {
               create: vi.fn().mockResolvedValue({ id: "payout-123" }),
               update: vi.fn().mockResolvedValue({ id: "payout-123" }),
               updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+              findUniqueOrThrow: vi.fn().mockResolvedValue({
+                ...createPayoutTransaction({
+                  id: "payout-123",
+                  bookingId: "booking-123",
+                  amountToPay: new Decimal(15000),
+                }),
+                fleetOwner: createOwner({
+                  id: "owner-1",
+                  email: "owner@example.com",
+                  phoneNumber: "+2348012345678",
+                }),
+              }),
             },
             bankDetails: {
               findUnique: vi.fn().mockResolvedValue({
@@ -72,7 +87,7 @@ describe("PaymentService", () => {
             },
             booking: {
               findUnique: vi.fn(),
-              update: vi.fn().mockResolvedValue({}),
+              update: vi.fn().mockResolvedValue({ bookingReference: "BR-booking-123" }),
             },
           },
         },
@@ -83,6 +98,16 @@ describe("PaymentService", () => {
             findTransferByReference: vi.fn().mockResolvedValue(null),
           },
         },
+        {
+          provide: NotificationOutboxService,
+          useValue: {
+            create: vi.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: PayoutStatusChangedHandler,
+          useValue: {},
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -91,6 +116,7 @@ describe("PaymentService", () => {
     service = module.get<PaymentService>(PaymentService);
     databaseService = module.get<DatabaseService>(DatabaseService);
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
+    notificationOutboxService = module.get(NotificationOutboxService);
 
     // Mock Prisma-style $transaction helper used in PaymentService
     // In tests we don't need a separate transactional client; reuse the same mock.
@@ -277,7 +303,17 @@ describe("PaymentService", () => {
     expect(databaseService.booking.update).toHaveBeenCalledWith({
       where: { id: booking.id },
       data: { overallPayoutStatus: PayoutTransactionStatus.PAID_OUT },
+      select: { bookingReference: true },
     });
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        payoutTransactionId: payout.id,
+        bookingId: booking.id,
+        status: PayoutTransactionStatus.PAID_OUT,
+      }),
+      databaseService,
+    );
   });
 
   it("releases a reclaimed lease when the existing transfer is still pending", async () => {
@@ -333,6 +369,7 @@ describe("PaymentService", () => {
     await expect(service.initiatePayout(booking)).rejects.toBeInstanceOf(
       PayoutProcessingClaimLostException,
     );
+    expect(notificationOutboxService.create).not.toHaveBeenCalled();
   });
 
   it("keeps an uncertain provider call leased for reconciliation", async () => {
@@ -388,6 +425,7 @@ describe("PaymentService", () => {
     expect(databaseService.booking.update).toHaveBeenCalledWith({
       where: { id: payout.bookingId },
       data: { overallPayoutStatus: PayoutTransactionStatus.PAID_OUT },
+      select: { bookingReference: true },
     });
   });
 
@@ -568,7 +606,18 @@ describe("PaymentService", () => {
       expect.objectContaining({
         where: { id: booking.id },
         data: { overallPayoutStatus: "FAILED" },
+        select: { bookingReference: true },
       }),
+    );
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        payoutTransactionId: payoutTransaction.id,
+        bookingId: booking.id,
+        status: PayoutTransactionStatus.FAILED,
+        failureReason: "Insufficient funds",
+      }),
+      databaseService,
     );
   });
 
@@ -626,6 +675,7 @@ describe("PaymentService", () => {
         data: { overallPayoutStatus: "PROCESSING" },
       }),
     );
+    expect(notificationOutboxService.create).not.toHaveBeenCalled();
   });
 
   it("should handle errors during payout initiation", async () => {

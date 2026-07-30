@@ -21,6 +21,7 @@ import type {
   BookingCancelledTemplateData,
   BookingExtensionConfirmedTemplateData,
   FlightUpdateTemplateData,
+  PayoutStatusTemplateData,
   ReviewReceivedTemplateData,
 } from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
@@ -690,4 +691,47 @@ export function FlightOperationalUpdateEmail({
 
 export async function renderFlightOperationalUpdateEmail(data: FlightUpdateTemplateData) {
   return await render(<FlightOperationalUpdateEmail data={data} />);
+}
+
+export function PayoutStatusEmail({ data }: { readonly data: PayoutStatusTemplateData }) {
+  const succeeded = data.status === "PAID_OUT";
+  const previewText = succeeded
+    ? `${data.amount} payout sent for booking ${data.bookingReference}`
+    : `Payout failed for booking ${data.bookingReference}`;
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle={data.subject}>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        {succeeded ? "Your payout has been sent." : "A payout needs attention."}
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Hi {firstNameFrom(data.recipientName)},{" "}
+        {succeeded
+          ? `${data.amount} for booking ${data.bookingReference} has been sent to your verified bank account.`
+          : `the ${data.amount} payout for booking ${data.bookingReference} failed.`}
+      </Text>
+      <Section className="bg-[#F5F5F7] rounded-lg p-4 mt-5">
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Booking:</strong> {data.bookingReference}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0">
+          <strong>Payout ID:</strong> {data.payoutTransactionId}
+        </Text>
+        {!succeeded && data.failureReason && (
+          <Text className="text-sm text-[#0B0B0F] m-0 mt-2">
+            <strong>Reason:</strong> {data.failureReason}
+          </Text>
+        )}
+      </Section>
+      <Text className="text-sm text-[#52525B] mt-5 mb-0">
+        {succeeded
+          ? "Your bank may take a short time to reflect the transfer."
+          : "Review the payout and resolve the failure before retrying."}
+      </Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderPayoutStatusEmail(data: PayoutStatusTemplateData) {
+  return await render(<PayoutStatusEmail data={data} />);
 }

@@ -22,6 +22,7 @@ import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
+  OPERATIONS_RECIPIENT_TYPE,
 } from "./notification.const";
 import {
   NotificationAudience,
@@ -38,6 +39,7 @@ import {
   BOOKING_STATUS_TEMPLATE_KIND,
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
+  PAYOUT_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 
@@ -66,7 +68,11 @@ describe("NotificationService", () => {
         {
           provide: ConfigService,
           useValue: {
-            get: vi.fn().mockReturnValue("HX1234567890abcdef1234567890abcdef"),
+            get: vi.fn((key: string) =>
+              key === "OPERATIONS_EMAIL"
+                ? "operations@tripdly.com"
+                : "HX1234567890abcdef1234567890abcdef",
+            ),
           },
         },
       ],
@@ -76,6 +82,72 @@ describe("NotificationService", () => {
 
     service = module.get<NotificationService>(NotificationService);
   });
+  describe("buildPayoutStatusChangedJobData", () => {
+    const fleetOwner = {
+      userId: "owner-123",
+      name: "Fleet Owner",
+      email: "owner@example.com",
+      phoneNumber: "+2348012345678",
+    };
+
+    it("targets the fleet owner over configured email and WhatsApp on success", () => {
+      expect(
+        service.buildPayoutStatusChangedJobData({
+          payoutTransactionId: "payout-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "PAID_OUT",
+          amount: 15000,
+          fleetOwner,
+        }),
+      ).toMatchObject({
+        type: NotificationType.PAYOUT_STATUS_CHANGED,
+        audience: NotificationAudience.FLEET_OWNER,
+        channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
+        recipients: {
+          [FLEET_OWNER_RECIPIENT_TYPE]: {
+            userId: "owner-123",
+            email: "owner@example.com",
+            phoneNumber: "+2348012345678",
+          },
+        },
+        templateData: {
+          templateKind: PAYOUT_STATUS_TEMPLATE_KIND,
+          status: "PAID_OUT",
+          amount: "₦15,000.00",
+        },
+      });
+    });
+
+    it("targets only operations email on failure", () => {
+      expect(
+        service.buildPayoutStatusChangedJobData({
+          payoutTransactionId: "payout-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "FAILED",
+          amount: 15000,
+          failureReason: "Account blocked",
+          fleetOwner,
+        }),
+      ).toMatchObject({
+        type: NotificationType.PAYOUT_STATUS_CHANGED,
+        audience: NotificationAudience.OPERATIONS,
+        channels: [NotificationChannel.EMAIL],
+        recipients: {
+          [OPERATIONS_RECIPIENT_TYPE]: {
+            email: "operations@tripdly.com",
+          },
+        },
+        templateData: {
+          templateKind: PAYOUT_STATUS_TEMPLATE_KIND,
+          status: "FAILED",
+          failureReason: "Account blocked",
+        },
+      });
+    });
+  });
+
   describe("buildBookingStatusChangeJobData", () => {
     it("returns email + whatsapp + push channels for a registered customer", async () => {
       const booking = createBooking({
