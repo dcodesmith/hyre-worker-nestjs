@@ -26,7 +26,9 @@ consumers must remain idempotent.
 Before calling Flutterwave, a payout worker atomically claims a short database
 lease on the booking's payout transaction. Concurrent or stale-redriven workers
 cannot call the provider while that lease is active, and lease ownership fences
-late success or failure writes. Provider calls retain a deterministic reference.
+late success or failure writes. Provider calls retain a deterministic reference,
+and an expired lease is reconciled by that reference before another transfer is
+initiated.
 
 ## Why this is separate from the notification outbox
 

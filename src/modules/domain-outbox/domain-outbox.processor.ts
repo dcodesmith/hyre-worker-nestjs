@@ -3,6 +3,10 @@ import { DomainOutboxEventType } from "@prisma/client";
 import type { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
+import {
+  PayoutBookingNotCompletedException,
+  PayoutBookingNotFoundException,
+} from "../payment/payment.error";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralProcessingService } from "../referral/referral-processing.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
@@ -54,6 +58,19 @@ export class DomainOutboxProcessor extends WorkerHost {
         job.data.dispatchAttempt,
       );
     } catch (error) {
+      if (
+        error instanceof PayoutBookingNotFoundException ||
+        error instanceof PayoutBookingNotCompletedException
+      ) {
+        await this.domainOutboxService.markFailed(
+          job.data.outboxEventId,
+          job.data.dispatchAttempt,
+          error,
+          true,
+        );
+        return;
+      }
+
       if (this.isFinalAttempt(job)) {
         try {
           await this.domainOutboxService.markFailed(

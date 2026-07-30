@@ -206,7 +206,7 @@ export class DomainOutboxService {
   }
 
   async markCompleted(outboxEventId: string, dispatchAttempt: number): Promise<void> {
-    await this.databaseService.domainOutboxEvent.updateMany({
+    const { count } = await this.databaseService.domainOutboxEvent.updateMany({
       where: {
         id: outboxEventId,
         attempts: dispatchAttempt,
@@ -220,11 +220,25 @@ export class DomainOutboxService {
         lastError: null,
       },
     });
+
+    if (count === 0) {
+      this.logger.warn(
+        { outboxEventId, dispatchAttempt },
+        "Domain outbox event was not marked completed; row no longer matches dispatched attempt",
+      );
+    }
   }
 
-  async markFailed(outboxEventId: string, dispatchAttempt: number, error: unknown): Promise<void> {
+  async markFailed(
+    outboxEventId: string,
+    dispatchAttempt: number,
+    error: unknown,
+    terminal = false,
+  ): Promise<void> {
     const status =
-      dispatchAttempt >= MAX_ATTEMPTS ? DomainOutboxStatus.DEAD_LETTER : DomainOutboxStatus.FAILED;
+      terminal || dispatchAttempt >= MAX_ATTEMPTS
+        ? DomainOutboxStatus.DEAD_LETTER
+        : DomainOutboxStatus.FAILED;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     await this.databaseService.domainOutboxEvent.updateMany({

@@ -74,6 +74,8 @@ export class TransferCompletedHandler {
       data: {
         status: newStatus,
         completedAt: new Date(),
+        processingLeaseId: null,
+        processingLeaseExpiresAt: null,
       },
     });
 

@@ -10,16 +10,38 @@ import {
   createPayoutTransaction,
 } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
+import type { FlutterwaveTransferData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
   PayoutBankDetailsRequiredException,
   PayoutBookingNotCompletedException,
   PayoutBookingNotFoundException,
   PayoutInitiationFailedException,
+  PayoutProcessingClaimLostException,
   PayoutProcessingInProgressException,
   PayoutTransactionRecoveryFailedException,
 } from "./payment.error";
 import { PaymentService } from "./payment.service";
+
+const createTransfer = (reference = "payout_payout-123"): FlutterwaveTransferData => ({
+  id: 12345,
+  account_number: "1234567890",
+  bank_code: "044",
+  full_name: "Test Account",
+  created_at: new Date().toISOString(),
+  currency: "NGN",
+  debit_currency: "NGN",
+  amount: 15000,
+  fee: 0,
+  status: "NEW",
+  reference,
+  meta: {},
+  narration: "Payout for booking",
+  complete_message: "",
+  requires_approval: 0,
+  is_approved: 1,
+  bank_name: "Access Bank",
+});
 
 describe("PaymentService", () => {
   let service: PaymentService;
@@ -57,6 +79,7 @@ describe("PaymentService", () => {
           provide: FlutterwaveService,
           useValue: {
             initiatePayout: vi.fn(),
+            findTransferByReference: vi.fn().mockResolvedValue(null),
           },
         },
       ],
@@ -87,25 +110,7 @@ describe("PaymentService", () => {
 
     vi.mocked(flutterwaveService.initiatePayout).mockResolvedValueOnce({
       success: true,
-      data: {
-        id: 12345,
-        account_number: "1234567890",
-        bank_code: "044",
-        full_name: "Test Account",
-        created_at: new Date().toISOString(),
-        currency: "NGN",
-        debit_currency: "NGN",
-        amount: 15000,
-        fee: 0,
-        status: "NEW",
-        reference: "payout_payout-123",
-        meta: {},
-        narration: "Payout for booking",
-        complete_message: "",
-        requires_approval: 0,
-        is_approved: 1,
-        bank_name: "Access Bank",
-      },
+      data: createTransfer(),
     });
 
     await service.initiatePayout(booking);
@@ -113,6 +118,14 @@ describe("PaymentService", () => {
     expect(flutterwaveService.initiatePayout).toHaveBeenCalledTimes(1);
     const callArgs = vi.mocked(flutterwaveService.initiatePayout).mock.calls[0]?.[0];
     expect(callArgs?.reference).toBe("payout_payout-123");
+    expect(databaseService.payoutTransaction.updateMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payoutProviderReference: "payout_payout-123",
+        }),
+      }),
+    );
   });
 
   it("reuses the booking payout transaction after a unique constraint race", async () => {
@@ -132,25 +145,7 @@ describe("PaymentService", () => {
     vi.mocked(databaseService.payoutTransaction.update).mockResolvedValueOnce(existing);
     vi.mocked(flutterwaveService.initiatePayout).mockResolvedValueOnce({
       success: true,
-      data: {
-        id: 12345,
-        account_number: "1234567890",
-        bank_code: "044",
-        full_name: "Test Account",
-        created_at: new Date().toISOString(),
-        currency: "NGN",
-        debit_currency: "NGN",
-        amount: 15000,
-        fee: 0,
-        status: "NEW",
-        reference: "payout_existing-payout",
-        meta: {},
-        narration: "Payout for booking",
-        complete_message: "",
-        requires_approval: 0,
-        is_approved: 1,
-        bank_name: "Access Bank",
-      },
+      data: createTransfer("payout_existing-payout"),
     });
 
     await service.initiatePayout(booking);
@@ -244,11 +239,79 @@ describe("PaymentService", () => {
       data: {
         status: PayoutTransactionStatus.PROCESSING,
         initiatedAt: expect.any(Date),
+        payoutProviderReference: "payout_payout-123",
         processingLeaseId: expect.any(String),
         processingLeaseExpiresAt: expect.any(Date),
       },
     });
     expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
+  });
+
+  it("reclaims an expired lease and reconciles the existing transfer", async () => {
+    const booking = createBooking({
+      id: "booking-123",
+      fleetOwnerPayoutAmountNet: new Decimal(15000),
+      car: createCar({ owner: createOwner({ id: "owner-1" }) }),
+    });
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: booking.id,
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      processingLeaseId: "expired-lease",
+      processingLeaseExpiresAt: new Date(Date.now() - 1000),
+    });
+    vi.mocked(databaseService.payoutTransaction.create).mockResolvedValueOnce(payout);
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce({
+      ...createTransfer("payout_payout-123"),
+      status: "SUCCESSFUL",
+    });
+
+    await service.initiatePayout(booking);
+
+    expect(flutterwaveService.findTransferByReference).toHaveBeenCalledExactlyOnceWith(
+      "payout_payout-123",
+    );
+    expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
+    expect(databaseService.booking.update).toHaveBeenCalledWith({
+      where: { id: booking.id },
+      data: { overallPayoutStatus: PayoutTransactionStatus.PAID_OUT },
+    });
+  });
+
+  it("throws when the payout lease is lost after provider acceptance", async () => {
+    const booking = createBooking({
+      id: "booking-123",
+      fleetOwnerPayoutAmountNet: new Decimal(15000),
+      car: createCar({ owner: createOwner({ id: "owner-1" }) }),
+    });
+    vi.mocked(databaseService.payoutTransaction.updateMany)
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    vi.mocked(flutterwaveService.initiatePayout).mockResolvedValueOnce({
+      success: true,
+      data: createTransfer(),
+    });
+
+    await expect(service.initiatePayout(booking)).rejects.toBeInstanceOf(
+      PayoutProcessingClaimLostException,
+    );
+  });
+
+  it("keeps an uncertain provider call leased for reconciliation", async () => {
+    const booking = createBooking({
+      id: "booking-123",
+      fleetOwnerPayoutAmountNet: new Decimal(15000),
+      car: createCar({ owner: createOwner({ id: "owner-1" }) }),
+    });
+    vi.mocked(flutterwaveService.initiatePayout).mockRejectedValueOnce(new Error("Network error"));
+
+    await expect(service.initiatePayout(booking)).rejects.toBeInstanceOf(
+      PayoutInitiationFailedException,
+    );
+
+    expect(databaseService.payoutTransaction.updateMany).toHaveBeenCalledTimes(1);
+    expect(databaseService.booking.update).not.toHaveBeenCalled();
   });
 
   it.each([[PayoutTransactionStatus.PROCESSING], [PayoutTransactionStatus.PAID_OUT]])(
@@ -300,7 +363,7 @@ describe("PaymentService", () => {
     expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
   });
 
-  it("should retry payout when bank details are not found", async () => {
+  it("should reject payout when bank details are not found", async () => {
     const booking = createBooking({
       id: "booking-123",
       fleetOwnerPayoutAmountNet: new Decimal(15000),
@@ -316,7 +379,7 @@ describe("PaymentService", () => {
     expect(flutterwaveService.initiatePayout).not.toHaveBeenCalled();
   });
 
-  it("should retry payout when bank details are not verified", async () => {
+  it("should reject payout when bank details are not verified", async () => {
     const booking = createBooking({
       id: "booking-123",
       fleetOwnerPayoutAmountNet: new Decimal(15000),
@@ -431,25 +494,7 @@ describe("PaymentService", () => {
     vi.mocked(databaseService.payoutTransaction.create).mockResolvedValueOnce(payoutTransaction);
     vi.mocked(flutterwaveService.initiatePayout).mockResolvedValueOnce({
       success: true,
-      data: {
-        id: 12345,
-        account_number: "1234567890",
-        bank_code: "044",
-        full_name: "Test Account",
-        created_at: new Date().toISOString(),
-        currency: "NGN",
-        debit_currency: "NGN",
-        amount: 15000,
-        fee: 0,
-        status: "NEW",
-        reference: "payout_payout-123",
-        meta: {},
-        narration: "Payout for booking",
-        complete_message: "",
-        requires_approval: 0,
-        is_approved: 1,
-        bank_name: "Access Bank",
-      },
+      data: createTransfer(),
     });
 
     await service.initiatePayout(booking);
@@ -462,7 +507,6 @@ describe("PaymentService", () => {
         }),
         data: expect.objectContaining({
           status: "PROCESSING",
-          payoutProviderReference: "12345",
           processingLeaseId: null,
           processingLeaseExpiresAt: null,
         }),

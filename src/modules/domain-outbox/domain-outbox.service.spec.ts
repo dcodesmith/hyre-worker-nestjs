@@ -207,6 +207,26 @@ describe("DomainOutboxService", () => {
     });
   });
 
+  it("dead-letters a terminal failure without exhausting dispatch attempts", async () => {
+    await service.markFailed("outbox-1", 1, new Error("terminal failure"), true);
+
+    expect(domainOutboxEvent.updateMany).toHaveBeenCalledExactlyOnceWith({
+      where: {
+        id: "outbox-1",
+        attempts: 1,
+        status: {
+          in: [DomainOutboxStatus.PROCESSING, DomainOutboxStatus.DISPATCHED],
+        },
+      },
+      data: {
+        status: DomainOutboxStatus.DEAD_LETTER,
+        nextAttemptAt: new Date("2030-01-02T12:05:10.000Z"),
+        lastError: "terminal failure",
+        processedAt: new Date("2030-01-02T12:05:00.000Z"),
+      },
+    });
+  });
+
   it("reclaims stale processing events and counts the retry attempt", async () => {
     domainOutboxEvent.findMany.mockResolvedValueOnce([
       {
@@ -313,6 +333,17 @@ describe("DomainOutboxService", () => {
         lastError: null,
       },
     });
+  });
+
+  it("warns when marking completed does not match a dispatched attempt", async () => {
+    domainOutboxEvent.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await service.markCompleted("outbox-1", 1);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { outboxEventId: "outbox-1", dispatchAttempt: 1 },
+      "Domain outbox event was not marked completed; row no longer matches dispatched attempt",
+    );
   });
 
   it("does not let an older failed attempt overwrite newer or completed state", async () => {

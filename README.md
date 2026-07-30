@@ -49,23 +49,34 @@ A production-ready NestJS worker service for automated booking management, handl
 │                    Cron Schedulers                      │
 │  (Every hour: Reminders, Status Updates, Payouts)       │
 └──────────────────┬──────────────────────────────────────┘
-                   │ Enqueue Jobs
+                   │ Enqueue scheduled jobs
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │              BullMQ Queues (Redis-backed)               │
 │  • reminders-queue         (Booking reminders)          │
 │  • status-updates-queue    (Status transitions)         │
 │  • notifications-queue     (Email/WhatsApp delivery)    │
-│  • domain-outbox-queue     (Referral + payout commands) │
 └──────────────────┬──────────────────────────────────────┘
                    │ Process Jobs
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    Job Processors                       │
 │  • ReminderProcessor       (Fetch & queue reminders)    │
-│  • StatusChangeProcessor   (Update statuses + payouts)  │
+│  • StatusChangeProcessor   (Update booking statuses)    │
 │  • NotificationProcessor   (Send emails/WhatsApp)       │
-│  • DomainOutboxProcessor   (Process durable commands)   │
+└─────────────────────────────────────────────────────────┘
+
+Booking completion transaction
+           │ Write referral + payout commands
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│              DomainOutboxEvent (PostgreSQL)             │
+└──────────────────┬──────────────────────────────────────┘
+                   │ DomainOutboxScheduler dispatches
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│ domain-outbox-queue → DomainOutboxProcessor             │
+│                       (Referral + payout commands)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -609,16 +620,17 @@ pnpm run start:prod
 3. Query: SELECT bookings WHERE status=ACTIVE AND endTime IN current_hour
 4. For each booking:
    a. Atomically update booking.status = COMPLETED and write referral + payout outbox events
-   b. DomainOutboxProcessor executes payout processing
+   b. Update car.status = AVAILABLE
+   c. Queue booking completion notifications
+5. DomainOutboxScheduler independently dispatches each due outbox event to BullMQ
+6. DomainOutboxProcessor asynchronously executes payout or referral work with no relative ordering guarantee
+   Payout:
       - Validate fleet owner bank details
       - Create PayoutTransaction (PENDING_DISBURSEMENT)
       - FlutterwaveService.initiatePayout() → Flutterwave API
       - Update transaction status (PROCESSING or FAILED)
-   c. Update car.status = AVAILABLE
-   d. NotificationService.queueBookingStatusNotifications()
-   e. DomainOutboxProcessor executes referral completion
-5. NotificationProcessor → Send completion notifications
-6. ReferralProcessingService → Process referral rewards
+   Referral:
+   - ReferralProcessingService processes referral rewards
    - Check ReferralProgramConfig (REFERRAL_ENABLED, REFERRAL_RELEASE_CONDITION)
    - Validate booking has referral applied (referralStatus = APPLIED)
    - Optional: Validate expiry window (REFERRAL_EXPIRY_DAYS)
@@ -626,6 +638,7 @@ pnpm run start:prod
    - Release pending reward (PENDING → RELEASED)
    - Update UserReferralStats (totalRewardsGranted, totalRewardsPending)
    - Update booking.referralStatus = REWARDED
+7. NotificationProcessor independently sends completion notifications
 ```
 
 ## Contributing

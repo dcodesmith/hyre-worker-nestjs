@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AxiosError, AxiosInstance } from "axios";
 import { PinoLogger } from "nestjs-pino";
@@ -109,10 +109,34 @@ export class FlutterwaveService {
 
       const handledError = this.handleError(error, "initiatePayout");
 
+      if (
+        handledError.code === "NETWORK_ERROR" ||
+        handledError.code === "UNEXPECTED_ERROR" ||
+        handledError.statusCode === HttpStatus.CONFLICT ||
+        (handledError.statusCode != null &&
+          handledError.statusCode >= HttpStatus.INTERNAL_SERVER_ERROR)
+      ) {
+        throw handledError;
+      }
+
       return {
         success: false,
         data: { message: handledError.message },
       };
+    }
+  }
+
+  async findTransferByReference(reference: string): Promise<FlutterwaveTransferData | null> {
+    try {
+      const { data: response } = await this.httpClient.get<
+        FlutterwaveResponse<FlutterwaveTransferData[]>
+      >("/v3/transfers", {
+        params: { reference },
+      });
+
+      return response.data?.find((transfer) => transfer.reference === reference) ?? null;
+    } catch (error) {
+      throw this.handleError(error, "findTransferByReference");
     }
   }
 

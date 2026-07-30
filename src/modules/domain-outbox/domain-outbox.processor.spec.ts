@@ -3,6 +3,10 @@ import { DomainOutboxEventType, DomainOutboxStatus } from "@prisma/client";
 import type { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import {
+  PayoutBookingNotCompletedException,
+  PayoutBookingNotFoundException,
+} from "../payment/payment.error";
 import { PaymentService } from "../payment/payment.service";
 import { ReferralProcessingService } from "../referral/referral-processing.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
@@ -117,6 +121,23 @@ describe("DomainOutboxProcessor", () => {
     ).rejects.toThrow("persistent failure");
 
     expect(domainOutboxService.markFailed).toHaveBeenCalledExactlyOnceWith("outbox-1", 1, error);
+  });
+
+  it.each([
+    new PayoutBookingNotFoundException("booking-1"),
+    new PayoutBookingNotCompletedException("booking-1"),
+  ])("dead-letters terminal payout invariant failures", async (error) => {
+    paymentService.processPayoutForBooking.mockRejectedValueOnce(error);
+
+    await processor.process(createJob(DomainOutboxEventType.PAYOUT_PROCESSING));
+
+    expect(domainOutboxService.markFailed).toHaveBeenCalledExactlyOnceWith(
+      "outbox-1",
+      1,
+      error,
+      true,
+    );
+    expect(domainOutboxService.markCompleted).not.toHaveBeenCalled();
   });
 
   it("retries when persisting business completion fails", async () => {

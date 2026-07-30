@@ -148,6 +148,7 @@ export class PaymentService {
   private async claimPayoutProcessing(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
+    reference: string,
   ): Promise<string | null> {
     if (
       payoutTransaction.status === PayoutTransactionStatus.PAID_OUT ||
@@ -188,6 +189,7 @@ export class PaymentService {
       data: {
         status: PayoutTransactionStatus.PROCESSING,
         initiatedAt: now,
+        payoutProviderReference: reference,
         processingLeaseId,
         processingLeaseExpiresAt: new Date(now.getTime() + PAYOUT_PROCESSING_LEASE_MS),
       },
@@ -200,23 +202,12 @@ export class PaymentService {
     return processingLeaseId;
   }
 
-  private extractTransferId(data: unknown): string | null {
-    if (!data || typeof data !== "object" || !("id" in data)) {
-      return null;
-    }
-
-    const typedData = data as { id?: unknown };
-    return typedData.id != null ? String(typedData.id) : null;
-  }
-
   private async handleSuccessfulPayout(
     bookingId: string,
     payoutTransaction: PayoutTransaction,
-    payoutResultData: unknown,
     processingLeaseId: string,
+    status: PayoutTransactionStatus = PayoutTransactionStatus.PROCESSING,
   ): Promise<void> {
-    const transferId = this.extractTransferId(payoutResultData);
-
     await this.databaseService.$transaction(async (tx) => {
       const updated = await tx.payoutTransaction.updateMany({
         where: {
@@ -225,10 +216,10 @@ export class PaymentService {
           processingLeaseId,
         },
         data: {
-          status: PayoutTransactionStatus.PROCESSING,
-          payoutProviderReference: transferId,
+          status,
           processingLeaseId: null,
           processingLeaseExpiresAt: null,
+          completedAt: status === PayoutTransactionStatus.PAID_OUT ? new Date() : null,
         },
       });
       if (updated.count === 0) {
@@ -237,7 +228,7 @@ export class PaymentService {
 
       await tx.booking.update({
         where: { id: bookingId },
-        data: { overallPayoutStatus: "PROCESSING" },
+        data: { overallPayoutStatus: status },
       });
     });
 
@@ -248,6 +239,39 @@ export class PaymentService {
       },
       "Payout for booking initiated successfully",
     );
+  }
+
+  private async reconcileExistingPayout(
+    bookingId: string,
+    payoutTransaction: PayoutTransaction,
+    reference: string,
+    processingLeaseId: string,
+  ): Promise<boolean> {
+    const transfer = await this.flutterwaveService.findTransferByReference(reference);
+    if (!transfer) {
+      return false;
+    }
+
+    const status = transfer.status.trim().toUpperCase();
+    if (status === "FAILED") {
+      await this.handleFailedPayout(
+        bookingId,
+        payoutTransaction,
+        transfer.complete_message || "Flutterwave transfer failed",
+        processingLeaseId,
+      );
+      return true;
+    }
+
+    await this.handleSuccessfulPayout(
+      bookingId,
+      payoutTransaction,
+      processingLeaseId,
+      status === "SUCCESSFUL"
+        ? PayoutTransactionStatus.PAID_OUT
+        : PayoutTransactionStatus.PROCESSING,
+    );
+    return true;
   }
 
   private extractErrorMessage(data: unknown): string {
@@ -327,14 +351,27 @@ export class PaymentService {
         payoutAmount,
       );
 
-      const processingLeaseId = await this.claimPayoutProcessing(booking.id, payoutTransaction);
+      const reference = `payout_${payoutTransaction.id}`;
+      const processingLeaseId = await this.claimPayoutProcessing(
+        booking.id,
+        payoutTransaction,
+        reference,
+      );
       if (!processingLeaseId) {
         return;
       }
 
-      // Use a deterministic reference derived from the payout transaction ID so that
-      // retries for the same logical payout use the same Flutterwave reference.
-      const reference = `payout_${payoutTransaction.id}`;
+      if (
+        payoutTransaction.status === PayoutTransactionStatus.PROCESSING &&
+        (await this.reconcileExistingPayout(
+          booking.id,
+          payoutTransaction,
+          reference,
+          processingLeaseId,
+        ))
+      ) {
+        return;
+      }
 
       let payoutResult: PayoutResponse;
       try {
@@ -351,24 +388,20 @@ export class PaymentService {
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        await this.handleFailedPayout(booking.id, payoutTransaction, reason, processingLeaseId);
         throw new PayoutInitiationFailedException(booking.id, reason);
       }
 
       if (payoutResult.success) {
-        await this.handleSuccessfulPayout(
-          booking.id,
-          payoutTransaction,
-          payoutResult.data,
-          processingLeaseId,
-        );
+        await this.handleSuccessfulPayout(booking.id, payoutTransaction, processingLeaseId);
       } else {
         const reason = this.extractErrorMessage(payoutResult.data);
         await this.handleFailedPayout(booking.id, payoutTransaction, reason, processingLeaseId);
         throw new PayoutInitiationFailedException(booking.id, reason);
       }
     } catch (error) {
-      if (error instanceof Error) {
+      if (error instanceof PayoutProcessingInProgressException) {
+        this.logger.warn({ bookingId: booking.id }, error.message);
+      } else if (error instanceof Error) {
         this.logger.error(
           { error: error.message, stack: error.stack },
           "Failed to initiate payout",
