@@ -739,6 +739,35 @@ describe("PaymentApiService", () => {
       expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
     });
 
+    it("allows an extension already marked as refund processing to be re-reserved", async () => {
+      const payment = createPayment({
+        bookingId: null,
+        extensionId: "extension-123",
+        booking: null,
+        extension: createExtension({
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
+        }),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
+        success: false,
+        error: "Provider rejected refund",
+      });
+
+      await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
+
+      expect(transactionClient.extension.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "extension-123",
+          paymentStatus: {
+            in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
+          },
+        },
+        data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+      });
+    });
+
     it("does not call Flutterwave when the booking refund state cannot be reserved", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },

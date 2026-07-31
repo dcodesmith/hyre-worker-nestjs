@@ -295,7 +295,9 @@ export class PaymentApiService {
         const extensionUpdate = await tx.extension.updateMany({
           where: {
             id: payment.extensionId,
-            paymentStatus: PaymentStatus.PAID,
+            paymentStatus: {
+              in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
+            },
           },
           data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
         });
