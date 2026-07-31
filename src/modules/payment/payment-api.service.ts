@@ -249,6 +249,13 @@ export class PaymentApiService {
     amount: number,
     idempotencyKey: string,
   ): Promise<void> {
+    if (
+      (!payment.bookingId && !payment.extensionId) ||
+      (payment.bookingId && payment.extensionId)
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
+
     const reserved = await this.databaseService.$transaction(async (tx) => {
       const { count } = await tx.payment.updateMany({
         where: {

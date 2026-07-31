@@ -720,6 +720,25 @@ describe("PaymentApiService", () => {
       ).rejects.toThrow(RefundReservationConflictException);
     });
 
+    it.each([
+      { bookingId: null, extensionId: null },
+      { bookingId: "booking-123", extensionId: "extension-123" },
+    ])("rejects an invalid payment association: %o", async ({ bookingId, extensionId }) => {
+      const payment = createPayment({
+        bookingId,
+        extensionId,
+        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(RefundDomainStateMismatchException);
+
+      expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
+      expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+    });
+
     it("does not call Flutterwave when the booking refund state cannot be reserved", async () => {
       const payment = createPayment({
         booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },

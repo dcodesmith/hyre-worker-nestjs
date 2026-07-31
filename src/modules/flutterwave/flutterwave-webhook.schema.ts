@@ -28,7 +28,7 @@ export const flutterwaveRefundWebhookDataSchema = z.looseObject({
   comments: z.string().nullish(),
 });
 
-export const flutterwaveWebhookPayloadSchema = z.discriminatedUnion("event", [
+const handledFlutterwaveWebhookPayloadSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("charge.completed"),
     data: flutterwaveChargeWebhookDataSchema,
@@ -41,6 +41,29 @@ export const flutterwaveWebhookPayloadSchema = z.discriminatedUnion("event", [
     event: z.literal("refund.completed"),
     data: flutterwaveRefundWebhookDataSchema,
   }),
+]);
+
+const unknownFlutterwaveWebhookPayloadSchema = z
+  .looseObject({
+    event: z.string().trim().min(1),
+    data: z.unknown().optional(),
+  })
+  .refine(
+    ({ event }) =>
+      event !== "charge.completed" &&
+      event !== "transfer.completed" &&
+      event !== "refund.completed",
+    { path: ["event"], message: "Handled webhook events require a valid payload" },
+  )
+  .transform(({ event, data }) => ({
+    event: "unknown" as const,
+    originalEvent: event,
+    data,
+  }));
+
+export const flutterwaveWebhookPayloadSchema = z.union([
+  handledFlutterwaveWebhookPayloadSchema,
+  unknownFlutterwaveWebhookPayloadSchema,
 ]);
 
 export type FlutterwaveChargeWebhookData = z.infer<typeof flutterwaveChargeWebhookDataSchema>;

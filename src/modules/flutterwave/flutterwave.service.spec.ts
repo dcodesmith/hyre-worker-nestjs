@@ -674,10 +674,27 @@ describe("FlutterwaveService", () => {
         account_id: 123,
         transaction_id: 12345,
       };
-      mockAxiosInstance.get.mockResolvedValueOnce({ data: refund });
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          message: "Refund fetched",
+          data: refund,
+        },
+      });
 
       await expect(service.fetchRefund("67890")).resolves.toEqual(refund);
       expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/refunds/67890");
+    });
+
+    it.each([
+      { status: "error", message: "Refund not found", data: undefined },
+      { status: "success", message: "Refund data missing", data: undefined },
+    ])("rejects an invalid provider response: $message", async (response) => {
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: response });
+
+      await expect(service.fetchRefund("67890")).rejects.toMatchObject({
+        code: "REFUND_FETCH_FAILED",
+      });
     });
 
     it("throws provider lookup failures", async () => {

@@ -76,12 +76,18 @@ describe("flutterwaveWebhookPayloadSchema", () => {
     expect(flutterwaveWebhookPayloadSchema.safeParse(payload).success).toBe(false);
   });
 
-  it("rejects unknown webhook events", () => {
+  it("accepts unknown webhook events for acknowledgement", () => {
     const result = flutterwaveWebhookPayloadSchema.safeParse({
       event: "refund.pending",
       data: {},
     });
 
-    expect(result.success).toBe(false);
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        event: "unknown",
+        originalEvent: "refund.pending",
+      },
+    });
   });
 });

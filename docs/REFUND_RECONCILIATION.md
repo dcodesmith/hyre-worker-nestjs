@@ -52,44 +52,8 @@ Once handed off, the refund is excluded from automated reconciliation.
 6. Record the investigation outcome in the operations incident or support ticket.
 
 Do not initiate another refund while the payment is `REFUND_PROCESSING` or `REFUND_ERROR`.
-# Refund reconciliation
 
-Refunds are reconciled hourly against Flutterwave V3 using the persisted refund ID. A successful
-refund is only finalized for the documented terminal statuses:
-
-- `completed-bank-transfer`
-- `completed-momo`
-- `completed-mpgs`
-- `completed-offline`
-- `completed-preauth`
-
-Flutterwave's plain `completed` status means that the refund was initiated and is still awaiting
-disbursement. It must not trigger a customer success notification.
-
-## Operations handoff
-
-Operations receives one durable email while automated reconciliation continues when:
-
-- an uncertain initiation has no refund ID after 15 minutes;
-- three consecutive provider lookups fail;
-- Flutterwave returns an unrecognized status three consecutive times;
-- the provider refund transaction or amount does not match the local payment; or
-- the refund remains pending beyond 48 hours for bank transfers, 6 days for mobile money, or
-  16 days for cards and unknown payment methods.
-
-The email includes the booking reference, payment ID, refund ID when available, amount, and reason.
-Operations should:
-
-1. Locate the payment and refund in the Flutterwave dashboard.
-2. Confirm the refund ID, original transaction ID, amount, and current status.
-3. Never initiate another refund until Flutterwave confirms that no refund exists for the payment.
-4. If Flutterwave's API returns a documented terminal status, allow the next hourly reconciliation
-   pass to finalize it.
-5. If the dashboard and API disagree or the refund remains unresolved, escalate to Flutterwave
-   support and engineering. Do not update only the `Payment` row because refund finalization also
-   synchronizes the booking or extension and writes the notification outbox atomically.
-
-Flutterwave references:
+## Flutterwave references
 
 - https://developer.flutterwave.com/v3.0/docs/refunds
 - https://developer.flutterwave.com/v3.0/reference/get-transaction-refunds

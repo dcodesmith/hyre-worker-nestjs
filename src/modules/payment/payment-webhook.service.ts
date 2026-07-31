@@ -45,6 +45,18 @@ export class PaymentWebhookService {
       case "refund.completed":
         await this.refundCompletedHandler.handle(payload.data);
         break;
+
+      case "unknown":
+        this.logger.warn(
+          { event: payload.originalEvent },
+          "Ignoring unsupported Flutterwave webhook event",
+        );
+        break;
+
+      default: {
+        const unhandledPayload: never = payload;
+        this.logger.warn({ payload: unhandledPayload }, "Unhandled Flutterwave webhook payload");
+      }
     }
   }
 }

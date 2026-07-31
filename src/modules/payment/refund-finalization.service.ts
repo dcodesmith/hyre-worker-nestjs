@@ -119,6 +119,17 @@ export class RefundFinalizationService {
       return false;
     }
 
+    if (
+      (!payment.bookingId && !payment.extensionId) ||
+      (payment.bookingId && payment.extensionId)
+    ) {
+      return this.requestManualReview({
+        paymentId: payment.id,
+        reason:
+          "Payment must reference exactly one booking or extension before refund finalization",
+      });
+    }
+
     const booking = payment.booking ?? payment.extension?.bookingLeg.booking;
     const existingWebhookPayload =
       payment.webhookPayload &&
@@ -136,69 +147,81 @@ export class RefundFinalizationService {
         }
       : undefined;
 
-    const finalized = await this.databaseService.$transaction(async (tx) => {
-      const result = await tx.payment.updateMany({
-        where: {
-          id: payment.id,
-          status: {
-            in: [PaymentAttemptStatus.REFUND_PROCESSING, PaymentAttemptStatus.REFUND_ERROR],
-          },
-        },
-        data: {
-          status: input.status,
-          ...(webhookPayload ? { webhookPayload } : {}),
-        },
-      });
-
-      if (result.count === 0) {
-        return false;
-      }
-
-      const domainPaymentStatus = toDomainPaymentStatus(input.status);
-      const currentDomainStatuses = [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING];
-      if (payment.bookingId) {
-        const bookingUpdate = await tx.booking.updateMany({
+    let finalized: boolean;
+    try {
+      finalized = await this.databaseService.$transaction(async (tx) => {
+        const result = await tx.payment.updateMany({
           where: {
-            id: payment.bookingId,
-            paymentStatus: { in: currentDomainStatuses },
+            id: payment.id,
+            status: {
+              in: [PaymentAttemptStatus.REFUND_PROCESSING, PaymentAttemptStatus.REFUND_ERROR],
+            },
           },
-          data: { paymentStatus: domainPaymentStatus },
-        });
-        if (bookingUpdate.count === 0) {
-          throw new RefundDomainStateMismatchException(payment.id);
-        }
-      } else if (payment.extensionId) {
-        const extensionUpdate = await tx.extension.updateMany({
-          where: {
-            id: payment.extensionId,
-            paymentStatus: { in: currentDomainStatuses },
-          },
-          data: { paymentStatus: domainPaymentStatus },
-        });
-        if (extensionUpdate.count === 0) {
-          throw new RefundDomainStateMismatchException(payment.id);
-        }
-      }
-
-      if (booking) {
-        await this.notificationOutboxService.create(
-          this.refundStatusChangedHandler,
-          {
-            refundId: input.refundId,
-            paymentId: payment.id,
-            bookingId: booking.id,
-            bookingReference: booking.bookingReference,
+          data: {
             status: input.status,
-            amount: input.amount,
-            failureReason: input.failureReason,
-            customer: getRefundNotificationCustomer(booking),
+            ...(webhookPayload ? { webhookPayload } : {}),
           },
-          tx,
-        );
-      }
+        });
 
-      return true;
-    });
+        if (result.count === 0) {
+          return false;
+        }
+
+        const domainPaymentStatus = toDomainPaymentStatus(input.status);
+        const currentDomainStatuses = [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING];
+        if (payment.bookingId) {
+          const bookingUpdate = await tx.booking.updateMany({
+            where: {
+              id: payment.bookingId,
+              paymentStatus: { in: currentDomainStatuses },
+            },
+            data: { paymentStatus: domainPaymentStatus },
+          });
+          if (bookingUpdate.count === 0) {
+            throw new RefundDomainStateMismatchException(payment.id);
+          }
+        } else if (payment.extensionId) {
+          const extensionUpdate = await tx.extension.updateMany({
+            where: {
+              id: payment.extensionId,
+              paymentStatus: { in: currentDomainStatuses },
+            },
+            data: { paymentStatus: domainPaymentStatus },
+          });
+          if (extensionUpdate.count === 0) {
+            throw new RefundDomainStateMismatchException(payment.id);
+          }
+        }
+
+        if (booking) {
+          await this.notificationOutboxService.create(
+            this.refundStatusChangedHandler,
+            {
+              refundId: input.refundId,
+              paymentId: payment.id,
+              bookingId: booking.id,
+              bookingReference: booking.bookingReference,
+              status: input.status,
+              amount: input.amount,
+              failureReason: input.failureReason,
+              customer: getRefundNotificationCustomer(booking),
+            },
+            tx,
+          );
+        }
+
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof RefundDomainStateMismatchException) {
+        return this.requestManualReview({
+          paymentId: payment.id,
+          reason:
+            "Refund finalization could not update the related booking or extension payment status",
+        });
+      }
+      throw error;
+    }
 
     if (finalized && !booking) {
       this.logger.warn(
@@ -225,13 +248,15 @@ export class RefundFinalizationService {
       return false;
     }
 
-    const booking = payment.booking ?? payment.extension?.bookingLeg.booking;
+    const hasExactlyOneAssociation = Boolean(payment.bookingId) !== Boolean(payment.extensionId);
+    const booking = hasExactlyOneAssociation
+      ? (payment.booking ?? payment.extension?.bookingLeg.booking)
+      : null;
     if (!booking) {
       this.logger.error(
         { paymentId: payment.id },
-        "Cannot request refund manual review without a related booking",
+        "Requesting refund manual review without an unambiguous related booking",
       );
-      return false;
     }
 
     return this.databaseService.$transaction(async (tx) => {
@@ -260,12 +285,12 @@ export class RefundFinalizationService {
         {
           refundId: payment.refundProviderId ?? `unresolved:${payment.id}`,
           paymentId: payment.id,
-          bookingId: booking.id,
-          bookingReference: booking.bookingReference,
+          bookingId: booking?.id ?? `payment:${payment.id}`,
+          bookingReference: booking?.bookingReference ?? `Payment ${payment.id}`,
           status: "REFUND_REVIEW_REQUIRED",
-          amount: payment.refundRequestedAmount?.toNumber() ?? 0,
+          amount: (payment.refundRequestedAmount ?? payment.amountCharged)?.toNumber() ?? 0,
           failureReason: input.reason,
-          customer: getRefundNotificationCustomer(booking),
+          customer: booking ? getRefundNotificationCustomer(booking) : {},
         },
         tx,
       );

@@ -245,10 +245,16 @@ export class FlutterwaveService {
 
   async fetchRefund(refundId: string): Promise<FlutterwaveFetchedRefundData> {
     try {
-      const { data } = await this.httpClient.get<FlutterwaveFetchedRefundData>(
-        `/v3/refunds/${refundId}`,
-      );
-      return data;
+      const { data: response } = await this.httpClient.get<
+        FlutterwaveResponse<FlutterwaveFetchedRefundData>
+      >(`/v3/refunds/${refundId}`);
+      if (response.status !== "success" || !response.data) {
+        throw new FlutterwaveError(
+          response.message || "Failed to fetch refund",
+          "REFUND_FETCH_FAILED",
+        );
+      }
+      return response.data;
     } catch (error) {
       throw this.handleError(error, "fetchRefund");
     }

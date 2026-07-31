@@ -7,7 +7,6 @@ import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { RefundStatusChangedHandler } from "../notification/handlers/refund-status-changed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { RefundDomainStateMismatchException } from "./payment.error";
 import {
   type RefundFinalizationPayment,
   RefundFinalizationService,
@@ -221,6 +220,7 @@ describe("RefundFinalizationService", () => {
     findUnique.mockResolvedValueOnce({
       ...createPaymentRecord({
         id: "payment-123",
+        bookingId: "booking-123",
         status: PaymentAttemptStatus.REFUND_PROCESSING,
       }),
       booking,
@@ -243,7 +243,7 @@ describe("RefundFinalizationService", () => {
   });
 
   it("rolls back finalization when the booking refund state has changed", async () => {
-    findUnique.mockResolvedValueOnce({
+    const payment = {
       ...createPaymentRecord({
         id: "payment-123",
         bookingId: "booking-123",
@@ -251,7 +251,8 @@ describe("RefundFinalizationService", () => {
       }),
       booking,
       extension: null,
-    });
+    };
+    findUnique.mockResolvedValue(payment);
     transactionClient.booking.updateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(
@@ -261,9 +262,17 @@ describe("RefundFinalizationService", () => {
         status: PaymentAttemptStatus.REFUNDED,
         amount: 10000,
       }),
-    ).rejects.toThrow(RefundDomainStateMismatchException);
+    ).resolves.toBe(true);
 
-    expect(notificationOutboxService.create).not.toHaveBeenCalled();
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      refundStatusChangedHandler,
+      expect.objectContaining({
+        status: "REFUND_REVIEW_REQUIRED",
+        failureReason:
+          "Refund finalization could not update the related booking or extension payment status",
+      }),
+      transactionClient,
+    );
   });
 
   it("skips payments that are missing or no longer in refund processing", async () => {
@@ -289,6 +298,43 @@ describe("RefundFinalizationService", () => {
     expect(notificationOutboxService.create).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { bookingId: null, extensionId: null },
+    { bookingId: "booking-123", extensionId: "extension-123" },
+  ])("hands off an invalid payment association: %o", async ({ bookingId, extensionId }) => {
+    findUnique.mockResolvedValue({
+      ...createPaymentRecord({
+        id: "payment-123",
+        bookingId,
+        extensionId,
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+      }),
+      booking,
+      extension: null,
+    });
+
+    await expect(
+      service.finalize({
+        paymentId: "payment-123",
+        refundId: "refund-123",
+        status: PaymentAttemptStatus.REFUNDED,
+        amount: 10000,
+      }),
+    ).resolves.toBe(true);
+
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      refundStatusChangedHandler,
+      expect.objectContaining({
+        bookingId: "payment:payment-123",
+        bookingReference: "Payment payment-123",
+        status: "REFUND_REVIEW_REQUIRED",
+        failureReason:
+          "Payment must reference exactly one booking or extension before refund finalization",
+      }),
+      transactionClient,
+    );
+  });
+
   it("atomically records a one-time operations handoff for manual review", async () => {
     findUnique.mockResolvedValueOnce({
       ...createPaymentRecord({
@@ -296,7 +342,8 @@ describe("RefundFinalizationService", () => {
         bookingId: "booking-123",
         status: PaymentAttemptStatus.REFUND_PROCESSING,
         refundProviderId: "refund-123",
-        refundRequestedAmount: new Decimal(5000),
+        refundRequestedAmount: null,
+        amountCharged: new Decimal(5000),
       }),
       booking,
       extension: null,
@@ -357,5 +404,39 @@ describe("RefundFinalizationService", () => {
     ).resolves.toBe(false);
 
     expect(notificationOutboxService.create).not.toHaveBeenCalled();
+  });
+
+  it("records a payment-level handoff for an ambiguous payment association", async () => {
+    findUnique.mockResolvedValueOnce({
+      ...createPaymentRecord({
+        id: "payment-123",
+        bookingId: "booking-123",
+        extensionId: "extension-123",
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+      }),
+      booking,
+      extension: {
+        bookingLeg: {
+          booking,
+        },
+      },
+    });
+
+    await expect(
+      service.requestManualReview({
+        paymentId: "payment-123",
+        reason: "Refund exceeded provider SLA",
+      }),
+    ).resolves.toBe(true);
+
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      refundStatusChangedHandler,
+      expect.objectContaining({
+        bookingId: "payment:payment-123",
+        bookingReference: "Payment payment-123",
+        status: "REFUND_REVIEW_REQUIRED",
+      }),
+      transactionClient,
+    );
   });
 });

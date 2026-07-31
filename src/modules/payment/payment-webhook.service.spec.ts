@@ -118,4 +118,16 @@ describe("PaymentWebhookService", () => {
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
     expect(transferCompletedHandler.handle).not.toHaveBeenCalled();
   });
+
+  it("ignores unsupported webhook events", async () => {
+    await service.handleWebhook({
+      event: "unknown",
+      originalEvent: "refund.pending",
+      data: {},
+    });
+
+    expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
+    expect(transferCompletedHandler.handle).not.toHaveBeenCalled();
+    expect(refundCompletedHandler.handle).not.toHaveBeenCalled();
+  });
 });

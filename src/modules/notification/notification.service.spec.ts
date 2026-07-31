@@ -195,6 +195,27 @@ describe("NotificationService", () => {
       });
     });
 
+    it("labels a partial refund accurately", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "PARTIALLY_REFUNDED",
+          amount: 5000,
+          customer,
+        }),
+      ).toMatchObject({
+        pushPayload: {
+          title: "Partial refund completed",
+        },
+        templateData: {
+          subject: "Partial refund completed for booking BR-123",
+        },
+      });
+    });
+
     it("targets only operations email on failure", () => {
       expect(
         service.buildRefundStatusChangedJobData({

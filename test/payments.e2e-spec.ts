@@ -403,6 +403,19 @@ describe("Payments E2E Tests", () => {
         expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
       });
+
+      it("acknowledges a signed unsupported webhook event", async () => {
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.pending",
+            data: { id: 123 },
+          });
+
+        expect(response.status).toBe(HttpStatus.OK);
+        expect(response.body.status).toBe("ok");
+      });
     });
 
     describe("charge.completed", () => {
@@ -995,7 +1008,7 @@ describe("Payments E2E Tests", () => {
   describe("refund reconciliation", () => {
     it("hands a refund past its provider SLA to operations exactly once", async () => {
       const flwTransactionId = Date.now().toString();
-      const refundId = `refund-${flwTransactionId}`;
+      const refundId = flwTransactionId;
       await databaseService.booking.update({
         where: { id: testBookingId },
         data: { paymentStatus: "REFUND_PROCESSING" },

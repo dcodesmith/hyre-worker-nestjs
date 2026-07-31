@@ -458,6 +458,14 @@ export class NotificationService {
 
     const recipientType = succeeded ? CLIENT_RECIPIENT_TYPE : OPERATIONS_RECIPIENT_TYPE;
     const formattedAmount = formatCurrency(amount);
+    let subject = `Refund failed for booking ${bookingReference}`;
+    if (status === "REFUNDED") {
+      subject = `Refund completed for booking ${bookingReference}`;
+    } else if (status === "PARTIALLY_REFUNDED") {
+      subject = `Partial refund completed for booking ${bookingReference}`;
+    } else if (requiresReview) {
+      subject = `Refund requires manual review for booking ${bookingReference}`;
+    }
 
     return {
       id: `refund-status-${refundId}-${status.toLowerCase()}`,
@@ -485,11 +493,7 @@ export class NotificationService {
         : undefined,
       templateData: {
         templateKind: REFUND_STATUS_TEMPLATE_KIND,
-        subject: succeeded
-          ? `Refund completed for booking ${bookingReference}`
-          : requiresReview
-            ? `Refund requires manual review for booking ${bookingReference}`
-            : `Refund failed for booking ${bookingReference}`,
+        subject,
         status,
         recipientName: succeeded ? (customer.name ?? "Customer") : "Operations team",
         amount: formattedAmount,

@@ -201,6 +201,29 @@ describe("RefundReconciliationService", () => {
     });
   });
 
+  it("hands off when Flutterwave returns a different refund ID", async () => {
+    const payment = createPaymentRecord({
+      id: "payment-123",
+      status: PaymentAttemptStatus.REFUND_PROCESSING,
+      flutterwaveTransactionId: "456",
+      amountCharged: new Decimal(10000),
+      refundProviderId: "123",
+      refundRequestedAt: new Date("2026-07-30T19:00:00.000Z"),
+    });
+    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
+    vi.mocked(flutterwaveService.fetchRefund).mockResolvedValueOnce(
+      createFetchedRefund({ id: 999 }),
+    );
+
+    await expect(service.reconcileProcessingRefunds()).resolves.toBe(1);
+
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: "payment-123",
+      reason: "Refund provider ID mismatch: expected 123, received 999",
+    });
+    expect(refundFinalizationService.finalize).not.toHaveBeenCalled();
+  });
+
   it("hands off after three consecutive provider lookup failures", async () => {
     const payment = createPaymentRecord({
       id: "payment-123",
@@ -218,6 +241,54 @@ describe("RefundReconciliationService", () => {
       paymentId: "payment-123",
       reason: "Flutterwave refund verification failed 3 consecutive times",
     });
+  });
+
+  it("hands off an unknown provider status after three consecutive checks", async () => {
+    const payment = createPaymentRecord({
+      id: "payment-123",
+      status: PaymentAttemptStatus.REFUND_PROCESSING,
+      flutterwaveTransactionId: "456",
+      amountCharged: new Decimal(10000),
+      refundProviderId: "123",
+      refundRequestedAt: new Date("2026-07-30T19:00:00.000Z"),
+      refundVerificationFailures: 2,
+    });
+    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
+    vi.mocked(flutterwaveService.fetchRefund).mockResolvedValueOnce(
+      createFetchedRefund({ status: "provider-review" }),
+    );
+
+    await expect(service.reconcileProcessingRefunds()).resolves.toBe(1);
+
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: "payment-123",
+      reason: 'Flutterwave returned unrecognized refund status "provider-review"',
+    });
+  });
+
+  it("resets consecutive verification failures after a valid provider check", async () => {
+    const payment = createPaymentRecord({
+      id: "payment-123",
+      status: PaymentAttemptStatus.REFUND_PROCESSING,
+      flutterwaveTransactionId: "456",
+      amountCharged: new Decimal(10000),
+      refundProviderId: "123",
+      refundRequestedAt: new Date("2026-07-30T19:00:00.000Z"),
+      refundVerificationFailures: 2,
+    });
+    vi.mocked(databaseService.payment.findMany).mockResolvedValueOnce([payment]);
+    vi.mocked(flutterwaveService.fetchRefund).mockResolvedValueOnce(createFetchedRefund());
+
+    await expect(service.reconcileProcessingRefunds()).resolves.toBe(0);
+
+    expect(databaseService.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          refundVerificationFailures: 0,
+        }),
+      }),
+    );
+    expect(refundFinalizationService.requestManualReview).not.toHaveBeenCalled();
   });
 
   it("hands off a pending bank refund after its SLA", async () => {

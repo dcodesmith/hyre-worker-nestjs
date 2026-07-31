@@ -470,6 +470,7 @@ export class TestDataFactory {
         refundProviderStatus: options.refundProviderStatus,
         refundRequestedAmount: options.refundRequestedAmount,
         refundRequestedAt: options.refundRequestedAt,
+        refundIdempotencyKey: options.refundIdempotencyKey,
         refundLastCheckedAt: options.refundLastCheckedAt,
         refundReconciliationAttempts: options.refundReconciliationAttempts,
         refundVerificationFailures: options.refundVerificationFailures,

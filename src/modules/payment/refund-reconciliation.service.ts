@@ -161,7 +161,7 @@ export class RefundReconciliationService {
       const isFullRefund = amountCharged != null && providerRefund.amount_refunded >= amountCharged;
       return this.refundFinalizationService.finalize({
         paymentId: payment.id,
-        refundId: String(providerRefund.id),
+        refundId: payment.refundProviderId,
         status: isFullRefund
           ? PaymentAttemptStatus.REFUNDED
           : PaymentAttemptStatus.PARTIALLY_REFUNDED,
@@ -176,7 +176,7 @@ export class RefundReconciliationService {
     if (providerState === "FAILED") {
       return this.refundFinalizationService.finalize({
         paymentId: payment.id,
-        refundId: String(providerRefund.id),
+        refundId: payment.refundProviderId,
         status: PaymentAttemptStatus.REFUND_FAILED,
         amount: payment.refundRequestedAmount?.toNumber() ?? providerRefund.amount_refunded,
         failureReason: providerRefund.comment || providerRefund.status,
@@ -210,6 +210,10 @@ export class RefundReconciliationService {
     providerRefund: FlutterwaveFetchedRefundData,
     providerState: RefundProviderState,
   ): string | null {
+    if (String(providerRefund.id) !== payment.refundProviderId) {
+      return `Refund provider ID mismatch: expected ${payment.refundProviderId}, received ${providerRefund.id}`;
+    }
+
     if (
       payment.flutterwaveTransactionId &&
       String(providerRefund.transaction_id) !== payment.flutterwaveTransactionId
@@ -276,12 +280,12 @@ export class RefundReconciliationService {
     }
 
     const paymentMethod = payment.paymentMethod?.trim().toLowerCase() ?? "";
-    const slaMs =
-      paymentMethod.includes("momo") || paymentMethod.includes("mobile")
-        ? MOBILE_MONEY_REFUND_SLA_MS
-        : paymentMethod.includes("bank") || paymentMethod.includes("account")
-          ? BANK_REFUND_SLA_MS
-          : CARD_OR_UNKNOWN_REFUND_SLA_MS;
+    let slaMs = CARD_OR_UNKNOWN_REFUND_SLA_MS;
+    if (paymentMethod.includes("momo") || paymentMethod.includes("mobile")) {
+      slaMs = MOBILE_MONEY_REFUND_SLA_MS;
+    } else if (paymentMethod.includes("bank") || paymentMethod.includes("account")) {
+      slaMs = BANK_REFUND_SLA_MS;
+    }
 
     return payment.refundRequestedAt.getTime() <= Date.now() - slaMs;
   }
