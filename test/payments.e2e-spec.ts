@@ -786,6 +786,7 @@ describe("Payments E2E Tests", () => {
           is_approved: 1,
           bank_name: "Access Bank",
         };
+        vi.spyOn(flutterwaveService, "findTransferByReference").mockResolvedValueOnce(transferData);
 
         const response = await request(app.getHttpServer())
           .post("/api/payments/webhook/flutterwave")
@@ -809,6 +810,7 @@ describe("Payments E2E Tests", () => {
         // Verify payout transaction was updated
         const updatedPayout = await factory.getPayoutTransactionById(payoutTransaction.id);
         expect(updatedPayout?.status).toBe("PAID_OUT");
+        expect(updatedPayout?.amountPaid?.toNumber()).toBe(45000);
         expect(updatedPayout?.completedAt).toBeDefined();
 
         const notificationEvent = await databaseService.notificationOutboxEvent.findUnique({

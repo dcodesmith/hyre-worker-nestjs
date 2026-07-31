@@ -28,6 +28,11 @@ export const PaymentErrorCode = {
   REFUND_RECONCILIATION_REQUIRED: "REFUND_RECONCILIATION_REQUIRED",
   REFUND_WEBHOOK_PAYMENT_NOT_FOUND: "REFUND_WEBHOOK_PAYMENT_NOT_FOUND",
   REFUND_DOMAIN_STATE_MISMATCH: "REFUND_DOMAIN_STATE_MISMATCH",
+  FINANCIAL_OPERATION_NOT_FOUND: "FINANCIAL_OPERATION_NOT_FOUND",
+  FINANCIAL_PROVIDER_REFERENCE_MISSING: "FINANCIAL_PROVIDER_REFERENCE_MISSING",
+  FINANCIAL_PROVIDER_REFERENCE_MISMATCH: "FINANCIAL_PROVIDER_REFERENCE_MISMATCH",
+  FINANCIAL_PROVIDER_IDENTITY_MISSING: "FINANCIAL_PROVIDER_IDENTITY_MISSING",
+  FINANCIAL_RECONCILIATION_NOT_ALLOWED: "FINANCIAL_RECONCILIATION_NOT_ALLOWED",
 } as const;
 
 export class PaymentException extends AppException {}
@@ -269,6 +274,76 @@ export class RefundDomainStateMismatchException extends PaymentException {
       {
         title: "Refund Domain State Mismatch",
         details: { paymentId },
+      },
+    );
+  }
+}
+
+export class FinancialOperationNotFoundException extends PaymentException {
+  constructor(resourceType: "refund" | "payout", resourceId: string) {
+    super(
+      PaymentErrorCode.FINANCIAL_OPERATION_NOT_FOUND,
+      `${resourceType === "refund" ? "Refund" : "Payout"} not found`,
+      HttpStatus.NOT_FOUND,
+      {
+        title: "Financial Operation Not Found",
+        details: { resourceType, resourceId },
+      },
+    );
+  }
+}
+
+export class FinancialProviderReferenceMissingException extends PaymentException {
+  constructor(resourceType: "refund" | "payout", resourceId: string) {
+    super(
+      PaymentErrorCode.FINANCIAL_PROVIDER_REFERENCE_MISSING,
+      `${resourceType === "refund" ? "Refund" : "Payout"} has no provider reference`,
+      HttpStatus.CONFLICT,
+      {
+        title: "Financial Provider Reference Missing",
+        details: { resourceType, resourceId },
+      },
+    );
+  }
+}
+
+export class FinancialProviderReferenceMismatchException extends PaymentException {
+  constructor(resourceType: "refund" | "payout", resourceId: string) {
+    super(
+      PaymentErrorCode.FINANCIAL_PROVIDER_REFERENCE_MISMATCH,
+      `The supplied provider reference does not match the stored ${resourceType} reference`,
+      HttpStatus.CONFLICT,
+      {
+        title: "Financial Provider Reference Mismatch",
+        details: { resourceType, resourceId },
+      },
+    );
+  }
+}
+
+export class FinancialProviderIdentityMissingException extends PaymentException {
+  constructor(resourceType: "refund" | "payout", resourceId: string) {
+    super(
+      PaymentErrorCode.FINANCIAL_PROVIDER_IDENTITY_MISSING,
+      `${resourceType === "refund" ? "Refund" : "Payout"} cannot be reconciled without the original provider transaction identity`,
+      HttpStatus.CONFLICT,
+      {
+        title: "Financial Provider Identity Missing",
+        details: { resourceType, resourceId },
+      },
+    );
+  }
+}
+
+export class FinancialReconciliationNotAllowedException extends PaymentException {
+  constructor(resourceType: "refund" | "payout", resourceId: string, status: string) {
+    super(
+      PaymentErrorCode.FINANCIAL_RECONCILIATION_NOT_ALLOWED,
+      `${resourceType === "refund" ? "Refund" : "Payout"} cannot be reconciled from status ${status}`,
+      HttpStatus.CONFLICT,
+      {
+        title: "Financial Reconciliation Not Allowed",
+        details: { resourceType, resourceId, status },
       },
     );
   }

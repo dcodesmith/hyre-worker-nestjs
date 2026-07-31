@@ -4,7 +4,7 @@ import { BookingStatus, PayoutTransaction, PayoutTransactionStatus } from "@pris
 import { PinoLogger } from "nestjs-pino";
 import { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
-import type { PayoutResponse } from "../flutterwave/flutterwave.interface";
+import type { FlutterwaveTransferData, PayoutResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PayoutStatusChangedHandler } from "../notification/handlers/payout-status-changed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
@@ -19,9 +19,15 @@ import {
 } from "./payment.error";
 
 const PAYOUT_PROCESSING_LEASE_MS = 10 * 60 * 1000;
-const PAYOUT_RECONCILIATION_GRACE_PERIOD_MS = 15 * 60 * 1000;
+export const PAYOUT_RECONCILIATION_GRACE_PERIOD_MS = 15 * 60 * 1000;
 const PAYOUT_RECONCILIATION_BATCH_SIZE = 50;
 type TerminalPayoutStatus = "PAID_OUT" | "FAILED";
+
+export interface PayoutReconciliationResult {
+  reconciled: boolean;
+  providerStatus: string | null;
+  mismatchReason: string | null;
+}
 
 @Injectable()
 export class PaymentService {
@@ -81,7 +87,7 @@ export class PaymentService {
 
   private async createOrUpdatePayoutTransaction(
     booking: BookingWithRelations,
-    bankDetails: { bankName: string; accountNumber: string },
+    bankDetails: { bankName: string; accountNumber: string; bankCode: string },
     payoutAmount: number,
   ): Promise<PayoutTransaction> {
     const fleetOwner = booking.car.owner;
@@ -96,6 +102,8 @@ export class PaymentService {
           currency: "NGN",
           status: "PENDING_DISBURSEMENT",
           payoutMethodDetails,
+          payoutBankCode: bankDetails.bankCode,
+          payoutAccountLast4: bankDetails.accountNumber.slice(-4),
         },
       });
     } catch (error) {
@@ -128,6 +136,8 @@ export class PaymentService {
             amountToPay: payoutAmount,
             currency: "NGN",
             payoutMethodDetails,
+            payoutBankCode: bankDetails.bankCode,
+            payoutAccountLast4: bankDetails.accountNumber.slice(-4),
           },
         });
         this.logger.info(
@@ -214,12 +224,13 @@ export class PaymentService {
     payoutTransaction: PayoutTransaction,
     processingLeaseId: string,
     status: PayoutTransactionStatus = PayoutTransactionStatus.PROCESSING,
+    amountPaid?: number,
   ): Promise<void> {
     if (status === PayoutTransactionStatus.PAID_OUT) {
       const finalized = await this.finalizePayoutStatus(
         payoutTransaction,
         PayoutTransactionStatus.PAID_OUT,
-        { processingLeaseId },
+        { processingLeaseId, amountPaid },
       );
       if (!finalized) {
         throw new PayoutProcessingClaimLostException(bookingId);
@@ -266,6 +277,7 @@ export class PaymentService {
     options: {
       processingLeaseId?: string;
       failureReason?: string;
+      amountPaid?: number;
     } = {},
   ): Promise<boolean> {
     const bookingId = payoutTransaction.bookingId;
@@ -282,6 +294,11 @@ export class PaymentService {
           completedAt: new Date(),
           processingLeaseId: null,
           processingLeaseExpiresAt: null,
+          ...(status === PayoutTransactionStatus.PAID_OUT
+            ? {
+                amountPaid: options.amountPaid ?? payoutTransaction.amountToPay,
+              }
+            : {}),
           ...(status === PayoutTransactionStatus.FAILED
             ? {
                 notes: `Flutterwave payout failed: ${options.failureReason ?? "Unknown failure"}`,
@@ -366,15 +383,51 @@ export class PaymentService {
       return false;
     }
 
+    await this.reconcileClaimedTransfer(
+      bookingId,
+      payoutTransaction,
+      transfer,
+      reference,
+      processingLeaseId,
+    );
+    return true;
+  }
+
+  private async reconcileClaimedTransfer(
+    bookingId: string,
+    payoutTransaction: PayoutTransaction,
+    transfer: FlutterwaveTransferData,
+    reference: string,
+    processingLeaseId: string,
+  ): Promise<PayoutReconciliationResult> {
     const status = transfer.status.trim().toUpperCase();
+    const mismatchReason = this.getPayoutTransferMismatchReason(
+      payoutTransaction,
+      transfer,
+      reference,
+    );
+    if (mismatchReason) {
+      await this.releasePayoutProcessingLease(payoutTransaction.id, processingLeaseId);
+      this.logger.error(
+        {
+          bookingId,
+          transactionId: payoutTransaction.id,
+          providerStatus: status,
+          mismatchReason,
+        },
+        "Flutterwave payout does not match the local payout transaction",
+      );
+      return { reconciled: false, providerStatus: status, mismatchReason };
+    }
+
     if (status === "FAILED") {
-      await this.handleFailedPayout(
+      const reconciled = await this.handleFailedPayout(
         bookingId,
         payoutTransaction,
         transfer.complete_message || "Flutterwave transfer failed",
         processingLeaseId,
       );
-      return true;
+      return { reconciled, providerStatus: status, mismatchReason: null };
     }
 
     if (status === "SUCCESSFUL") {
@@ -383,8 +436,9 @@ export class PaymentService {
         payoutTransaction,
         processingLeaseId,
         PayoutTransactionStatus.PAID_OUT,
+        transfer.amount,
       );
-      return true;
+      return { reconciled: true, providerStatus: status, mismatchReason: null };
     }
 
     await this.releasePayoutProcessingLease(payoutTransaction.id, processingLeaseId);
@@ -394,9 +448,9 @@ export class PaymentService {
         transactionId: payoutTransaction.id,
         providerStatus: status,
       },
-      "Payout remains pending at Flutterwave and will be reconciled later",
+      "Payout remains pending at Flutterwave",
     );
-    return true;
+    return { reconciled: false, providerStatus: status, mismatchReason: null };
   }
 
   async reconcileProcessingPayouts(): Promise<number> {
@@ -422,7 +476,8 @@ export class PaymentService {
     let reconciledCount = 0;
     for (const payout of payouts) {
       try {
-        if (await this.reconcileProcessingPayout(payout)) {
+        const result = await this.reconcilePayout(payout);
+        if (result.reconciled) {
           reconciledCount += 1;
         }
       } catch (error) {
@@ -440,11 +495,11 @@ export class PaymentService {
     return reconciledCount;
   }
 
-  private async reconcileProcessingPayout(payoutTransaction: PayoutTransaction): Promise<boolean> {
+  async reconcilePayout(payoutTransaction: PayoutTransaction): Promise<PayoutReconciliationResult> {
     const reference = payoutTransaction.payoutProviderReference;
     const bookingId = payoutTransaction.bookingId;
     if (!reference || !bookingId) {
-      return false;
+      return { reconciled: false, providerStatus: null, mismatchReason: null };
     }
 
     const now = new Date();
@@ -466,42 +521,58 @@ export class PaymentService {
       },
     });
     if (claimed.count === 0) {
-      return false;
+      return { reconciled: false, providerStatus: null, mismatchReason: null };
     }
 
     const transfer = await this.flutterwaveService.findTransferByReference(reference);
-    const status = transfer?.status.trim().toUpperCase();
-
-    if (status === "SUCCESSFUL") {
-      await this.handleSuccessfulPayout(
+    if (transfer) {
+      return this.reconcileClaimedTransfer(
         bookingId,
         payoutTransaction,
-        processingLeaseId,
-        PayoutTransactionStatus.PAID_OUT,
-      );
-      return true;
-    }
-
-    if (status === "FAILED") {
-      await this.handleFailedPayout(
-        bookingId,
-        payoutTransaction,
-        transfer.complete_message || "Flutterwave transfer failed",
+        transfer,
+        reference,
         processingLeaseId,
       );
-      return true;
     }
 
     await this.releasePayoutProcessingLease(payoutTransaction.id, processingLeaseId);
     this.logger.warn(
       {
-        bookingId: payoutTransaction.bookingId,
+        bookingId,
         transactionId: payoutTransaction.id,
-        providerStatus: status ?? "NOT_FOUND",
+        providerStatus: "NOT_FOUND",
       },
       "Payout remains unresolved after the reconciliation grace period",
     );
-    return false;
+    return { reconciled: false, providerStatus: "NOT_FOUND", mismatchReason: null };
+  }
+
+  private getPayoutTransferMismatchReason(
+    payoutTransaction: PayoutTransaction,
+    transfer: FlutterwaveTransferData,
+    expectedReference: string,
+  ): string | null {
+    if (transfer.reference !== expectedReference) {
+      return "Flutterwave transfer reference does not match the payout reference";
+    }
+    if (
+      transfer.currency.trim().toUpperCase() !== payoutTransaction.currency.trim().toUpperCase()
+    ) {
+      return "Flutterwave transfer currency does not match the payout currency";
+    }
+    if (!payoutTransaction.amountToPay.equals(transfer.amount)) {
+      return "Flutterwave transfer amount does not match the payout amount";
+    }
+    if (!payoutTransaction.payoutBankCode || !payoutTransaction.payoutAccountLast4) {
+      return "Payout beneficiary snapshot is unavailable";
+    }
+    if (transfer.bank_code !== payoutTransaction.payoutBankCode) {
+      return "Flutterwave transfer bank does not match the payout beneficiary";
+    }
+    if (!transfer.account_number.endsWith(payoutTransaction.payoutAccountLast4)) {
+      return "Flutterwave transfer account does not match the payout beneficiary";
+    }
+    return null;
   }
 
   private extractErrorMessage(data: unknown): string {
@@ -520,7 +591,7 @@ export class PaymentService {
     payoutTransaction: PayoutTransaction,
     errorMessage: string,
     processingLeaseId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const finalized = await this.finalizePayoutStatus(
       payoutTransaction,
       PayoutTransactionStatus.FAILED,
@@ -530,7 +601,7 @@ export class PaymentService {
       },
     );
     if (!finalized) {
-      return;
+      return false;
     }
 
     this.logger.error(
@@ -540,6 +611,7 @@ export class PaymentService {
       },
       "Payout initiation for booking failed",
     );
+    return true;
   }
 
   /**

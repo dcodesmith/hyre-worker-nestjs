@@ -445,6 +445,7 @@ model Payment {
   @@index([flutterwaveReference])
   @@index([status])
   @@index([status, refundRequestedAt])
+  @@index([status, refundManualReviewNotifiedAt])
 }
 
 model PayoutTransaction {
@@ -456,8 +457,10 @@ model PayoutTransaction {
   amountPaid              Decimal?                @db.Decimal(10, 2)
   currency                String
   status                  PayoutTransactionStatus
-  payoutProviderReference String?
+  payoutProviderReference String?                  @unique
   payoutMethodDetails     String?
+  payoutBankCode          String?
+  payoutAccountLast4      String?
   processingLeaseId       String?
   processingLeaseExpiresAt DateTime?
   initiatedAt             DateTime                @default(now())
@@ -470,7 +473,22 @@ model PayoutTransaction {
 
   @@index([fleetOwnerId])
   @@index([status])
+  @@index([status, initiatedAt])
   @@index([extensionId])
+}
+
+model FinancialReconciliationAudit {
+  id                String                         @id @default(cuid())
+  resourceType      FinancialReconciliationResourceType
+  resourceId        String
+  actorUserId       String
+  outcome           FinancialReconciliationOutcome @default(STARTED)
+  providerReference String?
+  providerStatus    String?
+  error             String?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+  @@index([resourceType, resourceId, createdAt], map: "FinancialRecon_resource_created_idx")
 }
 
 model DocumentApproval {
@@ -901,6 +919,18 @@ enum PayoutTransactionStatus {
   PAID_OUT
   FAILED
   REVERSED
+}
+
+enum FinancialReconciliationResourceType {
+  REFUND
+  PAYOUT
+}
+
+enum FinancialReconciliationOutcome {
+  STARTED
+  RECONCILED
+  UNRESOLVED
+  FAILED
 }
 
 enum CarApprovalStatus {
