@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
@@ -7,12 +7,33 @@ import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutt
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
+import {
+  PaymentAccessForbiddenException,
+  PaymentAmountMismatchException,
+  PaymentBookingNotFoundException,
+  PaymentEntityAccessForbiddenException,
+  PaymentEntityAlreadyPaidException,
+  PaymentEntityNotPayableException,
+  PaymentExtensionNotFoundException,
+  PaymentNotFoundException,
+  RefundAmountExceedsChargeException,
+  RefundChargedAmountMissingException,
+  RefundDomainStateMismatchException,
+  RefundPaymentNotSuccessfulException,
+  RefundProviderIdMissingException,
+  RefundProviderReferenceMissingException,
+  RefundReconciliationRequiredException,
+  RefundReservationConflictException,
+} from "./payment.error";
 import type { PaymentStatusResponse, UserInfo } from "./payment.interface";
+import { RefundFinalizationService } from "./refund-finalization.service";
+
 @Injectable()
 export class PaymentApiService {
   constructor(
     private readonly flutterwaveService: FlutterwaveService,
     private readonly databaseService: DatabaseService,
+    private readonly refundFinalizationService: RefundFinalizationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentApiService.name);
@@ -48,9 +69,8 @@ export class PaymentApiService {
         },
         "Payment amount mismatch",
       );
-      throw new BadRequestException(
-        `Payment amount mismatch: expected ${serverAmount}, received ${dto.amount}`,
-      );
+
+      throw new PaymentAmountMismatchException(serverAmount, dto.amount);
     }
 
     // Create payment intent with Flutterwave using server-validated amount
@@ -101,13 +121,13 @@ export class PaymentApiService {
     });
 
     if (!payment) {
-      throw new NotFoundException("Payment not found");
+      throw new PaymentNotFoundException(txRef);
     }
 
     // Verify user owns this payment
     const ownerId = payment.booking?.userId || payment.extension?.bookingLeg?.booking?.userId;
     if (ownerId !== userId) {
-      throw new BadRequestException("You do not have permission to view this payment");
+      throw new PaymentAccessForbiddenException(payment.id, "view");
     }
 
     return {
@@ -142,13 +162,13 @@ export class PaymentApiService {
     const payment = await this.fetchPaymentForRefund(txRef);
     this.validateRefundEligibility(payment, userId, dto.amount);
 
-    const isRetry = payment.status === "REFUND_ERROR";
-    const idempotencyKey = this.getRefundIdempotencyKey(payment, isRetry);
+    const idempotencyKey = this.getRefundIdempotencyKey(payment);
 
-    await this.reserveRefund(payment.id, isRetry, idempotencyKey);
+    await this.reserveRefund(payment, dto.amount, idempotencyKey);
 
     // Safe: validateRefundEligibility ensures flutterwaveTransactionId exists
     const transactionId = payment.flutterwaveTransactionId;
+
     return this.executeRefund(txRef, payment.id, transactionId, dto.amount, idempotencyKey);
   }
 
@@ -157,6 +177,8 @@ export class PaymentApiService {
       where: { txRef },
       select: {
         id: true,
+        bookingId: true,
+        extensionId: true,
         status: true,
         amountCharged: true,
         flutterwaveTransactionId: true,
@@ -171,7 +193,7 @@ export class PaymentApiService {
     });
 
     if (!payment) {
-      throw new NotFoundException("Payment not found");
+      throw new PaymentNotFoundException(txRef);
     }
 
     return payment;
@@ -184,35 +206,37 @@ export class PaymentApiService {
   ): void {
     const ownerId = payment.booking?.userId || payment.extension?.bookingLeg?.booking?.userId;
     if (ownerId !== userId) {
-      throw new BadRequestException("You do not have permission to refund this payment");
+      throw new PaymentAccessForbiddenException(payment.id, "refund");
     }
 
-    if (payment.status !== "SUCCESSFUL" && payment.status !== "REFUND_ERROR") {
-      throw new BadRequestException(
-        "Cannot refund a payment that is not successful or in refund error state",
-      );
+    if (payment.status === "REFUND_ERROR") {
+      throw new RefundReconciliationRequiredException(payment.id);
+    }
+
+    if (payment.status !== "SUCCESSFUL") {
+      throw new RefundPaymentNotSuccessfulException(payment.id, payment.status);
     }
 
     if (!payment.amountCharged) {
-      throw new BadRequestException("Payment has no charged amount recorded");
+      throw new RefundChargedAmountMissingException(payment.id);
     }
 
     if (refundAmount > payment.amountCharged.toNumber()) {
-      throw new BadRequestException("Refund amount cannot exceed the amount charged");
+      throw new RefundAmountExceedsChargeException(
+        payment.id,
+        refundAmount,
+        payment.amountCharged.toNumber(),
+      );
     }
 
     if (!payment.flutterwaveTransactionId) {
-      throw new BadRequestException("Payment does not have a provider reference");
+      throw new RefundProviderReferenceMissingException(payment.id);
     }
   }
 
   private getRefundIdempotencyKey(
     payment: Awaited<ReturnType<typeof this.fetchPaymentForRefund>>,
-    isRetry: boolean,
   ): string {
-    if (isRetry && payment.refundIdempotencyKey) {
-      return payment.refundIdempotencyKey;
-    }
     return `refund_${payment.id}_${randomUUID()}`;
   }
 
@@ -221,23 +245,73 @@ export class PaymentApiService {
    * CRITICAL: Match ONLY the status we observed when deciding the idempotency key strategy.
    */
   private async reserveRefund(
-    paymentId: string,
-    isRetry: boolean,
+    payment: Awaited<ReturnType<typeof this.fetchPaymentForRefund>>,
+    amount: number,
     idempotencyKey: string,
   ): Promise<void> {
-    const { count } = await this.databaseService.payment.updateMany({
-      where: {
-        id: paymentId,
-        status: isRetry ? "REFUND_ERROR" : "SUCCESSFUL",
-      },
-      data: {
-        status: "REFUND_PROCESSING",
-        refundIdempotencyKey: idempotencyKey,
-      },
+    if (
+      (!payment.bookingId && !payment.extensionId) ||
+      (payment.bookingId && payment.extensionId)
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
+
+    const reserved = await this.databaseService.$transaction(async (tx) => {
+      const { count } = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          status: "SUCCESSFUL",
+        },
+        data: {
+          status: "REFUND_PROCESSING",
+          refundIdempotencyKey: idempotencyKey,
+          refundRequestedAmount: amount,
+          refundRequestedAt: new Date(),
+          refundReconciliationAttempts: 0,
+          refundVerificationFailures: 0,
+          refundManualReviewNotifiedAt: null,
+        },
+      });
+
+      if (count === 0) {
+        return false;
+      }
+
+      if (payment.bookingId) {
+        const bookingUpdate = await tx.booking.updateMany({
+          where: {
+            id: payment.bookingId,
+            paymentStatus: {
+              in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
+            },
+          },
+          data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+        });
+
+        if (bookingUpdate.count === 0) {
+          throw new RefundDomainStateMismatchException(payment.id);
+        }
+      } else if (payment.extensionId) {
+        const extensionUpdate = await tx.extension.updateMany({
+          where: {
+            id: payment.extensionId,
+            paymentStatus: {
+              in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
+            },
+          },
+          data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+        });
+
+        if (extensionUpdate.count === 0) {
+          throw new RefundDomainStateMismatchException(payment.id);
+        }
+      }
+
+      return true;
     });
 
-    if (count === 0) {
-      throw new BadRequestException("Refund already in progress or payment status changed");
+    if (!reserved) {
+      throw new RefundReservationConflictException(payment.id);
     }
   }
 
@@ -258,23 +332,44 @@ export class PaymentApiService {
         idempotencyKey,
       });
     } catch (error) {
-      await this.handleRefundError(txRef, paymentId, idempotencyKey, error);
+      await this.markRefundUncertain(txRef, paymentId, idempotencyKey, error);
       throw error;
     }
 
-    await this.handleRefundResult(txRef, paymentId, refundResult);
+    try {
+      await this.handleRefundResult(txRef, paymentId, amount, idempotencyKey, refundResult);
+    } catch (error) {
+      await this.markRefundUncertain(txRef, paymentId, idempotencyKey, error, refundResult);
+      throw error;
+    }
     return refundResult;
   }
 
-  private async handleRefundError(
+  private async markRefundUncertain(
     txRef: string,
     paymentId: string,
     idempotencyKey: string,
     error: unknown,
+    refundResult?: RefundResponse,
   ): Promise<void> {
-    await this.databaseService.payment.update({
-      where: { id: paymentId },
-      data: { status: "REFUND_ERROR" },
+    const providerData =
+      refundResult?.success && refundResult.refundId != null
+        ? {
+            refundProviderId: String(refundResult.refundId),
+            refundProviderStatus: refundResult.status?.trim() || "unknown",
+            refundLastCheckedAt: new Date(),
+          }
+        : {};
+
+    await this.databaseService.payment.updateMany({
+      where: {
+        id: paymentId,
+        status: "REFUND_PROCESSING",
+      },
+      data: {
+        status: "REFUND_ERROR",
+        ...providerData,
+      },
     });
 
     this.logger.error(
@@ -284,18 +379,35 @@ export class PaymentApiService {
         idempotencyKey,
         error: error instanceof Error ? error.message : String(error),
       },
-      "Refund request failed with error, status set to REFUND_ERROR",
+      "Refund outcome is uncertain and requires reconciliation",
     );
   }
 
   private async handleRefundResult(
     txRef: string,
     paymentId: string,
+    amount: number,
+    idempotencyKey: string,
     refundResult: RefundResponse,
   ): Promise<void> {
     if (refundResult.success) {
-      // Refund initiated successfully - stays as REFUND_PROCESSING
-      // Webhook will update to REFUND_PARTIAL or REFUND_FULL when complete
+      if (refundResult.refundId == null) {
+        throw new RefundProviderIdMissingException(paymentId);
+      }
+
+      const providerStatus = refundResult.status?.trim() || "unknown";
+      await this.databaseService.payment.updateMany({
+        where: {
+          id: paymentId,
+          status: "REFUND_PROCESSING",
+        },
+        data: {
+          refundProviderId: String(refundResult.refundId),
+          refundProviderStatus: providerStatus,
+          refundLastCheckedAt: new Date(),
+        },
+      });
+
       this.logger.info(
         {
           txRef,
@@ -306,10 +418,12 @@ export class PaymentApiService {
       return;
     }
 
-    // Flutterwave explicitly rejected the refund - mark as REFUND_FAILED
-    await this.databaseService.payment.update({
-      where: { id: paymentId },
-      data: { status: "REFUND_FAILED" },
+    await this.refundFinalizationService.finalize({
+      paymentId,
+      refundId: `idempotency:${idempotencyKey}`,
+      status: "REFUND_FAILED",
+      amount,
+      failureReason: refundResult.error || "Flutterwave rejected refund",
     });
 
     this.logger.warn(
@@ -358,21 +472,31 @@ export class PaymentApiService {
     });
 
     if (!booking) {
-      throw new NotFoundException("Booking not found");
+      throw new PaymentBookingNotFoundException(entityId);
     }
 
     if (booking.userId !== userId) {
-      throw new BadRequestException("You do not have permission to pay for this booking");
+      throw new PaymentEntityAccessForbiddenException("booking", entityId);
     }
 
     if (this.isUnpayableBookingStatus(booking.status)) {
-      throw new BadRequestException(
-        `Cannot pay for a booking with status: ${booking.status.toLowerCase()}`,
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        `status is ${booking.status.toLowerCase()}`,
       );
     }
 
     if (booking.paymentStatus === PaymentStatus.PAID) {
-      throw new BadRequestException("This booking has already been paid");
+      throw new PaymentEntityAlreadyPaidException("booking", entityId);
+    }
+
+    if (booking.paymentStatus !== PaymentStatus.UNPAID) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        `payment status is ${booking.paymentStatus.toLowerCase()}`,
+      );
     }
 
     return booking.totalAmount.toNumber();
@@ -395,28 +519,40 @@ export class PaymentApiService {
     });
 
     if (!extension) {
-      throw new NotFoundException("Extension not found");
+      throw new PaymentExtensionNotFoundException(entityId);
     }
 
     if (extension.bookingLeg.booking.userId !== userId) {
-      throw new BadRequestException("You do not have permission to pay for this extension");
+      throw new PaymentEntityAccessForbiddenException("extension", entityId);
     }
 
     const parentBookingStatus = extension.bookingLeg.booking.status;
     if (this.isUnpayableBookingStatus(parentBookingStatus)) {
-      throw new BadRequestException(
-        `Cannot pay for extension: parent booking is ${parentBookingStatus.toLowerCase()}`,
+      throw new PaymentEntityNotPayableException(
+        "extension",
+        entityId,
+        `parent booking is ${parentBookingStatus.toLowerCase()}`,
       );
     }
 
     if (this.isUnpayableExtensionStatus(extension.status)) {
-      throw new BadRequestException(
-        `Cannot pay for an extension with status: ${extension.status.toLowerCase()}`,
+      throw new PaymentEntityNotPayableException(
+        "extension",
+        entityId,
+        `status is ${extension.status.toLowerCase()}`,
       );
     }
 
     if (extension.paymentStatus === PaymentStatus.PAID) {
-      throw new BadRequestException("This extension has already been paid");
+      throw new PaymentEntityAlreadyPaidException("extension", entityId);
+    }
+
+    if (extension.paymentStatus !== PaymentStatus.UNPAID) {
+      throw new PaymentEntityNotPayableException(
+        "extension",
+        entityId,
+        `payment status is ${extension.paymentStatus.toLowerCase()}`,
+      );
     }
 
     return extension.totalAmount.toNumber();

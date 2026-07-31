@@ -8,6 +8,7 @@ import { BookingConfirmationService } from "../booking/booking-confirmation.serv
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import { PaymentService } from "./payment.service";
+import { RefundReconciliationService } from "./refund-reconciliation.service";
 
 const RECONCILIATION_GRACE_PERIOD_MS = 5 * 60 * 1000;
 const RECONCILIATION_BATCH_SIZE = 50;
@@ -20,6 +21,7 @@ export class PaymentReconciliationService {
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
     private readonly paymentService: PaymentService,
+    private readonly refundReconciliationService: RefundReconciliationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentReconciliationService.name);
@@ -104,6 +106,23 @@ export class PaymentReconciliationService {
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to reconcile processing payouts",
+      );
+      return 0;
+    }
+  }
+
+  @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
+  async reconcileProcessingRefunds(): Promise<number> {
+    try {
+      const reconciledCount = await this.refundReconciliationService.reconcileProcessingRefunds();
+      if (reconciledCount > 0) {
+        this.logger.info({ reconciledCount }, "Reconciled processing refunds");
+      }
+      return reconciledCount;
+    } catch (error) {
+      this.logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to reconcile processing refunds",
       );
       return 0;
     }

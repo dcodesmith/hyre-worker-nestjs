@@ -120,6 +120,7 @@ export const envSchema = z
     TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_REFUND_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
 
     FLUTTERWAVE_SECRET_KEY: z.string().min(1, "FLUTTERWAVE_SECRET_KEY is required"),
     FLUTTERWAVE_PUBLIC_KEY: z.string().min(1, "FLUTTERWAVE_PUBLIC_KEY is required"),

@@ -7,6 +7,7 @@ import { HttpClientService } from "../http-client/http-client.service";
 import {
   FlutterwaveConfig,
   FlutterwaveError,
+  FlutterwaveFetchedRefundData,
   FlutterwavePaymentLinkData,
   FlutterwaveRefundData,
   FlutterwaveResponse,
@@ -168,7 +169,7 @@ export class FlutterwaveService {
     };
 
     if (callbackUrl) {
-      payload.callback_url = callbackUrl;
+      payload.callbackurl = callbackUrl;
     }
 
     try {
@@ -224,8 +225,13 @@ export class FlutterwaveService {
       // Handle error to extract proper error message and code from HTTP responses
       const handledError = this.handleError(error, "initiateRefund");
 
-      // Re-throw network/unexpected errors so caller can distinguish uncertain states
-      if (handledError.code === "NETWORK_ERROR" || handledError.code === "UNEXPECTED_ERROR") {
+      if (
+        handledError.code === "NETWORK_ERROR" ||
+        handledError.code === "UNEXPECTED_ERROR" ||
+        handledError.statusCode === HttpStatus.CONFLICT ||
+        (handledError.statusCode != null &&
+          handledError.statusCode >= HttpStatus.INTERNAL_SERVER_ERROR)
+      ) {
         throw handledError;
       }
 
@@ -234,6 +240,23 @@ export class FlutterwaveService {
         success: false,
         error: handledError.message,
       };
+    }
+  }
+
+  async fetchRefund(refundId: string): Promise<FlutterwaveFetchedRefundData> {
+    try {
+      const { data: response } = await this.httpClient.get<
+        FlutterwaveResponse<FlutterwaveFetchedRefundData>
+      >(`/v3/refunds/${refundId}`);
+      if (response.status !== "success" || !response.data) {
+        throw new FlutterwaveError(
+          response.message || "Failed to fetch refund",
+          "REFUND_FETCH_FAILED",
+        );
+      }
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error, "fetchRefund");
     }
   }
 

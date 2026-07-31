@@ -9,6 +9,7 @@ import { ExtensionConfirmationService } from "../booking/extension-confirmation.
 import { DatabaseService } from "../database/database.service";
 import { PaymentService } from "./payment.service";
 import { PaymentReconciliationService } from "./payment-reconciliation.service";
+import { RefundReconciliationService } from "./refund-reconciliation.service";
 
 describe("PaymentReconciliationService", () => {
   let service: PaymentReconciliationService;
@@ -16,6 +17,7 @@ describe("PaymentReconciliationService", () => {
   let bookingConfirmationService: BookingConfirmationService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let paymentService: PaymentService;
+  let refundReconciliationService: RefundReconciliationService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -47,6 +49,12 @@ describe("PaymentReconciliationService", () => {
             reconcileProcessingPayouts: vi.fn(),
           },
         },
+        {
+          provide: RefundReconciliationService,
+          useValue: {
+            reconcileProcessingRefunds: vi.fn(),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -57,6 +65,7 @@ describe("PaymentReconciliationService", () => {
     bookingConfirmationService = module.get(BookingConfirmationService);
     extensionConfirmationService = module.get(ExtensionConfirmationService);
     paymentService = module.get(PaymentService);
+    refundReconciliationService = module.get(RefundReconciliationService);
   });
 
   it("retries eligible successful payments for pending bookings", async () => {
@@ -210,5 +219,23 @@ describe("PaymentReconciliationService", () => {
     );
 
     await expect(service.reconcileProcessingPayouts()).resolves.toBe(0);
+  });
+
+  it("reconciles stale processing refunds", async () => {
+    vi.mocked(refundReconciliationService.reconcileProcessingRefunds).mockResolvedValueOnce(2);
+
+    await expect(service.reconcileProcessingRefunds()).resolves.toBe(2);
+
+    expect(
+      refundReconciliationService.reconcileProcessingRefunds,
+    ).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("returns zero when refund reconciliation fails", async () => {
+    vi.mocked(refundReconciliationService.reconcileProcessingRefunds).mockRejectedValueOnce(
+      new Error("provider unavailable"),
+    );
+
+    await expect(service.reconcileProcessingRefunds()).resolves.toBe(0);
   });
 });

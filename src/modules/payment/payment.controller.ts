@@ -1,15 +1,16 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from "@nestjs/common";
 import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
-import type {
-  FlutterwaveWebhookPayload,
-  PaymentIntentResponse,
-  RefundResponse,
-} from "../flutterwave/flutterwave.interface";
+import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
+import {
+  type FlutterwaveWebhookPayload,
+  flutterwaveWebhookPayloadSchema,
+} from "../flutterwave/flutterwave-webhook.schema";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
 import { FlutterwaveWebhookGuard } from "./guards/flutterwave-webhook.guard";
+import { InvalidFlutterwaveWebhookPayloadException } from "./payment.error";
 import type { PaymentStatusResponse } from "./payment.interface";
 import { PaymentApiService } from "./payment-api.service";
 import { PaymentWebhookService } from "./payment-webhook.service";
@@ -78,9 +79,13 @@ export class PaymentController {
    * @see https://developer.flutterwave.com/v3.0/docs/webhooks
    */
   @Post("webhook/flutterwave")
+  @HttpCode(HttpStatus.OK)
   @UseGuards(FlutterwaveWebhookGuard)
   async handleFlutterwaveWebhook(
-    @Body() payload: FlutterwaveWebhookPayload,
+    @ZodBody(flutterwaveWebhookPayloadSchema, {
+      exceptionFactory: (errors) => new InvalidFlutterwaveWebhookPayloadException(errors),
+    })
+    payload: FlutterwaveWebhookPayload,
   ): Promise<{ status: string }> {
     await this.paymentWebhookService.handleWebhook(payload);
 

@@ -70,6 +70,9 @@ export class WhatsAppService {
       [Template.PayoutSucceeded]: this.configService.get("TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID", {
         infer: true,
       }),
+      [Template.RefundSucceeded]: this.configService.get("TWILIO_REFUND_SUCCEEDED_CONTENT_SID", {
+        infer: true,
+      }),
     };
 
     try {

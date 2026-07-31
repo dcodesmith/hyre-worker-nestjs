@@ -16,6 +16,7 @@ import { ChauffeurAssignedHandler } from "./handlers/chauffeur-assigned.handler"
 import { FlightStatusUpdatedHandler } from "./handlers/flight-status-updated.handler";
 import { PayoutStatusChangedHandler } from "./handlers/payout-status-changed.handler";
 import { ReferralRewardReleasedHandler } from "./handlers/referral-reward-released.handler";
+import { RefundStatusChangedHandler } from "./handlers/refund-status-changed.handler";
 import { ReviewReceivedHandler } from "./handlers/review-received.handler";
 import { NotificationProcessor } from "./notification.processor";
 import { NotificationService } from "./notification.service";
@@ -70,6 +71,7 @@ import { WhatsAppService } from "./whatsapp.service";
     FlightStatusUpdatedHandler,
     ReferralRewardReleasedHandler,
     PayoutStatusChangedHandler,
+    RefundStatusChangedHandler,
   ],
   exports: [
     NotificationService,
@@ -88,6 +90,7 @@ import { WhatsAppService } from "./whatsapp.service";
     FlightStatusUpdatedHandler,
     ReferralRewardReleasedHandler,
     PayoutStatusChangedHandler,
+    RefundStatusChangedHandler,
     BullModule,
   ],
 })

@@ -22,6 +22,7 @@ import type {
   BookingExtensionConfirmedTemplateData,
   FlightUpdateTemplateData,
   PayoutStatusTemplateData,
+  RefundStatusTemplateData,
   ReviewReceivedTemplateData,
 } from "../modules/notification/template-data.interface";
 import { NormalisedBookingDetails, NormalisedBookingLegDetails } from "../types";
@@ -734,4 +735,57 @@ export function PayoutStatusEmail({ data }: { readonly data: PayoutStatusTemplat
 
 export async function renderPayoutStatusEmail(data: PayoutStatusTemplateData) {
   return await render(<PayoutStatusEmail data={data} />);
+}
+
+export function RefundStatusEmail({ data }: { readonly data: RefundStatusTemplateData }) {
+  const succeeded = data.status === "REFUNDED" || data.status === "PARTIALLY_REFUNDED";
+  const partial = data.status === "PARTIALLY_REFUNDED";
+  const requiresReview = data.status === "REFUND_REVIEW_REQUIRED";
+  let previewText = `Refund failed for booking ${data.bookingReference}`;
+  let heading = "A refund needs attention.";
+  let summary = `the ${data.amount} refund for booking ${data.bookingReference} failed.`;
+  let nextStep = "Review the refund and resolve the failure before retrying.";
+
+  if (succeeded) {
+    previewText = `${data.amount} refund completed for booking ${data.bookingReference}`;
+    heading = partial ? "Your partial refund is complete." : "Your refund is complete.";
+    summary = `${data.amount} for booking ${data.bookingReference} has been returned to your original payment method.`;
+    nextStep = "Your payment provider may take a few business days to show the refund.";
+  } else if (requiresReview) {
+    previewText = `Refund requires manual review for booking ${data.bookingReference}`;
+    summary = `the ${data.amount} refund for booking ${data.bookingReference} could not be reconciled automatically.`;
+    nextStep = "Check the refund in Flutterwave before retrying or changing its state.";
+  }
+
+  return (
+    <EmailTemplate previewText={previewText} pageTitle={data.subject}>
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        {heading}
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Hi {firstNameFrom(data.recipientName)}, {summary}
+      </Text>
+      <Section className="bg-[#F5F5F7] rounded-lg p-4 mt-5">
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Booking:</strong> {data.bookingReference}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0 mb-2">
+          <strong>Payment ID:</strong> {data.paymentId}
+        </Text>
+        <Text className="text-sm text-[#0B0B0F] m-0">
+          <strong>Refund ID:</strong> {data.refundId}
+        </Text>
+        {!succeeded && data.failureReason && (
+          <Text className="text-sm text-[#0B0B0F] m-0 mt-2">
+            <strong>Reason:</strong> {data.failureReason}
+          </Text>
+        )}
+      </Section>
+      <Text className="text-sm text-[#52525B] mt-5 mb-0">{nextStep}</Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderRefundStatusEmail(data: RefundStatusTemplateData) {
+  return await render(<RefundStatusEmail data={data} />);
 }

@@ -43,6 +43,14 @@ function createMockPayment(overrides: Partial<Payment>): Payment {
     webhookPayload: null,
     verificationResponse: null,
     refundIdempotencyKey: null,
+    refundProviderId: null,
+    refundProviderStatus: null,
+    refundRequestedAmount: null,
+    refundRequestedAt: null,
+    refundLastCheckedAt: null,
+    refundReconciliationAttempts: 0,
+    refundVerificationFailures: 0,
+    refundManualReviewNotifiedAt: null,
     ...overrides,
   };
 }

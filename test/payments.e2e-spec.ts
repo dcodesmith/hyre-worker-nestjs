@@ -9,13 +9,59 @@ import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
+import type { FlutterwaveFetchedRefundData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
+import type { FlutterwaveRefundWebhookData } from "../src/modules/flutterwave/flutterwave-webhook.schema";
+import { RefundReconciliationService } from "../src/modules/payment/refund-reconciliation.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
+
+function createRefundWebhookData(
+  transactionId: number,
+  overrides: Partial<FlutterwaveRefundWebhookData> = {},
+): FlutterwaveRefundWebhookData {
+  const now = new Date().toISOString();
+  return {
+    id: transactionId + 1,
+    AmountRefunded: 50000,
+    status: "completed",
+    FlwRef: `FLW-REF-${transactionId}`,
+    TransactionId: transactionId,
+    destination: "card",
+    comments: "Customer requested refund",
+    settlement_id: "settle-123",
+    meta: "{}",
+    createdAt: now,
+    updatedAt: now,
+    walletId: 789,
+    AccountId: 123,
+    ...overrides,
+  };
+}
+
+function createFetchedRefund(
+  transactionId: number,
+  overrides: Partial<FlutterwaveFetchedRefundData> = {},
+): FlutterwaveFetchedRefundData {
+  return {
+    id: transactionId + 1,
+    amount_refunded: 50000,
+    status: "completed",
+    flw_ref: `FLW-REF-${transactionId}`,
+    comment: null,
+    settlement_id: "NEW",
+    meta: {},
+    created_at: new Date().toISOString(),
+    account_id: 123,
+    transaction_id: transactionId,
+    ...overrides,
+  };
+}
 
 describe("Payments E2E Tests", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let refundReconciliationService: RefundReconciliationService;
   let factory: TestDataFactory;
 
   let testUserId: string;
@@ -44,6 +90,7 @@ describe("Payments E2E Tests", () => {
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
+    refundReconciliationService = app.get(RefundReconciliationService);
     factory = new TestDataFactory(databaseService, app);
 
     await app.init();
@@ -105,7 +152,8 @@ describe("Payments E2E Tests", () => {
           callbackUrl: "https://example.com/callback",
         });
 
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      expect(response.body.errorCode).toBe("PAYMENT_ENTITY_ACCESS_FORBIDDEN");
       expect(response.body.detail).toContain("permission");
     });
   });
@@ -137,7 +185,8 @@ describe("Payments E2E Tests", () => {
         .get(`/api/payments/status/${testPaymentTxRef}`)
         .set("Cookie", otherUserCookie);
 
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      expect(response.body.errorCode).toBe("PAYMENT_ACCESS_FORBIDDEN");
       expect(response.body.detail).toContain("permission");
     });
   });
@@ -146,6 +195,10 @@ describe("Payments E2E Tests", () => {
     let successfulPaymentTxRef: string;
 
     beforeAll(async () => {
+      await databaseService.booking.update({
+        where: { id: testBookingId },
+        data: { paymentStatus: "PAID" },
+      });
       const payment = await factory.createPayment(testBookingId, {
         amountExpected: 50000,
         amountCharged: 50000,
@@ -156,14 +209,67 @@ describe("Payments E2E Tests", () => {
       successfulPaymentTxRef = payment.txRef;
     });
 
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it("should reject refund when user does not own the payment", async () => {
       const response = await request(app.getHttpServer())
         .post(`/api/payments/${successfulPaymentTxRef}/refund`)
         .set("Cookie", otherUserCookie)
         .send({ amount: 25000, reason: "Customer cancellation" });
 
-      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.status).toBe(HttpStatus.FORBIDDEN);
+      expect(response.body.errorCode).toBe("PAYMENT_ACCESS_FORBIDDEN");
       expect(response.body.detail).toContain("permission");
+    });
+
+    it("initiates a refund after cancellation marks the booking as refund processing", async () => {
+      const booking = await factory.createBookingWithDependencies(testUserId);
+      await databaseService.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: "CONFIRMED",
+          paymentStatus: "PAID",
+        },
+      });
+      const payment = await factory.createPayment(booking.id, {
+        amountExpected: 50000,
+        amountCharged: 50000,
+        status: "SUCCESSFUL",
+        flutterwaveTransactionId: `FLW-CANCELLED-${Date.now()}`,
+        confirmedAt: new Date(),
+      });
+      vi.spyOn(flutterwaveService, "initiateRefund").mockResolvedValueOnce({
+        success: true,
+        refundId: Date.now(),
+        status: "completed",
+      });
+
+      const cancellationResponse = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}/cancel`)
+        .set("Cookie", testUserCookie)
+        .send({ reason: "Customer cancellation" });
+      expect(cancellationResponse.status).toBe(HttpStatus.OK);
+
+      const refundResponse = await request(app.getHttpServer())
+        .post(`/api/payments/${payment.txRef}/refund`)
+        .set("Cookie", testUserCookie)
+        .send({ amount: 50000, reason: "Customer cancellation" });
+
+      expect(refundResponse.status).toBe(HttpStatus.CREATED);
+      await expect(factory.getPaymentById(payment.id)).resolves.toMatchObject({
+        status: "REFUND_PROCESSING",
+      });
+      await expect(
+        databaseService.booking.findUnique({
+          where: { id: booking.id },
+          select: { status: true, paymentStatus: true },
+        }),
+      ).resolves.toMatchObject({
+        status: "CANCELLED",
+        paymentStatus: "REFUND_PROCESSING",
+      });
     });
 
     it("should initiate refund for booking owner", async () => {
@@ -182,6 +288,58 @@ describe("Payments E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.CREATED);
       expect(response.body.success).toBe(true);
       expect(response.body.refundId).toBeDefined();
+    });
+
+    it("should atomically record an operations notification for an explicit provider rejection", async () => {
+      await databaseService.booking.update({
+        where: { id: testBookingId },
+        data: { paymentStatus: "PAID" },
+      });
+      const payment = await factory.createPayment(testBookingId, {
+        amountExpected: 50000,
+        amountCharged: 50000,
+        status: "SUCCESSFUL",
+        flutterwaveTransactionId: `FLW-REJECTED-${Date.now()}`,
+        confirmedAt: new Date(),
+      });
+      vi.spyOn(flutterwaveService, "initiateRefund").mockResolvedValueOnce({
+        success: false,
+        error: "Provider rejected refund",
+      });
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/payments/${payment.txRef}/refund`)
+        .set("Cookie", testUserCookie)
+        .send({ amount: 25000, reason: "Customer cancellation" });
+
+      expect(response.status).toBe(HttpStatus.CREATED);
+      expect(response.body).toMatchObject({
+        success: false,
+        error: "Provider rejected refund",
+      });
+
+      const updatedPayment = await factory.getPaymentById(payment.id);
+      expect(updatedPayment?.status).toBe("REFUND_FAILED");
+      expect(updatedPayment?.refundIdempotencyKey).toBeTruthy();
+      await expect(
+        databaseService.booking.findUnique({
+          where: { id: testBookingId },
+          select: { paymentStatus: true },
+        }),
+      ).resolves.toMatchObject({ paymentStatus: "REFUND_FAILED" });
+
+      const notificationEvent = await databaseService.notificationOutboxEvent.findUnique({
+        where: {
+          dedupeKey: `refund-status:idempotency:${updatedPayment?.refundIdempotencyKey}:REFUND_FAILED`,
+        },
+      });
+      expect(notificationEvent?.payload).toMatchObject({
+        subtype: "REFUND_REFUND_FAILED",
+        notificationJobData: {
+          audience: "operations",
+          channels: ["email"],
+        },
+      });
     });
   });
 
@@ -242,7 +400,20 @@ describe("Payments E2E Tests", () => {
             data: webhookData,
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.OK);
+        expect(response.body.status).toBe("ok");
+      });
+
+      it("acknowledges a signed unsupported webhook event", async () => {
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.pending",
+            data: { id: 123 },
+          });
+
+        expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
       });
     });
@@ -303,7 +474,7 @@ describe("Payments E2E Tests", () => {
             data: webhookData,
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
 
         // Verify booking was confirmed
@@ -367,7 +538,7 @@ describe("Payments E2E Tests", () => {
             data: webhookData,
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.OK);
 
         // Verify booking was NOT confirmed (still PENDING)
         const unchangedBooking = await factory.getBookingById(pendingBooking.id);
@@ -456,7 +627,7 @@ describe("Payments E2E Tests", () => {
             data: webhookData,
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
 
         const updatedExtension = await databaseService.extension.findUnique({
@@ -552,7 +723,7 @@ describe("Payments E2E Tests", () => {
             event: "charge.completed",
             data: webhookData,
           });
-        expect(firstResponse.status).toBe(HttpStatus.CREATED);
+        expect(firstResponse.status).toBe(HttpStatus.OK);
 
         const secondResponse = await request(app.getHttpServer())
           .post("/api/payments/webhook/flutterwave")
@@ -561,7 +732,7 @@ describe("Payments E2E Tests", () => {
             event: "charge.completed",
             data: webhookData,
           });
-        expect(secondResponse.status).toBe(HttpStatus.CREATED);
+        expect(secondResponse.status).toBe(HttpStatus.OK);
 
         const updatedExtension = await databaseService.extension.findUnique({
           where: { id: extension.id },
@@ -624,7 +795,7 @@ describe("Payments E2E Tests", () => {
             data: transferData,
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
         const duplicateResponse = await request(app.getHttpServer())
           .post("/api/payments/webhook/flutterwave")
@@ -633,7 +804,7 @@ describe("Payments E2E Tests", () => {
             event: "transfer.completed",
             data: transferData,
           });
-        expect(duplicateResponse.status).toBe(HttpStatus.CREATED);
+        expect(duplicateResponse.status).toBe(HttpStatus.OK);
 
         // Verify payout transaction was updated
         const updatedPayout = await factory.getPayoutTransactionById(payoutTransaction.id);
@@ -663,45 +834,220 @@ describe("Payments E2E Tests", () => {
     });
 
     describe("refund.completed", () => {
-      it("should update payment status to REFUNDED when refund is completed", async () => {
-        // Use a unique numeric transaction ID since Flutterwave sends TransactionId as a number
-        const flwTransactionId = Date.now() + Math.floor(Math.random() * 100000);
-        const payment = await factory.createPayment(testBookingId, {
-          status: "REFUND_PROCESSING",
-          amountExpected: 50000,
-          amountCharged: 50000,
-          flutterwaveTransactionId: flwTransactionId.toString(),
-        });
-
+      it("rejects malformed refund payloads instead of acknowledging them", async () => {
         const response = await request(app.getHttpServer())
           .post("/api/payments/webhook/flutterwave")
           .set("verif-hash", webhookSecret)
           .send({
             event: "refund.completed",
             data: {
-              id: 55555,
-              AmountRefunded: 50000,
-              status: "completed",
-              FlwRef: "FLW-REF-REFUND",
-              destination: "card",
-              comments: "Customer requested refund",
-              settlement_id: "settle-123",
-              meta: "{}",
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              walletId: 789,
-              AccountId: 123,
-              TransactionId: flwTransactionId,
+              id: 0,
+              AmountRefunded: -1,
+              status: "",
+              FlwRef: "",
+              TransactionId: 0,
             },
           });
 
-        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+        expect(response.body).toMatchObject({
+          errorCode: "FLUTTERWAVE_WEBHOOK_PAYLOAD_INVALID",
+          title: "Invalid Flutterwave Webhook Payload",
+        });
+      });
+
+      it("should update payment status to REFUNDED when refund is completed", async () => {
+        // Use a unique numeric transaction ID since Flutterwave sends TransactionId as a number
+        const flwTransactionId = Date.now();
+        await databaseService.booking.update({
+          where: { id: testBookingId },
+          data: { paymentStatus: "REFUND_PROCESSING" },
+        });
+        const payment = await factory.createPayment(testBookingId, {
+          status: "REFUND_PROCESSING",
+          amountExpected: 50000,
+          amountCharged: 50000,
+          flutterwaveTransactionId: flwTransactionId.toString(),
+          refundRequestedAmount: 50000,
+          refundRequestedAt: new Date(),
+        });
+        const refundData = createRefundWebhookData(flwTransactionId, {
+          id: 55555,
+          FlwRef: "FLW-REF-REFUND",
+        });
+        vi.spyOn(flutterwaveService, "fetchRefund").mockResolvedValue(
+          createFetchedRefund(flwTransactionId, {
+            id: 55555,
+            status: "completed-mpgs",
+            flw_ref: "FLW-REF-REFUND",
+            comment: "Customer requested refund",
+            settlement_id: "settle-123",
+            created_at: refundData.createdAt,
+          }),
+        );
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.completed",
+            data: refundData,
+          });
+
+        expect(response.status).toBe(HttpStatus.OK);
         expect(response.body.status).toBe("ok");
 
         // Verify payment was updated
         const updatedPayment = await factory.getPaymentById(payment.id);
         expect(updatedPayment?.status).toBe("REFUNDED");
+        await expect(
+          databaseService.booking.findUnique({
+            where: { id: testBookingId },
+            select: { paymentStatus: true },
+          }),
+        ).resolves.toMatchObject({ paymentStatus: "REFUNDED" });
+
+        const dedupeKey = "refund-status:55555:REFUNDED";
+        const notificationEvent = await databaseService.notificationOutboxEvent.findUnique({
+          where: { dedupeKey },
+        });
+        expect(notificationEvent).toMatchObject({
+          bookingId: testBookingId,
+          status: "PENDING",
+        });
+        expect(notificationEvent?.payload).toMatchObject({
+          subtype: "REFUND_REFUNDED",
+        });
+
+        const duplicateResponse = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.completed",
+            data: refundData,
+          });
+        expect(duplicateResponse.status).toBe(HttpStatus.OK);
+        await expect(
+          databaseService.notificationOutboxEvent.count({ where: { dedupeKey } }),
+        ).resolves.toBe(1);
       });
+
+      it("should atomically record an operations notification when a refund fails", async () => {
+        const flwTransactionId = Date.now();
+        const refundId = flwTransactionId + 1;
+        await databaseService.booking.update({
+          where: { id: testBookingId },
+          data: { paymentStatus: "REFUND_PROCESSING" },
+        });
+        const payment = await factory.createPayment(testBookingId, {
+          status: "REFUND_PROCESSING",
+          amountExpected: 50000,
+          amountCharged: 50000,
+          flutterwaveTransactionId: flwTransactionId.toString(),
+          refundRequestedAmount: 50000,
+          refundRequestedAt: new Date(),
+        });
+        vi.spyOn(flutterwaveService, "fetchRefund").mockResolvedValue(
+          createFetchedRefund(flwTransactionId, {
+            id: refundId,
+            amount_refunded: 0,
+            status: "failed",
+            flw_ref: "FLW-REF-FAILED",
+            comment: "Provider rejected refund",
+            settlement_id: "settle-failed",
+          }),
+        );
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/webhook/flutterwave")
+          .set("verif-hash", webhookSecret)
+          .send({
+            event: "refund.completed",
+            data: createRefundWebhookData(flwTransactionId, {
+              id: refundId,
+              AmountRefunded: 0,
+              status: "failed",
+              FlwRef: "FLW-REF-FAILED",
+              comments: "Provider rejected refund",
+              settlement_id: "settle-failed",
+            }),
+          });
+
+        expect(response.status).toBe(HttpStatus.OK);
+        expect((await factory.getPaymentById(payment.id))?.status).toBe("REFUND_FAILED");
+        await expect(
+          databaseService.booking.findUnique({
+            where: { id: testBookingId },
+            select: { paymentStatus: true },
+          }),
+        ).resolves.toMatchObject({ paymentStatus: "REFUND_FAILED" });
+
+        const notificationEvent = await databaseService.notificationOutboxEvent.findUnique({
+          where: {
+            dedupeKey: `refund-status:${refundId}:REFUND_FAILED`,
+          },
+        });
+        expect(notificationEvent).toMatchObject({
+          bookingId: testBookingId,
+          status: "PENDING",
+        });
+        expect(notificationEvent?.payload).toMatchObject({
+          subtype: "REFUND_REFUND_FAILED",
+          notificationJobData: {
+            audience: "operations",
+            channels: ["email"],
+            templateData: {
+              amount: "₦50,000.00",
+            },
+          },
+        });
+      });
+    });
+  });
+
+  describe("refund reconciliation", () => {
+    it("hands a refund past its provider SLA to operations exactly once", async () => {
+      const flwTransactionId = Date.now().toString();
+      const refundId = flwTransactionId;
+      await databaseService.booking.update({
+        where: { id: testBookingId },
+        data: { paymentStatus: "REFUND_PROCESSING" },
+      });
+      const payment = await factory.createPayment(testBookingId, {
+        status: "REFUND_PROCESSING",
+        amountExpected: 50000,
+        amountCharged: 50000,
+        paymentMethod: "bank_transfer",
+        flutterwaveTransactionId: flwTransactionId,
+        refundProviderId: refundId,
+        refundRequestedAmount: 50000,
+        refundRequestedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      });
+      vi.spyOn(flutterwaveService, "fetchRefund").mockResolvedValue(
+        createFetchedRefund(Number(flwTransactionId), {
+          id: Number(flwTransactionId),
+          flw_ref: `FLW-${refundId}`,
+        }),
+      );
+
+      await expect(refundReconciliationService.reconcileProcessingRefunds()).resolves.toBe(1);
+      await expect(refundReconciliationService.reconcileProcessingRefunds()).resolves.toBe(0);
+      expect(flutterwaveService.fetchRefund).toHaveBeenCalledTimes(1);
+
+      const updatedPayment = await factory.getPaymentById(payment.id);
+      expect(updatedPayment).toMatchObject({
+        status: "REFUND_PROCESSING",
+        refundProviderStatus: "completed",
+      });
+      expect(updatedPayment?.refundManualReviewNotifiedAt).toBeInstanceOf(Date);
+
+      await expect(
+        databaseService.notificationOutboxEvent.count({
+          where: {
+            dedupeKey: `refund-status:${refundId}:REFUND_REVIEW_REQUIRED`,
+          },
+        }),
+      ).resolves.toBe(1);
     });
   });
 });

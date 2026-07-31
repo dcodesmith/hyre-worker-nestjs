@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPayoutTransaction } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave.interface";
+import type { FlutterwaveTransferWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 import { PaymentService } from "./payment.service";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
 
@@ -111,13 +111,6 @@ describe("TransferCompletedHandler", () => {
 
     await handler.handle(mockTransferData);
 
-    expect(paymentService.finalizePayoutStatus).not.toHaveBeenCalled();
-  });
-
-  it("skips processing when reference is missing", async () => {
-    await handler.handle({ ...mockTransferData, reference: "" });
-
-    expect(databaseService.payoutTransaction.findFirst).not.toHaveBeenCalled();
     expect(paymentService.finalizePayoutStatus).not.toHaveBeenCalled();
   });
 });

@@ -40,6 +40,7 @@ import {
   FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
   FLIGHT_UPDATE_TEMPLATE_KIND,
   PAYOUT_STATUS_TEMPLATE_KIND,
+  REFUND_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
 } from "./template-data.interface";
 
@@ -145,6 +146,145 @@ describe("NotificationService", () => {
           failureReason: "Account blocked",
         },
       });
+    });
+  });
+
+  describe("buildRefundStatusChangedJobData", () => {
+    const customer = {
+      userId: "customer-123",
+      name: "Customer",
+      email: "customer@example.com",
+      phoneNumber: "+2348012345678",
+    };
+
+    it("targets the customer over configured email, WhatsApp, and push on success", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "REFUNDED",
+          amount: 15000,
+          customer,
+        }),
+      ).toMatchObject({
+        type: NotificationType.REFUND_STATUS_CHANGED,
+        audience: NotificationAudience.CUSTOMER,
+        channels: [
+          NotificationChannel.EMAIL,
+          NotificationChannel.WHATSAPP,
+          NotificationChannel.PUSH,
+        ],
+        recipients: {
+          [CLIENT_RECIPIENT_TYPE]: {
+            userId: "customer-123",
+            email: "customer@example.com",
+            phoneNumber: "+2348012345678",
+          },
+        },
+        pushPayload: {
+          title: "Refund completed",
+          body: "₦15,000.00 has been refunded for booking BR-123.",
+        },
+        templateData: {
+          templateKind: REFUND_STATUS_TEMPLATE_KIND,
+          status: "REFUNDED",
+          amount: "₦15,000.00",
+        },
+      });
+    });
+
+    it("labels a partial refund accurately", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "PARTIALLY_REFUNDED",
+          amount: 5000,
+          customer,
+        }),
+      ).toMatchObject({
+        pushPayload: {
+          title: "Partial refund completed",
+        },
+        templateData: {
+          subject: "Partial refund completed for booking BR-123",
+        },
+      });
+    });
+
+    it("targets only operations email on failure", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "REFUND_FAILED",
+          amount: 15000,
+          failureReason: "Provider rejected refund",
+          customer,
+        }),
+      ).toMatchObject({
+        type: NotificationType.REFUND_STATUS_CHANGED,
+        audience: NotificationAudience.OPERATIONS,
+        channels: [NotificationChannel.EMAIL],
+        recipients: {
+          [OPERATIONS_RECIPIENT_TYPE]: {
+            email: "operations@tripdly.com",
+          },
+        },
+        templateData: {
+          templateKind: REFUND_STATUS_TEMPLATE_KIND,
+          status: "REFUND_FAILED",
+          failureReason: "Provider rejected refund",
+        },
+      });
+    });
+
+    it("targets only operations email when manual reconciliation is required", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "REFUND_REVIEW_REQUIRED",
+          amount: 15000,
+          failureReason: "Refund exceeded provider SLA",
+          customer,
+        }),
+      ).toMatchObject({
+        audience: NotificationAudience.OPERATIONS,
+        channels: [NotificationChannel.EMAIL],
+        recipients: {
+          [OPERATIONS_RECIPIENT_TYPE]: {
+            email: "operations@tripdly.com",
+          },
+        },
+        templateData: {
+          status: "REFUND_REVIEW_REQUIRED",
+          subject: "Refund requires manual review for booking BR-123",
+          failureReason: "Refund exceeded provider SLA",
+        },
+      });
+    });
+
+    it("returns null when a successful refund has no deliverable customer channel", () => {
+      expect(
+        service.buildRefundStatusChangedJobData({
+          refundId: "refund-123",
+          paymentId: "payment-123",
+          bookingId: "booking-123",
+          bookingReference: "BR-123",
+          status: "REFUNDED",
+          amount: 15000,
+          customer: {},
+        }),
+      ).toBeNull();
     });
   });
 

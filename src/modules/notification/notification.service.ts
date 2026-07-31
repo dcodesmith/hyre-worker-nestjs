@@ -32,6 +32,7 @@ import {
   NotificationType,
   PayoutStatusChangedNotificationParams,
   ReferralRewardReleasedNotificationParams,
+  RefundStatusChangedNotificationParams,
   ReviewReceivedNotificationParams,
 } from "./notification.interface";
 import {
@@ -49,6 +50,7 @@ import {
   FLIGHT_UPDATE_TEMPLATE_KIND,
   PAYOUT_STATUS_TEMPLATE_KIND,
   PUSH_ONLY_TEMPLATE_KIND,
+  REFUND_STATUS_TEMPLATE_KIND,
   REVIEW_RECEIVED_TEMPLATE_KIND,
   RecipientType,
 } from "./template-data.interface";
@@ -69,6 +71,7 @@ export type ReminderRecipientContext = {
 export class NotificationService {
   private readonly flightWhatsAppEnabled: boolean;
   private readonly payoutWhatsAppEnabled: boolean;
+  private readonly refundWhatsAppEnabled: boolean;
   private readonly operationsEmail: string;
 
   constructor(
@@ -83,6 +86,9 @@ export class NotificationService {
     );
     this.payoutWhatsAppEnabled = Boolean(
       configService.get("TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID", { infer: true }),
+    );
+    this.refundWhatsAppEnabled = Boolean(
+      configService.get("TWILIO_REFUND_SUCCEEDED_CONTENT_SID", { infer: true }),
     );
     this.operationsEmail =
       configService.get("OPERATIONS_EMAIL", { infer: true }) ?? "support@tripdly.com";
@@ -416,6 +422,84 @@ export class NotificationService {
         amount: formatCurrency(amount),
         bookingReference,
         payoutTransactionId,
+        failureReason,
+      },
+    };
+  }
+
+  buildRefundStatusChangedJobData({
+    refundId,
+    paymentId,
+    bookingId,
+    bookingReference,
+    status,
+    amount,
+    failureReason,
+    customer,
+  }: RefundStatusChangedNotificationParams): NotificationJobData | null {
+    const succeeded = status === "REFUNDED" || status === "PARTIALLY_REFUNDED";
+    const requiresReview = status === "REFUND_REVIEW_REQUIRED";
+    const channels = succeeded
+      ? this.recipientChannelResolver
+          .resolve({
+            audience: NotificationAudience.CUSTOMER,
+            email: customer.email ?? undefined,
+            phoneNumber: customer.phoneNumber ?? undefined,
+            userId: customer.userId,
+          })
+          .filter(
+            (channel) => channel !== NotificationChannel.WHATSAPP || this.refundWhatsAppEnabled,
+          )
+      : [NotificationChannel.EMAIL];
+
+    if (channels.length === 0) {
+      return null;
+    }
+
+    const recipientType = succeeded ? CLIENT_RECIPIENT_TYPE : OPERATIONS_RECIPIENT_TYPE;
+    const formattedAmount = formatCurrency(amount);
+    let subject = `Refund failed for booking ${bookingReference}`;
+    if (status === "REFUNDED") {
+      subject = `Refund completed for booking ${bookingReference}`;
+    } else if (status === "PARTIALLY_REFUNDED") {
+      subject = `Partial refund completed for booking ${bookingReference}`;
+    } else if (requiresReview) {
+      subject = `Refund requires manual review for booking ${bookingReference}`;
+    }
+
+    return {
+      id: `refund-status-${refundId}-${status.toLowerCase()}`,
+      type: NotificationType.REFUND_STATUS_CHANGED,
+      audience: succeeded ? NotificationAudience.CUSTOMER : NotificationAudience.OPERATIONS,
+      channels,
+      bookingId,
+      recipients: {
+        [recipientType]: succeeded
+          ? {
+              userId: customer.userId,
+              email: customer.email ?? undefined,
+              phoneNumber: customer.phoneNumber ?? undefined,
+            }
+          : {
+              email: this.operationsEmail,
+            },
+      },
+      pushPayload: succeeded
+        ? {
+            title: status === "REFUNDED" ? "Refund completed" : "Partial refund completed",
+            body: `${formattedAmount} has been refunded for booking ${bookingReference}.`,
+            data: createBookingNotificationData(NotificationType.REFUND_STATUS_CHANGED, bookingId),
+          }
+        : undefined,
+      templateData: {
+        templateKind: REFUND_STATUS_TEMPLATE_KIND,
+        subject,
+        status,
+        recipientName: succeeded ? (customer.name ?? "Customer") : "Operations team",
+        amount: formattedAmount,
+        bookingReference,
+        paymentId,
+        refundId,
         failureReason,
       },
     };

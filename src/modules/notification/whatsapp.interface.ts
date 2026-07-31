@@ -11,4 +11,5 @@ export enum Template {
   BookingExtensionConfirmation = "bookingExtensionConfirmation",
   FlightOperationalUpdate = "flightOperationalUpdate",
   PayoutSucceeded = "payoutSucceeded",
+  RefundSucceeded = "refundSucceeded",
 }
