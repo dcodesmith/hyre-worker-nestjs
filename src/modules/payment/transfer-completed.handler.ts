@@ -27,7 +27,7 @@ export class TransferCompletedHandler {
       "Processing transfer.completed webhook",
     );
 
-    const payoutTransaction = await this.databaseService.payoutTransaction.findFirst({
+    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
       where: { payoutProviderReference: reference },
     });
 
@@ -50,25 +50,16 @@ export class TransferCompletedHandler {
       return;
     }
 
-    const normalizedStatus = status.toUpperCase();
-    const newStatus =
-      normalizedStatus === "SUCCESSFUL"
-        ? PayoutTransactionStatus.PAID_OUT
-        : PayoutTransactionStatus.FAILED;
-
-    const finalized = await this.paymentService.finalizePayoutStatus(
-      payoutTransaction,
-      newStatus,
-      normalizedStatus === "SUCCESSFUL"
-        ? undefined
-        : {
-            failureReason: data.complete_message || "Flutterwave transfer failed",
-          },
-    );
-    if (!finalized) {
+    const result = await this.paymentService.reconcilePayout(payoutTransaction);
+    if (!result?.reconciled) {
       this.logger.info(
-        { reference, payoutTransactionId: payoutTransaction.id },
-        "Payout transaction was already finalized by another worker",
+        {
+          reference,
+          payoutTransactionId: payoutTransaction.id,
+          providerStatus: result?.providerStatus,
+          mismatchReason: result?.mismatchReason,
+        },
+        "Payout webhook did not produce a verified terminal transition",
       );
       return;
     }
@@ -77,9 +68,9 @@ export class TransferCompletedHandler {
       {
         reference,
         payoutTransactionId: payoutTransaction.id,
-        newStatus,
+        providerStatus: result.providerStatus,
       },
-      "Payout transaction status updated from webhook",
+      "Payout transaction verified and finalized from webhook",
     );
   }
 }

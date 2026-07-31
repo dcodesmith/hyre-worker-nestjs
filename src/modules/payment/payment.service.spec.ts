@@ -283,6 +283,7 @@ describe("PaymentService", () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       bookingId: booking.id,
+      amountToPay: new Decimal(15000),
       status: PayoutTransactionStatus.PROCESSING,
       payoutProviderReference: "payout_payout-123",
       processingLeaseId: "expired-lease",
@@ -325,6 +326,7 @@ describe("PaymentService", () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       bookingId: booking.id,
+      amountToPay: new Decimal(15000),
       status: PayoutTransactionStatus.PROCESSING,
       payoutProviderReference: "payout_payout-123",
       processingLeaseId: "expired-lease",
@@ -392,6 +394,7 @@ describe("PaymentService", () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
       status: PayoutTransactionStatus.PROCESSING,
       payoutProviderReference: "payout_payout-123",
       initiatedAt: new Date(Date.now() - 20 * 60 * 1000),
@@ -406,6 +409,14 @@ describe("PaymentService", () => {
 
     await expect(service.reconcileProcessingPayouts()).resolves.toBe(1);
 
+    expect(databaseService.payoutTransaction.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: PayoutTransactionStatus.PAID_OUT,
+          amountPaid: 15000,
+        }),
+      }),
+    );
     expect(databaseService.payoutTransaction.findMany).toHaveBeenCalledWith({
       where: {
         status: PayoutTransactionStatus.PROCESSING,
@@ -433,6 +444,7 @@ describe("PaymentService", () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
       status: PayoutTransactionStatus.PROCESSING,
       payoutProviderReference: "payout_payout-123",
       initiatedAt: new Date(Date.now() - 20 * 60 * 1000),
@@ -460,6 +472,103 @@ describe("PaymentService", () => {
     expect(databaseService.booking.update).not.toHaveBeenCalled();
   });
 
+  it("returns the provider result for a targeted payout reconciliation", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce(
+      createTransfer("payout_payout-123"),
+    );
+
+    await expect(service.reconcilePayout(payout)).resolves.toEqual({
+      reconciled: false,
+      providerStatus: "NEW",
+      mismatchReason: null,
+    });
+  });
+
+  it("does not finalize a targeted payout when Flutterwave returns mismatched details", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce({
+      ...createTransfer("different-reference"),
+      status: "SUCCESSFUL",
+    });
+
+    await expect(service.reconcilePayout(payout)).resolves.toEqual({
+      reconciled: false,
+      providerStatus: "SUCCESSFUL",
+      mismatchReason: "Flutterwave transfer reference does not match the payout reference",
+    });
+    expect(databaseService.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize a targeted payout for a different beneficiary", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      payoutBankCode: "044",
+      payoutAccountLast4: "7890",
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce({
+      ...createTransfer("payout_payout-123"),
+      status: "SUCCESSFUL",
+      bank_code: "058",
+    });
+
+    await expect(service.reconcilePayout(payout)).resolves.toMatchObject({
+      reconciled: false,
+      providerStatus: "SUCCESSFUL",
+      mismatchReason: "Flutterwave transfer bank does not match the payout beneficiary",
+    });
+    expect(databaseService.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("does not report reconciliation when failed payout finalization loses its claim", async () => {
+    const payout = createPayoutTransaction({
+      id: "payout-123",
+      bookingId: "booking-123",
+      amountToPay: new Decimal(15000),
+      status: PayoutTransactionStatus.PROCESSING,
+      payoutProviderReference: "payout_payout-123",
+      processingLeaseId: null,
+      processingLeaseExpiresAt: null,
+    });
+    vi.mocked(databaseService.payoutTransaction.updateMany)
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    vi.mocked(flutterwaveService.findTransferByReference).mockResolvedValueOnce({
+      ...createTransfer("payout_payout-123"),
+      status: "FAILED",
+      complete_message: "Transfer failed",
+    });
+
+    await expect(service.reconcilePayout(payout)).resolves.toEqual({
+      reconciled: false,
+      providerStatus: "FAILED",
+      mismatchReason: null,
+    });
+    expect(notificationOutboxService.create).not.toHaveBeenCalled();
+  });
+
   it.each([[PayoutTransactionStatus.PROCESSING], [PayoutTransactionStatus.PAID_OUT]])(
     "should not retry payout when status is %s",
     async (terminalStatus) => {
@@ -479,6 +588,8 @@ describe("PaymentService", () => {
         amountToPay: new Decimal(15000),
         currency: "NGN",
         payoutMethodDetails: "Bank: Access Bank, Account: ****7890",
+        payoutBankCode: "044",
+        payoutAccountLast4: "7890",
         initiatedAt: new Date(),
         processedAt: null,
         completedAt: null,
@@ -569,6 +680,8 @@ describe("PaymentService", () => {
       amountToPay: new Decimal(15000),
       currency: "NGN",
       payoutMethodDetails: "Bank: Access Bank, Account: ****7890",
+      payoutBankCode: "044",
+      payoutAccountLast4: "7890",
       initiatedAt: new Date(),
       processedAt: null,
       completedAt: null,
@@ -637,6 +750,8 @@ describe("PaymentService", () => {
       amountToPay: new Decimal(15000),
       currency: "NGN",
       payoutMethodDetails: "Bank: Access Bank, Account: ****7890",
+      payoutBankCode: "044",
+      payoutAccountLast4: "7890",
       initiatedAt: new Date(),
       processedAt: null,
       completedAt: null,

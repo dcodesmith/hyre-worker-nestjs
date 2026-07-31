@@ -40,14 +40,18 @@ describe("TransferCompletedHandler", () => {
           provide: DatabaseService,
           useValue: {
             payoutTransaction: {
-              findFirst: vi.fn(),
+              findUnique: vi.fn(),
             },
           },
         },
         {
           provide: PaymentService,
           useValue: {
-            finalizePayoutStatus: vi.fn().mockResolvedValue(true),
+            reconcilePayout: vi.fn().mockResolvedValue({
+              reconciled: true,
+              providerStatus: "SUCCESSFUL",
+              mismatchReason: null,
+            }),
           },
         },
       ],
@@ -61,44 +65,41 @@ describe("TransferCompletedHandler", () => {
     vi.clearAllMocks();
   });
 
-  it("updates payout to PAID_OUT for successful transfer", async () => {
+  it("verifies the payout with Flutterwave before finalizing", async () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       payoutProviderReference: "payout-ref-123",
       status: PayoutTransactionStatus.PROCESSING,
     });
-    vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(payout);
+    vi.mocked(databaseService.payoutTransaction.findUnique).mockResolvedValueOnce(payout);
 
     await handler.handle(mockTransferData);
 
-    expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
+    expect(databaseService.payoutTransaction.findUnique).toHaveBeenCalledWith({
       where: { payoutProviderReference: mockTransferData.reference },
     });
-    expect(paymentService.finalizePayoutStatus).toHaveBeenCalledWith(
-      payout,
-      PayoutTransactionStatus.PAID_OUT,
-      undefined,
-    );
+    expect(paymentService.reconcilePayout).toHaveBeenCalledWith(payout);
   });
 
-  it("updates payout to FAILED for failed transfer", async () => {
+  it("does not trust a failed webhook as the terminal provider status", async () => {
     const payout = createPayoutTransaction({
       id: "payout-123",
       payoutProviderReference: "payout-ref-123",
       status: PayoutTransactionStatus.PROCESSING,
     });
-    vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(payout);
+    vi.mocked(databaseService.payoutTransaction.findUnique).mockResolvedValueOnce(payout);
+    vi.mocked(paymentService.reconcilePayout).mockResolvedValueOnce({
+      reconciled: false,
+      providerStatus: "PENDING",
+      mismatchReason: null,
+    });
 
     await handler.handle({ ...mockTransferData, status: "FAILED" });
 
-    expect(databaseService.payoutTransaction.findFirst).toHaveBeenCalledWith({
+    expect(databaseService.payoutTransaction.findUnique).toHaveBeenCalledWith({
       where: { payoutProviderReference: mockTransferData.reference },
     });
-    expect(paymentService.finalizePayoutStatus).toHaveBeenCalledWith(
-      payout,
-      PayoutTransactionStatus.FAILED,
-      { failureReason: "Transfer completed" },
-    );
+    expect(paymentService.reconcilePayout).toHaveBeenCalledWith(payout);
   });
 
   it("skips update when payout already finalized", async () => {
@@ -107,10 +108,10 @@ describe("TransferCompletedHandler", () => {
       payoutProviderReference: "payout-ref-123",
       status: PayoutTransactionStatus.PAID_OUT,
     });
-    vi.mocked(databaseService.payoutTransaction.findFirst).mockResolvedValueOnce(payout);
+    vi.mocked(databaseService.payoutTransaction.findUnique).mockResolvedValueOnce(payout);
 
     await handler.handle(mockTransferData);
 
-    expect(paymentService.finalizePayoutStatus).not.toHaveBeenCalled();
+    expect(paymentService.reconcilePayout).not.toHaveBeenCalled();
   });
 });

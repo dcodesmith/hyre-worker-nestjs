@@ -578,6 +578,9 @@ export class TestDataFactory {
         payoutProviderReference:
           options.payoutProviderReference ??
           `payout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        payoutBankCode: options.payoutBankCode ?? "044",
+        payoutAccountLast4: options.payoutAccountLast4 ?? "7890",
+        initiatedAt: options.initiatedAt,
       },
       select: { id: true },
     });
