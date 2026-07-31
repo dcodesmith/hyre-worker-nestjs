@@ -71,8 +71,10 @@ const payoutAdminInclude = {
   },
 } satisfies Prisma.PayoutTransactionInclude;
 
-type RefundAdminRecord = Prisma.PaymentGetPayload<{ include: typeof refundAdminInclude }>;
-type PayoutAdminRecord = Prisma.PayoutTransactionGetPayload<{ include: typeof payoutAdminInclude }>;
+export type RefundAdminRecord = Prisma.PaymentGetPayload<{ include: typeof refundAdminInclude }>;
+export type PayoutAdminRecord = Prisma.PayoutTransactionGetPayload<{
+  include: typeof payoutAdminInclude;
+}>;
 
 const REFUND_STATUSES: PaymentAttemptStatus[] = [
   PaymentAttemptStatus.REFUND_PROCESSING,

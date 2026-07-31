@@ -9,16 +9,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPaymentRecord, createPayoutTransaction } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import { AdminFinancialOperationsService } from "./admin-financial-operations.service";
+import {
+  AdminFinancialOperationsService,
+  type PayoutAdminRecord,
+  type RefundAdminRecord,
+} from "./admin-financial-operations.service";
 import {
   FinancialProviderIdentityMissingException,
+  FinancialProviderReferenceMismatchException,
   FinancialProviderReferenceMissingException,
   FinancialReconciliationNotAllowedException,
 } from "./payment.error";
 import { PaymentService } from "./payment.service";
 import { RefundReconciliationService } from "./refund-reconciliation.service";
 
-const createRefund = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+const createRefund = (overrides: Partial<RefundAdminRecord> = {}): RefundAdminRecord => ({
   ...createPaymentRecord({
     id: "payment-1",
     bookingId: "booking-1",
@@ -36,13 +41,12 @@ const createRefund = (overrides: Record<string, unknown> = {}): Record<string, u
   booking: {
     id: "booking-1",
     bookingReference: "HYR-1",
-    paymentStatus: "REFUND_PROCESSING",
   },
   extension: null,
   ...overrides,
 });
 
-const createPayout = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+const createPayout = (overrides: Partial<PayoutAdminRecord> = {}): PayoutAdminRecord => ({
   ...createPayoutTransaction({
     id: "payout-1",
     fleetOwnerId: "owner-1",
@@ -204,6 +208,16 @@ describe("AdminFinancialOperationsService", () => {
       "payment-1",
       "refund-recovered",
     );
+  });
+
+  it("rejects an operator-supplied refund ID that conflicts with the stored ID", async () => {
+    databaseServiceMock.payment.findUnique.mockResolvedValueOnce(createRefund());
+
+    await expect(
+      service.reconcileRefund("payment-1", { refundProviderId: "refund-other" }, "admin-1"),
+    ).rejects.toThrow(FinancialProviderReferenceMismatchException);
+    expect(refundReconciliationServiceMock.reconcileWebhookRefund).not.toHaveBeenCalled();
+    expect(databaseServiceMock.financialReconciliationAudit.create).not.toHaveBeenCalled();
   });
 
   it("rejects refund reconciliation without a provider ID", async () => {

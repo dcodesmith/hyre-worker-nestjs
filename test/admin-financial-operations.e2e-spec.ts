@@ -19,8 +19,43 @@ describe("Admin Financial Operations E2E Tests", () => {
   let adminUserId: string;
   let staffCookie: string;
   let customerCookie: string;
-  let refundPaymentId: string;
-  let payoutTransactionId: string;
+  let customerUserId: string;
+  let fleetOwnerId: string;
+  let carId: string;
+  let providerSequence = 41000;
+
+  const createReviewRefund = async () => {
+    const flutterwaveTransactionId = String(++providerSequence);
+    const refundProviderId = String(++providerSequence);
+    const booking = await factory.createBooking(customerUserId, carId, {
+      paymentStatus: "REFUND_PROCESSING",
+    });
+    const payment = await factory.createPayment(booking.id, {
+      amountCharged: 50000,
+      status: "REFUND_ERROR",
+      flutterwaveTransactionId,
+      refundProviderId,
+      refundProviderStatus: "processing",
+      refundRequestedAmount: 50000,
+      refundRequestedAt: new Date(Date.now() - 30 * 60 * 1000),
+      refundManualReviewNotifiedAt: new Date(),
+    });
+    return { paymentId: payment.id, flutterwaveTransactionId, refundProviderId };
+  };
+
+  const createReviewPayout = async () => {
+    const booking = await factory.createBooking(customerUserId, carId, {
+      status: "COMPLETED",
+      overallPayoutStatus: "PROCESSING",
+    });
+    const payout = await factory.createPayoutTransaction(fleetOwnerId, {
+      bookingId: booking.id,
+      status: "PROCESSING",
+      payoutProviderReference: `payout-${booking.id}`,
+      initiatedAt: new Date(Date.now() - 30 * 60 * 1000),
+    });
+    return payout.id;
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -52,35 +87,11 @@ describe("Admin Financial Operations E2E Tests", () => {
       "user",
     );
     customerCookie = customer.cookie;
+    customerUserId = customer.user.id;
     const fleetOwner = await factory.createFleetOwner();
+    fleetOwnerId = fleetOwner.id;
     const car = await factory.createCar(fleetOwner.id);
-
-    const refundBooking = await factory.createBooking(customer.user.id, car.id, {
-      paymentStatus: "REFUND_PROCESSING",
-    });
-    const refundPayment = await factory.createPayment(refundBooking.id, {
-      amountCharged: 50000,
-      status: "REFUND_ERROR",
-      flutterwaveTransactionId: "41001",
-      refundProviderId: "41002",
-      refundProviderStatus: "processing",
-      refundRequestedAmount: 50000,
-      refundRequestedAt: new Date(Date.now() - 30 * 60 * 1000),
-      refundManualReviewNotifiedAt: new Date(),
-    });
-    refundPaymentId = refundPayment.id;
-
-    const payoutBooking = await factory.createBooking(customer.user.id, car.id, {
-      status: "COMPLETED",
-      overallPayoutStatus: "PROCESSING",
-    });
-    const payout = await factory.createPayoutTransaction(fleetOwner.id, {
-      bookingId: payoutBooking.id,
-      status: "PROCESSING",
-      payoutProviderReference: `payout-${payoutBooking.id}`,
-      initiatedAt: new Date(Date.now() - 30 * 60 * 1000),
-    });
-    payoutTransactionId = payout.id;
+    carId = car.id;
   });
 
   afterEach(() => {
@@ -92,6 +103,7 @@ describe("Admin Financial Operations E2E Tests", () => {
   });
 
   it("enforces read and reconcile roles", async () => {
+    const { paymentId } = await createReviewRefund();
     const unauthenticatedResponse = await request(app.getHttpServer())
       .get("/api/admin/financial-operations/refunds")
       .then((response) => response);
@@ -108,21 +120,21 @@ describe("Admin Financial Operations E2E Tests", () => {
     expect(staffResponse.status).toBe(HttpStatus.OK);
 
     const staffReconcileResponse = await request(app.getHttpServer())
-      .post(`/api/admin/financial-operations/refunds/${refundPaymentId}/reconcile`)
+      .post(`/api/admin/financial-operations/refunds/${paymentId}/reconcile`)
       .set("Cookie", staffCookie)
       .send({});
     expect(staffReconcileResponse.status).toBe(HttpStatus.FORBIDDEN);
   });
 
   it("lists refund and payout attention queues", async () => {
+    const { paymentId } = await createReviewRefund();
+    const payoutTransactionId = await createReviewPayout();
     const refundResponse = await request(app.getHttpServer())
       .get("/api/admin/financial-operations/refunds")
       .set("Cookie", adminCookie)
       .expect(HttpStatus.OK);
     expect(refundResponse.body.refunds).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: refundPaymentId, status: "REFUND_ERROR" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ id: paymentId, status: "REFUND_ERROR" })]),
     );
     expect(refundResponse.body.meta).toMatchObject({ page: 1, limit: 20 });
 
@@ -138,11 +150,11 @@ describe("Admin Financial Operations E2E Tests", () => {
     expect(payoutResponse.body.meta).toMatchObject({ page: 1, limit: 20 });
 
     const refundDetail = await request(app.getHttpServer())
-      .get(`/api/admin/financial-operations/refunds/${refundPaymentId}`)
+      .get(`/api/admin/financial-operations/refunds/${paymentId}`)
       .set("Cookie", staffCookie)
       .expect(HttpStatus.OK);
     expect(refundDetail.body).toMatchObject({
-      id: refundPaymentId,
+      id: paymentId,
       audits: [],
     });
 
@@ -157,8 +169,9 @@ describe("Admin Financial Operations E2E Tests", () => {
   });
 
   it("verifies and finalizes a refund with a durable admin audit", async () => {
+    const { paymentId, flutterwaveTransactionId, refundProviderId } = await createReviewRefund();
     vi.spyOn(flutterwaveService, "fetchRefund").mockResolvedValueOnce({
-      id: 41002,
+      id: Number(refundProviderId),
       amount_refunded: 50000,
       status: "completed-preauth",
       flw_ref: "FLW-REF-41001",
@@ -167,11 +180,11 @@ describe("Admin Financial Operations E2E Tests", () => {
       meta: {},
       created_at: new Date().toISOString(),
       account_id: 123,
-      transaction_id: 41001,
+      transaction_id: Number(flutterwaveTransactionId),
     });
 
     const response = await request(app.getHttpServer())
-      .post(`/api/admin/financial-operations/refunds/${refundPaymentId}/reconcile`)
+      .post(`/api/admin/financial-operations/refunds/${paymentId}/reconcile`)
       .set("Cookie", adminCookie)
       .send({})
       .expect(HttpStatus.OK);
@@ -182,13 +195,13 @@ describe("Admin Financial Operations E2E Tests", () => {
       providerStatus: "completed-preauth",
     });
     const payment = await databaseService.payment.findUniqueOrThrow({
-      where: { id: refundPaymentId },
+      where: { id: paymentId },
     });
     expect(payment.status).toBe("REFUNDED");
     await expect(
       databaseService.financialReconciliationAudit.findFirst({
         where: {
-          resourceId: refundPaymentId,
+          resourceId: paymentId,
           actorUserId: adminUserId,
           outcome: "RECONCILED",
         },
@@ -196,18 +209,19 @@ describe("Admin Financial Operations E2E Tests", () => {
     ).resolves.not.toBeNull();
 
     await request(app.getHttpServer())
-      .post(`/api/admin/financial-operations/refunds/${refundPaymentId}/reconcile`)
+      .post(`/api/admin/financial-operations/refunds/${paymentId}/reconcile`)
       .set("Cookie", adminCookie)
       .send({})
       .expect(HttpStatus.CONFLICT);
     await expect(
       databaseService.financialReconciliationAudit.count({
-        where: { resourceId: refundPaymentId },
+        where: { resourceId: paymentId },
       }),
     ).resolves.toBe(1);
   });
 
   it("verifies and finalizes a payout without re-initiating it", async () => {
+    const payoutTransactionId = await createReviewPayout();
     const persistedPayout = await databaseService.payoutTransaction.findUniqueOrThrow({
       where: { id: payoutTransactionId },
     });
