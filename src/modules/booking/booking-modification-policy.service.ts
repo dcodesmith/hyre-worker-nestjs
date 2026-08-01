@@ -19,6 +19,10 @@ export class BookingModificationPolicyService {
     this.cutoffHours = configService.get("BOOKING_MODIFICATION_CUTOFF_HOURS", { infer: true });
   }
 
+  getStartDateThreshold(now: Date): Date {
+    return new Date(now.getTime() + this.cutoffHours * 60 * 60 * 1000);
+  }
+
   getEligibility(
     booking: BookingModificationPolicyInput,
     canAct = true,

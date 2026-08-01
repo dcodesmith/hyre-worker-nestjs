@@ -4,6 +4,7 @@ import {
   type BookingType,
   ChauffeurApprovalStatus,
   PaymentStatus,
+  type Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
@@ -223,17 +224,36 @@ export class BookingUpdateService {
     }
 
     return this.databaseService.$transaction(async (tx) => {
-      this.bookingModificationPolicyService.assertCanEdit(currentBooking);
-      if (newStartDate) {
-        this.bookingModificationPolicyService.assertWithinWindow(newStartDate);
+      const bookingLocked = await this.lockEditableBookingState(
+        tx,
+        bookingId,
+        userId,
+        currentBooking.startDate,
+      );
+      if (!bookingLocked) {
+        throw new BookingStatusNotModifiableException(
+          "edit",
+          "Booking state changed during the update. Please retry",
+        );
       }
 
+      const policyNow = await this.getDatabaseNow(tx);
+      this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
+      if (newStartDate) {
+        this.bookingModificationPolicyService.assertWithinWindow(newStartDate, policyNow);
+      }
+
+      const startDateThreshold =
+        this.bookingModificationPolicyService.getStartDateThreshold(policyNow);
       const updated = await tx.booking.updateMany({
         where: {
           id: bookingId,
           userId,
           status: BookingStatus.CONFIRMED,
-          startDate: currentBooking.startDate,
+          startDate: {
+            equals: currentBooking.startDate,
+            gt: startDateThreshold,
+          },
         },
         data: updateData,
       });
@@ -258,6 +278,32 @@ export class BookingUpdateService {
       );
       return this.withModificationEligibility(updatedBooking);
     });
+  }
+
+  private async lockEditableBookingState(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    userId: string,
+    currentStartDate: Date,
+  ): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT booking."id"
+      FROM "Booking" AS booking
+      WHERE booking."id" = ${bookingId}
+        AND booking."userId" = ${userId}
+        AND booking."status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND booking."startDate" = ${currentStartDate}
+      FOR UPDATE OF booking
+    `;
+
+    return rows.length > 0;
+  }
+
+  private async getDatabaseNow(tx: Prisma.TransactionClient): Promise<Date> {
+    const [clock] = await tx.$queryRaw<Array<{ policyNow: Date }>>`
+      SELECT clock_timestamp() AS "policyNow"
+    `;
+    return clock.policyNow;
   }
 
   private getBookingDetailsById(bookingId: string) {

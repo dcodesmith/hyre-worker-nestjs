@@ -8,6 +8,7 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import {
   BookingCancellationFailedException,
   BookingNotFoundException,
+  BookingOutsideModificationWindowException,
   BookingStatusNotModifiableException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
@@ -26,6 +27,7 @@ describe("BookingCancellationService", () => {
     car: {
       update: vi.fn(),
     },
+    $queryRaw: vi.fn(),
   };
 
   const databaseServiceMock = {
@@ -43,6 +45,7 @@ describe("BookingCancellationService", () => {
   };
   const bookingModificationPolicyServiceMock = {
     assertCanCancel: vi.fn(),
+    getStartDateThreshold: vi.fn((now: Date) => new Date(now.getTime() + 12 * 60 * 60 * 1000)),
     getEligibility: vi.fn().mockReturnValue({
       canEdit: false,
       canCancel: false,
@@ -54,7 +57,10 @@ describe("BookingCancellationService", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     bookingModificationPolicyServiceMock.assertCanCancel.mockImplementation(
-      (booking: { status: BookingStatus; paymentStatus: PaymentStatus }) => {
+      (
+        booking: { status: BookingStatus; paymentStatus: PaymentStatus; startDate: Date },
+        now = new Date(),
+      ) => {
         if (
           booking.status !== BookingStatus.CONFIRMED ||
           booking.paymentStatus !== PaymentStatus.PAID
@@ -64,12 +70,23 @@ describe("BookingCancellationService", () => {
             "Only paid confirmed bookings can be cancelled",
           );
         }
+        if (now.getTime() >= booking.startDate.getTime() - 12 * 60 * 60 * 1000) {
+          throw new BookingOutsideModificationWindowException(
+            new Date(booking.startDate.getTime() - 12 * 60 * 60 * 1000),
+            12,
+          );
+        }
       },
     );
     databaseServiceMock.$transaction.mockImplementation(
       async (callback: (transaction: typeof txMock) => unknown) => callback(txMock),
     );
     txMock.booking.updateMany.mockResolvedValue({ count: 1 });
+    txMock.$queryRaw.mockImplementation((query: TemplateStringsArray) =>
+      query.join("").includes("clock_timestamp")
+        ? [{ policyNow: new Date() }]
+        : [{ id: "booking-1" }],
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -148,7 +165,7 @@ describe("BookingCancellationService", () => {
       { booking: expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }) },
       txMock,
     );
-    expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledOnce();
+    expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledTimes(2);
   });
 
   it("throws BookingNotFoundException when booking is missing or not owned by user", async () => {
@@ -188,6 +205,26 @@ describe("BookingCancellationService", () => {
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
     ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
     expect(txMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("rejects cancellation when the cutoff expires before the guarded write", async () => {
+    const startDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    txMock.booking.findUnique.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      startDate,
+      carId: "car-1",
+    });
+    txMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow: new Date(startDate.getTime() - 12 * 60 * 60 * 1000) }]);
+
+    await expect(
+      service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
+    ).rejects.toBeInstanceOf(BookingOutsideModificationWindowException);
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("throws BookingCancellationFailedException when transaction fails unexpectedly", async () => {

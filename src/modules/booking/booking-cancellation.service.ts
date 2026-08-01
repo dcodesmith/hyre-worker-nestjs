@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
+import { BookingStatus, PaymentStatus, type Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
@@ -49,13 +49,33 @@ export class BookingCancellationService {
 
         this.bookingModificationPolicyService.assertCanCancel(existingBooking);
 
+        const bookingLocked = await this.lockCancellableBookingState(
+          tx,
+          bookingId,
+          userId,
+          existingBooking.startDate,
+        );
+        if (!bookingLocked) {
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Booking state changed during cancellation. Please retry",
+          );
+        }
+
+        const policyNow = await this.getDatabaseNow(tx);
+        this.bookingModificationPolicyService.assertCanCancel(existingBooking, policyNow);
+        const startDateThreshold =
+          this.bookingModificationPolicyService.getStartDateThreshold(policyNow);
         const updated = await tx.booking.updateMany({
           where: {
             id: bookingId,
             userId,
             status: BookingStatus.CONFIRMED,
             paymentStatus: PaymentStatus.PAID,
-            startDate: existingBooking.startDate,
+            startDate: {
+              equals: existingBooking.startDate,
+              gt: startDateThreshold,
+            },
           },
           data: {
             status: BookingStatus.CANCELLED,
@@ -126,5 +146,32 @@ export class BookingCancellationService {
       );
       throw new BookingCancellationFailedException();
     }
+  }
+
+  private async lockCancellableBookingState(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    userId: string,
+    startDate: Date,
+  ): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT booking."id"
+      FROM "Booking" AS booking
+      WHERE booking."id" = ${bookingId}
+        AND booking."userId" = ${userId}
+        AND booking."status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND booking."paymentStatus" = ${PaymentStatus.PAID}::"PaymentStatus"
+        AND booking."startDate" = ${startDate}
+      FOR UPDATE OF booking
+    `;
+
+    return rows.length > 0;
+  }
+
+  private async getDatabaseNow(tx: Prisma.TransactionClient): Promise<Date> {
+    const [clock] = await tx.$queryRaw<Array<{ policyNow: Date }>>`
+      SELECT clock_timestamp() AS "policyNow"
+    `;
+    return clock.policyNow;
   }
 }
