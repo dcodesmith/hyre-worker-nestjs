@@ -247,7 +247,7 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build REDIS_URL for validation and migrations
         run: |
@@ -309,7 +309,7 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve Neon pooled DATABASE_URL
         id: neon_db
