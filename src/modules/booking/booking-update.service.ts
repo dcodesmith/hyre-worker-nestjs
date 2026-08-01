@@ -15,6 +15,7 @@ import {
   BookingChauffeurNotFoundException,
   BookingException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
@@ -222,9 +223,29 @@ export class BookingUpdateService {
     }
 
     return this.databaseService.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
-        where: { id: bookingId },
+      this.bookingModificationPolicyService.assertCanEdit(currentBooking);
+      if (newStartDate) {
+        this.bookingModificationPolicyService.assertWithinWindow(newStartDate);
+      }
+
+      const updated = await tx.booking.updateMany({
+        where: {
+          id: bookingId,
+          userId,
+          status: BookingStatus.CONFIRMED,
+          startDate: currentBooking.startDate,
+        },
         data: updateData,
+      });
+      if (updated.count === 0) {
+        throw new BookingStatusNotModifiableException(
+          "edit",
+          "Booking state changed during the update. Please retry",
+        );
+      }
+
+      const updatedBooking = await tx.booking.findUniqueOrThrow({
+        where: { id: bookingId },
         include: this.bookingDetailsInclude,
       });
       await this.notificationOutboxService.create(

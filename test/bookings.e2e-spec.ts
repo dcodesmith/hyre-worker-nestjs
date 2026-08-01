@@ -318,6 +318,7 @@ describe("Bookings E2E Tests", () => {
       expect(response.body).toMatchObject({
         canEdit: true,
         canCancel: true,
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
         policyHoursBeforeStart: 12,
       });
     });
@@ -338,6 +339,10 @@ describe("Bookings E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.CONFLICT);
       expect(response.body.errorCode).toBe("BOOKING_OUTSIDE_MODIFICATION_WINDOW");
+      expect(response.body.details).toEqual({
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
     });
 
     it("should reject updates for non-confirmed bookings", async () => {
@@ -443,6 +448,7 @@ describe("Bookings E2E Tests", () => {
       expect(response.body).toMatchObject({
         canEdit: false,
         canCancel: false,
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
         policyHoursBeforeStart: 12,
       });
 
@@ -479,6 +485,10 @@ describe("Bookings E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.CONFLICT);
       expect(response.body.errorCode).toBe("BOOKING_OUTSIDE_MODIFICATION_WINDOW");
+      expect(response.body.details).toEqual({
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
     });
 
     it("should reject cancellation for non-confirmed bookings", async () => {

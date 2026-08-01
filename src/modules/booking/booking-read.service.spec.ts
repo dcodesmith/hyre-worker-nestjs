@@ -45,12 +45,15 @@ describe("BookingReadService", () => {
     },
   };
   const bookingModificationPolicyServiceMock = {
-    getEligibility: vi.fn((_booking: unknown, canAct = true) => ({
-      canEdit: canAct,
-      canCancel: canAct,
-      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
-      policyHoursBeforeStart: 12,
-    })),
+    getEligibility: vi.fn((booking: { status: string }, canAct = true) => {
+      const canModify = canAct && booking.status === "CONFIRMED";
+      return {
+        canEdit: canModify,
+        canCancel: canModify,
+        modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+        policyHoursBeforeStart: 12,
+      };
+    }),
   };
 
   beforeEach(async () => {
@@ -118,8 +121,8 @@ describe("BookingReadService", () => {
           id: "booking-2",
           status: "COMPLETED",
           totalAmount: 21000,
-          canEdit: true,
-          canCancel: true,
+          canEdit: false,
+          canCancel: false,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
         },

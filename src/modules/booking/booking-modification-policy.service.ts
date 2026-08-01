@@ -25,22 +25,18 @@ export class BookingModificationPolicyService {
     now = new Date(),
   ): BookingModificationEligibility {
     const modificationCutoffAt = this.getModificationCutoffAt(booking.startDate);
-    const isWindowOpen = now.getTime() < modificationCutoffAt.getTime();
+    const isWindowOpen = this.isWithinWindow(booking.startDate, now);
 
     return {
-      canEdit: canAct && booking.status === BookingStatus.CONFIRMED && isWindowOpen,
-      canCancel:
-        canAct &&
-        booking.status === BookingStatus.CONFIRMED &&
-        booking.paymentStatus === PaymentStatus.PAID &&
-        isWindowOpen,
+      canEdit: canAct && this.isEditableStatus(booking) && isWindowOpen,
+      canCancel: canAct && this.isCancellableStatus(booking) && isWindowOpen,
       modificationCutoffAt: modificationCutoffAt.toISOString(),
       policyHoursBeforeStart: this.cutoffHours,
     };
   }
 
   assertCanEdit(booking: BookingModificationPolicyInput, now = new Date()): void {
-    if (booking.status !== BookingStatus.CONFIRMED) {
+    if (!this.isEditableStatus(booking)) {
       throw new BookingStatusNotModifiableException(
         "edit",
         "Only confirmed bookings can be edited",
@@ -50,10 +46,7 @@ export class BookingModificationPolicyService {
   }
 
   assertCanCancel(booking: BookingModificationPolicyInput, now = new Date()): void {
-    if (
-      booking.status !== BookingStatus.CONFIRMED ||
-      booking.paymentStatus !== PaymentStatus.PAID
-    ) {
+    if (!this.isCancellableStatus(booking)) {
       throw new BookingStatusNotModifiableException(
         "cancel",
         "Only paid confirmed bookings can be cancelled",
@@ -63,10 +56,24 @@ export class BookingModificationPolicyService {
   }
 
   assertWithinWindow(startDate: Date, now = new Date()): void {
-    const modificationCutoffAt = this.getModificationCutoffAt(startDate);
-    if (now.getTime() >= modificationCutoffAt.getTime()) {
+    if (!this.isWithinWindow(startDate, now)) {
+      const modificationCutoffAt = this.getModificationCutoffAt(startDate);
       throw new BookingOutsideModificationWindowException(modificationCutoffAt, this.cutoffHours);
     }
+  }
+
+  private isEditableStatus(booking: BookingModificationPolicyInput): boolean {
+    return booking.status === BookingStatus.CONFIRMED;
+  }
+
+  private isCancellableStatus(booking: BookingModificationPolicyInput): boolean {
+    return (
+      booking.status === BookingStatus.CONFIRMED && booking.paymentStatus === PaymentStatus.PAID
+    );
+  }
+
+  private isWithinWindow(startDate: Date, now: Date): boolean {
+    return now.getTime() < this.getModificationCutoffAt(startDate).getTime();
   }
 
   private getModificationCutoffAt(startDate: Date): Date {

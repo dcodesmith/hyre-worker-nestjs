@@ -8,6 +8,7 @@ import {
   BookingCancellationFailedException,
   BookingException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
 } from "./booking.error";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
@@ -48,8 +49,14 @@ export class BookingCancellationService {
 
         this.bookingModificationPolicyService.assertCanCancel(existingBooking);
 
-        const updatedBooking = await tx.booking.update({
-          where: { id: bookingId },
+        const updated = await tx.booking.updateMany({
+          where: {
+            id: bookingId,
+            userId,
+            status: BookingStatus.CONFIRMED,
+            paymentStatus: PaymentStatus.PAID,
+            startDate: existingBooking.startDate,
+          },
           data: {
             status: BookingStatus.CANCELLED,
             paymentStatus: PaymentStatus.REFUND_PROCESSING,
@@ -58,6 +65,16 @@ export class BookingCancellationService {
             referralCreditsReserved: 0,
             referralCreditsUsed: 0,
           },
+        });
+        if (updated.count === 0) {
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Booking state changed during cancellation. Please retry",
+          );
+        }
+
+        const updatedBooking = await tx.booking.findUniqueOrThrow({
+          where: { id: bookingId },
           include: {
             user: true,
             chauffeur: true,

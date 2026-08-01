@@ -20,7 +20,8 @@ describe("BookingCancellationService", () => {
   const txMock = {
     booking: {
       findUnique: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     car: {
       update: vi.fn(),
@@ -68,6 +69,7 @@ describe("BookingCancellationService", () => {
     databaseServiceMock.$transaction.mockImplementation(
       async (callback: (transaction: typeof txMock) => unknown) => callback(txMock),
     );
+    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -94,9 +96,10 @@ describe("BookingCancellationService", () => {
       userId: "user-1",
       status: BookingStatus.CONFIRMED,
       paymentStatus: PaymentStatus.PAID,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
       carId: "car-1",
     });
-    txMock.booking.update.mockResolvedValueOnce({
+    txMock.booking.findUniqueOrThrow.mockResolvedValueOnce({
       id: "booking-1",
       status: BookingStatus.CANCELLED,
       car: { owner: {} },
@@ -114,9 +117,14 @@ describe("BookingCancellationService", () => {
     expect(result).toEqual(
       expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }),
     );
-    expect(txMock.booking.update).toHaveBeenCalledWith(
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "booking-1" },
+        where: expect.objectContaining({
+          id: "booking-1",
+          userId: "user-1",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+        }),
         data: expect.objectContaining({
           status: BookingStatus.CANCELLED,
           paymentStatus: PaymentStatus.REFUND_PROCESSING,
@@ -163,6 +171,23 @@ describe("BookingCancellationService", () => {
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
     ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+  });
+
+  it("rejects cancellation when booking state changes before persistence", async () => {
+    txMock.booking.findUnique.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      carId: "car-1",
+    });
+    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+    expect(txMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it("throws BookingCancellationFailedException when transaction fails unexpectedly", async () => {

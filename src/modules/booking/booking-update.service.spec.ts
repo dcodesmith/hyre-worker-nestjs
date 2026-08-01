@@ -25,7 +25,8 @@ describe("BookingUpdateService", () => {
     booking: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     user: {
       findFirst: vi.fn(),
@@ -78,6 +79,7 @@ describe("BookingUpdateService", () => {
       (callback: (tx: { booking: typeof databaseServiceMock.booking }) => Promise<unknown>) =>
         callback({ booking: databaseServiceMock.booking }),
     );
+    databaseServiceMock.booking.updateMany.mockResolvedValue({ count: 1 });
     notificationOutboxServiceMock.create.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -112,15 +114,19 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
 
     await service.updateBooking("booking-1", "user-1", {
       pickupAddress: "New pickup",
     });
 
-    expect(databaseServiceMock.booking.update).toHaveBeenCalledWith(
+    expect(databaseServiceMock.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "booking-1" },
+        where: expect.objectContaining({
+          id: "booking-1",
+          userId: "user-1",
+          status: BookingStatus.CONFIRMED,
+        }),
         data: expect.objectContaining({
           pickupLocation: "New pickup",
         }),
@@ -149,7 +155,7 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
 
     await service.updateBooking("booking-1", "user-1", {
       pickupTime: "10:30 AM",
@@ -162,10 +168,8 @@ describe("BookingUpdateService", () => {
         excludeBookingId: "booking-1",
       }),
     );
-    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
-    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledWith(
-      expect.any(Date),
-    );
+    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledTimes(2);
+    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledTimes(2);
   });
 
   it("throws when booking does not exist for user", async () => {
@@ -192,6 +196,26 @@ describe("BookingUpdateService", () => {
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
     ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+  });
+
+  it("rejects the update when booking state changes before persistence", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 36 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+    expect(databaseServiceMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it("throws validation error for pickupTime on unsupported booking type", async () => {
@@ -232,7 +256,7 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
     notificationOutboxServiceMock.create.mockRejectedValueOnce(new Error("Outbox unavailable"));
 
     await expect(
@@ -262,7 +286,7 @@ describe("BookingUpdateService", () => {
       pickupAddress: "Old pickup",
     });
 
-    expect(databaseServiceMock.booking.update).not.toHaveBeenCalled();
+    expect(databaseServiceMock.booking.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({
       id: "booking-1",
       paymentStatus: PaymentStatus.PAID,
