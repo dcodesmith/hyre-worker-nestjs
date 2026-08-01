@@ -91,3 +91,24 @@ describe("envSchema operations email", () => {
     }
   });
 });
+
+describe("envSchema booking modification cutoff", () => {
+  it("defaults to 12 hours", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+    });
+
+    expect(result.BOOKING_MODIFICATION_CUTOFF_HOURS).toBe(12);
+  });
+
+  it("accepts a positive integer override", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      BOOKING_MODIFICATION_CUTOFF_HOURS: "24",
+    });
+
+    expect(result.BOOKING_MODIFICATION_CUTOFF_HOURS).toBe(24);
+  });
+});

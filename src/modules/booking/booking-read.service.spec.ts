@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingFetchFailedException, BookingNotFoundException } from "./booking.error";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingReadService } from "./booking-read.service";
 
 describe("BookingReadService", () => {
@@ -43,11 +44,26 @@ describe("BookingReadService", () => {
       findFirst: vi.fn(),
     },
   };
+  const bookingModificationPolicyServiceMock = {
+    getEligibility: vi.fn((_booking: unknown, canAct = true) => ({
+      canEdit: canAct,
+      canCancel: canAct,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    })),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BookingReadService, { provide: DatabaseService, useValue: databaseServiceMock }],
+      providers: [
+        BookingReadService,
+        { provide: DatabaseService, useValue: databaseServiceMock },
+        {
+          provide: BookingModificationPolicyService,
+          useValue: bookingModificationPolicyServiceMock,
+        },
+      ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
@@ -78,10 +94,36 @@ describe("BookingReadService", () => {
 
     expect(result).toEqual({
       CONFIRMED: [
-        { id: "booking-1", status: "CONFIRMED", totalAmount: 15000 },
-        { id: "booking-3", status: "CONFIRMED", totalAmount: 8000 },
+        {
+          id: "booking-1",
+          status: "CONFIRMED",
+          totalAmount: 15000,
+          canEdit: true,
+          canCancel: true,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
+        {
+          id: "booking-3",
+          status: "CONFIRMED",
+          totalAmount: 8000,
+          canEdit: true,
+          canCancel: true,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
       ],
-      COMPLETED: [{ id: "booking-2", status: "COMPLETED", totalAmount: 21000 }],
+      COMPLETED: [
+        {
+          id: "booking-2",
+          status: "COMPLETED",
+          totalAmount: 21000,
+          canEdit: true,
+          canCancel: true,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
+      ],
     });
   });
 
@@ -107,6 +149,10 @@ describe("BookingReadService", () => {
       status: "CONFIRMED",
       totalAmount: 12000,
       legs: [{ id: "leg-1", extensions: [{ id: "ext-1", totalAmount: 2000 }] }],
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
     });
   });
 
@@ -131,6 +177,10 @@ describe("BookingReadService", () => {
       car: {
         ownerId: "owner-1",
       },
+      canEdit: false,
+      canCancel: false,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
     });
     expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({

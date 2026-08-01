@@ -19,13 +19,14 @@ import {
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
-import { CurrentBookingRecord } from "./booking.interface";
+import type { CurrentBookingRecord } from "./booking.interface";
+import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
 
 @Injectable()
 export class BookingUpdateService {
-  private readonly bookingEditWindowMs = 12 * 60 * 60 * 1000;
   private readonly bookingDetailsInclude = {
     car: { include: { owner: true } },
     user: true,
@@ -54,6 +55,7 @@ export class BookingUpdateService {
 
   constructor(
     private readonly bookingValidationService: BookingValidationService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly chauffeurAssignedHandler: ChauffeurAssignedHandler,
@@ -194,10 +196,12 @@ export class BookingUpdateService {
     input: UpdateBookingBodyDto,
   ) {
     const currentBooking = await this.getCurrentBookingForUser(bookingId, userId);
-    this.assertBookingCanBeUpdated(currentBooking);
+    this.bookingModificationPolicyService.assertCanEdit(currentBooking);
 
     const { newStartDate, newEndDate } = this.resolveUpdatedDates(currentBooking, input.pickupTime);
-    this.assertWithinEditWindow(newStartDate ?? currentBooking.startDate);
+    if (newStartDate) {
+      this.bookingModificationPolicyService.assertWithinWindow(newStartDate);
+    }
 
     const { newPickupLocation, newReturnLocation } = this.resolveLocationUpdates(
       currentBooking,
@@ -213,7 +217,8 @@ export class BookingUpdateService {
     };
 
     if (Object.keys(updateData).length === 0) {
-      return this.getBookingDetailsById(currentBooking.id);
+      const booking = await this.getBookingDetailsById(currentBooking.id);
+      return booking ? this.withModificationEligibility(booking) : booking;
     }
 
     return this.databaseService.$transaction(async (tx) => {
@@ -230,7 +235,7 @@ export class BookingUpdateService {
         },
         tx,
       );
-      return updatedBooking;
+      return this.withModificationEligibility(updatedBooking);
     });
   }
 
@@ -264,14 +269,6 @@ export class BookingUpdateService {
     return { newPickupLocation, newReturnLocation };
   }
 
-  private assertWithinEditWindow(effectiveStartDate: Date): void {
-    if (effectiveStartDate.getTime() - Date.now() < this.bookingEditWindowMs) {
-      throw new BookingUpdateNotAllowedException(
-        "Bookings cannot be edited within 12 hours of start time",
-      );
-    }
-  }
-
   private async getCurrentBookingForUser(
     bookingId: string,
     userId: string,
@@ -284,6 +281,7 @@ export class BookingUpdateService {
         carId: true,
         type: true,
         status: true,
+        paymentStatus: true,
         startDate: true,
         endDate: true,
         pickupLocation: true,
@@ -296,12 +294,6 @@ export class BookingUpdateService {
     }
 
     return currentBooking;
-  }
-
-  private assertBookingCanBeUpdated(currentBooking: CurrentBookingRecord): void {
-    if (currentBooking.status !== BookingStatus.CONFIRMED) {
-      throw new BookingUpdateNotAllowedException("Only confirmed bookings can be updated");
-    }
   }
 
   private resolveTargetReturnLocation(
@@ -387,5 +379,12 @@ export class BookingUpdateService {
     newEndDate.setHours(newEndDate.getHours() + durationHours);
 
     return { newStartDate, newEndDate };
+  }
+
+  private withModificationEligibility<T extends BookingModificationPolicyInput>(booking: T) {
+    return {
+      ...booking,
+      ...this.bookingModificationPolicyService.getEligibility(booking),
+    };
   }
 }

@@ -102,6 +102,7 @@ export const envSchema = z
           error: "TIMEZONE must be a valid IANA timezone (e.g., Africa/Lagos, America/New_York)",
         },
       ),
+    BOOKING_MODIFICATION_CUTOFF_HOURS: z.coerce.number().int().positive().default(12),
 
     TWILIO_ACCOUNT_SID: z.string().min(1, "TWILIO_ACCOUNT_SID is required"),
     TWILIO_AUTH_TOKEN: z.string().min(1, "TWILIO_AUTH_TOKEN is required"),

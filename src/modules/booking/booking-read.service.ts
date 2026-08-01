@@ -10,6 +10,8 @@ import {
   BookingNotFoundException,
 } from "./booking.error";
 import type { BookingPaymentStatusResponse } from "./booking.interface";
+import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import type { BookingPaymentStatusQueryDto } from "./dto/get-booking-payment-status.dto";
 
 @Injectable()
@@ -40,6 +42,7 @@ export class BookingReadService {
 
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingReadService.name);
@@ -63,7 +66,9 @@ export class BookingReadService {
         orderBy: { startDate: "asc" },
       });
 
-      const serializedBookings = bookings.map((booking) => this.serializeValue(booking));
+      const serializedBookings = bookings.map((booking) =>
+        this.withModificationEligibility(booking),
+      );
 
       return serializedBookings.reduce<Record<string, unknown[]>>((acc, booking) => {
         const status = booking.status;
@@ -116,7 +121,7 @@ export class BookingReadService {
         throw new BookingNotFoundException();
       }
 
-      return this.serializeValue(booking);
+      return this.withModificationEligibility(booking, booking.userId === sessionUser.id);
     } catch (error) {
       if (error instanceof BookingException) {
         throw error;
@@ -249,5 +254,15 @@ export class BookingReadService {
     }
 
     return value;
+  }
+
+  private withModificationEligibility<T extends BookingModificationPolicyInput>(
+    booking: T,
+    canAct = true,
+  ) {
+    return {
+      ...this.serializeValue(booking),
+      ...this.bookingModificationPolicyService.getEligibility(booking, canAct),
+    };
   }
 }

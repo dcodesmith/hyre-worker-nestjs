@@ -9,10 +9,12 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import {
   BookingChauffeurNotFoundException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 
@@ -49,9 +51,29 @@ describe("BookingUpdateService", () => {
     eventType: "BOOKING_LIFECYCLE" as const,
     buildEvents: vi.fn(),
   };
+  const bookingModificationPolicyServiceMock = {
+    assertCanEdit: vi.fn(),
+    assertWithinWindow: vi.fn(),
+    getEligibility: vi.fn().mockReturnValue({
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    }),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    bookingModificationPolicyServiceMock.assertCanEdit.mockImplementation(
+      (booking: { status: BookingStatus }) => {
+        if (booking.status !== BookingStatus.CONFIRMED) {
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Only confirmed bookings can be edited",
+          );
+        }
+      },
+    );
     databaseServiceMock.$transaction.mockImplementation(
       (callback: (tx: { booking: typeof databaseServiceMock.booking }) => Promise<unknown>) =>
         callback({ booking: databaseServiceMock.booking }),
@@ -63,6 +85,10 @@ describe("BookingUpdateService", () => {
         BookingUpdateService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
+        {
+          provide: BookingModificationPolicyService,
+          useValue: bookingModificationPolicyServiceMock,
+        },
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
         { provide: ChauffeurAssignedHandler, useValue: chauffeurAssignedHandlerMock },
         { provide: BookingUpdatedHandler, useValue: bookingUpdatedHandlerMock },
@@ -136,6 +162,10 @@ describe("BookingUpdateService", () => {
         excludeBookingId: "booking-1",
       }),
     );
+    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
+    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledWith(
+      expect.any(Date),
+    );
   });
 
   it("throws when booking does not exist for user", async () => {
@@ -161,7 +191,7 @@ describe("BookingUpdateService", () => {
 
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
-    ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
   });
 
   it("throws validation error for pickupTime on unsupported booking type", async () => {
@@ -233,7 +263,14 @@ describe("BookingUpdateService", () => {
     });
 
     expect(databaseServiceMock.booking.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ id: "booking-1", paymentStatus: PaymentStatus.PAID });
+    expect(result).toEqual({
+      id: "booking-1",
+      paymentStatus: PaymentStatus.PAID,
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    });
   });
 
   describe("assignChauffeur", () => {

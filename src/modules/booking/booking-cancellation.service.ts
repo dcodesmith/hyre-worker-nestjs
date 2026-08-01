@@ -7,10 +7,10 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import {
   BookingCancellationFailedException,
   BookingException,
-  BookingNotCancellableException,
   BookingNotFoundException,
 } from "./booking.error";
 import { BookingEligibilityService } from "./booking-eligibility.service";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 
 const CANCELLED_BOOKING_REFERRAL_REASON = "BOOKING_CANCELLED";
 
@@ -21,6 +21,7 @@ export class BookingCancellationService {
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingCancellationHandler: BookingCancellationHandler,
     private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCancellationService.name);
@@ -36,6 +37,7 @@ export class BookingCancellationService {
             userId: true,
             status: true,
             paymentStatus: true,
+            startDate: true,
             carId: true,
           },
         });
@@ -44,13 +46,7 @@ export class BookingCancellationService {
           throw new BookingNotFoundException();
         }
 
-        const canCancelBooking =
-          existingBooking.status === BookingStatus.CONFIRMED &&
-          existingBooking.paymentStatus === PaymentStatus.PAID;
-
-        if (!canCancelBooking) {
-          throw new BookingNotCancellableException();
-        }
+        this.bookingModificationPolicyService.assertCanCancel(existingBooking);
 
         const updatedBooking = await tx.booking.update({
           where: { id: bookingId },
@@ -90,7 +86,10 @@ export class BookingCancellationService {
           tx,
         );
 
-        return updatedBooking;
+        return {
+          ...updatedBooking,
+          ...this.bookingModificationPolicyService.getEligibility(updatedBooking),
+        };
       });
 
       return updatedBooking;

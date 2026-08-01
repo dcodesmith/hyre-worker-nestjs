@@ -170,6 +170,7 @@ export type CurrentBookingRecord = {
   carId: string;
   type: BookingType;
   status: BookingStatus;
+  paymentStatus: PaymentStatus;
   startDate: Date;
   endDate: Date;
   pickupLocation: string;

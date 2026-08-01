@@ -7,11 +7,12 @@ import { BookingCancellationHandler } from "../notification/handlers/booking-can
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
   BookingCancellationFailedException,
-  BookingNotCancellableException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 
 describe("BookingCancellationService", () => {
   let service: BookingCancellationService;
@@ -39,9 +40,31 @@ describe("BookingCancellationService", () => {
   const bookingEligibilityServiceMock = {
     reversePendingReferralRewards: vi.fn(),
   };
+  const bookingModificationPolicyServiceMock = {
+    assertCanCancel: vi.fn(),
+    getEligibility: vi.fn().mockReturnValue({
+      canEdit: false,
+      canCancel: false,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    }),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    bookingModificationPolicyServiceMock.assertCanCancel.mockImplementation(
+      (booking: { status: BookingStatus; paymentStatus: PaymentStatus }) => {
+        if (
+          booking.status !== BookingStatus.CONFIRMED ||
+          booking.paymentStatus !== PaymentStatus.PAID
+        ) {
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Only paid confirmed bookings can be cancelled",
+          );
+        }
+      },
+    );
     databaseServiceMock.$transaction.mockImplementation(
       async (callback: (transaction: typeof txMock) => unknown) => callback(txMock),
     );
@@ -53,6 +76,10 @@ describe("BookingCancellationService", () => {
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
         { provide: BookingCancellationHandler, useValue: bookingCancellationHandlerMock },
         { provide: BookingEligibilityService, useValue: bookingEligibilityServiceMock },
+        {
+          provide: BookingModificationPolicyService,
+          useValue: bookingModificationPolicyServiceMock,
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -113,6 +140,7 @@ describe("BookingCancellationService", () => {
       { booking: expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }) },
       txMock,
     );
+    expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledOnce();
   });
 
   it("throws BookingNotFoundException when booking is missing or not owned by user", async () => {
@@ -123,7 +151,7 @@ describe("BookingCancellationService", () => {
     ).rejects.toBeInstanceOf(BookingNotFoundException);
   });
 
-  it("throws BookingNotCancellableException when booking status is not cancellable", async () => {
+  it("throws BookingStatusNotModifiableException when booking status is not cancellable", async () => {
     txMock.booking.findUnique.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -134,7 +162,7 @@ describe("BookingCancellationService", () => {
 
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
-    ).rejects.toBeInstanceOf(BookingNotCancellableException);
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
   });
 
   it("throws BookingCancellationFailedException when transaction fails unexpectedly", async () => {
