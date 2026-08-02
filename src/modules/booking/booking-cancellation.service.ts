@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PaymentStatus, Status } from "@prisma/client";
+import { BookingStatus, PaymentStatus, type Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
@@ -7,10 +7,12 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import {
   BookingCancellationFailedException,
   BookingException,
-  BookingNotCancellableException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
 } from "./booking.error";
 import { BookingEligibilityService } from "./booking-eligibility.service";
+import { getDatabaseNow } from "./booking-modification-policy.helper";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 
 const CANCELLED_BOOKING_REFERRAL_REASON = "BOOKING_CANCELLED";
 
@@ -21,6 +23,7 @@ export class BookingCancellationService {
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingCancellationHandler: BookingCancellationHandler,
     private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCancellationService.name);
@@ -36,6 +39,7 @@ export class BookingCancellationService {
             userId: true,
             status: true,
             paymentStatus: true,
+            startDate: true,
             carId: true,
           },
         });
@@ -44,24 +48,57 @@ export class BookingCancellationService {
           throw new BookingNotFoundException();
         }
 
-        const canCancelBooking =
-          existingBooking.status === BookingStatus.CONFIRMED &&
-          existingBooking.paymentStatus === PaymentStatus.PAID;
+        this.bookingModificationPolicyService.assertCancellableStatus(existingBooking);
 
-        if (!canCancelBooking) {
-          throw new BookingNotCancellableException();
+        const bookingLocked = await this.lockCancellableBookingState(
+          tx,
+          bookingId,
+          userId,
+          existingBooking.startDate,
+        );
+        if (!bookingLocked) {
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Booking state changed during cancellation. Please retry",
+          );
         }
 
-        const updatedBooking = await tx.booking.update({
+        const policyNow = await getDatabaseNow(tx);
+        this.bookingModificationPolicyService.assertCanCancel(existingBooking, policyNow);
+        const modificationCutoffAt = this.bookingModificationPolicyService.getModificationCutoffAt(
+          existingBooking.startDate,
+        );
+        const updated = await tx.$queryRaw<Array<{ id: string }>>`
+          UPDATE "Booking"
+          SET "status" = ${BookingStatus.CANCELLED}::"BookingStatus",
+              "paymentStatus" = ${PaymentStatus.REFUND_PROCESSING}::"PaymentStatus",
+              "cancelledAt" = timezone('UTC', clock_timestamp()),
+              "cancellationReason" = ${reason},
+              "referralCreditsReserved" = 0,
+              "referralCreditsUsed" = 0,
+              "updatedAt" = timezone('UTC', clock_timestamp())
+          WHERE "id" = ${bookingId}
+            AND "userId" = ${userId}
+            AND "status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+            AND "paymentStatus" = ${PaymentStatus.PAID}::"PaymentStatus"
+            AND "startDate" = ${existingBooking.startDate}
+            AND clock_timestamp() < ${modificationCutoffAt}
+          RETURNING "id"
+        `;
+        if (updated.length === 0) {
+          const rejectionNow = await getDatabaseNow(tx);
+          this.bookingModificationPolicyService.assertWithinWindow(
+            existingBooking.startDate,
+            rejectionNow,
+          );
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Booking state changed during cancellation. Please retry",
+          );
+        }
+
+        const updatedBooking = await tx.booking.findUniqueOrThrow({
           where: { id: bookingId },
-          data: {
-            status: BookingStatus.CANCELLED,
-            paymentStatus: PaymentStatus.REFUND_PROCESSING,
-            cancelledAt: new Date(),
-            cancellationReason: reason,
-            referralCreditsReserved: 0,
-            referralCreditsUsed: 0,
-          },
           include: {
             user: true,
             chauffeur: true,
@@ -90,7 +127,15 @@ export class BookingCancellationService {
           tx,
         );
 
-        return updatedBooking;
+        const responseNow = await getDatabaseNow(tx);
+        return {
+          ...updatedBooking,
+          ...this.bookingModificationPolicyService.getEligibility(
+            updatedBooking,
+            true,
+            responseNow,
+          ),
+        };
       });
 
       return updatedBooking;
@@ -110,5 +155,25 @@ export class BookingCancellationService {
       );
       throw new BookingCancellationFailedException();
     }
+  }
+
+  private async lockCancellableBookingState(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    userId: string,
+    startDate: Date,
+  ): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT booking."id"
+      FROM "Booking" AS booking
+      WHERE booking."id" = ${bookingId}
+        AND booking."userId" = ${userId}
+        AND booking."status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND booking."paymentStatus" = ${PaymentStatus.PAID}::"PaymentStatus"
+        AND booking."startDate" = ${startDate}
+      FOR UPDATE OF booking
+    `;
+
+    return rows.length > 0;
   }
 }

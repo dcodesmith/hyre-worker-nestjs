@@ -170,8 +170,20 @@ export type CurrentBookingRecord = {
   carId: string;
   type: BookingType;
   status: BookingStatus;
+  paymentStatus: PaymentStatus;
   startDate: Date;
   endDate: Date;
   pickupLocation: string;
   returnLocation: string;
 };
+
+export interface BookingWindowedUpdateInput {
+  bookingId: string;
+  userId: string;
+  currentStartDate: Date;
+  modificationCutoffAt: Date;
+  newStartDate?: Date;
+  newEndDate?: Date;
+  newPickupLocation?: string;
+  newReturnLocation?: string;
+}

@@ -10,6 +10,9 @@ import {
   BookingNotFoundException,
 } from "./booking.error";
 import type { BookingPaymentStatusResponse } from "./booking.interface";
+import { getDatabaseNow } from "./booking-modification-policy.helper";
+import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import type { BookingPaymentStatusQueryDto } from "./dto/get-booking-payment-status.dto";
 
 @Injectable()
@@ -40,6 +43,7 @@ export class BookingReadService {
 
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingReadService.name);
@@ -63,7 +67,10 @@ export class BookingReadService {
         orderBy: { startDate: "asc" },
       });
 
-      const serializedBookings = bookings.map((booking) => this.serializeValue(booking));
+      const policyNow = await getDatabaseNow(this.databaseService);
+      const serializedBookings = bookings.map((booking) =>
+        this.withModificationEligibility(booking, true, policyNow),
+      );
 
       return serializedBookings.reduce<Record<string, unknown[]>>((acc, booking) => {
         const status = booking.status;
@@ -116,7 +123,12 @@ export class BookingReadService {
         throw new BookingNotFoundException();
       }
 
-      return this.serializeValue(booking);
+      const policyNow = await getDatabaseNow(this.databaseService);
+      return this.withModificationEligibility(
+        booking,
+        booking.userId === sessionUser.id,
+        policyNow,
+      );
     } catch (error) {
       if (error instanceof BookingException) {
         throw error;
@@ -249,5 +261,16 @@ export class BookingReadService {
     }
 
     return value;
+  }
+
+  private withModificationEligibility<T extends BookingModificationPolicyInput>(
+    booking: T,
+    canAct: boolean,
+    now: Date,
+  ) {
+    return {
+      ...this.serializeValue(booking),
+      ...this.bookingModificationPolicyService.getEligibility(booking, canAct, now),
+    };
   }
 }

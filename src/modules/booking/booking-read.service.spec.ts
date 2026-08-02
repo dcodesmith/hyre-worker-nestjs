@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingFetchFailedException, BookingNotFoundException } from "./booking.error";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingReadService } from "./booking-read.service";
 
 describe("BookingReadService", () => {
   let service: BookingReadService;
+  const policyNow = new Date("2026-08-01T23:59:59.999Z");
   const customerSessionUser = {
     id: "user-1",
     email: "user@example.com",
@@ -42,12 +44,32 @@ describe("BookingReadService", () => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    $queryRaw: vi.fn(),
+  };
+  const bookingModificationPolicyServiceMock = {
+    getEligibility: vi.fn((booking: { status: string }, canAct = true, _now?: Date) => {
+      const canModify = canAct && booking.status === "CONFIRMED";
+      return {
+        canEdit: canModify,
+        canCancel: canModify,
+        modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+        policyHoursBeforeStart: 12,
+      };
+    }),
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ policyNow }]);
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BookingReadService, { provide: DatabaseService, useValue: databaseServiceMock }],
+      providers: [
+        BookingReadService,
+        { provide: DatabaseService, useValue: databaseServiceMock },
+        {
+          provide: BookingModificationPolicyService,
+          useValue: bookingModificationPolicyServiceMock,
+        },
+      ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
@@ -78,11 +100,42 @@ describe("BookingReadService", () => {
 
     expect(result).toEqual({
       CONFIRMED: [
-        { id: "booking-1", status: "CONFIRMED", totalAmount: 15000 },
-        { id: "booking-3", status: "CONFIRMED", totalAmount: 8000 },
+        {
+          id: "booking-1",
+          status: "CONFIRMED",
+          totalAmount: 15000,
+          canEdit: true,
+          canCancel: true,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
+        {
+          id: "booking-3",
+          status: "CONFIRMED",
+          totalAmount: 8000,
+          canEdit: true,
+          canCancel: true,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
       ],
-      COMPLETED: [{ id: "booking-2", status: "COMPLETED", totalAmount: 21000 }],
+      COMPLETED: [
+        {
+          id: "booking-2",
+          status: "COMPLETED",
+          totalAmount: 21000,
+          canEdit: false,
+          canCancel: false,
+          modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+          policyHoursBeforeStart: 12,
+        },
+      ],
     });
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-1" }),
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the requesting user", async () => {
@@ -107,7 +160,16 @@ describe("BookingReadService", () => {
       status: "CONFIRMED",
       totalAmount: 12000,
       legs: [{ id: "leg-1", extensions: [{ id: "ext-1", totalAmount: 2000 }] }],
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
     });
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-123" }),
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the fleet owner that owns the booked car", async () => {
@@ -131,6 +193,10 @@ describe("BookingReadService", () => {
       car: {
         ownerId: "owner-1",
       },
+      canEdit: false,
+      canCancel: false,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
     });
     expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -139,6 +205,11 @@ describe("BookingReadService", () => {
           OR: [{ car: { ownerId: "owner-1" } }],
         },
       }),
+    );
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-123" }),
+      false,
+      policyNow,
     );
   });
 

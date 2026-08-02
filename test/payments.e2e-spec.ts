@@ -225,7 +225,13 @@ describe("Payments E2E Tests", () => {
     });
 
     it("initiates a refund after cancellation marks the booking as refund processing", async () => {
-      const booking = await factory.createBookingWithDependencies(testUserId);
+      const futureStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const booking = await factory.createBookingWithDependencies(testUserId, {
+        booking: {
+          startDate: futureStart,
+          endDate: new Date(futureStart.getTime() + 12 * 60 * 60 * 1000),
+        },
+      });
       await databaseService.booking.update({
         where: { id: booking.id },
         data: {

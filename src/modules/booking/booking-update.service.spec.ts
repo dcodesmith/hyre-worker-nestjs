@@ -9,12 +9,25 @@ import { NotificationOutboxService } from "../notification/notification-outbox.s
 import {
   BookingChauffeurNotFoundException,
   BookingNotFoundException,
+  BookingOutsideModificationWindowException,
+  BookingStatusNotModifiableException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
+
+function getQueryText(query: unknown): string {
+  if (Array.isArray(query)) {
+    return query.join("");
+  }
+  if (query && typeof query === "object" && "strings" in query) {
+    return (query as { strings: string[] }).strings.join("");
+  }
+  return String(query);
+}
 
 describe("BookingUpdateService", () => {
   let service: BookingUpdateService;
@@ -23,11 +36,12 @@ describe("BookingUpdateService", () => {
     booking: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
-      update: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     user: {
       findFirst: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
 
@@ -49,13 +63,80 @@ describe("BookingUpdateService", () => {
     eventType: "BOOKING_LIFECYCLE" as const,
     buildEvents: vi.fn(),
   };
+  const bookingModificationPolicyServiceMock = {
+    assertEditableStatus: vi.fn(),
+    assertCanEdit: vi.fn(),
+    assertWithinWindow: vi.fn(),
+    getModificationCutoffAt: vi.fn(
+      (startDate: Date) => new Date(startDate.getTime() - 12 * 60 * 60 * 1000),
+    ),
+    getEligibility: vi.fn().mockReturnValue({
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    }),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    databaseServiceMock.$transaction.mockImplementation(
-      (callback: (tx: { booking: typeof databaseServiceMock.booking }) => Promise<unknown>) =>
-        callback({ booking: databaseServiceMock.booking }),
+    bookingModificationPolicyServiceMock.assertEditableStatus.mockImplementation(
+      (booking: { status: BookingStatus }) => {
+        if (booking.status !== BookingStatus.CONFIRMED) {
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Only confirmed bookings can be edited",
+          );
+        }
+      },
     );
+    bookingModificationPolicyServiceMock.assertCanEdit.mockImplementation(
+      (booking: { status: BookingStatus; startDate: Date }, now = new Date()) => {
+        if (booking.status !== BookingStatus.CONFIRMED) {
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Only confirmed bookings can be edited",
+          );
+        }
+        if (now.getTime() >= booking.startDate.getTime() - 12 * 60 * 60 * 1000) {
+          throw new BookingOutsideModificationWindowException(
+            new Date(booking.startDate.getTime() - 12 * 60 * 60 * 1000),
+            12,
+          );
+        }
+      },
+    );
+    bookingModificationPolicyServiceMock.assertWithinWindow.mockImplementation(
+      (startDate: Date, now = new Date()) => {
+        if (now.getTime() >= startDate.getTime() - 12 * 60 * 60 * 1000) {
+          throw new BookingOutsideModificationWindowException(
+            new Date(startDate.getTime() - 12 * 60 * 60 * 1000),
+            12,
+          );
+        }
+      },
+    );
+    databaseServiceMock.$transaction.mockImplementation(
+      (
+        callback: (tx: {
+          booking: typeof databaseServiceMock.booking;
+          $queryRaw: typeof databaseServiceMock.$queryRaw;
+        }) => Promise<unknown>,
+      ) =>
+        callback({
+          booking: databaseServiceMock.booking,
+          $queryRaw: databaseServiceMock.$queryRaw,
+        }),
+    );
+    databaseServiceMock.$queryRaw.mockImplementation((query: unknown) => {
+      const queryText = getQueryText(query);
+      if (queryText.includes('UPDATE "Booking"')) {
+        return [{ id: "booking-1" }];
+      }
+      return queryText.includes('SELECT clock_timestamp() AS "policyNow"')
+        ? [{ policyNow: new Date() }]
+        : [{ id: "booking-1" }];
+    });
     notificationOutboxServiceMock.create.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -63,6 +144,10 @@ describe("BookingUpdateService", () => {
         BookingUpdateService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
+        {
+          provide: BookingModificationPolicyService,
+          useValue: bookingModificationPolicyServiceMock,
+        },
         { provide: NotificationOutboxService, useValue: notificationOutboxServiceMock },
         { provide: ChauffeurAssignedHandler, useValue: chauffeurAssignedHandlerMock },
         { provide: BookingUpdatedHandler, useValue: bookingUpdatedHandlerMock },
@@ -75,6 +160,8 @@ describe("BookingUpdateService", () => {
   });
 
   it("updates booking pickup location", async () => {
+    const policyNow = new Date("2026-08-01T23:59:58.000Z");
+    const responseNow = new Date("2026-08-01T23:59:59.000Z");
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -86,19 +173,35 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow }])
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow: responseNow }]);
 
     await service.updateBooking("booking-1", "user-1", {
       pickupAddress: "New pickup",
     });
 
-    expect(databaseServiceMock.booking.update).toHaveBeenCalledWith(
+    const updateQuery = databaseServiceMock.$queryRaw.mock.calls.find(([query]) =>
+      getQueryText(query).includes('UPDATE "Booking"'),
+    )?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
+    expect(updateQuery).toEqual(
       expect.objectContaining({
-        where: { id: "booking-1" },
-        data: expect.objectContaining({
-          pickupLocation: "New pickup",
-        }),
+        values: expect.arrayContaining([
+          "booking-1",
+          "user-1",
+          BookingStatus.CONFIRMED,
+          "New pickup",
+        ]),
       }),
+    );
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      { id: "booking-1" },
+      true,
+      responseNow,
     );
     expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
       bookingUpdatedHandlerMock,
@@ -106,7 +209,10 @@ describe("BookingUpdateService", () => {
         booking: { id: "booking-1" },
         actor: { type: "user", userId: "user-1" },
       },
-      { booking: databaseServiceMock.booking },
+      {
+        booking: databaseServiceMock.booking,
+        $queryRaw: databaseServiceMock.$queryRaw,
+      },
     );
   });
 
@@ -123,7 +229,7 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
 
     await service.updateBooking("booking-1", "user-1", {
       pickupTime: "10:30 AM",
@@ -136,6 +242,8 @@ describe("BookingUpdateService", () => {
         excludeBookingId: "booking-1",
       }),
     );
+    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
+    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();
   });
 
   it("throws when booking does not exist for user", async () => {
@@ -161,7 +269,54 @@ describe("BookingUpdateService", () => {
 
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
-    ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+  });
+
+  it("rejects the update when booking state changes before persistence", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 36 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([]);
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
+    ).rejects.toBeInstanceOf(BookingStatusNotModifiableException);
+    expect(databaseServiceMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("rejects the update when the database cutoff expires inside the guarded write", async () => {
+    const startDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const modificationCutoffAt = new Date(startDate.getTime() - 12 * 60 * 60 * 1000);
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate,
+      endDate: new Date(startDate.getTime() + 12 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow: new Date(modificationCutoffAt.getTime() - 1) }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ policyNow: modificationCutoffAt }]);
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
+    ).rejects.toBeInstanceOf(BookingOutsideModificationWindowException);
+    const updateQuery = databaseServiceMock.$queryRaw.mock.calls[2]?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
   });
 
   it("throws validation error for pickupTime on unsupported booking type", async () => {
@@ -202,7 +357,7 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.update.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
     notificationOutboxServiceMock.create.mockRejectedValueOnce(new Error("Outbox unavailable"));
 
     await expect(
@@ -211,6 +366,7 @@ describe("BookingUpdateService", () => {
   });
 
   it("returns current booking when no changes detected", async () => {
+    const policyNow = new Date("2026-08-01T23:59:59.999Z");
     const baseBooking = {
       id: "booking-1",
       userId: "user-1",
@@ -227,13 +383,30 @@ describe("BookingUpdateService", () => {
       id: "booking-1",
       paymentStatus: PaymentStatus.PAID,
     });
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([{ policyNow }]);
 
     const result = await service.updateBooking("booking-1", "user-1", {
       pickupAddress: "Old pickup",
     });
 
-    expect(databaseServiceMock.booking.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ id: "booking-1", paymentStatus: PaymentStatus.PAID });
+    expect(
+      databaseServiceMock.$queryRaw.mock.calls.some(([query]) =>
+        getQueryText(query).includes('UPDATE "Booking"'),
+      ),
+    ).toBe(false);
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-1" }),
+      true,
+      policyNow,
+    );
+    expect(result).toEqual({
+      id: "booking-1",
+      paymentStatus: PaymentStatus.PAID,
+      canEdit: true,
+      canCancel: true,
+      modificationCutoffAt: "2026-08-02T00:00:00.000Z",
+      policyHoursBeforeStart: 12,
+    });
   });
 
   describe("assignChauffeur", () => {

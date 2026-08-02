@@ -187,9 +187,12 @@ describe("Bookings E2E Tests", () => {
     });
 
     it("should return bookings grouped by status for authenticated user", async () => {
-      await factory.createBooking(testUserId, testCarId, {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
+      const booking = await factory.createBooking(testUserId, testCarId, {
         status: "CONFIRMED",
         paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
       });
 
       const response = await request(app.getHttpServer())
@@ -200,6 +203,17 @@ describe("Bookings E2E Tests", () => {
       expect(response.body).toBeTypeOf("object");
       expect(response.body.CONFIRMED).toBeInstanceOf(Array);
       expect(response.body.CONFIRMED.length).toBeGreaterThanOrEqual(1);
+      const listedBooking = response.body.CONFIRMED.find(
+        (item: { id: string }) => item.id === booking.id,
+      );
+      expect(listedBooking).toMatchObject({
+        canEdit: true,
+        canCancel: true,
+        policyHoursBeforeStart: 12,
+      });
+      expect(listedBooking.modificationCutoffAt).toBe(
+        new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+      );
     });
 
     it("should not return another user's bookings", async () => {
@@ -230,9 +244,12 @@ describe("Bookings E2E Tests", () => {
     });
 
     it("should return booking details for the owner", async () => {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
       const booking = await factory.createBooking(testUserId, testCarId, {
         status: "CONFIRMED",
         paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
       });
 
       const response = await request(app.getHttpServer())
@@ -241,6 +258,12 @@ describe("Bookings E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body.id).toBe(booking.id);
+      expect(response.body).toMatchObject({
+        canEdit: true,
+        canCancel: true,
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
     });
 
     it("should return 404 for non-existent booking", async () => {
@@ -292,6 +315,52 @@ describe("Bookings E2E Tests", () => {
         .send({ pickupAddress: "456 Updated St, Lagos" });
 
       expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toMatchObject({
+        canEdit: true,
+        canCancel: true,
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
+    });
+
+    it("should reject updates outside the modification window", async () => {
+      const futureStart = new Date(Date.now() + 6 * 60 * 60 * 1000);
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ pickupAddress: "Too Late Address" });
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+      expect(response.body.errorCode).toBe("BOOKING_OUTSIDE_MODIFICATION_WINDOW");
+      expect(response.body.details).toEqual({
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
+    });
+
+    it("should reject updates for non-confirmed bookings", async () => {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "ACTIVE",
+        paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie)
+        .send({ pickupAddress: "Not Allowed Address" });
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+      expect(response.body.errorCode).toBe("BOOKING_STATUS_NOT_MODIFIABLE");
     });
 
     it("should return 400 for empty update body", async () => {
@@ -334,9 +403,12 @@ describe("Bookings E2E Tests", () => {
     });
 
     it("should cancel a confirmed booking", async () => {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
       const booking = await factory.createBooking(testUserId, testCarId, {
         status: "CONFIRMED",
         paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
       });
       const referrer = await factory.createUser({
         email: uniqueEmail("cancelled-booking-referrer"),
@@ -373,6 +445,12 @@ describe("Bookings E2E Tests", () => {
         .send({ reason: "Plans changed" });
 
       expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toMatchObject({
+        canEdit: false,
+        canCancel: false,
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
 
       const cancelled = await factory.getBookingById(booking.id);
       expect(cancelled?.status).toBe("CANCELLED");
@@ -389,6 +467,46 @@ describe("Bookings E2E Tests", () => {
       });
       expect(stats.totalReferrals).toBe(0);
       expect(stats.totalRewardsPending.toString()).toBe("0");
+    });
+
+    it("should reject cancellation outside the modification window", async () => {
+      const futureStart = new Date(Date.now() + 6 * 60 * 60 * 1000);
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}/cancel`)
+        .set("Cookie", testUserCookie)
+        .send({ reason: "Too late" });
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+      expect(response.body.errorCode).toBe("BOOKING_OUTSIDE_MODIFICATION_WINDOW");
+      expect(response.body.details).toEqual({
+        modificationCutoffAt: new Date(futureStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+        policyHoursBeforeStart: 12,
+      });
+    });
+
+    it("should reject cancellation for non-confirmed bookings", async () => {
+      const futureStart = new Date(Date.now() + 86400000 * 3);
+      const booking = await factory.createBooking(testUserId, testCarId, {
+        status: "ACTIVE",
+        paymentStatus: "PAID",
+        startDate: futureStart,
+        endDate: new Date(futureStart.getTime() + 43200000),
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/bookings/${booking.id}/cancel`)
+        .set("Cookie", testUserCookie)
+        .send({ reason: "Not allowed" });
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+      expect(response.body.errorCode).toBe("BOOKING_STATUS_NOT_MODIFIABLE");
     });
 
     it("should return 404 when cancelling another user's booking", async () => {

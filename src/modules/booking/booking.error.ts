@@ -20,6 +20,8 @@ export const BookingErrorCode = {
   BOOKING_UPDATE_FAILED: "BOOKING_UPDATE_FAILED",
   BOOKING_UPDATE_NOT_ALLOWED: "BOOKING_UPDATE_NOT_ALLOWED",
   BOOKING_NOT_CANCELLABLE: "BOOKING_NOT_CANCELLABLE",
+  BOOKING_OUTSIDE_MODIFICATION_WINDOW: "BOOKING_OUTSIDE_MODIFICATION_WINDOW",
+  BOOKING_STATUS_NOT_MODIFIABLE: "BOOKING_STATUS_NOT_MODIFIABLE",
   BOOKING_CANCELLATION_FAILED: "BOOKING_CANCELLATION_FAILED",
   BOOKING_PAYMENT_SYNC_FAILED: "BOOKING_PAYMENT_SYNC_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
@@ -192,6 +194,32 @@ export class BookingNotCancellableException extends BookingException {
       HttpStatus.CONFLICT,
       { title: "Booking Not Cancellable" },
     );
+  }
+}
+
+export class BookingOutsideModificationWindowException extends BookingException {
+  constructor(modificationCutoffAt: Date, policyHoursBeforeStart: number) {
+    super(
+      BookingErrorCode.BOOKING_OUTSIDE_MODIFICATION_WINDOW,
+      `Bookings cannot be modified within ${policyHoursBeforeStart} hours of the start time`,
+      HttpStatus.CONFLICT,
+      {
+        title: "Booking Modification Window Closed",
+        details: {
+          modificationCutoffAt: modificationCutoffAt.toISOString(),
+          policyHoursBeforeStart,
+        },
+      },
+    );
+  }
+}
+
+export class BookingStatusNotModifiableException extends BookingException {
+  constructor(action: "edit" | "cancel", detail: string) {
+    super(BookingErrorCode.BOOKING_STATUS_NOT_MODIFIABLE, detail, HttpStatus.CONFLICT, {
+      title: "Booking Status Not Modifiable",
+      details: { action },
+    });
   }
 }
 

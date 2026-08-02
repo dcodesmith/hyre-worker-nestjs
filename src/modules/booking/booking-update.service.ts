@@ -4,6 +4,7 @@ import {
   type BookingType,
   ChauffeurApprovalStatus,
   PaymentStatus,
+  Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
@@ -15,17 +16,20 @@ import {
   BookingChauffeurNotFoundException,
   BookingException,
   BookingNotFoundException,
+  BookingStatusNotModifiableException,
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
-import { CurrentBookingRecord } from "./booking.interface";
+import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
+import { getDatabaseNow } from "./booking-modification-policy.helper";
+import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
+import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
 
 @Injectable()
 export class BookingUpdateService {
-  private readonly bookingEditWindowMs = 12 * 60 * 60 * 1000;
   private readonly bookingDetailsInclude = {
     car: { include: { owner: true } },
     user: true,
@@ -54,6 +58,7 @@ export class BookingUpdateService {
 
   constructor(
     private readonly bookingValidationService: BookingValidationService,
+    private readonly bookingModificationPolicyService: BookingModificationPolicyService,
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly chauffeurAssignedHandler: ChauffeurAssignedHandler,
@@ -194,10 +199,9 @@ export class BookingUpdateService {
     input: UpdateBookingBodyDto,
   ) {
     const currentBooking = await this.getCurrentBookingForUser(bookingId, userId);
-    this.assertBookingCanBeUpdated(currentBooking);
+    this.bookingModificationPolicyService.assertEditableStatus(currentBooking);
 
     const { newStartDate, newEndDate } = this.resolveUpdatedDates(currentBooking, input.pickupTime);
-    this.assertWithinEditWindow(newStartDate ?? currentBooking.startDate);
 
     const { newPickupLocation, newReturnLocation } = this.resolveLocationUpdates(
       currentBooking,
@@ -213,13 +217,59 @@ export class BookingUpdateService {
     };
 
     if (Object.keys(updateData).length === 0) {
-      return this.getBookingDetailsById(currentBooking.id);
+      const policyNow = await getDatabaseNow(this.databaseService);
+      this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
+      const booking = await this.getBookingDetailsById(currentBooking.id);
+      return booking ? this.withModificationEligibility(booking, policyNow) : booking;
     }
 
     return this.databaseService.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
+      const bookingLocked = await this.lockEditableBookingState(
+        tx,
+        bookingId,
+        userId,
+        currentBooking.startDate,
+      );
+      if (!bookingLocked) {
+        throw new BookingStatusNotModifiableException(
+          "edit",
+          "Booking state changed during the update. Please retry",
+        );
+      }
+
+      const policyNow = await getDatabaseNow(tx);
+      this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
+      if (newStartDate) {
+        this.bookingModificationPolicyService.assertWithinWindow(newStartDate, policyNow);
+      }
+
+      const effectiveStartDate =
+        newStartDate && newStartDate < currentBooking.startDate
+          ? newStartDate
+          : currentBooking.startDate;
+      const modificationCutoffAt =
+        this.bookingModificationPolicyService.getModificationCutoffAt(effectiveStartDate);
+      const updated = await this.updateBookingWithinWindow(tx, {
+        bookingId,
+        userId,
+        currentStartDate: currentBooking.startDate,
+        modificationCutoffAt,
+        newStartDate,
+        newEndDate,
+        newPickupLocation,
+        newReturnLocation,
+      });
+      if (!updated) {
+        const rejectionNow = await getDatabaseNow(tx);
+        this.bookingModificationPolicyService.assertWithinWindow(effectiveStartDate, rejectionNow);
+        throw new BookingStatusNotModifiableException(
+          "edit",
+          "Booking state changed during the update. Please retry",
+        );
+      }
+
+      const updatedBooking = await tx.booking.findUniqueOrThrow({
         where: { id: bookingId },
-        data: updateData,
         include: this.bookingDetailsInclude,
       });
       await this.notificationOutboxService.create(
@@ -230,8 +280,60 @@ export class BookingUpdateService {
         },
         tx,
       );
-      return updatedBooking;
+      const responseNow = await getDatabaseNow(tx);
+      return this.withModificationEligibility(updatedBooking, responseNow);
     });
+  }
+
+  private async updateBookingWithinWindow(
+    tx: Prisma.TransactionClient,
+    input: BookingWindowedUpdateInput,
+  ): Promise<boolean> {
+    const assignments = [Prisma.sql`"updatedAt" = timezone('UTC', clock_timestamp())`];
+    if (input.newStartDate) {
+      assignments.push(Prisma.sql`"startDate" = ${input.newStartDate}`);
+    }
+    if (input.newEndDate) {
+      assignments.push(Prisma.sql`"endDate" = ${input.newEndDate}`);
+    }
+    if (input.newPickupLocation) {
+      assignments.push(Prisma.sql`"pickupLocation" = ${input.newPickupLocation}`);
+    }
+    if (input.newReturnLocation) {
+      assignments.push(Prisma.sql`"returnLocation" = ${input.newReturnLocation}`);
+    }
+
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      UPDATE "Booking"
+      SET ${Prisma.join(assignments, ", ")}
+      WHERE "id" = ${input.bookingId}
+        AND "userId" = ${input.userId}
+        AND "status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND "startDate" = ${input.currentStartDate}
+        AND clock_timestamp() < ${input.modificationCutoffAt}
+      RETURNING "id"
+    `);
+
+    return rows.length > 0;
+  }
+
+  private async lockEditableBookingState(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    userId: string,
+    currentStartDate: Date,
+  ): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT booking."id"
+      FROM "Booking" AS booking
+      WHERE booking."id" = ${bookingId}
+        AND booking."userId" = ${userId}
+        AND booking."status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND booking."startDate" = ${currentStartDate}
+      FOR UPDATE OF booking
+    `;
+
+    return rows.length > 0;
   }
 
   private getBookingDetailsById(bookingId: string) {
@@ -264,14 +366,6 @@ export class BookingUpdateService {
     return { newPickupLocation, newReturnLocation };
   }
 
-  private assertWithinEditWindow(effectiveStartDate: Date): void {
-    if (effectiveStartDate.getTime() - Date.now() < this.bookingEditWindowMs) {
-      throw new BookingUpdateNotAllowedException(
-        "Bookings cannot be edited within 12 hours of start time",
-      );
-    }
-  }
-
   private async getCurrentBookingForUser(
     bookingId: string,
     userId: string,
@@ -284,6 +378,7 @@ export class BookingUpdateService {
         carId: true,
         type: true,
         status: true,
+        paymentStatus: true,
         startDate: true,
         endDate: true,
         pickupLocation: true,
@@ -296,12 +391,6 @@ export class BookingUpdateService {
     }
 
     return currentBooking;
-  }
-
-  private assertBookingCanBeUpdated(currentBooking: CurrentBookingRecord): void {
-    if (currentBooking.status !== BookingStatus.CONFIRMED) {
-      throw new BookingUpdateNotAllowedException("Only confirmed bookings can be updated");
-    }
   }
 
   private resolveTargetReturnLocation(
@@ -387,5 +476,15 @@ export class BookingUpdateService {
     newEndDate.setHours(newEndDate.getHours() + durationHours);
 
     return { newStartDate, newEndDate };
+  }
+
+  private withModificationEligibility<T extends BookingModificationPolicyInput>(
+    booking: T,
+    now: Date,
+  ) {
+    return {
+      ...booking,
+      ...this.bookingModificationPolicyService.getEligibility(booking, true, now),
+    };
   }
 }
