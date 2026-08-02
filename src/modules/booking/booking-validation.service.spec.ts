@@ -581,7 +581,7 @@ describe("BookingValidationService", () => {
       );
     });
 
-    it("should check paid bookings and active ten-minute pending holds", async () => {
+    it("should check paid bookings and every pending reservation", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -610,7 +610,6 @@ describe("BookingValidationService", () => {
               {
                 paymentStatus: PaymentStatus.UNPAID,
                 status: BookingStatus.PENDING,
-                createdAt: { gte: expect.any(Date) },
               },
             ],
           }),

@@ -36,18 +36,18 @@ export class RatesService {
    * Rates are cached for 5 minutes to reduce database load.
    * Throws an error if any required rate is not found.
    */
-  async getRates(database?: Prisma.TransactionClient): Promise<PlatformRates> {
+  async getRates(tx?: Prisma.TransactionClient): Promise<PlatformRates> {
     const now = Date.now();
 
     // Return cached data if still valid
-    if (!database && this.cache.data && now - this.cache.timestamp < this.CACHE_TTL_MS) {
+    if (!tx && this.cache.data && now - this.cache.timestamp < this.CACHE_TTL_MS) {
       this.logger.debug("Returning cached rates");
       return this.cache.data;
     }
 
     this.logger.debug("Fetching rates from database");
     const currentDate = new Date();
-    const reader = database ?? this.databaseService;
+    const reader = tx ?? this.databaseService;
 
     // Run all rate queries in parallel for better performance
     const [platformRates, vatRate, securityDetailAddonRate] = await Promise.all([
@@ -106,7 +106,7 @@ export class RatesService {
       securityDetailRate: securityDetailAddonRate.rateAmount,
     };
 
-    if (!database) {
+    if (!tx) {
       this.cache.data = result;
       this.cache.timestamp = now;
     }

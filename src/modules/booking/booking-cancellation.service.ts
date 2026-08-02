@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, type Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
@@ -49,6 +49,10 @@ export class BookingCancellationService {
         }
 
         this.bookingModificationPolicyService.assertCancellableStatus(existingBooking);
+        const carExists = await lockCarRow(tx, existingBooking.carId);
+        if (!carExists) {
+          throw new BookingNotFoundException();
+        }
 
         const bookingLocked = await this.lockCancellableBookingState(
           tx,

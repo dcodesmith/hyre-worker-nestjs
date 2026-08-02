@@ -298,8 +298,16 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    paymentStatus: PaymentStatus.PAID,
-                    status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+                    OR: [
+                      {
+                        paymentStatus: PaymentStatus.PAID,
+                        status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+                      },
+                      {
+                        paymentStatus: PaymentStatus.UNPAID,
+                        status: BookingStatus.PENDING,
+                      },
+                    ],
                   }),
                 },
               }),

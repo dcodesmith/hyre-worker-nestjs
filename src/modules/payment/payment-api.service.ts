@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
+import { PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import {
+  BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
+} from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -88,7 +92,20 @@ export class PaymentApiService {
         entityId: dto.entityId,
         userId: user.id,
       },
+      ...(dto.type === "booking" && {
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+      }),
     });
+
+    if (dto.type === "booking") {
+      await this.databaseService.booking.update({
+        where: { id: dto.entityId },
+        data: {
+          paymentIntent: paymentIntent.paymentIntentId,
+          paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
+        },
+      });
+    }
 
     this.logger.info(
       {
@@ -170,48 +187,6 @@ export class PaymentApiService {
     const transactionId = payment.flutterwaveTransactionId;
 
     return this.executeRefund(txRef, payment.id, transactionId, dto.amount, idempotencyKey);
-  }
-
-  async refundBookingForAvailabilityConflict(txRef: string): Promise<void> {
-    const payment = await this.fetchPaymentForRefund(txRef);
-    if (
-      payment.status === PaymentAttemptStatus.REFUND_PROCESSING ||
-      payment.status === PaymentAttemptStatus.REFUND_ERROR ||
-      payment.status === PaymentAttemptStatus.REFUNDED ||
-      payment.status === PaymentAttemptStatus.PARTIALLY_REFUNDED
-    ) {
-      return;
-    }
-    if (
-      payment.status !== PaymentAttemptStatus.SUCCESSFUL ||
-      !payment.bookingId ||
-      payment.extensionId
-    ) {
-      throw new RefundDomainStateMismatchException(payment.id);
-    }
-    if (!payment.amountCharged) {
-      throw new RefundChargedAmountMissingException(payment.id);
-    }
-    if (!payment.flutterwaveTransactionId) {
-      throw new RefundProviderReferenceMissingException(payment.id);
-    }
-
-    const amount = payment.amountCharged.toNumber();
-    const idempotencyKey =
-      payment.refundIdempotencyKey ?? `refund_availability_conflict_${payment.id}`;
-    await this.reserveAvailabilityConflictRefund(
-      payment.id,
-      payment.bookingId,
-      amount,
-      idempotencyKey,
-    );
-    await this.executeRefund(
-      txRef,
-      payment.id,
-      payment.flutterwaveTransactionId,
-      amount,
-      idempotencyKey,
-    );
   }
 
   private async fetchPaymentForRefund(txRef: string) {
@@ -354,49 +329,6 @@ export class PaymentApiService {
 
     if (!reserved) {
       throw new RefundReservationConflictException(payment.id);
-    }
-  }
-
-  private async reserveAvailabilityConflictRefund(
-    paymentId: string,
-    bookingId: string,
-    amount: number,
-    idempotencyKey: string,
-  ): Promise<void> {
-    const reserved = await this.databaseService.$transaction(async (tx) => {
-      const paymentUpdate = await tx.payment.updateMany({
-        where: { id: paymentId, status: PaymentAttemptStatus.SUCCESSFUL },
-        data: {
-          status: PaymentAttemptStatus.REFUND_PROCESSING,
-          refundIdempotencyKey: idempotencyKey,
-          refundRequestedAmount: amount,
-          refundRequestedAt: new Date(),
-          refundReconciliationAttempts: 0,
-          refundVerificationFailures: 0,
-          refundManualReviewNotifiedAt: null,
-        },
-      });
-      if (paymentUpdate.count === 0) return false;
-
-      const bookingUpdate = await tx.booking.updateMany({
-        where: {
-          id: bookingId,
-          status: BookingStatus.PENDING,
-          paymentStatus: PaymentStatus.UNPAID,
-        },
-        data: {
-          status: BookingStatus.REJECTED,
-          paymentStatus: PaymentStatus.REFUND_PROCESSING,
-        },
-      });
-      if (bookingUpdate.count !== 1) {
-        throw new RefundDomainStateMismatchException(paymentId);
-      }
-      return true;
-    });
-
-    if (!reserved) {
-      throw new RefundReservationConflictException(paymentId);
     }
   }
 
@@ -553,7 +485,15 @@ export class PaymentApiService {
   private async validateBookingForPayment(entityId: string, userId: string): Promise<number> {
     const booking = await this.databaseService.booking.findUnique({
       where: { id: entityId },
-      select: { id: true, userId: true, status: true, paymentStatus: true, totalAmount: true },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        paymentStatus: true,
+        totalAmount: true,
+        paymentIntent: true,
+        paymentSessionExpiresAt: true,
+      },
     });
 
     if (!booking) {
@@ -581,6 +521,20 @@ export class PaymentApiService {
         "booking",
         entityId,
         `payment status is ${booking.paymentStatus.toLowerCase()}`,
+      );
+    }
+    if (booking.paymentSessionExpiresAt && booking.paymentSessionExpiresAt <= new Date()) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        "payment session has expired",
+      );
+    }
+    if (booking.paymentIntent) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        "payment session is already initialized",
       );
     }
 

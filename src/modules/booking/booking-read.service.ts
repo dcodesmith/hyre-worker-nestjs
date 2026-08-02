@@ -167,6 +167,7 @@ export class BookingReadService {
           userId: true,
           guestUser: true,
           totalAmount: true,
+          paymentSessionExpiresAt: true,
         },
       });
 
@@ -204,6 +205,7 @@ export class BookingReadService {
         paymentId: booking.paymentId ?? null,
         totalAmount: booking.totalAmount.toNumber(),
         isConfirmed,
+        reservationExpiresAt: booking.paymentSessionExpiresAt?.toISOString() ?? null,
       };
     } catch (error) {
       if (error instanceof BookingException) {

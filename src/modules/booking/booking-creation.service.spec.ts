@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -24,6 +24,7 @@ import { MapsService } from "../maps/maps.service";
 import {
   BookingCreationFailedException,
   BookingPaymentSyncFailedException,
+  BookingRequestInProgressException,
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -37,6 +38,7 @@ import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
 
@@ -154,6 +156,7 @@ describe("BookingCreationService", () => {
         BookingEligibilityService,
         BookingPaymentService,
         BookingPersistenceService,
+        BookingReservationService,
         {
           provide: BookingCreationIdempotencyService,
           useValue: {
@@ -293,6 +296,7 @@ describe("BookingCreationService", () => {
         totalAmount: 56437.5,
         currency: "NGN",
         bookingStatus: BookingStatus.PENDING,
+        reservationExpiresAt: expect.any(String),
       });
 
       expect(validationService.validateDates).toHaveBeenCalledWith({
@@ -324,6 +328,7 @@ describe("BookingCreationService", () => {
         totalAmount: 56437.5,
         currency: "NGN",
         bookingStatus: BookingStatus.PENDING,
+        reservationExpiresAt: expect.any(String),
       });
 
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
@@ -387,6 +392,24 @@ describe("BookingCreationService", () => {
       );
 
       expect(databaseService.car.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("maps the database overlap constraint to CarNotAvailableException", async () => {
+      setupSuccessfulMocks();
+      mockTransaction.mockRejectedValueOnce(
+        new Prisma.PrismaClientUnknownRequestError(
+          'Database error code: 23P01 constraint "Booking_car_active_window_excl"',
+          { clientVersion: "test" },
+        ),
+      );
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput(),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toThrow(CarNotAvailableException);
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it("should throw BookingValidationException when guest email is registered", async () => {
@@ -538,7 +561,7 @@ describe("BookingCreationService", () => {
 
       await expect(
         service.createBooking({ input: createBookingInput(), sessionUser: createSessionUser() }),
-      ).rejects.toThrow(BookingPaymentSyncFailedException);
+      ).rejects.toThrow(BookingRequestInProgressException);
 
       expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });

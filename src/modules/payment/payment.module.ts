@@ -6,6 +6,7 @@ import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
 import { NotificationModule } from "../notification/notification.module";
 import { AdminFinancialOperationsController } from "./admin-financial-operations.controller";
 import { AdminFinancialOperationsService } from "./admin-financial-operations.service";
+import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import { PaymentController } from "./payment.controller";
 import { PaymentService } from "./payment.service";
@@ -27,6 +28,7 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
     PaymentWebhookService,
     PaymentReconciliationService,
     ChargeCompletedHandler,
+    BookingReservationExpirationService,
     TransferCompletedHandler,
     RefundCompletedHandler,
     RefundFinalizationService,

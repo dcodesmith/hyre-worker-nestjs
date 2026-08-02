@@ -286,6 +286,7 @@ model Booking {
   guestUser                               Json?
   type                                    BookingType               @default(DAY)
   paymentIntent                           String?
+  paymentSessionExpiresAt                 DateTime?
   fleetOwnerPayoutAmountNet               Decimal?                  @db.Decimal(10, 2)
   netTotal                                Decimal?                  @db.Decimal(10, 2)
   overallPayoutStatus                     PayoutTransactionStatus?
@@ -332,6 +333,7 @@ model Booking {
   @@index([chauffeurId])
   @@index([paymentStatus])
   @@index([paymentIntent])
+  @@index([status, paymentStatus, paymentSessionExpiresAt])
   @@index([overallPayoutStatus])
   @@index([startDate, endDate, status])
   @@index([status, paymentStatus, startDate])

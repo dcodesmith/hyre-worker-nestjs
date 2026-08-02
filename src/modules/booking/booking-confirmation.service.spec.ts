@@ -19,9 +19,7 @@ import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { CarNotAvailableException } from "./booking.error";
 import { BookingConfirmationService } from "./booking-confirmation.service";
-import { BookingValidationService } from "./booking-validation.service";
 
 // Helper to create mock Payment objects with required fields for testing
 function createMockPayment(overrides: Partial<Payment>): Payment {
@@ -88,7 +86,6 @@ describe("BookingConfirmationService", () => {
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let eventEmitter: EventEmitter2;
   let eventEmitterReadinessWatcher: EventEmitterReadinessWatcher;
-  let bookingValidationService: BookingValidationService;
   let flightAlertQueue: { add: ReturnType<typeof vi.fn> };
   let findFlightForAlert: ReturnType<
     typeof vi.fn<(args: unknown) => Promise<FlightAlertRecord | null>>
@@ -136,10 +133,6 @@ describe("BookingConfirmationService", () => {
         },
         { provide: BookingConfirmedHandler, useValue: {} },
         {
-          provide: BookingValidationService,
-          useValue: { checkCarAvailability: vi.fn().mockResolvedValue(undefined) },
-        },
-        {
           provide: getQueueToken(FLIGHT_ALERTS_QUEUE),
           useValue: { add: vi.fn() },
         },
@@ -168,7 +161,6 @@ describe("BookingConfirmationService", () => {
     eventEmitterReadinessWatcher = module.get<EventEmitterReadinessWatcher>(
       EventEmitterReadinessWatcher,
     );
-    bookingValidationService = module.get(BookingValidationService);
     flightAlertQueue = module.get(getQueueToken(FLIGHT_ALERTS_QUEUE));
   });
   describe("confirmFromPayment", () => {
@@ -210,26 +202,6 @@ describe("BookingConfirmationService", () => {
         },
       });
       expect(eventEmitter.emit).not.toHaveBeenCalled();
-    });
-
-    it("rejects confirmation when the locked final availability check finds a conflict", async () => {
-      const mockPayment = createMockPayment({ bookingId: "booking-123" });
-      vi.mocked(bookingValidationService.checkCarAvailability).mockRejectedValueOnce(
-        new CarNotAvailableException("car-123"),
-      );
-
-      await expect(service.confirmFromPayment(mockPayment)).rejects.toThrow(
-        CarNotAvailableException,
-      );
-
-      expect(bookingValidationService.checkCarAvailability).toHaveBeenCalledWith(
-        expect.objectContaining({
-          carId: "car-123",
-          excludeBookingId: "booking-123",
-        }),
-        databaseService,
-      );
-      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
     });
 
     it("should write booking confirmation notifications to the outbox transaction", async () => {

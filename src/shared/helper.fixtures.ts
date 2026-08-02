@@ -196,6 +196,7 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     totalAmount: new Decimal(10000),
     paymentId: null,
     paymentIntent: null,
+    paymentSessionExpiresAt: null,
     netTotal: new Decimal(9000),
     platformCustomerServiceFeeRatePercent: new Decimal(5),
     platformCustomerServiceFeeAmount: new Decimal(450),

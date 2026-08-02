@@ -9,7 +9,6 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
-  BOOKING_PAYMENT_SESSION_DURATION_MS,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FULL_DAY_END_HOUR,
@@ -188,8 +187,9 @@ export class BookingValidationService {
   /**
    * Check if a car is available for the requested booking period.
    *
-   * A car is unavailable for paid active bookings and recent unpaid PENDING
-   * bookings while their ten-minute checkout session can still be used.
+   * A car is unavailable for paid active bookings and all PENDING reservations.
+   * Expired reservations remain blocking until payment reconciliation explicitly
+   * confirms or cancels them.
    *
    * A 2-hour buffer is applied between bookings for car preparation.
    *
@@ -199,12 +199,13 @@ export class BookingValidationService {
    */
   async checkCarAvailability(
     input: CarAvailabilityInput,
-    database: Prisma.TransactionClient | DatabaseService = this.databaseService,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const { carId, startDate, endDate, excludeBookingId } = input;
+    const reader = tx ?? this.databaseService;
 
     // Verify car exists and is bookable
-    const car = await database.car.findUnique({
+    const car = await reader.car.findUnique({
       where: { id: carId },
       select: { id: true, status: true, approvalStatus: true },
     });
@@ -250,8 +251,7 @@ export class BookingValidationService {
     const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval({ startDate, endDate });
 
     // Find conflicting bookings
-    const pendingHoldCutoff = new Date(Date.now() - BOOKING_PAYMENT_SESSION_DURATION_MS);
-    const conflictingBookings = await database.booking.findMany({
+    const conflictingBookings = await reader.booking.findMany({
       where: {
         carId,
         OR: [
@@ -262,7 +262,6 @@ export class BookingValidationService {
           {
             paymentStatus: PaymentStatus.UNPAID,
             status: BookingStatus.PENDING,
-            createdAt: { gte: pendingHoldCutoff },
           },
         ],
         // Exclude current booking if this is an update

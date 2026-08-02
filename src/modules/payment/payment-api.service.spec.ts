@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -44,6 +44,7 @@ describe("PaymentApiService", () => {
     },
     booking: {
       findUnique: vi.fn(),
+      update: vi.fn(),
       updateMany: vi.fn(),
     },
     extension: {
@@ -127,10 +128,18 @@ describe("PaymentApiService", () => {
         callbackUrl: "https://example.com/callback",
         transactionType: "booking_creation",
         idempotencyKey: "booking_booking-123",
+        sessionDurationMinutes: 10,
         metadata: {
           type: "booking",
           entityId: "booking-123",
           userId: mockUserInfo.id,
+        },
+      });
+      expect(databaseService.booking.update).toHaveBeenCalledWith({
+        where: { id: "booking-123" },
+        data: {
+          paymentIntent: "pi-123",
+          paymentSessionExpiresAt: expect.any(Date),
         },
       });
     });
@@ -201,6 +210,39 @@ describe("PaymentApiService", () => {
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
         PaymentEntityAlreadyPaidException,
       );
+    });
+
+    it("does not create a new checkout for an expired reservation", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentSessionExpiresAt: new Date(Date.now() - 60_000),
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not initialize a second checkout for an active reservation", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentIntent: "booking-123",
+        paymentSessionExpiresAt: new Date(Date.now() + 60_000),
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -795,61 +837,6 @@ describe("PaymentApiService", () => {
       await expect(
         service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
       ).rejects.toThrow(RefundReconciliationRequiredException);
-
-      expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
-      expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("refundBookingForAvailabilityConflict", () => {
-    it("atomically rejects the booking and reserves an automatic refund", async () => {
-      const payment = createPayment({
-        bookingId: "booking-123",
-        extensionId: null,
-        status: PaymentAttemptStatus.SUCCESSFUL,
-        amountCharged: new Decimal(10000),
-        flutterwaveTransactionId: "flw-123",
-        booking: { id: "booking-123", status: BookingStatus.PENDING, userId: mockUserInfo.id },
-      });
-      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-      vi.mocked(databaseService.payment.updateMany).mockResolvedValue({ count: 1 });
-      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
-        success: true,
-        refundId: 67890,
-        amountRefunded: 10000,
-        status: "pending",
-      });
-
-      await service.refundBookingForAvailabilityConflict("tx-ref-123");
-
-      expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: "booking-123",
-          status: BookingStatus.PENDING,
-          paymentStatus: PaymentStatus.UNPAID,
-        },
-        data: {
-          status: BookingStatus.REJECTED,
-          paymentStatus: PaymentStatus.REFUND_PROCESSING,
-        },
-      });
-      expect(flutterwaveService.initiateRefund).toHaveBeenCalledWith(
-        expect.objectContaining({
-          transactionId: "flw-123",
-          amount: 10000,
-          idempotencyKey: "refund_availability_conflict_payment-123",
-        }),
-      );
-    });
-
-    it("does not request a duplicate automatic refund", async () => {
-      const payment = createPayment({
-        bookingId: "booking-123",
-        status: PaymentAttemptStatus.REFUND_PROCESSING,
-      });
-      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-
-      await service.refundBookingForAvailabilityConflict("tx-ref-123");
 
       expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
       expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();

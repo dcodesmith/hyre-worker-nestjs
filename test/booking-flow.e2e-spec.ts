@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BookingReservationService } from "../src/modules/booking/booking-reservation.service";
 import type { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
@@ -37,6 +38,7 @@ describe("Booking Flow E2E", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let bookingReservationService: BookingReservationService;
   let factory: TestDataFactory;
   let webhookSecret: string;
 
@@ -62,6 +64,7 @@ describe("Booking Flow E2E", () => {
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
+    bookingReservationService = app.get(BookingReservationService);
     factory = new TestDataFactory(databaseService, app);
 
     const configService = app.get(ConfigService);
@@ -617,8 +620,9 @@ describe("Booking Flow E2E", () => {
 
     await databaseService.booking.update({
       where: { id: firstBookingId },
-      data: { createdAt: new Date(Date.now() - 11 * 60 * 1000) },
+      data: { paymentSessionExpiresAt: new Date(Date.now() - 60_000) },
     });
+    await bookingReservationService.cancelExpiredReservation(firstBookingId);
 
     // Attempt 2: after the checkout hold expires, a fresh booking can reserve the
     // discount with the original referrer.

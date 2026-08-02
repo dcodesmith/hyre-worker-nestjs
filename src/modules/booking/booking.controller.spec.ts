@@ -54,6 +54,7 @@ describe("BookingController", () => {
     totalAmount: 56437.5,
     currency: "NGN" as const,
     bookingStatus: BookingStatus.PENDING,
+    reservationExpiresAt: "2026-08-02T20:10:00.000Z",
   };
   const mockCreateExtensionResponse = {
     extensionId: "extension-123",
@@ -302,15 +303,6 @@ describe("BookingController", () => {
     });
 
     describe("validation", () => {
-      it("requires a valid Idempotency-Key header", async () => {
-        const response = createMockResponse();
-
-        await expect(
-          controller.createBooking(createValidBookingDto(), mockSessionUser, undefined, response),
-        ).rejects.toThrow(BookingValidationException);
-        expect(bookingCreationService.createBooking).not.toHaveBeenCalled();
-      });
-
       it("sets Retry-After when an identical request is processing", async () => {
         const response = createMockResponse();
         vi.mocked(bookingCreationService.createBooking).mockRejectedValueOnce(

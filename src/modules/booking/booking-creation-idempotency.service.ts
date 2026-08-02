@@ -170,12 +170,16 @@ export class BookingCreationIdempotencyService {
     idempotencyId: string,
     bookingId: string,
     paymentIntentId: string,
+    reservationExpiresAt: Date,
     response: CreateBookingResponse,
   ): Promise<void> {
     await this.databaseService.$transaction(async (tx) => {
       await tx.booking.update({
         where: { id: bookingId },
-        data: { paymentIntent: paymentIntentId },
+        data: {
+          paymentIntent: paymentIntentId,
+          paymentSessionExpiresAt: reservationExpiresAt,
+        },
       });
       const checkpointed = await tx.bookingCreationIdempotency.updateMany({
         where: {
@@ -252,7 +256,9 @@ export class BookingCreationIdempotencyService {
       typeof value.totalAmount !== "number" ||
       value.currency !== "NGN" ||
       typeof value.bookingStatus !== "string" ||
-      !this.isBookingStatus(value.bookingStatus)
+      !this.isBookingStatus(value.bookingStatus) ||
+      typeof value.reservationExpiresAt !== "string" ||
+      Number.isNaN(Date.parse(value.reservationExpiresAt))
     ) {
       throw new BookingCreationFailedException("Stored booking response is invalid.");
     }
@@ -262,6 +268,7 @@ export class BookingCreationIdempotencyService {
       totalAmount: value.totalAmount,
       currency: value.currency,
       bookingStatus: value.bookingStatus,
+      reservationExpiresAt: value.reservationExpiresAt,
     };
   }
 

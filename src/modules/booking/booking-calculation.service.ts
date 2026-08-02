@@ -51,7 +51,7 @@ export class BookingCalculationService {
    */
   async calculateBookingCost(
     input: BookingCalculationInput,
-    database?: Prisma.TransactionClient,
+    tx?: Prisma.TransactionClient,
   ): Promise<BookingFinancials> {
     const {
       bookingType,
@@ -64,9 +64,9 @@ export class BookingCalculationService {
       referralDiscountAmount,
     } = input;
 
-    const rates = await this.ratesService.getRates(database);
+    const rates = await this.ratesService.getRates(tx);
 
-    const overlappingPromotions = await this.loadOverlappingPromotions(car, legs, database);
+    const overlappingPromotions = await this.loadOverlappingPromotions(car, legs, tx);
     const legPrices = this.calculateLegPrices(legs, bookingType, car, overlappingPromotions);
     const numberOfLegs = legs.length;
     const netTotal = legPrices.reduce((sum, leg) => sum.add(leg.price), new Decimal(0));
@@ -170,7 +170,7 @@ export class BookingCalculationService {
   private async loadOverlappingPromotions(
     car: CarPricingWithIdentity,
     legs: GeneratedLeg[],
-    database?: Prisma.TransactionClient,
+    tx?: Prisma.TransactionClient,
   ): Promise<ActivePromotion[]> {
     if (!car.id || !car.ownerId || legs.length === 0) {
       return [];
@@ -187,7 +187,7 @@ export class BookingCalculationService {
         car.ownerId,
         start,
         endExclusive,
-        database,
+        tx,
       );
     } catch (error) {
       this.logger.warn(

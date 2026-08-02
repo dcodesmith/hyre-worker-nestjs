@@ -317,8 +317,16 @@ export class CarSearchService {
         {
           bookings: {
             none: {
-              paymentStatus: PaymentStatus.PAID,
-              status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+              OR: [
+                {
+                  paymentStatus: PaymentStatus.PAID,
+                  status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+                },
+                {
+                  paymentStatus: PaymentStatus.UNPAID,
+                  status: BookingStatus.PENDING,
+                },
+              ],
               startDate: { lt: bufferedEnd },
               endDate: { gt: bufferedStart },
             },

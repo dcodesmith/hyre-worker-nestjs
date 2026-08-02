@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { PaymentStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -277,6 +277,13 @@ describe("BookingPersistenceService", () => {
     ).resolves.toEqual({ id: "booking-1" });
 
     expect(createBooking).toHaveBeenCalledTimes(1);
+    expect(createBooking).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentSessionExpiresAt: expect.any(Date),
+      }),
+    });
   });
 
   it("throws when financials.numberOfLegs does not match legs length", async () => {

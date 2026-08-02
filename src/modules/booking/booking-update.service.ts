@@ -7,7 +7,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
@@ -20,11 +20,13 @@ import {
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
+  CarNotAvailableException,
 } from "./booking.error";
 import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
 
@@ -59,6 +61,7 @@ export class BookingUpdateService {
   constructor(
     private readonly bookingValidationService: BookingValidationService,
     private readonly bookingModificationPolicyService: BookingModificationPolicyService,
+    private readonly bookingReservationService: BookingReservationService,
     private readonly databaseService: DatabaseService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly chauffeurAssignedHandler: ChauffeurAssignedHandler,
@@ -207,7 +210,7 @@ export class BookingUpdateService {
       currentBooking,
       input,
     );
-    await this.validateUpdatedDatesAndAvailability(currentBooking, newStartDate, newEndDate);
+    this.validateUpdatedDates(currentBooking, newStartDate, newEndDate);
 
     const updateData = {
       ...(newStartDate ? { startDate: newStartDate } : {}),
@@ -223,66 +226,94 @@ export class BookingUpdateService {
       return booking ? this.withModificationEligibility(booking, policyNow) : booking;
     }
 
-    return this.databaseService.$transaction(async (tx) => {
-      const bookingLocked = await this.lockEditableBookingState(
-        tx,
-        bookingId,
-        userId,
-        currentBooking.startDate,
-      );
-      if (!bookingLocked) {
-        throw new BookingStatusNotModifiableException(
-          "edit",
-          "Booking state changed during the update. Please retry",
+    try {
+      return await this.databaseService.$transaction(async (tx) => {
+        if (newStartDate && newEndDate) {
+          const carExists = await lockCarRow(tx, currentBooking.carId);
+          if (!carExists) {
+            throw new CarNotAvailableException(currentBooking.carId);
+          }
+        }
+
+        const bookingLocked = await this.lockEditableBookingState(
+          tx,
+          bookingId,
+          userId,
+          currentBooking.startDate,
         );
-      }
+        if (!bookingLocked) {
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Booking state changed during the update. Please retry",
+          );
+        }
 
-      const policyNow = await getDatabaseNow(tx);
-      this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
-      if (newStartDate) {
-        this.bookingModificationPolicyService.assertWithinWindow(newStartDate, policyNow);
-      }
+        const policyNow = await getDatabaseNow(tx);
+        this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
+        if (newStartDate) {
+          this.bookingModificationPolicyService.assertWithinWindow(newStartDate, policyNow);
+        }
+        if (newStartDate && newEndDate) {
+          await this.bookingValidationService.checkCarAvailability(
+            {
+              carId: currentBooking.carId,
+              startDate: newStartDate,
+              endDate: newEndDate,
+              excludeBookingId: currentBooking.id,
+            },
+            tx,
+          );
+        }
 
-      const effectiveStartDate =
-        newStartDate && newStartDate < currentBooking.startDate
-          ? newStartDate
-          : currentBooking.startDate;
-      const modificationCutoffAt =
-        this.bookingModificationPolicyService.getModificationCutoffAt(effectiveStartDate);
-      const updated = await this.updateBookingWithinWindow(tx, {
-        bookingId,
-        userId,
-        currentStartDate: currentBooking.startDate,
-        modificationCutoffAt,
-        newStartDate,
-        newEndDate,
-        newPickupLocation,
-        newReturnLocation,
-      });
-      if (!updated) {
-        const rejectionNow = await getDatabaseNow(tx);
-        this.bookingModificationPolicyService.assertWithinWindow(effectiveStartDate, rejectionNow);
-        throw new BookingStatusNotModifiableException(
-          "edit",
-          "Booking state changed during the update. Please retry",
+        const effectiveStartDate =
+          newStartDate && newStartDate < currentBooking.startDate
+            ? newStartDate
+            : currentBooking.startDate;
+        const modificationCutoffAt =
+          this.bookingModificationPolicyService.getModificationCutoffAt(effectiveStartDate);
+        const updated = await this.updateBookingWithinWindow(tx, {
+          bookingId,
+          userId,
+          currentStartDate: currentBooking.startDate,
+          modificationCutoffAt,
+          newStartDate,
+          newEndDate,
+          newPickupLocation,
+          newReturnLocation,
+        });
+        if (!updated) {
+          const rejectionNow = await getDatabaseNow(tx);
+          this.bookingModificationPolicyService.assertWithinWindow(
+            effectiveStartDate,
+            rejectionNow,
+          );
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Booking state changed during the update. Please retry",
+          );
+        }
+
+        const updatedBooking = await tx.booking.findUniqueOrThrow({
+          where: { id: bookingId },
+          include: this.bookingDetailsInclude,
+        });
+        await this.notificationOutboxService.create(
+          this.bookingUpdatedHandler,
+          {
+            booking: updatedBooking,
+            actor: { type: "user", userId },
+          },
+          tx,
         );
-      }
-
-      const updatedBooking = await tx.booking.findUniqueOrThrow({
-        where: { id: bookingId },
-        include: this.bookingDetailsInclude,
+        const responseNow = await getDatabaseNow(tx);
+        return this.withModificationEligibility(updatedBooking, responseNow);
       });
-      await this.notificationOutboxService.create(
-        this.bookingUpdatedHandler,
-        {
-          booking: updatedBooking,
-          actor: { type: "user", userId },
-        },
-        tx,
-      );
-      const responseNow = await getDatabaseNow(tx);
-      return this.withModificationEligibility(updatedBooking, responseNow);
-    });
+    } catch (error) {
+      if (this.bookingReservationService.isOverlapConstraintViolation(error)) {
+        throw new CarNotAvailableException(currentBooking.carId);
+      }
+      throw error;
+    }
   }
 
   private async updateBookingWithinWindow(
@@ -407,11 +438,11 @@ export class BookingUpdateService {
     return input.dropOffAddress ?? currentReturnLocation;
   }
 
-  private async validateUpdatedDatesAndAvailability(
+  private validateUpdatedDates(
     currentBooking: CurrentBookingRecord,
     newStartDate?: Date,
     newEndDate?: Date,
-  ): Promise<void> {
+  ): void {
     if (!newStartDate || !newEndDate) {
       return;
     }
@@ -420,13 +451,6 @@ export class BookingUpdateService {
       startDate: newStartDate,
       endDate: newEndDate,
       bookingType: currentBooking.type,
-    });
-
-    await this.bookingValidationService.checkCarAvailability({
-      carId: currentBooking.carId,
-      startDate: newStartDate,
-      endDate: newEndDate,
-      excludeBookingId: currentBooking.id,
     });
   }
 

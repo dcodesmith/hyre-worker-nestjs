@@ -22,6 +22,7 @@ describe("Bookings E2E Tests", () => {
   let testUserCookie: string;
   let testUserId: string;
   let testCarId: string;
+  let fleetOwnerId: string;
 
   beforeAll(async () => {
     const mockSendOTPEmail = vi.fn().mockResolvedValue(undefined);
@@ -57,13 +58,13 @@ describe("Bookings E2E Tests", () => {
 
     // Create fleet owner and car
     const fleetOwner = await factory.createFleetOwner();
-    const car = await factory.createCar(fleetOwner.id);
-    testCarId = car.id;
+    fleetOwnerId = fleetOwner.id;
   });
 
   beforeEach(async () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
+    testCarId = (await factory.createCar(fleetOwnerId)).id;
 
     // Mock payment intent creation for all booking tests
     vi.spyOn(flutterwaveService, "createPaymentIntent").mockResolvedValue({
@@ -148,6 +149,7 @@ describe("Bookings E2E Tests", () => {
             totalAmount: Number(payload.expectedTotalAmount),
             currency: "NGN",
             bookingStatus: "PENDING",
+            reservationExpiresAt: expect.any(String),
           }),
         );
         expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
@@ -228,10 +230,30 @@ describe("Bookings E2E Tests", () => {
         expect(overlapping.body.errorCode).toBe("CAR_NOT_AVAILABLE");
       });
 
+      it("enforces overlapping reservations at the database boundary", async () => {
+        const startDate = new Date(Date.now() + 300 * 86400000);
+        const endDate = new Date(startDate.getTime() + 43200000);
+        await factory.createBooking(testUserId, testCarId, {
+          startDate,
+          endDate,
+          bookingReference: `DB-RESERVATION-${randomUUID()}`,
+        });
+
+        await expect(
+          factory.createBooking(testUserId, testCarId, {
+            startDate,
+            endDate,
+            bookingReference: `DB-CONFLICT-${randomUUID()}`,
+          }),
+        ).rejects.toThrow();
+      });
+
       it("allows only one concurrent identical request to initialize payment", async () => {
         const payload = await createValidBookingPayload(testCarId, testUserCookie);
         const idempotencyKey = randomUUID();
-        const bookingCountBefore = await databaseService.booking.count();
+        const bookingCountBefore = await databaseService.booking.count({
+          where: { carId: testCarId },
+        });
         let signalStarted!: () => void;
         let releasePayment!: () => void;
         const started = new Promise<void>((resolve) => {
@@ -268,7 +290,11 @@ describe("Bookings E2E Tests", () => {
         expect(concurrent.body.errorCode).toBe("BOOKING_REQUEST_IN_PROGRESS");
         expect(concurrent.headers["retry-after"]).toBe("5");
         expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
-        expect(await databaseService.booking.count()).toBe(bookingCountBefore + 1);
+        expect(
+          await databaseService.booking.count({
+            where: { carId: testCarId },
+          }),
+        ).toBe(bookingCountBefore + 1);
       });
 
       it("should return 404 for non-existent car", async () => {

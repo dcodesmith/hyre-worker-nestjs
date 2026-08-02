@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient, ReferralAttributionSource } from "@prisma/cl
 import request from "supertest";
 
 const ONE_DAY_MS = 86400000;
+let bookingSequence = 0;
 
 // ============================================================================
 // Test Data Factory Types (using Prisma UncheckedCreateInput for direct FK usage)
@@ -343,12 +344,18 @@ export class TestDataFactory {
     carId: string,
     options: CreateBookingOptions = {},
   ): Promise<{ id: string; bookingReference: string }> {
+    const defaultStartDate = new Date(Date.now() + (365 + bookingSequence++ * 2) * ONE_DAY_MS);
+    const startDate =
+      options.startDate ??
+      (options.endDate ? new Date(options.endDate.getTime() - ONE_DAY_MS) : defaultStartDate);
+    const endDate = options.endDate ?? new Date(startDate.getTime() + ONE_DAY_MS);
+
     const booking = await this.prisma.booking.create({
       data: {
         userId,
         carId,
-        startDate: options.startDate ?? new Date(),
-        endDate: options.endDate ?? new Date(Date.now() + 86400000), // +1 day
+        startDate,
+        endDate,
         totalAmount: options.totalAmount ?? 50000,
         pickupLocation: options.pickupLocation ?? "Lagos Airport",
         returnLocation: options.returnLocation ?? "Victoria Island",

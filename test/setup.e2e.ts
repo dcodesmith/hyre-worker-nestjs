@@ -98,6 +98,58 @@ async function initializeWorkerIsolation(): Promise<void> {
     }),
   });
   try {
+    await workerPrisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(820260802)");
+      await tx.$executeRawUnsafe("CREATE EXTENSION IF NOT EXISTS btree_gist");
+      await tx.$executeRawUnsafe(`
+        DO $constraint$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'Booking_valid_window_check'
+              AND connamespace = current_schema()::regnamespace
+          ) THEN
+            ALTER TABLE "Booking"
+            ADD CONSTRAINT "Booking_valid_window_check"
+            CHECK ("startDate" < "endDate");
+          END IF;
+        END
+        $constraint$
+      `);
+      await tx.$executeRawUnsafe(`
+        DO $constraint$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'Booking_car_active_window_excl'
+              AND connamespace = current_schema()::regnamespace
+          ) THEN
+            ALTER TABLE "Booking"
+            ADD CONSTRAINT "Booking_car_active_window_excl"
+            EXCLUDE USING gist (
+              "carId" WITH =,
+              tsrange(
+                LEAST("startDate" - INTERVAL '2 hours', "endDate" + INTERVAL '2 hours'),
+                GREATEST("startDate" - INTERVAL '2 hours', "endDate" + INTERVAL '2 hours'),
+                '[)'
+              ) WITH &&
+            )
+            WHERE (
+              "deletedAt" IS NULL
+              AND "status" IN (
+                'PENDING'::"BookingStatus",
+                'CONFIRMED'::"BookingStatus",
+                'ACTIVE'::"BookingStatus"
+              )
+            );
+          END IF;
+        END
+        $constraint$
+      `);
+    });
+
     const roles = ["user", "fleetOwner", "admin", "staff"];
     for (const roleName of roles) {
       await workerPrisma.role.upsert({

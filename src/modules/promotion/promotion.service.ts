@@ -256,14 +256,15 @@ export class PromotionService {
     ownerId: string,
     intervalStart: Date,
     intervalEndExclusive: Date,
-    database: Prisma.TransactionClient | DatabaseService = this.databaseService,
+    tx?: Prisma.TransactionClient,
   ): Promise<ActivePromotion[]> {
     if (intervalEndExclusive <= intervalStart) {
       return [];
     }
 
     try {
-      return await database.promotion.findMany({
+      const reader = tx ?? this.databaseService;
+      return await reader.promotion.findMany({
         where: {
           ownerId,
           ...PromotionService.overlapWhere(intervalStart, intervalEndExclusive),

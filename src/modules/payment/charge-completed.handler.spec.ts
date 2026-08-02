@@ -4,7 +4,6 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPaymentRecord } from "../../shared/helper.fixtures";
-import { CarNotAvailableException } from "../booking/booking.error";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
@@ -12,7 +11,6 @@ import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
-import { PaymentApiService } from "./payment-api.service";
 
 describe("ChargeCompletedHandler", () => {
   let handler: ChargeCompletedHandler;
@@ -21,7 +19,6 @@ describe("ChargeCompletedHandler", () => {
   let bookingConfirmationService: BookingConfirmationService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let bookingEligibilityService: BookingEligibilityService;
-  let paymentApiService: PaymentApiService;
 
   const mockBookingConfirmationService = {
     confirmFromPayment: vi.fn(),
@@ -31,9 +28,6 @@ describe("ChargeCompletedHandler", () => {
   };
   const mockBookingEligibilityService = {
     releaseReferralReservation: vi.fn(),
-  };
-  const mockPaymentApiService = {
-    refundBookingForAvailabilityConflict: vi.fn(),
   };
   const mockChargeData: FlutterwaveChargeWebhookData = {
     id: 12345,
@@ -90,7 +84,6 @@ describe("ChargeCompletedHandler", () => {
         { provide: BookingConfirmationService, useValue: mockBookingConfirmationService },
         { provide: ExtensionConfirmationService, useValue: mockExtensionConfirmationService },
         { provide: BookingEligibilityService, useValue: mockBookingEligibilityService },
-        { provide: PaymentApiService, useValue: mockPaymentApiService },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -104,7 +97,6 @@ describe("ChargeCompletedHandler", () => {
       ExtensionConfirmationService,
     );
     bookingEligibilityService = module.get<BookingEligibilityService>(BookingEligibilityService);
-    paymentApiService = module.get<PaymentApiService>(PaymentApiService);
     vi.clearAllMocks();
   });
 
@@ -139,40 +131,6 @@ describe("ChargeCompletedHandler", () => {
     expect(databaseService.payment.upsert).toHaveBeenCalled();
     expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
-  });
-
-  it("refunds a successful charge when final locked availability fails", async () => {
-    const createdPayment = {
-      ...createPaymentRecord({
-        id: "payment-123",
-        txRef: "tx-ref-123",
-        status: PaymentAttemptStatus.SUCCESSFUL,
-        bookingId: "booking-456",
-        amountExpected: new Decimal(10000),
-        amountCharged: new Decimal(10000),
-        currency: "NGN",
-      }),
-      booking: { id: "booking-456", status: BookingStatus.PENDING },
-    };
-    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
-      status: "success",
-      message: "ok",
-      data: { ...mockChargeData },
-    });
-    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
-      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
-    );
-    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
-    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(createdPayment);
-    vi.mocked(bookingConfirmationService.confirmFromPayment).mockRejectedValueOnce(
-      new CarNotAvailableException("car-123"),
-    );
-
-    await handler.handle(mockChargeData);
-
-    expect(paymentApiService.refundBookingForAvailabilityConflict).toHaveBeenCalledWith(
-      "tx-ref-123",
-    );
   });
 
   it("creates payment but blocks confirmation when charged amount differs from expected", async () => {

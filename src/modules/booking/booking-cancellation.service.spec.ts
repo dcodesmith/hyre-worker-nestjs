@@ -167,6 +167,7 @@ describe("BookingCancellationService", () => {
     });
     txMock.car.update.mockResolvedValueOnce({ id: "car-1", status: "AVAILABLE" });
     txMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "car-1" }])
       .mockResolvedValueOnce([{ id: "booking-1" }])
       .mockResolvedValueOnce([{ policyNow }])
       .mockResolvedValueOnce([{ id: "booking-1" }])
@@ -181,9 +182,9 @@ describe("BookingCancellationService", () => {
     expect(result).toEqual(
       expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }),
     );
-    const updateQuery = txMock.$queryRaw.mock.calls[2]?.[0];
+    const updateQuery = txMock.$queryRaw.mock.calls[3]?.[0];
     expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
-    expect(txMock.$queryRaw.mock.calls[2]?.slice(1)).toEqual(
+    expect(txMock.$queryRaw.mock.calls[3]?.slice(1)).toEqual(
       expect.arrayContaining([
         BookingStatus.CANCELLED,
         PaymentStatus.REFUND_PROCESSING,
@@ -230,6 +231,7 @@ describe("BookingCancellationService", () => {
         carId: "car-1",
       });
       txMock.$queryRaw
+        .mockResolvedValueOnce([{ id: "car-1" }])
         .mockResolvedValueOnce([{ id: "booking-1" }])
         .mockResolvedValueOnce([{ policyNow: databaseNow }])
         .mockResolvedValueOnce([{ id: "booking-1" }])
@@ -291,7 +293,7 @@ describe("BookingCancellationService", () => {
       startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
       carId: "car-1",
     });
-    txMock.$queryRaw.mockResolvedValueOnce([]);
+    txMock.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([]);
 
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
@@ -311,6 +313,7 @@ describe("BookingCancellationService", () => {
       carId: "car-1",
     });
     txMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "car-1" }])
       .mockResolvedValueOnce([{ id: "booking-1" }])
       .mockResolvedValueOnce([{ policyNow: new Date(modificationCutoffAt.getTime() - 1) }])
       .mockResolvedValueOnce([])
@@ -319,7 +322,7 @@ describe("BookingCancellationService", () => {
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
     ).rejects.toBeInstanceOf(BookingOutsideModificationWindowException);
-    const updateQuery = txMock.$queryRaw.mock.calls[2]?.[0];
+    const updateQuery = txMock.$queryRaw.mock.calls[3]?.[0];
     expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
   });
 

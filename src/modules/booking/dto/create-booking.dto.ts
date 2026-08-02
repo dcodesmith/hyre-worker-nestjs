@@ -4,15 +4,6 @@ import { pickupTimeRegex } from "./pickup-time.regex";
 
 const nonNegativeDecimalStringRegex = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
-export const idempotencyKeySchema = z
-  .string()
-  .min(8, "Idempotency-Key must be at least 8 characters")
-  .max(128, "Idempotency-Key must be at most 128 characters")
-  .regex(
-    /^[A-Za-z0-9._~:-]+$/,
-    "Idempotency-Key may only contain safe ASCII letters, numbers, and . _ ~ : -",
-  );
-
 /**
  * Booking type enum values matching Prisma schema
  */

@@ -11,6 +11,7 @@ import {
 import Decimal from "decimal.js";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
+import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "./booking.const";
 import { BookingCreationFailedException, CarNotFoundException } from "./booking.error";
 import type {
   CarWithPricing,
@@ -35,11 +36,9 @@ export class BookingPersistenceService {
     private readonly configService: ConfigService<EnvConfig>,
   ) {}
 
-  async fetchCarWithPricing(
-    carId: string,
-    database: Prisma.TransactionClient | DatabaseService = this.databaseService,
-  ): Promise<CarWithPricing> {
-    const car = await database.car.findUnique({
+  async fetchCarWithPricing(carId: string, tx?: Prisma.TransactionClient): Promise<CarWithPricing> {
+    const reader = tx ?? this.databaseService;
+    const car = await reader.car.findUnique({
       where: { id: carId },
       select: {
         id: true,
@@ -185,6 +184,7 @@ export class BookingPersistenceService {
       type: booking.bookingType,
       status: BookingStatus.PENDING,
       paymentStatus: PaymentStatus.UNPAID,
+      paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
       startDate: booking.startDate,
       endDate: booking.endDate,
       pickupLocation: booking.pickupAddress,

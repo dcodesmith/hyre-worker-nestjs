@@ -11,9 +11,15 @@ import { FlightAwareApiException, FlightAwareException } from "../flightaware/fl
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { MapsService } from "../maps/maps.service";
 import {
+  BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
+} from "./booking.const";
+import {
   BookingCreationFailedException,
   BookingException,
   BookingPaymentSyncFailedException,
+  BookingRequestInProgressException,
+  CarNotAvailableException,
   PaymentIntentFailedException,
 } from "./booking.error";
 import type {
@@ -32,6 +38,7 @@ import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
@@ -71,6 +78,7 @@ export class BookingCreationService {
     private readonly eligibilityService: BookingEligibilityService,
     private readonly paymentService: BookingPaymentService,
     private readonly persistenceService: BookingPersistenceService,
+    private readonly reservationService: BookingReservationService,
     private readonly idempotencyService: BookingCreationIdempotencyService,
     private readonly logger: PinoLogger,
   ) {
@@ -223,7 +231,7 @@ export class BookingCreationService {
     car: CarWithPricing,
     legs: GeneratedLeg[],
     referralDiscountAmount: Decimal,
-    database?: Prisma.TransactionClient,
+    tx?: Prisma.TransactionClient,
   ): Promise<BookingFinancials> {
     return this.calculationService.calculateBookingCost(
       {
@@ -236,7 +244,7 @@ export class BookingCreationService {
         creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
         referralDiscountAmount,
       },
-      database,
+      tx,
     );
   }
 
@@ -251,7 +259,10 @@ export class BookingCreationService {
       throw new BookingCreationFailedException("Idempotent booking could not be recovered.");
     }
     if (booking.paymentIntent) {
-      throw new BookingPaymentSyncFailedException();
+      // The marker is persisted before calling Flutterwave. With no checkpointed
+      // response, the provider outcome is uncertain, so retrying could create a
+      // second checkout. Keep the reservation and let reconciliation resolve it.
+      throw new BookingRequestInProgressException(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS);
     }
     const customerDetails = await this.getCustomerDetails(bookingInput, sessionUser);
     return this.createPaymentAndSync(
@@ -509,6 +520,9 @@ export class BookingCreationService {
       if (error instanceof BookingException || error instanceof FlightAwareException) {
         throw error;
       }
+      if (this.reservationService.isOverlapConstraintViolation(error)) {
+        throw new CarNotAvailableException(booking.carId);
+      }
 
       this.logger.error(
         {
@@ -558,17 +572,20 @@ export class BookingCreationService {
         customerDetails,
         callbackUrl,
       );
+      const reservationExpiresAt = new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS);
       const response: CreateBookingResponse = {
         bookingId: createdBooking.id,
         checkoutUrl: paymentResult.checkoutUrl,
         totalAmount: totalAmount.toNumber(),
         currency: "NGN",
         bookingStatus: createdBooking.status,
+        reservationExpiresAt: reservationExpiresAt.toISOString(),
       };
       await this.syncPaymentIntentWithBooking(
         idempotencyId,
         createdBooking.id,
         paymentResult.paymentIntentId,
+        reservationExpiresAt,
         response,
       );
       return response;
@@ -624,6 +641,7 @@ export class BookingCreationService {
     idempotencyId: string,
     bookingId: string,
     paymentIntentId: string,
+    reservationExpiresAt: Date,
     response: CreateBookingResponse,
   ): Promise<void> {
     try {
@@ -631,6 +649,7 @@ export class BookingCreationService {
         idempotencyId,
         bookingId,
         paymentIntentId,
+        reservationExpiresAt,
         response,
       );
       await this.idempotencyService.complete(idempotencyId);

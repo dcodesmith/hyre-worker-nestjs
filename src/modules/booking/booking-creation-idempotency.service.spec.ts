@@ -7,6 +7,8 @@ import { BookingRequestInProgressException, IdempotencyKeyReusedException } from
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 
+const reservationExpiresAt = "2026-08-02T20:10:00.000Z";
+
 const input = (expectedTotalAmount = "100.00"): CreateBookingDto => ({
   carId: "car-1",
   startDate: new Date("2026-08-10T07:00:00.000Z"),
@@ -103,6 +105,7 @@ describe("BookingCreationIdempotencyService", () => {
           totalAmount: 100,
           currency: "NGN",
           bookingStatus: BookingStatus.PENDING,
+          reservationExpiresAt,
         },
       }),
     );
@@ -130,6 +133,7 @@ describe("BookingCreationIdempotencyService", () => {
           totalAmount: 100,
           currency: "NGN",
           bookingStatus: BookingStatus.PENDING,
+          reservationExpiresAt,
         },
       }),
     );
@@ -228,17 +232,27 @@ describe("BookingCreationIdempotencyService", () => {
   it("checkpoints the provider response before marking the request completed", async () => {
     databaseService.bookingCreationIdempotency.updateMany.mockResolvedValue({ count: 1 });
 
-    await service.checkpointPaymentResult("idem-1", "booking-1", "booking-1", {
-      bookingId: "booking-1",
-      checkoutUrl: "https://checkout.example/1",
-      totalAmount: 100,
-      currency: "NGN",
-      bookingStatus: BookingStatus.PENDING,
-    });
+    await service.checkpointPaymentResult(
+      "idem-1",
+      "booking-1",
+      "booking-1",
+      new Date(reservationExpiresAt),
+      {
+        bookingId: "booking-1",
+        checkoutUrl: "https://checkout.example/1",
+        totalAmount: 100,
+        currency: "NGN",
+        bookingStatus: BookingStatus.PENDING,
+        reservationExpiresAt,
+      },
+    );
 
     expect(databaseService.booking.update).toHaveBeenCalledWith({
       where: { id: "booking-1" },
-      data: { paymentIntent: "booking-1" },
+      data: {
+        paymentIntent: "booking-1",
+        paymentSessionExpiresAt: new Date(reservationExpiresAt),
+      },
     });
     expect(databaseService.bookingCreationIdempotency.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
