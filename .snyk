@@ -5,5 +5,13 @@ ignore:
     - "*":
         reason: "Transitive via @nestjs/config with no upstream fix currently available; direct lodash usage is blocked by security:check-lodash guard."
         expires: 2026-07-01T00:00:00.000Z
+  SNYK-JS-NANOID-18506894:
+    - "*":
+        reason: "Transitive via better-auth > next > postcss; Snyk only lists a nanoid 5.x fix, which is ESM-only and unsafe to force onto postcss's nanoid@3 range. Exploit requires attacker-controlled negative size into nanoid/non-secure, which postcss does not do."
+        expires: 2026-11-02T00:00:00.000Z
+  SNYK-JS-NANOID-18506897:
+    - "*":
+        reason: "Transitive via better-auth > next > postcss; Snyk only lists a nanoid 5.x fix, which is ESM-only and unsafe to force onto postcss's nanoid@3 range. Exploit requires attacker-controlled negative size into nanoid/non-secure, which postcss does not do."
+        expires: 2026-11-02T00:00:00.000Z
 
 patch: {}
