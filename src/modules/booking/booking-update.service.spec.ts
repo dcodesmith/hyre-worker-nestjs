@@ -46,6 +46,10 @@ describe("BookingUpdateService", () => {
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
+  const transactionMock = {
+    booking: databaseServiceMock.booking,
+    $queryRaw: databaseServiceMock.$queryRaw,
+  };
 
   const bookingValidationServiceMock = {
     validateDates: vi.fn(),
@@ -127,11 +131,7 @@ describe("BookingUpdateService", () => {
           booking: typeof databaseServiceMock.booking;
           $queryRaw: typeof databaseServiceMock.$queryRaw;
         }) => Promise<unknown>,
-      ) =>
-        callback({
-          booking: databaseServiceMock.booking,
-          $queryRaw: databaseServiceMock.$queryRaw,
-        }),
+      ) => callback(transactionMock),
     );
     databaseServiceMock.$queryRaw.mockImplementation((query: unknown) => {
       const queryText = getQueryText(query);
@@ -247,7 +247,7 @@ describe("BookingUpdateService", () => {
         carId: "car-1",
         excludeBookingId: "booking-1",
       }),
-      expect.any(Object),
+      transactionMock,
     );
     expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
     expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();

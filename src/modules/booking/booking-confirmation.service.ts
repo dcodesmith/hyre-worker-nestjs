@@ -93,6 +93,9 @@ export class BookingConfirmationService {
       if (pendingBooking?.status !== BookingStatus.PENDING) {
         return null;
       }
+      if (pendingBooking.carId !== bookingIdentity.carId) {
+        return null;
+      }
 
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.

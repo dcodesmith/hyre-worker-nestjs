@@ -28,6 +28,7 @@ export type BookingIdempotencyClaim =
 @Injectable()
 export class BookingCreationIdempotencyService {
   private static readonly bookingStatuses = new Set<string>(Object.values(BookingStatus));
+  private static readonly maxClaimAttempts = 3;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -69,6 +70,19 @@ export class BookingCreationIdempotencyService {
     idempotencyKey: string,
     requestHash: string,
   ): Promise<BookingIdempotencyClaim> {
+    return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, 1);
+  }
+
+  private async claimWithAttempt(
+    customerScope: string,
+    idempotencyKey: string,
+    requestHash: string,
+    attempt: number,
+  ): Promise<BookingIdempotencyClaim> {
+    if (attempt > BookingCreationIdempotencyService.maxClaimAttempts) {
+      throw new BookingRequestInProgressException(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS);
+    }
+
     try {
       const created = await this.databaseService.bookingCreationIdempotency.create({
         data: { customerScope, idempotencyKey, requestHash },
@@ -83,7 +97,7 @@ export class BookingCreationIdempotencyService {
       where: { customerScope_idempotencyKey: { customerScope, idempotencyKey } },
     });
     if (!existing) {
-      return this.claim(customerScope, idempotencyKey, requestHash);
+      return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, attempt + 1);
     }
     if (existing.requestHash !== requestHash) {
       throw new IdempotencyKeyReusedException();
@@ -123,7 +137,7 @@ export class BookingCreationIdempotencyService {
         },
       });
       if (released.count === 1) {
-        return this.claim(customerScope, idempotencyKey, requestHash);
+        return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, attempt + 1);
       }
     }
 
@@ -231,15 +245,44 @@ export class BookingCreationIdempotencyService {
 
   @Cron("0 3 * * *")
   async cleanupExpiredRecords(): Promise<number> {
+    const staleBefore = new Date(Date.now() - BOOKING_IDEMPOTENCY_RETENTION_MS);
+    const abandonedProcessingWhere: Prisma.BookingCreationIdempotencyWhereInput = {
+      state: BookingCreationIdempotencyState.PROCESSING,
+      bookingId: { not: null },
+      updatedAt: { lt: staleBefore },
+      booking: {
+        is: {
+          status: {
+            in: [BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.REJECTED],
+          },
+        },
+      },
+    };
+    const abandonedCount = await this.databaseService.bookingCreationIdempotency.count({
+      where: abandonedProcessingWhere,
+    });
     const result = await this.databaseService.bookingCreationIdempotency.deleteMany({
       where: {
-        createdAt: { lt: new Date(Date.now() - BOOKING_IDEMPOTENCY_RETENTION_MS) },
         OR: [
-          { state: BookingCreationIdempotencyState.COMPLETED },
-          { state: BookingCreationIdempotencyState.PROCESSING, bookingId: null },
+          {
+            state: BookingCreationIdempotencyState.COMPLETED,
+            updatedAt: { lt: staleBefore },
+          },
+          {
+            state: BookingCreationIdempotencyState.PROCESSING,
+            bookingId: null,
+            updatedAt: { lt: staleBefore },
+          },
+          abandonedProcessingWhere,
         ],
       },
     });
+    if (abandonedCount > 0) {
+      this.logger.warn(
+        { count: abandonedCount },
+        "Deleted abandoned booking idempotency records for terminal bookings",
+      );
+    }
     if (result.count > 0) {
       this.logger.info({ count: result.count }, "Deleted expired booking idempotency records");
     }
@@ -288,7 +331,11 @@ export class BookingCreationIdempotencyService {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, item]) => item !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => {
+          if (left < right) return -1;
+          if (left > right) return 1;
+          return 0;
+        })
         .map(([key, item]) => [key, this.canonicalize(item)]),
     );
   }

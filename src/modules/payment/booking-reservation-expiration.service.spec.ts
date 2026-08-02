@@ -103,4 +103,50 @@ describe("BookingReservationExpirationService", () => {
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
   });
+
+  it("reconciles both deterministic references when the stored payment intent is missing", async () => {
+    databaseService.booking.findMany.mockResolvedValue([{ id: "booking-1", paymentIntent: null }]);
+    flutterwaveService.findTransactionByReference.mockResolvedValue(null);
+    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+
+    await expect(service.reconcileExpiredReservations()).resolves.toBe(1);
+
+    expect(flutterwaveService.findTransactionByReference).toHaveBeenNthCalledWith(1, "booking-1");
+    expect(flutterwaveService.findTransactionByReference).toHaveBeenNthCalledWith(
+      2,
+      "booking_booking-1",
+    );
+    expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+  });
+
+  it("retains a missing-reference reservation when the fallback reference is successful", async () => {
+    databaseService.booking.findMany.mockResolvedValue([{ id: "booking-1", paymentIntent: null }]);
+    flutterwaveService.findTransactionByReference
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ ...transaction, tx_ref: "booking_booking-1" });
+
+    await expect(service.reconcileExpiredReservations()).resolves.toBe(1);
+
+    expect(chargeCompletedHandler.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ tx_ref: "booking_booking-1" }),
+    );
+    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+  });
+
+  it("skips a run while reconciliation is already in progress", async () => {
+    let releaseQuery!: (reservations: Array<{ id: string; paymentIntent: string }>) => void;
+    databaseService.booking.findMany.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseQuery = resolve;
+        }),
+    );
+
+    const firstRun = service.reconcileExpiredReservations();
+    await expect(service.reconcileExpiredReservations()).resolves.toBe(0);
+    expect(databaseService.booking.findMany).toHaveBeenCalledTimes(1);
+
+    releaseQuery([]);
+    await expect(firstRun).resolves.toBe(0);
+  });
 });

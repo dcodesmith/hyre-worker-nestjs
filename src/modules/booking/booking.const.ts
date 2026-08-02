@@ -1,3 +1,4 @@
+import { BookingStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 
 /**
@@ -23,6 +24,11 @@ export const BOOKING_PAYMENT_SESSION_DURATION_MS =
 export const BOOKING_IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const BOOKING_IDEMPOTENCY_PROCESSING_LEASE_MS = 60 * 1000;
 export const BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS = 5;
+export const BLOCKING_BOOKING_STATUSES = [
+  BookingStatus.PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.ACTIVE,
+] as const;
 
 /**
  * Constants for leg generation

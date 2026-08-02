@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS } from "../src/modules/booking/booking.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MapsService } from "../src/modules/maps/maps.service";
@@ -86,7 +87,11 @@ describe("Bookings E2E Tests", () => {
 
   describe("POST /api/bookings", () => {
     let bookingSequence = 0;
-    const createValidBookingPayload = async (carId: string, cookie?: string) => {
+    const createValidBookingPayload = async (
+      carId: string,
+      cookie?: string,
+      { allowPreviewFailure = false }: { allowPreviewFailure?: boolean } = {},
+    ) => {
       const dayOffset = 2 + bookingSequence++ * 3;
       const payload = {
         carId,
@@ -105,6 +110,9 @@ describe("Bookings E2E Tests", () => {
         .send(payload);
       if (cookie) previewRequest.set("Cookie", cookie);
       const preview = await previewRequest;
+      if (!allowPreviewFailure) {
+        expect(preview.status).toBe(HttpStatus.OK);
+      }
       return {
         ...payload,
         expectedTotalAmount:
@@ -288,7 +296,9 @@ describe("Bookings E2E Tests", () => {
         expect(first.status).toBe(HttpStatus.CREATED);
         expect(concurrent.status).toBe(HttpStatus.CONFLICT);
         expect(concurrent.body.errorCode).toBe("BOOKING_REQUEST_IN_PROGRESS");
-        expect(concurrent.headers["retry-after"]).toBe("5");
+        expect(concurrent.headers["retry-after"]).toBe(
+          String(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS),
+        );
         expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
         expect(
           await databaseService.booking.count({
@@ -298,7 +308,9 @@ describe("Bookings E2E Tests", () => {
       });
 
       it("should return 404 for non-existent car", async () => {
-        const payload = await createValidBookingPayload("non-existent-car-id", testUserCookie);
+        const payload = await createValidBookingPayload("non-existent-car-id", testUserCookie, {
+          allowPreviewFailure: true,
+        });
 
         const response = await request(app.getHttpServer())
           .post("/api/bookings")

@@ -83,6 +83,27 @@ describe("BookingReservationService", () => {
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["the payment session is still active", () => new Date(Date.now() + 60_000)],
+    ["the payment session expiry is missing", () => null],
+  ])("retains a reservation when %s", async (_description, getExpiresAt) => {
+    databaseService.booking.findUnique.mockResolvedValue({ carId: "car-1" });
+    tx.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([
+      {
+        id: "booking-1",
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentSessionExpiresAt: getExpiresAt(),
+      },
+    ]);
+
+    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(false);
+
+    expect(tx.payment.count).not.toHaveBeenCalled();
+    expect(bookingEligibilityService.releaseReferralReservation).not.toHaveBeenCalled();
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
   it("recognizes the PostgreSQL booking overlap constraint", () => {
     const error = new Prisma.PrismaClientUnknownRequestError(
       'Database error code: 23P01 constraint "Booking_car_active_window_excl"',

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, CarApprovalStatus, PaymentStatus, Prisma, Status } from "@prisma/client";
+import { CarApprovalStatus, Prisma, Status } from "@prisma/client";
 import { isSameDay } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
@@ -9,6 +9,7 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
+  BLOCKING_BOOKING_STATUSES,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FULL_DAY_END_HOUR,
@@ -254,16 +255,8 @@ export class BookingValidationService {
     const conflictingBookings = await reader.booking.findMany({
       where: {
         carId,
-        OR: [
-          {
-            paymentStatus: { in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING] },
-            status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-          },
-          {
-            paymentStatus: PaymentStatus.UNPAID,
-            status: BookingStatus.PENDING,
-          },
-        ],
+        deletedAt: null,
+        status: { in: [...BLOCKING_BOOKING_STATUSES] },
         // Exclude current booking if this is an update
         ...(excludeBookingId && { id: { not: excludeBookingId } }),
         // Check for overlap with buffer
@@ -346,35 +339,33 @@ export class BookingValidationService {
    * @throws BookingPriceChangedException if prices don't match
    */
   validateExpectedPrice(expectedTotal: string, financials: BookingFinancials): void {
+    let expectedDecimal: Decimal;
     try {
-      const expectedDecimal = new Decimal(expectedTotal);
-      const difference = expectedDecimal.minus(financials.totalAmount).abs();
-
-      if (difference.greaterThan(PRICE_TOLERANCE)) {
-        this.logger.warn(
-          {
-            expectedTotal: expectedDecimal.toString(),
-            serverTotal: financials.totalAmount.toString(),
-            difference: difference.toString(),
-          },
-          "Price mismatch detected",
-        );
-
-        throw new BookingPriceChangedException(
-          expectedDecimal.toFixed(2),
-          BookingPricingPreviewService.mapFinancials(financials),
-        );
-      }
-    } catch (error) {
-      if (error instanceof BookingPriceChangedException) {
-        throw error;
-      }
+      expectedDecimal = new Decimal(expectedTotal);
+    } catch {
       throw new BookingValidationException([
         {
           field: "expectedTotalAmount",
           message: "Invalid price format",
         },
       ]);
+    }
+
+    const difference = expectedDecimal.minus(financials.totalAmount).abs();
+    if (difference.greaterThan(PRICE_TOLERANCE)) {
+      this.logger.warn(
+        {
+          expectedTotal: expectedDecimal.toString(),
+          serverTotal: financials.totalAmount.toString(),
+          difference: difference.toString(),
+        },
+        "Price mismatch detected",
+      );
+
+      throw new BookingPriceChangedException(
+        expectedDecimal.toFixed(2),
+        BookingPricingPreviewService.mapFinancials(financials),
+      );
     }
   }
 

@@ -45,6 +45,7 @@ describe("BookingCreationIdempotencyService", () => {
       updateMany: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       deleteMany: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
     };
     booking: { update: ReturnType<typeof vi.fn> };
     $transaction: ReturnType<typeof vi.fn>;
@@ -58,6 +59,7 @@ describe("BookingCreationIdempotencyService", () => {
         updateMany: vi.fn(),
         update: vi.fn(),
         deleteMany: vi.fn(),
+        count: vi.fn(),
       },
       booking: { update: vi.fn() },
       $transaction: vi.fn(async (callback) => callback(databaseService)),
@@ -77,6 +79,18 @@ describe("BookingCreationIdempotencyService", () => {
     expect(service.createRequestHash(input("100.0"))).toBe(
       service.createRequestHash(input("100.00")),
     );
+  });
+
+  it("canonicalizes request keys without locale-dependent comparison", () => {
+    const localeCompare = vi.spyOn(String.prototype, "localeCompare").mockImplementation(() => {
+      throw new Error("localeCompare must not be used for persisted request hashes");
+    });
+
+    try {
+      expect(service.createRequestHash(input())).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      localeCompare.mockRestore();
+    }
   });
 
   it("claims a new customer-scoped key", async () => {
@@ -215,6 +229,39 @@ describe("BookingCreationIdempotencyService", () => {
     });
   });
 
+  it("bounds retries when a raced unique claim cannot be read", async () => {
+    databaseService.bookingCreationIdempotency.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    databaseService.bookingCreationIdempotency.findUnique.mockResolvedValue(null);
+
+    await expect(service.claim("user:user-1", "request-key", "hash-1")).rejects.toThrow(
+      BookingRequestInProgressException,
+    );
+    expect(databaseService.bookingCreationIdempotency.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds retries while reclaiming abandoned pre-booking requests", async () => {
+    databaseService.bookingCreationIdempotency.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    databaseService.bookingCreationIdempotency.findUnique.mockResolvedValue(
+      record({ updatedAt: new Date(Date.now() - 61_000) }),
+    );
+    databaseService.bookingCreationIdempotency.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(service.claim("user:user-1", "request-key", "hash-1")).rejects.toThrow(
+      BookingRequestInProgressException,
+    );
+    expect(databaseService.bookingCreationIdempotency.create).toHaveBeenCalledTimes(3);
+  });
+
   it("releases only a processing claim without a booking", async () => {
     databaseService.bookingCreationIdempotency.deleteMany.mockResolvedValue({ count: 1 });
 
@@ -229,22 +276,69 @@ describe("BookingCreationIdempotencyService", () => {
     });
   });
 
+  it("cleans only stale completed, unclaimed, or terminal-booking records", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-03T12:00:00.000Z"));
+    databaseService.bookingCreationIdempotency.count.mockResolvedValue(1);
+    databaseService.bookingCreationIdempotency.deleteMany.mockResolvedValue({ count: 3 });
+
+    try {
+      await expect(service.cleanupExpiredRecords()).resolves.toBe(3);
+
+      const staleBefore = new Date("2026-08-02T12:00:00.000Z");
+      const abandonedProcessingWhere = {
+        state: BookingCreationIdempotencyState.PROCESSING,
+        bookingId: { not: null },
+        updatedAt: { lt: staleBefore },
+        booking: {
+          is: {
+            status: {
+              in: [BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.REJECTED],
+            },
+          },
+        },
+      };
+      expect(databaseService.bookingCreationIdempotency.count).toHaveBeenCalledWith({
+        where: abandonedProcessingWhere,
+      });
+      expect(databaseService.bookingCreationIdempotency.deleteMany).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            {
+              state: BookingCreationIdempotencyState.COMPLETED,
+              updatedAt: { lt: staleBefore },
+            },
+            {
+              state: BookingCreationIdempotencyState.PROCESSING,
+              bookingId: null,
+              updatedAt: { lt: staleBefore },
+            },
+            abandonedProcessingWhere,
+          ],
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("checkpoints the provider response before marking the request completed", async () => {
     databaseService.bookingCreationIdempotency.updateMany.mockResolvedValue({ count: 1 });
+    const response = {
+      bookingId: "booking-1",
+      checkoutUrl: "https://checkout.example/1",
+      totalAmount: 100,
+      currency: "NGN" as const,
+      bookingStatus: BookingStatus.PENDING,
+      reservationExpiresAt,
+    };
 
     await service.checkpointPaymentResult(
       "idem-1",
       "booking-1",
       "booking-1",
       new Date(reservationExpiresAt),
-      {
-        bookingId: "booking-1",
-        checkoutUrl: "https://checkout.example/1",
-        totalAmount: 100,
-        currency: "NGN",
-        bookingStatus: BookingStatus.PENDING,
-        reservationExpiresAt,
-      },
+      response,
     );
 
     expect(databaseService.booking.update).toHaveBeenCalledWith({
@@ -261,6 +355,7 @@ describe("BookingCreationIdempotencyService", () => {
           bookingId: "booking-1",
           state: BookingCreationIdempotencyState.PROCESSING,
         }),
+        data: { response },
       }),
     );
   });

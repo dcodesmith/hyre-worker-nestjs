@@ -204,6 +204,25 @@ describe("BookingConfirmationService", () => {
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
+    it("skips confirmation when the booking moved to a different car before locking", async () => {
+      vi.mocked(databaseService.$queryRaw)
+        .mockResolvedValueOnce([{ carId: "car-original" }])
+        .mockResolvedValueOnce([{ id: "car-original" }])
+        .mockResolvedValueOnce([
+          {
+            id: "booking-123",
+            carId: "car-reassigned",
+            status: BookingStatus.PENDING,
+          },
+        ]);
+
+      await expect(
+        service.confirmFromPayment(createMockPayment({ bookingId: "booking-123" })),
+      ).resolves.toBe(false);
+
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
+    });
+
     it("should write booking confirmation notifications to the outbox transaction", async () => {
       const mockPayment = createMockPayment({
         id: "payment-123",

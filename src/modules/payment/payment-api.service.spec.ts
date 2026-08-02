@@ -4,6 +4,7 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
+import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
@@ -128,20 +129,86 @@ describe("PaymentApiService", () => {
         callbackUrl: "https://example.com/callback",
         transactionType: "booking_creation",
         idempotencyKey: "booking_booking-123",
-        sessionDurationMinutes: 10,
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
         metadata: {
           type: "booking",
           entityId: "booking-123",
           userId: mockUserInfo.id,
         },
       });
-      expect(databaseService.booking.update).toHaveBeenCalledWith({
-        where: { id: "booking-123" },
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "booking-123",
+          status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+          paymentStatus: PaymentStatus.UNPAID,
+          paymentIntent: null,
+          paymentSessionExpiresAt: null,
+        },
         data: {
-          paymentIntent: "pi-123",
+          paymentIntent: "booking_booking-123",
           paymentSessionExpiresAt: expect.any(Date),
         },
       });
+    });
+
+    it("claims the booking before calling Flutterwave", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValueOnce({
+        paymentIntentId: "booking_booking-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      await service.initializePayment(validBookingDto, mockUserInfo);
+
+      expect(
+        vi.mocked(databaseService.booking.updateMany).mock.invocationCallOrder[0],
+      ).toBeLessThan(vi.mocked(flutterwaveService.createPaymentIntent).mock.invocationCallOrder[0]);
+      expect(databaseService.booking.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects a concurrent booking payment initialization before provider access", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("retains the claimed reference when the provider outcome is uncertain", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValueOnce(
+        new Error("provider timeout"),
+      );
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        "provider timeout",
+      );
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            paymentIntent: "booking_booking-123",
+            paymentSessionExpiresAt: expect.any(Date),
+          },
+        }),
+      );
+      expect(databaseService.booking.update).not.toHaveBeenCalled();
     });
 
     it("should initialize payment for extension successfully", async () => {

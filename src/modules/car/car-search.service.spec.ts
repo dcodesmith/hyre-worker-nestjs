@@ -1,13 +1,8 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import {
-  BookingStatus,
-  BookingType,
-  PaymentStatus,
-  ServiceTier,
-  VehicleType,
-} from "@prisma/client";
+import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { ReviewsReadService } from "../reviews/reviews-read.service";
@@ -298,16 +293,8 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    OR: [
-                      {
-                        paymentStatus: PaymentStatus.PAID,
-                        status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-                      },
-                      {
-                        paymentStatus: PaymentStatus.UNPAID,
-                        status: BookingStatus.PENDING,
-                      },
-                    ],
+                    deletedAt: null,
+                    status: { in: [...BLOCKING_BOOKING_STATUSES] },
                   }),
                 },
               }),

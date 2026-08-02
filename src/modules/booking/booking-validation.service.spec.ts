@@ -11,6 +11,7 @@ import {
 } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
+  BLOCKING_BOOKING_STATUSES,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FULL_DAY_END_HOUR,
@@ -23,6 +24,7 @@ import {
   CarNotAvailableException,
   CarNotFoundException,
 } from "./booking.error";
+import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
 
@@ -413,7 +415,7 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalled();
     });
 
-    it("should block BOOKED status when an overlapping REFUND_PROCESSING active booking exists", async () => {
+    it("should block an overlapping active booking regardless of payment status", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -443,12 +445,8 @@ describe("BookingValidationService", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             carId: "car-123",
-            OR: expect.arrayContaining([
-              expect.objectContaining({
-                paymentStatus: { in: expect.arrayContaining([PaymentStatus.REFUND_PROCESSING]) },
-                status: { in: expect.arrayContaining([BookingStatus.ACTIVE]) },
-              }),
-            ]),
+            deletedAt: null,
+            status: { in: [...BLOCKING_BOOKING_STATUSES] },
             startDate: expect.objectContaining({ lt: expect.any(Date) }),
             endDate: expect.objectContaining({ gt: expect.any(Date) }),
           }),
@@ -600,18 +598,8 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            OR: [
-              {
-                paymentStatus: {
-                  in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
-                },
-                status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-              },
-              {
-                paymentStatus: PaymentStatus.UNPAID,
-                status: BookingStatus.PENDING,
-              },
-            ],
+            deletedAt: null,
+            status: { in: [...BLOCKING_BOOKING_STATUSES] },
           }),
         }),
       );
@@ -757,6 +745,20 @@ describe("BookingValidationService", () => {
           createBookingFinancials({ totalAmount: new Decimal("10000") }),
         ),
       ).toThrow(BookingValidationException);
+    });
+
+    it("should preserve server-side pricing mapping failures", () => {
+      const mappingError = new Error("pricing mapping failed");
+      vi.spyOn(BookingPricingPreviewService, "mapFinancials").mockImplementationOnce(() => {
+        throw mappingError;
+      });
+
+      expect(() =>
+        service.validateExpectedPrice(
+          "9000",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).toThrow(mappingError);
     });
   });
 

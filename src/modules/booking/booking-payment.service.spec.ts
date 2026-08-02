@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "./booking.const";
 import { PaymentIntentFailedException } from "./booking.error";
 import { BookingPaymentService } from "./booking-payment.service";
 
@@ -38,7 +39,10 @@ describe("BookingPaymentService", () => {
       checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
     });
     expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionDurationMinutes: 10 }),
+      expect.objectContaining({
+        amount: 1000,
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+      }),
     );
   });
 

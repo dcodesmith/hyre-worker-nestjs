@@ -118,7 +118,7 @@ export class RatesService {
         vat: vatRate.ratePercent.toString(),
         securityDetail: securityDetailAddonRate.rateAmount.toString(),
       },
-      "Rates fetched and cached",
+      tx ? "Rates fetched without caching" : "Rates fetched and cached",
     );
 
     return result;

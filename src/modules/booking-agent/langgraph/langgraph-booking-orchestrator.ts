@@ -54,6 +54,8 @@ export function buildBookingInputFromDraft(
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      // Placeholder required by CreateBookingInput. CreateBookingNode replaces it
+      // with the authoritative pricing-preview total before creating the booking.
       expectedTotalAmount: selectedOption.estimatedTotalInclVat.toString(),
       guestEmail: guestIdentity.guestEmail,
       guestName: guestIdentity.guestName,

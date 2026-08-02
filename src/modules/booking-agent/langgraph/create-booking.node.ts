@@ -4,7 +4,12 @@ import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { PRICE_TOLERANCE } from "../../booking/booking.const";
-import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
+import {
+  BookingRequestInProgressException,
+  CarNotAvailableException,
+  CarNotFoundException,
+  IdempotencyKeyReusedException,
+} from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
@@ -186,6 +191,9 @@ export class CreateBookingNode {
         };
       }
 
+      const idempotencyResult = this.mapIdempotencyError(error);
+      if (idempotencyResult) return idempotencyResult;
+
       return {
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         statusMessage: null,
@@ -315,6 +323,28 @@ export class CreateBookingNode {
       );
       return [];
     }
+  }
+
+  private mapIdempotencyError(error: unknown): LangGraphNodeResult | null {
+    if (error instanceof BookingRequestInProgressException) {
+      return {
+        error: null,
+        statusMessage:
+          "Your booking request is still being processed. Please wait a few seconds, then confirm again.",
+        stage: "confirming",
+      };
+    }
+
+    if (error instanceof IdempotencyKeyReusedException) {
+      return {
+        error: null,
+        statusMessage:
+          "Your booking details changed while the previous request was processing. Please review them and confirm again.",
+        stage: "confirming",
+      };
+    }
+
+    return null;
   }
 
   private logBookingCreationInput(

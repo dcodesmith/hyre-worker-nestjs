@@ -1,7 +1,12 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
+import {
+  BookingRequestInProgressException,
+  CarNotAvailableException,
+  CarNotFoundException,
+  IdempotencyKeyReusedException,
+} from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import { DatabaseService } from "../../database/database.service";
@@ -179,6 +184,62 @@ describe("CreateBookingNode", () => {
       }),
     );
     expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns an explicit retry response while the booking request is processing", async () => {
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new BookingRequestInProgressException(5),
+    );
+
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        error: null,
+        stage: "confirming",
+        statusMessage: expect.stringContaining("still being processed"),
+      }),
+    );
+    expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+  });
+
+  it("returns an explicit conflict response when the message key has different input", async () => {
+    bookingCreationServiceMock.createBooking.mockRejectedValue(new IdempotencyKeyReusedException());
+
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        error: null,
+        stage: "confirming",
+        statusMessage: expect.stringContaining("details changed"),
+      }),
+    );
+    expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
   });
 
   it("creates booking as linked user when conversation is verified-linked", async () => {

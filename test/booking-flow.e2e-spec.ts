@@ -622,7 +622,9 @@ describe("Booking Flow E2E", () => {
       where: { id: firstBookingId },
       data: { paymentSessionExpiresAt: new Date(Date.now() - 60_000) },
     });
-    await bookingReservationService.cancelExpiredReservation(firstBookingId);
+    await expect(bookingReservationService.cancelExpiredReservation(firstBookingId)).resolves.toBe(
+      true,
+    );
 
     // Attempt 2: after the checkout hold expires, a fresh booking can reserve the
     // discount with the original referrer.

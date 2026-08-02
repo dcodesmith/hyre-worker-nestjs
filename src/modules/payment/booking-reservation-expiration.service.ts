@@ -12,8 +12,15 @@ const EXPIRED_RESERVATION_BATCH_SIZE = 50;
 const EVERY_MINUTE = "* * * * *";
 const FINAL_UNPAID_STATUSES = new Set(["cancelled", "failed"]);
 
+interface ExpiredReservation {
+  id: string;
+  paymentIntent: string | null;
+}
+
 @Injectable()
 export class BookingReservationExpirationService {
+  private reconciliationInProgress = false;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
@@ -26,6 +33,20 @@ export class BookingReservationExpirationService {
 
   @Cron(EVERY_MINUTE, { timeZone: TIMEZONE })
   async reconcileExpiredReservations(): Promise<number> {
+    if (this.reconciliationInProgress) {
+      this.logger.warn("Skipping overlapping expired-reservation reconciliation");
+      return 0;
+    }
+
+    this.reconciliationInProgress = true;
+    try {
+      return await this.reconcileExpiredReservationBatch();
+    } finally {
+      this.reconciliationInProgress = false;
+    }
+  }
+
+  private async reconcileExpiredReservationBatch(): Promise<number> {
     const reservations = await this.databaseService.booking.findMany({
       where: {
         status: BookingStatus.PENDING,
@@ -42,51 +63,64 @@ export class BookingReservationExpirationService {
 
     let reconciledCount = 0;
     for (const reservation of reservations) {
-      if (!reservation.paymentIntent) continue;
-
-      try {
-        const transaction = await this.flutterwaveService.findTransactionByReference(
-          reservation.paymentIntent,
-        );
-        if (transaction?.status.trim().toLowerCase() === "successful") {
-          await this.chargeCompletedHandler.handle({
-            id: transaction.id,
-            tx_ref: transaction.tx_ref,
-            flw_ref: transaction.flw_ref,
-            amount: transaction.amount,
-            charged_amount: transaction.charged_amount,
-            currency: transaction.currency,
-            status: transaction.status,
-            payment_type: transaction.payment_type ?? "unknown",
-            created_at: transaction.created_at,
-          });
-          reconciledCount += 1;
-          continue;
-        }
-
-        if (
-          transaction === null ||
-          FINAL_UNPAID_STATUSES.has(transaction.status.trim().toLowerCase())
-        ) {
-          const cancelled = await this.bookingReservationService.cancelExpiredReservation(
-            reservation.id,
-          );
-          if (cancelled) reconciledCount += 1;
-        }
-        // Any other provider status is non-terminal. Keep the slot reserved and
-        // retry on the next run rather than risk releasing a successfully paid car.
-      } catch (error) {
-        this.logger.warn(
-          {
-            bookingId: reservation.id,
-            txRef: reservation.paymentIntent,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          "Retaining expired reservation while payment status is uncertain",
-        );
-      }
+      if (await this.reconcileReservation(reservation)) reconciledCount += 1;
     }
 
     return reconciledCount;
+  }
+
+  private async reconcileReservation(reservation: ExpiredReservation): Promise<boolean> {
+    const paymentReferences = reservation.paymentIntent
+      ? [reservation.paymentIntent]
+      : [reservation.id, `booking_${reservation.id}`];
+
+    try {
+      const transaction = await this.findTransaction(paymentReferences);
+      if (transaction?.status.trim().toLowerCase() === "successful") {
+        await this.chargeCompletedHandler.handle({
+          id: transaction.id,
+          tx_ref: transaction.tx_ref,
+          flw_ref: transaction.flw_ref,
+          amount: transaction.amount,
+          charged_amount: transaction.charged_amount,
+          currency: transaction.currency,
+          status: transaction.status,
+          payment_type: transaction.payment_type ?? "unknown",
+          created_at: transaction.created_at,
+        });
+        return true;
+      }
+
+      if (
+        transaction === null ||
+        FINAL_UNPAID_STATUSES.has(transaction.status.trim().toLowerCase())
+      ) {
+        return this.bookingReservationService.cancelExpiredReservation(reservation.id);
+      }
+      // Any other provider status is non-terminal. Keep the slot reserved and
+      // retry on the next run rather than risk releasing a successfully paid car.
+      return false;
+    } catch (error) {
+      this.logger.warn(
+        {
+          bookingId: reservation.id,
+          paymentReferences,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Retaining expired reservation while payment status is uncertain",
+      );
+      return false;
+    }
+  }
+
+  private async findTransaction(
+    paymentReferences: string[],
+  ): Promise<Awaited<ReturnType<FlutterwaveService["findTransactionByReference"]>>> {
+    for (const paymentReference of paymentReferences) {
+      const transaction =
+        await this.flutterwaveService.findTransactionByReference(paymentReference);
+      if (transaction) return transaction;
+    }
+    return null;
   }
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import {
   BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
@@ -77,7 +77,14 @@ export class PaymentApiService {
       throw new PaymentAmountMismatchException(serverAmount, dto.amount);
     }
 
-    // Create payment intent with Flutterwave using server-validated amount
+    const paymentReference = `${dto.type}_${dto.entityId}`;
+    if (dto.type === "booking") {
+      await this.claimBookingPaymentSession(dto.entityId, paymentReference);
+    }
+
+    // Create payment intent with Flutterwave using server-validated amount.
+    // Booking claims remain persisted when the provider outcome is uncertain so
+    // expiration reconciliation can verify the deterministic reference.
     const paymentIntent = await this.flutterwaveService.createPaymentIntent({
       amount: serverAmount,
       customer: {
@@ -86,7 +93,7 @@ export class PaymentApiService {
       },
       callbackUrl: dto.callbackUrl,
       transactionType: dto.type === "booking" ? "booking_creation" : "booking_extension",
-      idempotencyKey: `${dto.type}_${dto.entityId}`,
+      idempotencyKey: paymentReference,
       metadata: {
         type: dto.type,
         entityId: dto.entityId,
@@ -96,16 +103,6 @@ export class PaymentApiService {
         sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
       }),
     });
-
-    if (dto.type === "booking") {
-      await this.databaseService.booking.update({
-        where: { id: dto.entityId },
-        data: {
-          paymentIntent: paymentIntent.paymentIntentId,
-          paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
-        },
-      });
-    }
 
     this.logger.info(
       {
@@ -117,6 +114,33 @@ export class PaymentApiService {
     );
 
     return paymentIntent;
+  }
+
+  private async claimBookingPaymentSession(
+    bookingId: string,
+    paymentReference: string,
+  ): Promise<void> {
+    const { count } = await this.databaseService.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentIntent: null,
+        paymentSessionExpiresAt: null,
+      },
+      data: {
+        paymentIntent: paymentReference,
+        paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
+      },
+    });
+
+    if (count === 0) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        bookingId,
+        "payment session is already initialized",
+      );
+    }
   }
 
   /**
@@ -523,7 +547,8 @@ export class PaymentApiService {
         `payment status is ${booking.paymentStatus.toLowerCase()}`,
       );
     }
-    if (booking.paymentSessionExpiresAt && booking.paymentSessionExpiresAt <= new Date()) {
+    const paymentSessionExpiresAt: Date | null = booking.paymentSessionExpiresAt;
+    if (paymentSessionExpiresAt && paymentSessionExpiresAt <= new Date()) {
       throw new PaymentEntityNotPayableException(
         "booking",
         entityId,

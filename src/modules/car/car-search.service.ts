@@ -1,9 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import {
-  BookingStatus,
   BookingType,
   CarApprovalStatus,
-  PaymentStatus,
   Prisma,
   type ServiceTier,
   Status,
@@ -12,6 +10,7 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
+import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -252,7 +251,7 @@ export class CarSearchService {
                 bookingsAsChauffeur: {
                   some: {
                     status: {
-                      in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+                      in: [...BLOCKING_BOOKING_STATUSES],
                     },
                     AND: [{ startDate: { lte: endOfDay } }, { endDate: { gte: startOfDay } }],
                   },
@@ -317,16 +316,8 @@ export class CarSearchService {
         {
           bookings: {
             none: {
-              OR: [
-                {
-                  paymentStatus: PaymentStatus.PAID,
-                  status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
-                },
-                {
-                  paymentStatus: PaymentStatus.UNPAID,
-                  status: BookingStatus.PENDING,
-                },
-              ],
+              deletedAt: null,
+              status: { in: [...BLOCKING_BOOKING_STATUSES] },
               startDate: { lt: bufferedEnd },
               endDate: { gt: bufferedStart },
             },
