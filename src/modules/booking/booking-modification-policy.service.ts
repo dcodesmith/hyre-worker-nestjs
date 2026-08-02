@@ -40,23 +40,31 @@ export class BookingModificationPolicyService {
   }
 
   assertCanEdit(booking: BookingModificationPolicyInput, now = new Date()): void {
+    this.assertEditableStatus(booking);
+    this.assertWithinWindow(booking.startDate, now);
+  }
+
+  assertEditableStatus(booking: BookingModificationPolicyInput): void {
     if (!this.isEditableStatus(booking)) {
       throw new BookingStatusNotModifiableException(
         "edit",
         "Only confirmed bookings can be edited",
       );
     }
-    this.assertWithinWindow(booking.startDate, now);
   }
 
   assertCanCancel(booking: BookingModificationPolicyInput, now = new Date()): void {
+    this.assertCancellableStatus(booking);
+    this.assertWithinWindow(booking.startDate, now);
+  }
+
+  assertCancellableStatus(booking: BookingModificationPolicyInput): void {
     if (!this.isCancellableStatus(booking)) {
       throw new BookingStatusNotModifiableException(
         "cancel",
         "Only paid confirmed bookings can be cancelled",
       );
     }
-    this.assertWithinWindow(booking.startDate, now);
   }
 
   assertWithinWindow(startDate: Date, now = new Date()): void {

@@ -47,7 +47,7 @@ export class BookingCancellationService {
           throw new BookingNotFoundException();
         }
 
-        this.bookingModificationPolicyService.assertCanCancel(existingBooking);
+        this.bookingModificationPolicyService.assertCancellableStatus(existingBooking);
 
         const bookingLocked = await this.lockCancellableBookingState(
           tx,

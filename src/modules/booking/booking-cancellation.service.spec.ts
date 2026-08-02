@@ -44,6 +44,7 @@ describe("BookingCancellationService", () => {
     reversePendingReferralRewards: vi.fn(),
   };
   const bookingModificationPolicyServiceMock = {
+    assertCancellableStatus: vi.fn(),
     assertCanCancel: vi.fn(),
     getStartDateThreshold: vi.fn((now: Date) => new Date(now.getTime() + 12 * 60 * 60 * 1000)),
     getEligibility: vi.fn().mockReturnValue({
@@ -56,6 +57,19 @@ describe("BookingCancellationService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    bookingModificationPolicyServiceMock.assertCancellableStatus.mockImplementation(
+      (booking: { status: BookingStatus; paymentStatus: PaymentStatus }) => {
+        if (
+          booking.status !== BookingStatus.CONFIRMED ||
+          booking.paymentStatus !== PaymentStatus.PAID
+        ) {
+          throw new BookingStatusNotModifiableException(
+            "cancel",
+            "Only paid confirmed bookings can be cancelled",
+          );
+        }
+      },
+    );
     bookingModificationPolicyServiceMock.assertCanCancel.mockImplementation(
       (
         booking: { status: BookingStatus; paymentStatus: PaymentStatus; startDate: Date },
@@ -165,7 +179,46 @@ describe("BookingCancellationService", () => {
       { booking: expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }) },
       txMock,
     );
-    expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledTimes(2);
+    expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledOnce();
+  });
+
+  it("uses the database clock when the application clock is past the cutoff", async () => {
+    const startDate = new Date("2026-08-03T12:00:00.000Z");
+    const databaseNow = new Date("2026-08-02T23:59:59.999Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-03T00:00:00.001Z"));
+
+    try {
+      txMock.booking.findUnique.mockResolvedValueOnce({
+        id: "booking-1",
+        userId: "user-1",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        startDate,
+        carId: "car-1",
+      });
+      txMock.$queryRaw
+        .mockResolvedValueOnce([{ id: "booking-1" }])
+        .mockResolvedValueOnce([{ policyNow: databaseNow }]);
+      txMock.booking.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "booking-1",
+        status: BookingStatus.CANCELLED,
+        car: { owner: {} },
+        user: {},
+        legs: [],
+      });
+      txMock.car.update.mockResolvedValueOnce({ id: "car-1", status: "AVAILABLE" });
+
+      await expect(
+        service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
+      ).resolves.toEqual(expect.objectContaining({ status: BookingStatus.CANCELLED }));
+      expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "booking-1" }),
+        databaseNow,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("throws BookingNotFoundException when booking is missing or not owned by user", async () => {

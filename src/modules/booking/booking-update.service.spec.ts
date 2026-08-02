@@ -55,6 +55,7 @@ describe("BookingUpdateService", () => {
     buildEvents: vi.fn(),
   };
   const bookingModificationPolicyServiceMock = {
+    assertEditableStatus: vi.fn(),
     assertCanEdit: vi.fn(),
     assertWithinWindow: vi.fn(),
     getStartDateThreshold: vi.fn((now: Date) => new Date(now.getTime() + 12 * 60 * 60 * 1000)),
@@ -68,6 +69,16 @@ describe("BookingUpdateService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    bookingModificationPolicyServiceMock.assertEditableStatus.mockImplementation(
+      (booking: { status: BookingStatus }) => {
+        if (booking.status !== BookingStatus.CONFIRMED) {
+          throw new BookingStatusNotModifiableException(
+            "edit",
+            "Only confirmed bookings can be edited",
+          );
+        }
+      },
+    );
     bookingModificationPolicyServiceMock.assertCanEdit.mockImplementation(
       (booking: { status: BookingStatus; startDate: Date }, now = new Date()) => {
         if (booking.status !== BookingStatus.CONFIRMED) {
@@ -203,8 +214,8 @@ describe("BookingUpdateService", () => {
         excludeBookingId: "booking-1",
       }),
     );
-    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledTimes(2);
-    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledTimes(2);
+    expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
+    expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();
   });
 
   it("throws when booking does not exist for user", async () => {

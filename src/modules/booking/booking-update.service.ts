@@ -198,12 +198,9 @@ export class BookingUpdateService {
     input: UpdateBookingBodyDto,
   ) {
     const currentBooking = await this.getCurrentBookingForUser(bookingId, userId);
-    this.bookingModificationPolicyService.assertCanEdit(currentBooking);
+    this.bookingModificationPolicyService.assertEditableStatus(currentBooking);
 
     const { newStartDate, newEndDate } = this.resolveUpdatedDates(currentBooking, input.pickupTime);
-    if (newStartDate) {
-      this.bookingModificationPolicyService.assertWithinWindow(newStartDate);
-    }
 
     const { newPickupLocation, newReturnLocation } = this.resolveLocationUpdates(
       currentBooking,
@@ -219,6 +216,8 @@ export class BookingUpdateService {
     };
 
     if (Object.keys(updateData).length === 0) {
+      const policyNow = await this.getDatabaseNow(this.databaseService);
+      this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
       const booking = await this.getBookingDetailsById(currentBooking.id);
       return booking ? this.withModificationEligibility(booking) : booking;
     }
@@ -299,8 +298,10 @@ export class BookingUpdateService {
     return rows.length > 0;
   }
 
-  private async getDatabaseNow(tx: Prisma.TransactionClient): Promise<Date> {
-    const [clock] = await tx.$queryRaw<Array<{ policyNow: Date }>>`
+  private async getDatabaseNow(
+    database: Pick<Prisma.TransactionClient, "$queryRaw">,
+  ): Promise<Date> {
+    const [clock] = await database.$queryRaw<Array<{ policyNow: Date }>>`
       SELECT clock_timestamp() AS "policyNow"
     `;
     return clock.policyNow;
