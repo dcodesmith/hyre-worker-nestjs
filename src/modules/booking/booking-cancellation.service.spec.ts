@@ -15,13 +15,23 @@ import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 
+function getQueryText(query: unknown): string {
+  if (Array.isArray(query)) {
+    return query.join("");
+  }
+  return String(
+    query && typeof query === "object" && "strings" in query
+      ? (query as { strings: string[] }).strings.join("")
+      : query,
+  );
+}
+
 describe("BookingCancellationService", () => {
   let service: BookingCancellationService;
 
   const txMock = {
     booking: {
       findUnique: vi.fn(),
-      updateMany: vi.fn(),
       findUniqueOrThrow: vi.fn(),
     },
     car: {
@@ -46,7 +56,10 @@ describe("BookingCancellationService", () => {
   const bookingModificationPolicyServiceMock = {
     assertCancellableStatus: vi.fn(),
     assertCanCancel: vi.fn(),
-    getStartDateThreshold: vi.fn((now: Date) => new Date(now.getTime() + 12 * 60 * 60 * 1000)),
+    assertWithinWindow: vi.fn(),
+    getModificationCutoffAt: vi.fn(
+      (startDate: Date) => new Date(startDate.getTime() - 12 * 60 * 60 * 1000),
+    ),
     getEligibility: vi.fn().mockReturnValue({
       canEdit: false,
       canCancel: false,
@@ -92,15 +105,28 @@ describe("BookingCancellationService", () => {
         }
       },
     );
+    bookingModificationPolicyServiceMock.assertWithinWindow.mockImplementation(
+      (startDate: Date, now = new Date()) => {
+        if (now.getTime() >= startDate.getTime() - 12 * 60 * 60 * 1000) {
+          throw new BookingOutsideModificationWindowException(
+            new Date(startDate.getTime() - 12 * 60 * 60 * 1000),
+            12,
+          );
+        }
+      },
+    );
     databaseServiceMock.$transaction.mockImplementation(
       async (callback: (transaction: typeof txMock) => unknown) => callback(txMock),
     );
-    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
-    txMock.$queryRaw.mockImplementation((query: TemplateStringsArray) =>
-      query.join("").includes("clock_timestamp")
+    txMock.$queryRaw.mockImplementation((query: unknown) => {
+      const queryText = getQueryText(query);
+      if (queryText.includes('UPDATE "Booking"')) {
+        return [{ id: "booking-1" }];
+      }
+      return queryText.includes('SELECT clock_timestamp() AS "policyNow"')
         ? [{ policyNow: new Date() }]
-        : [{ id: "booking-1" }],
-    );
+        : [{ id: "booking-1" }];
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -122,6 +148,8 @@ describe("BookingCancellationService", () => {
   });
 
   it("cancels a paid booking and marks payment as refund processing", async () => {
+    const policyNow = new Date("2026-08-01T23:59:58.000Z");
+    const responseNow = new Date("2026-08-01T23:59:59.000Z");
     txMock.booking.findUnique.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -138,6 +166,11 @@ describe("BookingCancellationService", () => {
       legs: [],
     });
     txMock.car.update.mockResolvedValueOnce({ id: "car-1", status: "AVAILABLE" });
+    txMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow }])
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow: responseNow }]);
 
     const result = await service.cancelBooking(
       "booking-1",
@@ -148,22 +181,16 @@ describe("BookingCancellationService", () => {
     expect(result).toEqual(
       expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }),
     );
-    expect(txMock.booking.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: "booking-1",
-          userId: "user-1",
-          status: BookingStatus.CONFIRMED,
-          paymentStatus: PaymentStatus.PAID,
-        }),
-        data: expect.objectContaining({
-          status: BookingStatus.CANCELLED,
-          paymentStatus: PaymentStatus.REFUND_PROCESSING,
-          cancellationReason: "User requested cancellation",
-          referralCreditsReserved: 0,
-          referralCreditsUsed: 0,
-        }),
-      }),
+    const updateQuery = txMock.$queryRaw.mock.calls[2]?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
+    expect(txMock.$queryRaw.mock.calls[2]?.slice(1)).toEqual(
+      expect.arrayContaining([
+        BookingStatus.CANCELLED,
+        PaymentStatus.REFUND_PROCESSING,
+        "User requested cancellation",
+        "booking-1",
+        "user-1",
+      ]),
     );
     expect(txMock.car.update).toHaveBeenCalledWith({
       where: { id: "car-1" },
@@ -180,6 +207,11 @@ describe("BookingCancellationService", () => {
       txMock,
     );
     expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledOnce();
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-1" }),
+      true,
+      responseNow,
+    );
   });
 
   it("uses the database clock when the application clock is past the cutoff", async () => {
@@ -199,6 +231,8 @@ describe("BookingCancellationService", () => {
       });
       txMock.$queryRaw
         .mockResolvedValueOnce([{ id: "booking-1" }])
+        .mockResolvedValueOnce([{ policyNow: databaseNow }])
+        .mockResolvedValueOnce([{ id: "booking-1" }])
         .mockResolvedValueOnce([{ policyNow: databaseNow }]);
       txMock.booking.findUniqueOrThrow.mockResolvedValueOnce({
         id: "booking-1",
@@ -214,6 +248,11 @@ describe("BookingCancellationService", () => {
       ).resolves.toEqual(expect.objectContaining({ status: BookingStatus.CANCELLED }));
       expect(bookingModificationPolicyServiceMock.assertCanCancel).toHaveBeenCalledWith(
         expect.objectContaining({ id: "booking-1" }),
+        databaseNow,
+      );
+      expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "booking-1" }),
+        true,
         databaseNow,
       );
     } finally {
@@ -252,7 +291,7 @@ describe("BookingCancellationService", () => {
       startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
       carId: "car-1",
     });
-    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    txMock.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
@@ -260,8 +299,9 @@ describe("BookingCancellationService", () => {
     expect(txMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
-  it("rejects cancellation when the cutoff expires before the guarded write", async () => {
+  it("rejects cancellation when the database cutoff expires inside the guarded write", async () => {
     const startDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const modificationCutoffAt = new Date(startDate.getTime() - 12 * 60 * 60 * 1000);
     txMock.booking.findUnique.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -272,12 +312,15 @@ describe("BookingCancellationService", () => {
     });
     txMock.$queryRaw
       .mockResolvedValueOnce([{ id: "booking-1" }])
-      .mockResolvedValueOnce([{ policyNow: new Date(startDate.getTime() - 12 * 60 * 60 * 1000) }]);
+      .mockResolvedValueOnce([{ policyNow: new Date(modificationCutoffAt.getTime() - 1) }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ policyNow: modificationCutoffAt }]);
 
     await expect(
       service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
     ).rejects.toBeInstanceOf(BookingOutsideModificationWindowException);
-    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    const updateQuery = txMock.$queryRaw.mock.calls[2]?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
   });
 
   it("throws BookingCancellationFailedException when transaction fails unexpectedly", async () => {

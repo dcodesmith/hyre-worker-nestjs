@@ -4,7 +4,7 @@ import {
   type BookingType,
   ChauffeurApprovalStatus,
   PaymentStatus,
-  type Prisma,
+  Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
@@ -21,7 +21,8 @@ import {
   BookingUpdateNotAllowedException,
   BookingValidationException,
 } from "./booking.error";
-import type { CurrentBookingRecord } from "./booking.interface";
+import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
+import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingValidationService } from "./booking-validation.service";
@@ -216,10 +217,10 @@ export class BookingUpdateService {
     };
 
     if (Object.keys(updateData).length === 0) {
-      const policyNow = await this.getDatabaseNow(this.databaseService);
+      const policyNow = await getDatabaseNow(this.databaseService);
       this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
       const booking = await this.getBookingDetailsById(currentBooking.id);
-      return booking ? this.withModificationEligibility(booking) : booking;
+      return booking ? this.withModificationEligibility(booking, policyNow) : booking;
     }
 
     return this.databaseService.$transaction(async (tx) => {
@@ -236,27 +237,31 @@ export class BookingUpdateService {
         );
       }
 
-      const policyNow = await this.getDatabaseNow(tx);
+      const policyNow = await getDatabaseNow(tx);
       this.bookingModificationPolicyService.assertCanEdit(currentBooking, policyNow);
       if (newStartDate) {
         this.bookingModificationPolicyService.assertWithinWindow(newStartDate, policyNow);
       }
 
-      const startDateThreshold =
-        this.bookingModificationPolicyService.getStartDateThreshold(policyNow);
-      const updated = await tx.booking.updateMany({
-        where: {
-          id: bookingId,
-          userId,
-          status: BookingStatus.CONFIRMED,
-          startDate: {
-            equals: currentBooking.startDate,
-            gt: startDateThreshold,
-          },
-        },
-        data: updateData,
+      const effectiveStartDate =
+        newStartDate && newStartDate < currentBooking.startDate
+          ? newStartDate
+          : currentBooking.startDate;
+      const modificationCutoffAt =
+        this.bookingModificationPolicyService.getModificationCutoffAt(effectiveStartDate);
+      const updated = await this.updateBookingWithinWindow(tx, {
+        bookingId,
+        userId,
+        currentStartDate: currentBooking.startDate,
+        modificationCutoffAt,
+        newStartDate,
+        newEndDate,
+        newPickupLocation,
+        newReturnLocation,
       });
-      if (updated.count === 0) {
+      if (!updated) {
+        const rejectionNow = await getDatabaseNow(tx);
+        this.bookingModificationPolicyService.assertWithinWindow(effectiveStartDate, rejectionNow);
         throw new BookingStatusNotModifiableException(
           "edit",
           "Booking state changed during the update. Please retry",
@@ -275,8 +280,41 @@ export class BookingUpdateService {
         },
         tx,
       );
-      return this.withModificationEligibility(updatedBooking);
+      const responseNow = await getDatabaseNow(tx);
+      return this.withModificationEligibility(updatedBooking, responseNow);
     });
+  }
+
+  private async updateBookingWithinWindow(
+    tx: Prisma.TransactionClient,
+    input: BookingWindowedUpdateInput,
+  ): Promise<boolean> {
+    const assignments = [Prisma.sql`"updatedAt" = timezone('UTC', clock_timestamp())`];
+    if (input.newStartDate) {
+      assignments.push(Prisma.sql`"startDate" = ${input.newStartDate}`);
+    }
+    if (input.newEndDate) {
+      assignments.push(Prisma.sql`"endDate" = ${input.newEndDate}`);
+    }
+    if (input.newPickupLocation) {
+      assignments.push(Prisma.sql`"pickupLocation" = ${input.newPickupLocation}`);
+    }
+    if (input.newReturnLocation) {
+      assignments.push(Prisma.sql`"returnLocation" = ${input.newReturnLocation}`);
+    }
+
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      UPDATE "Booking"
+      SET ${Prisma.join(assignments, ", ")}
+      WHERE "id" = ${input.bookingId}
+        AND "userId" = ${input.userId}
+        AND "status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+        AND "startDate" = ${input.currentStartDate}
+        AND clock_timestamp() < ${input.modificationCutoffAt}
+      RETURNING "id"
+    `);
+
+    return rows.length > 0;
   }
 
   private async lockEditableBookingState(
@@ -296,15 +334,6 @@ export class BookingUpdateService {
     `;
 
     return rows.length > 0;
-  }
-
-  private async getDatabaseNow(
-    database: Pick<Prisma.TransactionClient, "$queryRaw">,
-  ): Promise<Date> {
-    const [clock] = await database.$queryRaw<Array<{ policyNow: Date }>>`
-      SELECT clock_timestamp() AS "policyNow"
-    `;
-    return clock.policyNow;
   }
 
   private getBookingDetailsById(bookingId: string) {
@@ -449,10 +478,13 @@ export class BookingUpdateService {
     return { newStartDate, newEndDate };
   }
 
-  private withModificationEligibility<T extends BookingModificationPolicyInput>(booking: T) {
+  private withModificationEligibility<T extends BookingModificationPolicyInput>(
+    booking: T,
+    now: Date,
+  ) {
     return {
       ...booking,
-      ...this.bookingModificationPolicyService.getEligibility(booking),
+      ...this.bookingModificationPolicyService.getEligibility(booking, true, now),
     };
   }
 }

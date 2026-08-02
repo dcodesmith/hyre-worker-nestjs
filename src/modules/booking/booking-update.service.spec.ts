@@ -19,6 +19,16 @@ import { BookingModificationPolicyService } from "./booking-modification-policy.
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 
+function getQueryText(query: unknown): string {
+  if (Array.isArray(query)) {
+    return query.join("");
+  }
+  if (query && typeof query === "object" && "strings" in query) {
+    return (query as { strings: string[] }).strings.join("");
+  }
+  return String(query);
+}
+
 describe("BookingUpdateService", () => {
   let service: BookingUpdateService;
 
@@ -26,7 +36,6 @@ describe("BookingUpdateService", () => {
     booking: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
-      updateMany: vi.fn(),
       findUniqueOrThrow: vi.fn(),
     },
     user: {
@@ -58,7 +67,9 @@ describe("BookingUpdateService", () => {
     assertEditableStatus: vi.fn(),
     assertCanEdit: vi.fn(),
     assertWithinWindow: vi.fn(),
-    getStartDateThreshold: vi.fn((now: Date) => new Date(now.getTime() + 12 * 60 * 60 * 1000)),
+    getModificationCutoffAt: vi.fn(
+      (startDate: Date) => new Date(startDate.getTime() - 12 * 60 * 60 * 1000),
+    ),
     getEligibility: vi.fn().mockReturnValue({
       canEdit: true,
       canCancel: true,
@@ -117,12 +128,15 @@ describe("BookingUpdateService", () => {
           $queryRaw: databaseServiceMock.$queryRaw,
         }),
     );
-    databaseServiceMock.$queryRaw.mockImplementation((query: TemplateStringsArray) =>
-      query.join("").includes("clock_timestamp")
+    databaseServiceMock.$queryRaw.mockImplementation((query: unknown) => {
+      const queryText = getQueryText(query);
+      if (queryText.includes('UPDATE "Booking"')) {
+        return [{ id: "booking-1" }];
+      }
+      return queryText.includes('SELECT clock_timestamp() AS "policyNow"')
         ? [{ policyNow: new Date() }]
-        : [{ id: "booking-1" }],
-    );
-    databaseServiceMock.booking.updateMany.mockResolvedValue({ count: 1 });
+        : [{ id: "booking-1" }];
+    });
     notificationOutboxServiceMock.create.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -146,6 +160,8 @@ describe("BookingUpdateService", () => {
   });
 
   it("updates booking pickup location", async () => {
+    const policyNow = new Date("2026-08-01T23:59:58.000Z");
+    const responseNow = new Date("2026-08-01T23:59:59.000Z");
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -158,22 +174,34 @@ describe("BookingUpdateService", () => {
       returnLocation: "Old return",
     });
     databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: "booking-1" });
+    databaseServiceMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow }])
+      .mockResolvedValueOnce([{ id: "booking-1" }])
+      .mockResolvedValueOnce([{ policyNow: responseNow }]);
 
     await service.updateBooking("booking-1", "user-1", {
       pickupAddress: "New pickup",
     });
 
-    expect(databaseServiceMock.booking.updateMany).toHaveBeenCalledWith(
+    const updateQuery = databaseServiceMock.$queryRaw.mock.calls.find(([query]) =>
+      getQueryText(query).includes('UPDATE "Booking"'),
+    )?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
+    expect(updateQuery).toEqual(
       expect.objectContaining({
-        where: expect.objectContaining({
-          id: "booking-1",
-          userId: "user-1",
-          status: BookingStatus.CONFIRMED,
-        }),
-        data: expect.objectContaining({
-          pickupLocation: "New pickup",
-        }),
+        values: expect.arrayContaining([
+          "booking-1",
+          "user-1",
+          BookingStatus.CONFIRMED,
+          "New pickup",
+        ]),
       }),
+    );
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      { id: "booking-1" },
+      true,
+      responseNow,
     );
     expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
       bookingUpdatedHandlerMock,
@@ -256,7 +284,7 @@ describe("BookingUpdateService", () => {
       pickupLocation: "Old pickup",
       returnLocation: "Old return",
     });
-    databaseServiceMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
@@ -264,8 +292,9 @@ describe("BookingUpdateService", () => {
     expect(databaseServiceMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
-  it("rejects the update when the cutoff expires before the guarded write", async () => {
+  it("rejects the update when the database cutoff expires inside the guarded write", async () => {
     const startDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const modificationCutoffAt = new Date(startDate.getTime() - 12 * 60 * 60 * 1000);
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
       id: "booking-1",
       userId: "user-1",
@@ -279,12 +308,15 @@ describe("BookingUpdateService", () => {
     });
     databaseServiceMock.$queryRaw
       .mockResolvedValueOnce([{ id: "booking-1" }])
-      .mockResolvedValueOnce([{ policyNow: new Date(startDate.getTime() - 12 * 60 * 60 * 1000) }]);
+      .mockResolvedValueOnce([{ policyNow: new Date(modificationCutoffAt.getTime() - 1) }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ policyNow: modificationCutoffAt }]);
 
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
     ).rejects.toBeInstanceOf(BookingOutsideModificationWindowException);
-    expect(databaseServiceMock.booking.updateMany).not.toHaveBeenCalled();
+    const updateQuery = databaseServiceMock.$queryRaw.mock.calls[2]?.[0];
+    expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
   });
 
   it("throws validation error for pickupTime on unsupported booking type", async () => {
@@ -334,6 +366,7 @@ describe("BookingUpdateService", () => {
   });
 
   it("returns current booking when no changes detected", async () => {
+    const policyNow = new Date("2026-08-01T23:59:59.999Z");
     const baseBooking = {
       id: "booking-1",
       userId: "user-1",
@@ -350,12 +383,22 @@ describe("BookingUpdateService", () => {
       id: "booking-1",
       paymentStatus: PaymentStatus.PAID,
     });
+    databaseServiceMock.$queryRaw.mockResolvedValueOnce([{ policyNow }]);
 
     const result = await service.updateBooking("booking-1", "user-1", {
       pickupAddress: "Old pickup",
     });
 
-    expect(databaseServiceMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(
+      databaseServiceMock.$queryRaw.mock.calls.some(([query]) =>
+        getQueryText(query).includes('UPDATE "Booking"'),
+      ),
+    ).toBe(false);
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-1" }),
+      true,
+      policyNow,
+    );
     expect(result).toEqual({
       id: "booking-1",
       paymentStatus: PaymentStatus.PAID,

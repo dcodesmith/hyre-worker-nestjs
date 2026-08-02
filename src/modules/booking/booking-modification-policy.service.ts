@@ -19,10 +19,6 @@ export class BookingModificationPolicyService {
     this.cutoffHours = configService.get("BOOKING_MODIFICATION_CUTOFF_HOURS", { infer: true });
   }
 
-  getStartDateThreshold(now: Date): Date {
-    return new Date(now.getTime() + this.cutoffHours * 60 * 60 * 1000);
-  }
-
   getEligibility(
     booking: BookingModificationPolicyInput,
     canAct = true,
@@ -88,7 +84,7 @@ export class BookingModificationPolicyService {
     return now.getTime() < this.getModificationCutoffAt(startDate).getTime();
   }
 
-  private getModificationCutoffAt(startDate: Date): Date {
+  getModificationCutoffAt(startDate: Date): Date {
     // Date#getTime is an absolute UTC instant, independent of the server's local timezone.
     return new Date(startDate.getTime() - this.cutoffHours * 60 * 60 * 1000);
   }

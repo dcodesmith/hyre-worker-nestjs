@@ -8,6 +8,7 @@ import { BookingReadService } from "./booking-read.service";
 
 describe("BookingReadService", () => {
   let service: BookingReadService;
+  const policyNow = new Date("2026-08-01T23:59:59.999Z");
   const customerSessionUser = {
     id: "user-1",
     email: "user@example.com",
@@ -43,9 +44,10 @@ describe("BookingReadService", () => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    $queryRaw: vi.fn(),
   };
   const bookingModificationPolicyServiceMock = {
-    getEligibility: vi.fn((booking: { status: string }, canAct = true) => {
+    getEligibility: vi.fn((booking: { status: string }, canAct = true, _now?: Date) => {
       const canModify = canAct && booking.status === "CONFIRMED";
       return {
         canEdit: canModify,
@@ -58,6 +60,7 @@ describe("BookingReadService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.$queryRaw.mockResolvedValue([{ policyNow }]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingReadService,
@@ -128,6 +131,11 @@ describe("BookingReadService", () => {
         },
       ],
     });
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-1" }),
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the requesting user", async () => {
@@ -157,6 +165,11 @@ describe("BookingReadService", () => {
       modificationCutoffAt: "2026-08-02T00:00:00.000Z",
       policyHoursBeforeStart: 12,
     });
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-123" }),
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the fleet owner that owns the booked car", async () => {
@@ -192,6 +205,11 @@ describe("BookingReadService", () => {
           OR: [{ car: { ownerId: "owner-1" } }],
         },
       }),
+    );
+    expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-123" }),
+      false,
+      policyNow,
     );
   });
 

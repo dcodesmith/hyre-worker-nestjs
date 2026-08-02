@@ -146,8 +146,8 @@ describe("BookingModificationPolicyService", () => {
 
     expect(eligibility.modificationCutoffAt).toBe("2026-08-01T12:00:00.000Z");
     expect(eligibility.policyHoursBeforeStart).toBe(24);
-    expect(service.getStartDateThreshold(new Date("2026-08-01T00:00:00.000Z"))).toEqual(
-      new Date("2026-08-02T00:00:00.000Z"),
+    expect(service.getModificationCutoffAt(startDate)).toEqual(
+      new Date("2026-08-01T12:00:00.000Z"),
     );
   });
 });

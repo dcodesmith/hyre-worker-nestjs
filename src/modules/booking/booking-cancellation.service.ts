@@ -11,6 +11,7 @@ import {
   BookingStatusNotModifiableException,
 } from "./booking.error";
 import { BookingEligibilityService } from "./booking-eligibility.service";
+import { getDatabaseNow } from "./booking-modification-policy.helper";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 
 const CANCELLED_BOOKING_REFERRAL_REASON = "BOOKING_CANCELLED";
@@ -62,31 +63,34 @@ export class BookingCancellationService {
           );
         }
 
-        const policyNow = await this.getDatabaseNow(tx);
+        const policyNow = await getDatabaseNow(tx);
         this.bookingModificationPolicyService.assertCanCancel(existingBooking, policyNow);
-        const startDateThreshold =
-          this.bookingModificationPolicyService.getStartDateThreshold(policyNow);
-        const updated = await tx.booking.updateMany({
-          where: {
-            id: bookingId,
-            userId,
-            status: BookingStatus.CONFIRMED,
-            paymentStatus: PaymentStatus.PAID,
-            startDate: {
-              equals: existingBooking.startDate,
-              gt: startDateThreshold,
-            },
-          },
-          data: {
-            status: BookingStatus.CANCELLED,
-            paymentStatus: PaymentStatus.REFUND_PROCESSING,
-            cancelledAt: new Date(),
-            cancellationReason: reason,
-            referralCreditsReserved: 0,
-            referralCreditsUsed: 0,
-          },
-        });
-        if (updated.count === 0) {
+        const modificationCutoffAt = this.bookingModificationPolicyService.getModificationCutoffAt(
+          existingBooking.startDate,
+        );
+        const updated = await tx.$queryRaw<Array<{ id: string }>>`
+          UPDATE "Booking"
+          SET "status" = ${BookingStatus.CANCELLED}::"BookingStatus",
+              "paymentStatus" = ${PaymentStatus.REFUND_PROCESSING}::"PaymentStatus",
+              "cancelledAt" = timezone('UTC', clock_timestamp()),
+              "cancellationReason" = ${reason},
+              "referralCreditsReserved" = 0,
+              "referralCreditsUsed" = 0,
+              "updatedAt" = timezone('UTC', clock_timestamp())
+          WHERE "id" = ${bookingId}
+            AND "userId" = ${userId}
+            AND "status" = ${BookingStatus.CONFIRMED}::"BookingStatus"
+            AND "paymentStatus" = ${PaymentStatus.PAID}::"PaymentStatus"
+            AND "startDate" = ${existingBooking.startDate}
+            AND clock_timestamp() < ${modificationCutoffAt}
+          RETURNING "id"
+        `;
+        if (updated.length === 0) {
+          const rejectionNow = await getDatabaseNow(tx);
+          this.bookingModificationPolicyService.assertWithinWindow(
+            existingBooking.startDate,
+            rejectionNow,
+          );
           throw new BookingStatusNotModifiableException(
             "cancel",
             "Booking state changed during cancellation. Please retry",
@@ -123,9 +127,14 @@ export class BookingCancellationService {
           tx,
         );
 
+        const responseNow = await getDatabaseNow(tx);
         return {
           ...updatedBooking,
-          ...this.bookingModificationPolicyService.getEligibility(updatedBooking),
+          ...this.bookingModificationPolicyService.getEligibility(
+            updatedBooking,
+            true,
+            responseNow,
+          ),
         };
       });
 
@@ -166,12 +175,5 @@ export class BookingCancellationService {
     `;
 
     return rows.length > 0;
-  }
-
-  private async getDatabaseNow(tx: Prisma.TransactionClient): Promise<Date> {
-    const [clock] = await tx.$queryRaw<Array<{ policyNow: Date }>>`
-      SELECT clock_timestamp() AS "policyNow"
-    `;
-    return clock.policyNow;
   }
 }
