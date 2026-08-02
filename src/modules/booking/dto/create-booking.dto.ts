@@ -2,6 +2,17 @@ import { z } from "zod";
 import { callbackUrlSchema } from "../../../common/validation/callback-url";
 import { pickupTimeRegex } from "./pickup-time.regex";
 
+const nonNegativeDecimalStringRegex = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+export const idempotencyKeySchema = z
+  .string()
+  .min(8, "Idempotency-Key must be at least 8 characters")
+  .max(128, "Idempotency-Key must be at most 128 characters")
+  .regex(
+    /^[A-Za-z0-9._~:-]+$/,
+    "Idempotency-Key may only contain safe ASCII letters, numbers, and . _ ~ : -",
+  );
+
 /**
  * Booking type enum values matching Prisma schema
  */
@@ -26,7 +37,9 @@ const coreBookingFields = z.object({
   requiresFullTank: z.boolean().default(false),
   specialRequests: z.string().optional(),
   useCredits: z.number().min(0).default(0),
-  clientTotalAmount: z.string().optional(), // Decimal string for price validation
+  expectedTotalAmount: z
+    .string()
+    .regex(nonNegativeDecimalStringRegex, "Expected total amount must be a non-negative decimal"),
 });
 
 /**

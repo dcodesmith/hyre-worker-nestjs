@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import type { BookingType } from "@prisma/client";
+import type { BookingType, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import type { ActivePromotion } from "../promotion/promotion.interface";
@@ -49,7 +49,10 @@ export class BookingCalculationService {
    * @param input - Booking calculation parameters
    * @returns Complete financial breakdown
    */
-  async calculateBookingCost(input: BookingCalculationInput): Promise<BookingFinancials> {
+  async calculateBookingCost(
+    input: BookingCalculationInput,
+    database?: Prisma.TransactionClient,
+  ): Promise<BookingFinancials> {
     const {
       bookingType,
       legs,
@@ -61,9 +64,9 @@ export class BookingCalculationService {
       referralDiscountAmount,
     } = input;
 
-    const rates = await this.ratesService.getRates();
+    const rates = await this.ratesService.getRates(database);
 
-    const overlappingPromotions = await this.loadOverlappingPromotions(car, legs);
+    const overlappingPromotions = await this.loadOverlappingPromotions(car, legs, database);
     const legPrices = this.calculateLegPrices(legs, bookingType, car, overlappingPromotions);
     const numberOfLegs = legs.length;
     const netTotal = legPrices.reduce((sum, leg) => sum.add(leg.price), new Decimal(0));
@@ -167,6 +170,7 @@ export class BookingCalculationService {
   private async loadOverlappingPromotions(
     car: CarPricingWithIdentity,
     legs: GeneratedLeg[],
+    database?: Prisma.TransactionClient,
   ): Promise<ActivePromotion[]> {
     if (!car.id || !car.ownerId || legs.length === 0) {
       return [];
@@ -183,6 +187,7 @@ export class BookingCalculationService {
         car.ownerId,
         start,
         endExclusive,
+        database,
       );
     } catch (error) {
       this.logger.warn(

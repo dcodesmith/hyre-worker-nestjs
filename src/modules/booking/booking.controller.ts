@@ -1,18 +1,22 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Patch,
   Post,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { BookingRequestInProgressException, BookingValidationException } from "./booking.error";
 import type { CreateBookingResponse, CreateExtensionResponse } from "./booking.interface";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
@@ -22,7 +26,7 @@ import { BookingReadService } from "./booking-read.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { ValidatedBookingBody } from "./decorators/validated-booking-body.decorator";
 import { type CancelBookingBodyDto, cancelBookingBodySchema } from "./dto/cancel-booking.dto";
-import type { CreateBookingInput } from "./dto/create-booking.dto";
+import { type CreateBookingInput, idempotencyKeySchema } from "./dto/create-booking.dto";
 import {
   bookingIdParamSchema,
   type CreateExtensionBodyDto,
@@ -71,11 +75,32 @@ export class BookingController {
   async createBooking(
     @ValidatedBookingBody() booking: CreateBookingInput,
     @CurrentUser() sessionUser: AuthSession["user"] | null,
+    @Headers("idempotency-key") rawIdempotencyKey: string | undefined,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<CreateBookingResponse> {
-    return this.bookingCreationService.createBooking({
-      input: booking,
-      sessionUser,
-    });
+    const parsedKey = idempotencyKeySchema.safeParse(rawIdempotencyKey);
+    if (!parsedKey.success) {
+      throw new BookingValidationException(
+        parsedKey.error.issues.map((issue) => ({
+          field: "Idempotency-Key",
+          code: issue.code,
+          message: issue.message,
+        })),
+      );
+    }
+
+    try {
+      return await this.bookingCreationService.createBooking({
+        input: booking,
+        sessionUser,
+        idempotencyKey: parsedKey.data,
+      });
+    } catch (error) {
+      if (error instanceof BookingRequestInProgressException) {
+        response.setHeader("Retry-After", String(error.retryAfterSeconds));
+      }
+      throw error;
+    }
   }
 
   @Post(":bookingId/extensions")

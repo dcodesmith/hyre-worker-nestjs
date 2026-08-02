@@ -54,8 +54,7 @@ export function buildBookingInputFromDraft(
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
-      // Let BookingCreationService compute authoritative totals server-side.
-      // Avoid passing estimated totals from search cards, which may be rounded for display.
+      expectedTotalAmount: selectedOption.estimatedTotalInclVat.toString(),
       guestEmail: guestIdentity.guestEmail,
       guestName: guestIdentity.guestName,
       guestPhone: guestIdentity.guestPhone,

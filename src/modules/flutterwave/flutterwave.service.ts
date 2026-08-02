@@ -282,6 +282,9 @@ export class FlutterwaveService {
             ? "Payment for car booking"
             : "Payment for booking extension",
       },
+      ...(options.sessionDurationMinutes && {
+        configurations: { session_duration: options.sessionDurationMinutes },
+      }),
     };
 
     try {

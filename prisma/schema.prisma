@@ -323,6 +323,7 @@ model Booking {
   referralRewards                         ReferralReward[]
   review                                  Review?                   @relation("BookingReview")
   linkedDrafts                            BookingDraft[]            @relation("LinkedBookingDraft")
+  creationIdempotency                     BookingCreationIdempotency?
 
   @@index([bookingReference])
   @@index([carId])
@@ -346,6 +347,22 @@ model Booking {
   @@index([userId, paymentStatus, referralCreditsReserved])
   @@index([flightId])
   @@index([deletedAt])
+}
+
+model BookingCreationIdempotency {
+  id             String                          @id @default(cuid())
+  idempotencyKey String
+  customerScope  String
+  requestHash    String
+  state          BookingCreationIdempotencyState @default(PROCESSING)
+  bookingId      String?                         @unique
+  response       Json?
+  createdAt      DateTime                        @default(now())
+  updatedAt      DateTime                        @updatedAt
+  booking        Booking?                        @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([customerScope, idempotencyKey])
+  @@index([state, createdAt])
 }
 
 model BookingLeg {
@@ -873,6 +890,11 @@ enum BookingStatus {
   COMPLETED
   CANCELLED
   REJECTED
+}
+
+enum BookingCreationIdempotencyState {
+  PROCESSING
+  COMPLETED
 }
 
 enum PaymentStatus {

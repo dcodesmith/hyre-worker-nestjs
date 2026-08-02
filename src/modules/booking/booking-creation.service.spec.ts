@@ -4,7 +4,12 @@ import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { createBookingFinancials, createCar, createUser } from "../../shared/helper.fixtures";
+import {
+  createBooking,
+  createBookingFinancials,
+  createCar,
+  createUser,
+} from "../../shared/helper.fixtures";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -26,7 +31,8 @@ import {
   ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
 import { BookingCalculationService } from "./booking-calculation.service";
-import { BookingCreationService } from "./booking-creation.service";
+import { BookingCreationService, type CreateBookingRequest } from "./booking-creation.service";
+import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingPaymentService } from "./booking-payment.service";
@@ -47,6 +53,7 @@ const createBookingInput = (overrides: Partial<CreateBookingDto> = {}): CreateBo
     includeSecurityDetail: false,
     requiresFullTank: false,
     useCredits: 0,
+    expectedTotalAmount: "56437.50",
   };
   return { ...base, ...overrides } as CreateBookingDto;
 };
@@ -78,11 +85,16 @@ const createSessionUser = (overrides: Partial<AuthSession["user"]> = {}): AuthSe
 });
 
 describe("BookingCreationService", () => {
-  let service: BookingCreationService;
+  let service: {
+    createBooking(
+      request: Omit<CreateBookingRequest, "idempotencyKey">,
+    ): Promise<Awaited<ReturnType<BookingCreationService["createBooking"]>>>;
+  };
   let databaseService: DatabaseService;
   let validationService: BookingValidationService;
   let legService: BookingLegService;
   let calculationService: BookingCalculationService;
+  let idempotencyService: BookingCreationIdempotencyService;
   let flutterwaveService: FlutterwaveService;
   let flightAwareService: FlightAwareService;
   let mapsService: MapsService;
@@ -103,7 +115,13 @@ describe("BookingCreationService", () => {
           useValue: {
             car: { findUnique: vi.fn() },
             user: { findUnique: vi.fn(), update: vi.fn() },
-            booking: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
+            booking: {
+              create: vi.fn(),
+              findFirst: vi.fn(),
+              findUnique: vi.fn(),
+              update: vi.fn(),
+              updateMany: vi.fn(),
+            },
             flight: { upsert: vi.fn(), updateMany: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn() },
@@ -118,7 +136,7 @@ describe("BookingCreationService", () => {
             validateGuestRequirements: vi.fn(),
             checkCarAvailability: vi.fn(),
             validateGuestEmail: vi.fn(),
-            validatePriceMatch: vi.fn(),
+            validateExpectedPrice: vi.fn(),
           },
         },
         {
@@ -136,6 +154,18 @@ describe("BookingCreationService", () => {
         BookingEligibilityService,
         BookingPaymentService,
         BookingPersistenceService,
+        {
+          provide: BookingCreationIdempotencyService,
+          useValue: {
+            getCustomerScope: vi.fn().mockReturnValue("user:user-123"),
+            createRequestHash: vi.fn().mockReturnValue("request-hash"),
+            claim: vi.fn().mockResolvedValue({ kind: "claimed", id: "idempotency-123" }),
+            attachBooking: vi.fn(),
+            checkpointPaymentResult: vi.fn(),
+            complete: vi.fn(),
+            release: vi.fn(),
+          },
+        },
         {
           provide: ConfigService,
           useValue: {
@@ -166,11 +196,21 @@ describe("BookingCreationService", () => {
       .useMocker(mockPinoLoggerToken)
       .compile();
 
-    service = module.get<BookingCreationService>(BookingCreationService);
+    const bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
+    service = {
+      createBooking: (request) =>
+        bookingCreationService.createBooking({
+          ...request,
+          idempotencyKey: "test-idempotency-key",
+        }),
+    };
     databaseService = module.get<DatabaseService>(DatabaseService);
     validationService = module.get<BookingValidationService>(BookingValidationService);
     legService = module.get<BookingLegService>(BookingLegService);
     calculationService = module.get<BookingCalculationService>(BookingCalculationService);
+    idempotencyService = module.get<BookingCreationIdempotencyService>(
+      BookingCreationIdempotencyService,
+    );
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
     flightAwareService = module.get<FlightAwareService>(FlightAwareService);
     mapsService = module.get<MapsService>(MapsService);
@@ -183,7 +223,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.validateGuestRequirements).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
@@ -209,6 +249,7 @@ describe("BookingCreationService", () => {
       // Setup transaction mock to execute the callback
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -226,6 +267,7 @@ describe("BookingCreationService", () => {
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
         };
 
         return callback(mockTx);
@@ -248,6 +290,9 @@ describe("BookingCreationService", () => {
       expect(result).toEqual({
         bookingId: "booking-123",
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+        totalAmount: 56437.5,
+        currency: "NGN",
+        bookingStatus: BookingStatus.PENDING,
       });
 
       expect(validationService.validateDates).toHaveBeenCalledWith({
@@ -276,6 +321,9 @@ describe("BookingCreationService", () => {
       expect(result).toEqual({
         bookingId: "booking-123",
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+        totalAmount: 56437.5,
+        currency: "NGN",
+        bookingStatus: BookingStatus.PENDING,
       });
 
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
@@ -404,13 +452,13 @@ describe("BookingCreationService", () => {
         createBookingFinancials(),
       );
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
-      vi.mocked(validationService.validatePriceMatch).mockImplementation(() => {
+      vi.mocked(validationService.validateExpectedPrice).mockImplementation(() => {
         throw new BookingValidationException([
-          { field: "clientTotalAmount", message: "Price mismatch" },
+          { field: "expectedTotalAmount", message: "Price mismatch" },
         ]);
       });
 
-      const booking = createBookingInput({ clientTotalAmount: "10000" });
+      const booking = createBookingInput({ expectedTotalAmount: "10000" });
       const user = createSessionUser();
 
       await expect(service.createBooking({ input: booking, sessionUser: user })).rejects.toThrow(
@@ -460,7 +508,7 @@ describe("BookingCreationService", () => {
 
     it("throws BookingPaymentSyncFailedException when payment sync update fails", async () => {
       setupSuccessfulMocks();
-      vi.mocked(databaseService.booking.update).mockRejectedValueOnce(
+      vi.mocked(idempotencyService.complete).mockRejectedValueOnce(
         new Error("failed to save payment intent"),
       );
 
@@ -473,11 +521,33 @@ describe("BookingCreationService", () => {
       expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
     });
 
+    it("does not create another payment intent when resuming an uncertain provider result", async () => {
+      vi.mocked(idempotencyService.claim).mockResolvedValueOnce({
+        kind: "resume",
+        id: "idempotency-123",
+        bookingId: "booking-123",
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(
+        createBooking({
+          id: "booking-123",
+          paymentIntent: "booking-123",
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        }),
+      );
+
+      await expect(
+        service.createBooking({ input: createBookingInput(), sessionUser: createSessionUser() }),
+      ).rejects.toThrow(BookingPaymentSyncFailedException);
+
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
 
@@ -491,6 +561,8 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -569,7 +641,7 @@ describe("BookingCreationService", () => {
       // Validation methods now return void
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       const validatedFlight: ValidatedFlight = {
         flightNumber: "BA74",
@@ -617,6 +689,8 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "BA74-20250201" }),
             updateMany: vi.fn(),
@@ -728,7 +802,7 @@ describe("BookingCreationService", () => {
       );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -756,6 +830,7 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Mock for pessimistic locking query - returns fresh user data showing discount not used
           $queryRaw: vi
             .fn()
@@ -814,6 +889,7 @@ describe("BookingCreationService", () => {
         expect.objectContaining({
           referralDiscountAmount: new Decimal(5000),
         }),
+        expect.anything(),
       );
     });
 
@@ -827,7 +903,7 @@ describe("BookingCreationService", () => {
       );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -857,6 +933,7 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Mock for pessimistic locking query - returns fresh user data showing discount not used
           $queryRaw: vi
             .fn()
@@ -921,7 +998,7 @@ describe("BookingCreationService", () => {
       );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -950,6 +1027,7 @@ describe("BookingCreationService", () => {
       // Simulate race condition: fresh DB query shows discount was already used
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Fresh DB query with FOR UPDATE shows discount was already used by concurrent request
           $queryRaw: vi
             .fn()
@@ -981,7 +1059,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -1004,6 +1082,8 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1040,6 +1120,7 @@ describe("BookingCreationService", () => {
         expect.objectContaining({
           referralDiscountAmount: new Decimal(0),
         }),
+        expect.anything(),
       );
     });
 
@@ -1053,7 +1134,7 @@ describe("BookingCreationService", () => {
       );
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
-      vi.mocked(validationService.validatePriceMatch).mockReturnValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
 
@@ -1078,6 +1159,8 @@ describe("BookingCreationService", () => {
 
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1115,6 +1198,7 @@ describe("BookingCreationService", () => {
         expect.objectContaining({
           referralDiscountAmount: new Decimal(0),
         }),
+        expect.anything(),
       );
 
       // Verify referral config was NOT fetched (preliminary check caught it)

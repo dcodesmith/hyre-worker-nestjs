@@ -6,6 +6,7 @@ import {
   BookingStatus,
   type Payment,
   PaymentStatus,
+  Prisma,
   Status,
 } from "@prisma/client";
 import type { Queue } from "bullmq";
@@ -13,10 +14,12 @@ import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import type { BookingWithRelations } from "../../types";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { CarNotAvailableException } from "./booking.error";
+import { BookingValidationService } from "./booking-validation.service";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -35,6 +38,7 @@ export class BookingConfirmationService {
     private readonly logger: PinoLogger,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingConfirmedHandler: BookingConfirmedHandler,
+    private readonly bookingValidationService: BookingValidationService,
     @InjectQueue(FLIGHT_ALERTS_QUEUE)
     private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {
@@ -65,6 +69,42 @@ export class BookingConfirmationService {
     }
 
     const updatedBooking = await this.databaseService.$transaction(async (tx) => {
+      const [pendingBooking] = await tx.$queryRaw<
+        Array<{
+          id: string;
+          carId: string;
+          startDate: Date;
+          endDate: Date;
+          status: BookingStatus;
+        }>
+      >(
+        Prisma.sql`
+          SELECT id, "carId", "startDate", "endDate", status
+          FROM "Booking"
+          WHERE id = ${bookingId}
+        `,
+      );
+      if (pendingBooking?.status !== BookingStatus.PENDING) {
+        return null;
+      }
+
+      const carExists = await lockCarRow(tx, pendingBooking.carId);
+      if (!carExists) {
+        throw new CarNotAvailableException(
+          pendingBooking.carId,
+          "The vehicle is no longer available for this paid booking.",
+        );
+      }
+      await this.bookingValidationService.checkCarAvailability(
+        {
+          carId: pendingBooking.carId,
+          startDate: pendingBooking.startDate,
+          endDate: pendingBooking.endDate,
+          excludeBookingId: pendingBooking.id,
+        },
+        tx,
+      );
+
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.
       const updateResult = await tx.booking.updateMany({

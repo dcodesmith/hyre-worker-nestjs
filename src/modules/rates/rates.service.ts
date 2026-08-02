@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { buildActiveWindowWhere } from "./rates.helper";
@@ -35,22 +36,23 @@ export class RatesService {
    * Rates are cached for 5 minutes to reduce database load.
    * Throws an error if any required rate is not found.
    */
-  async getRates(): Promise<PlatformRates> {
+  async getRates(database?: Prisma.TransactionClient): Promise<PlatformRates> {
     const now = Date.now();
 
     // Return cached data if still valid
-    if (this.cache.data && now - this.cache.timestamp < this.CACHE_TTL_MS) {
+    if (!database && this.cache.data && now - this.cache.timestamp < this.CACHE_TTL_MS) {
       this.logger.debug("Returning cached rates");
       return this.cache.data;
     }
 
     this.logger.debug("Fetching rates from database");
     const currentDate = new Date();
+    const reader = database ?? this.databaseService;
 
     // Run all rate queries in parallel for better performance
     const [platformRates, vatRate, securityDetailAddonRate] = await Promise.all([
       // Get both platform fee rates in a single query
-      this.databaseService.platformFeeRate.findMany({
+      reader.platformFeeRate.findMany({
         where: {
           feeType: { in: ["PLATFORM_SERVICE_FEE", "FLEET_OWNER_COMMISSION"] },
           ...buildActiveWindowWhere(currentDate),
@@ -58,14 +60,14 @@ export class RatesService {
         orderBy: { effectiveSince: "desc" },
       }),
       // Get VAT rate
-      this.databaseService.taxRate.findFirst({
+      reader.taxRate.findFirst({
         where: {
           ...buildActiveWindowWhere(currentDate),
         },
         orderBy: { effectiveSince: "desc" },
       }),
       // Get security detail addon rate
-      this.databaseService.addonRate.findFirst({
+      reader.addonRate.findFirst({
         where: {
           addonType: "SECURITY_DETAIL",
           ...buildActiveWindowWhere(currentDate),
@@ -104,9 +106,10 @@ export class RatesService {
       securityDetailRate: securityDetailAddonRate.rateAmount,
     };
 
-    // Cache the result
-    this.cache.data = result;
-    this.cache.timestamp = now;
+    if (!database) {
+      this.cache.data = result;
+      this.cache.timestamp = now;
+    }
 
     this.logger.debug(
       {

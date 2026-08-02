@@ -105,7 +105,7 @@ export class BookingPricingPreviewService {
         })
       : baseFinancials;
 
-    const response = this.mapPreviewResponse(financials);
+    const response = BookingPricingPreviewService.mapFinancials(financials);
     this.logger.debug(
       {
         carId: input.carId,
@@ -120,9 +120,9 @@ export class BookingPricingPreviewService {
     return response;
   }
 
-  private mapPreviewResponse(financials: BookingFinancials): BookingPricingPreviewResponseDto {
-    const segments = this.buildSegments(financials.legPrices);
-    const discountCoverage = this.computeCoverage(financials.legPrices);
+  static mapFinancials(financials: BookingFinancials): BookingPricingPreviewResponseDto {
+    const segments = BookingPricingPreviewService.buildSegments(financials.legPrices);
+    const discountCoverage = BookingPricingPreviewService.computeCoverage(financials.legPrices);
 
     const compareAtPlatformFeeAmount = financials.compareAtNetTotal
       .add(financials.fuelUpgradeCost)
@@ -169,7 +169,7 @@ export class BookingPricingPreviewService {
     };
   }
 
-  private computeCoverage(legPrices: LegPrice[]): PricingPreviewDiscountCoverage {
+  private static computeCoverage(legPrices: LegPrice[]): PricingPreviewDiscountCoverage {
     if (legPrices.length === 0) {
       return "NONE";
     }
@@ -187,7 +187,7 @@ export class BookingPricingPreviewService {
     return "PARTIAL";
   }
 
-  private buildSegments(legPrices: LegPrice[]): PricingPreviewSegmentDto[] {
+  private static buildSegments(legPrices: LegPrice[]): PricingPreviewSegmentDto[] {
     const grouped = new Map<string, MutableSegment>();
 
     for (const leg of legPrices) {

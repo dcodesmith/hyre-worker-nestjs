@@ -3,12 +3,14 @@ import type { Booking, Payment, Prisma } from "@prisma/client";
 import { PaymentAttemptStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import { CarNotAvailableException } from "../booking/booking.error";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
+import { PaymentApiService } from "./payment-api.service";
 
 const MONEY_TOLERANCE = 0.01;
 
@@ -20,6 +22,7 @@ export class ChargeCompletedHandler {
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
     private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly paymentApiService: PaymentApiService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ChargeCompletedHandler.name);
@@ -106,7 +109,17 @@ export class ChargeCompletedHandler {
     }
 
     if (payment.bookingId) {
-      await this.bookingConfirmationService.confirmFromPayment(payment);
+      try {
+        await this.bookingConfirmationService.confirmFromPayment(payment);
+      } catch (error) {
+        if (!(error instanceof CarNotAvailableException)) throw error;
+
+        this.logger.warn(
+          { bookingId: payment.bookingId, paymentId: payment.id, txRef },
+          "Paid booking is no longer available; initiating automatic refund",
+        );
+        await this.paymentApiService.refundBookingForAvailabilityConflict(txRef);
+      }
       return;
     }
 

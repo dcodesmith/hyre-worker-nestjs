@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
@@ -172,6 +172,48 @@ export class PaymentApiService {
     return this.executeRefund(txRef, payment.id, transactionId, dto.amount, idempotencyKey);
   }
 
+  async refundBookingForAvailabilityConflict(txRef: string): Promise<void> {
+    const payment = await this.fetchPaymentForRefund(txRef);
+    if (
+      payment.status === PaymentAttemptStatus.REFUND_PROCESSING ||
+      payment.status === PaymentAttemptStatus.REFUND_ERROR ||
+      payment.status === PaymentAttemptStatus.REFUNDED ||
+      payment.status === PaymentAttemptStatus.PARTIALLY_REFUNDED
+    ) {
+      return;
+    }
+    if (
+      payment.status !== PaymentAttemptStatus.SUCCESSFUL ||
+      !payment.bookingId ||
+      payment.extensionId
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
+    if (!payment.amountCharged) {
+      throw new RefundChargedAmountMissingException(payment.id);
+    }
+    if (!payment.flutterwaveTransactionId) {
+      throw new RefundProviderReferenceMissingException(payment.id);
+    }
+
+    const amount = payment.amountCharged.toNumber();
+    const idempotencyKey =
+      payment.refundIdempotencyKey ?? `refund_availability_conflict_${payment.id}`;
+    await this.reserveAvailabilityConflictRefund(
+      payment.id,
+      payment.bookingId,
+      amount,
+      idempotencyKey,
+    );
+    await this.executeRefund(
+      txRef,
+      payment.id,
+      payment.flutterwaveTransactionId,
+      amount,
+      idempotencyKey,
+    );
+  }
+
   private async fetchPaymentForRefund(txRef: string) {
     const payment = await this.databaseService.payment.findFirst({
       where: { txRef },
@@ -312,6 +354,49 @@ export class PaymentApiService {
 
     if (!reserved) {
       throw new RefundReservationConflictException(payment.id);
+    }
+  }
+
+  private async reserveAvailabilityConflictRefund(
+    paymentId: string,
+    bookingId: string,
+    amount: number,
+    idempotencyKey: string,
+  ): Promise<void> {
+    const reserved = await this.databaseService.$transaction(async (tx) => {
+      const paymentUpdate = await tx.payment.updateMany({
+        where: { id: paymentId, status: PaymentAttemptStatus.SUCCESSFUL },
+        data: {
+          status: PaymentAttemptStatus.REFUND_PROCESSING,
+          refundIdempotencyKey: idempotencyKey,
+          refundRequestedAmount: amount,
+          refundRequestedAt: new Date(),
+          refundReconciliationAttempts: 0,
+          refundVerificationFailures: 0,
+          refundManualReviewNotifiedAt: null,
+        },
+      });
+      if (paymentUpdate.count === 0) return false;
+
+      const bookingUpdate = await tx.booking.updateMany({
+        where: {
+          id: bookingId,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        },
+        data: {
+          status: BookingStatus.REJECTED,
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
+        },
+      });
+      if (bookingUpdate.count !== 1) {
+        throw new RefundDomainStateMismatchException(paymentId);
+      }
+      return true;
+    });
+
+    if (!reserved) {
+      throw new RefundReservationConflictException(paymentId);
     }
   }
 

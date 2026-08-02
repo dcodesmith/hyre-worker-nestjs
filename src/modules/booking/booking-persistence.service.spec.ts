@@ -112,6 +112,7 @@ describe("BookingPersistenceService", () => {
           includeSecurityDetail: false,
           requiresFullTank: false,
           useCredits: 0,
+          expectedTotalAmount: "10000",
         },
         {
           flightId: "flight-1",
@@ -178,6 +179,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     await expect(
@@ -234,6 +236,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     const financials = createBookingFinancials({
@@ -301,6 +304,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     await expect(

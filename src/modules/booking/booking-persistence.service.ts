@@ -35,8 +35,11 @@ export class BookingPersistenceService {
     private readonly configService: ConfigService<EnvConfig>,
   ) {}
 
-  async fetchCarWithPricing(carId: string): Promise<CarWithPricing> {
-    const car = await this.databaseService.car.findUnique({
+  async fetchCarWithPricing(
+    carId: string,
+    database: Prisma.TransactionClient | DatabaseService = this.databaseService,
+  ): Promise<CarWithPricing> {
+    const car = await database.car.findUnique({
       where: { id: carId },
       select: {
         id: true,

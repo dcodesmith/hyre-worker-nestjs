@@ -29,7 +29,7 @@ describe("BookingPaymentService", () => {
     const service = module.get<BookingPaymentService>(BookingPaymentService);
     const result = await service.createPaymentIntent(
       { id: "booking-1", bookingReference: "BK-123" },
-      { totalAmount: new Decimal(1000) } as never,
+      new Decimal(1000),
       { email: "user@example.com", name: "User", phoneNumber: "08012345678" },
     );
 
@@ -37,6 +37,9 @@ describe("BookingPaymentService", () => {
       paymentIntentId: "pi-123",
       checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
     });
+    expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionDurationMinutes: 10 }),
+    );
   });
 
   it("maps FlutterwaveError to PaymentIntentFailedException", async () => {
@@ -61,7 +64,7 @@ describe("BookingPaymentService", () => {
     await expect(
       service.createPaymentIntent(
         { id: "booking-1", bookingReference: "BK-123" },
-        { totalAmount: new Decimal(1000) } as never,
+        new Decimal(1000),
         { email: "user@example.com", name: "User", phoneNumber: "08012345678" },
       ),
     ).rejects.toThrow(PaymentIntentFailedException);
@@ -87,7 +90,7 @@ describe("BookingPaymentService", () => {
     await expect(
       service.createPaymentIntent(
         { id: "booking-1", bookingReference: "BK-123" },
-        { totalAmount: new Decimal(1000) } as never,
+        new Decimal(1000),
         { email: "user@example.com", name: "User", phoneNumber: "08012345678" },
       ),
     ).rejects.toThrow(PaymentIntentFailedException);

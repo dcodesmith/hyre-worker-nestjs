@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
+import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
@@ -48,6 +49,9 @@ describe("CreateBookingNode", () => {
   const bookingCreationServiceMock = {
     createBooking: vi.fn(),
   };
+  const bookingPricingPreviewServiceMock = {
+    preview: vi.fn(),
+  };
   const databaseServiceMock = {
     whatsAppConversation: {
       findUnique: vi.fn(),
@@ -73,11 +77,17 @@ describe("CreateBookingNode", () => {
       linkedUserId: null,
       linkStatus: "UNLINKED",
     });
+    bookingPricingPreviewServiceMock.preview.mockResolvedValue({
+      subtotalBeforeDiscounts: 150000,
+      vatAmount: 0,
+      totalAmount: 150000,
+    });
 
     moduleRef = await Test.createTestingModule({
       providers: [
         CreateBookingNode,
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
+        { provide: BookingPricingPreviewService, useValue: bookingPricingPreviewServiceMock },
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingAgentSearchService, useValue: bookingAgentSearchServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
@@ -137,6 +147,38 @@ describe("CreateBookingNode", () => {
         context: { guestContactSource: "WHATSAPP_AGENT" },
       }),
     );
+  });
+
+  it("requires confirmation when authoritative pricing differs from the displayed estimate", async () => {
+    bookingPricingPreviewServiceMock.preview.mockResolvedValueOnce({
+      subtotalBeforeDiscounts: 160000,
+      vatAmount: 12000,
+      totalAmount: 172000,
+    });
+    const selectedOption = buildVehicleOption({ estimatedTotalInclVat: 150000 });
+
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption,
+      }),
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        stage: "confirming",
+        selectedOption: expect.objectContaining({ estimatedTotalInclVat: 172000 }),
+        statusMessage: expect.stringContaining("₦172,000"),
+      }),
+    );
+    expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
   });
 
   it("creates booking as linked user when conversation is verified-linked", async () => {

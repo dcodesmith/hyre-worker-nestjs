@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma/client";
+import { BookingStatus, CarApprovalStatus, PaymentStatus, Prisma, Status } from "@prisma/client";
 import { isSameDay } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
@@ -9,6 +9,7 @@ import { buildBufferedBookingInterval } from "../../shared/availability-buffer.h
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FULL_DAY_END_HOUR,
@@ -17,11 +18,14 @@ import {
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
 import {
+  BookingPriceChangedException,
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
 } from "./booking.error";
 import type { CarAvailabilityInput, DateValidationInput } from "./booking.interface";
+import type { BookingFinancials } from "./booking-calculation.interface";
+import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
@@ -184,9 +188,8 @@ export class BookingValidationService {
   /**
    * Check if a car is available for the requested booking period.
    *
-   * A car is unavailable if there are overlapping bookings with:
-   * - Status: CONFIRMED or ACTIVE
-   * - PaymentStatus: PAID or REFUND_PROCESSING
+   * A car is unavailable for paid active bookings and recent unpaid PENDING
+   * bookings while their ten-minute checkout session can still be used.
    *
    * A 2-hour buffer is applied between bookings for car preparation.
    *
@@ -194,11 +197,14 @@ export class BookingValidationService {
    * @throws CarNotFoundException if car does not exist
    * @throws CarNotAvailableException if car is not approved, not available, or has conflicts
    */
-  async checkCarAvailability(input: CarAvailabilityInput): Promise<void> {
+  async checkCarAvailability(
+    input: CarAvailabilityInput,
+    database: Prisma.TransactionClient | DatabaseService = this.databaseService,
+  ): Promise<void> {
     const { carId, startDate, endDate, excludeBookingId } = input;
 
     // Verify car exists and is bookable
-    const car = await this.databaseService.car.findUnique({
+    const car = await database.car.findUnique({
       where: { id: carId },
       select: { id: true, status: true, approvalStatus: true },
     });
@@ -244,11 +250,21 @@ export class BookingValidationService {
     const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval({ startDate, endDate });
 
     // Find conflicting bookings
-    const conflictingBookings = await this.databaseService.booking.findMany({
+    const pendingHoldCutoff = new Date(Date.now() - BOOKING_PAYMENT_SESSION_DURATION_MS);
+    const conflictingBookings = await database.booking.findMany({
       where: {
         carId,
-        paymentStatus: { in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING] },
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+        OR: [
+          {
+            paymentStatus: { in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING] },
+            status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+          },
+          {
+            paymentStatus: PaymentStatus.UNPAID,
+            status: BookingStatus.PENDING,
+            createdAt: { gte: pendingHoldCutoff },
+          },
+        ],
         // Exclude current booking if this is an update
         ...(excludeBookingId && { id: { not: excludeBookingId } }),
         // Check for overlap with buffer
@@ -323,51 +339,40 @@ export class BookingValidationService {
   }
 
   /**
-   * Validate that client-provided total matches server calculation.
+   * Validate that the accepted preview total matches server calculation.
    *
    * This prevents price manipulation attacks where the client sends
    * a lower amount than the actual calculated price.
    *
-   * @param clientTotal - Total amount sent by client (as string)
-   * @param serverTotal - Total amount calculated by server
-   * @throws BookingValidationException if prices don't match
+   * @throws BookingPriceChangedException if prices don't match
    */
-  validatePriceMatch(clientTotal: string | undefined, serverTotal: Decimal): void {
-    // Skip validation if client didn't provide a total
-    if (!clientTotal) {
-      return;
-    }
-
+  validateExpectedPrice(expectedTotal: string, financials: BookingFinancials): void {
     try {
-      const clientDecimal = new Decimal(clientTotal);
-      const difference = clientDecimal.minus(serverTotal).abs();
+      const expectedDecimal = new Decimal(expectedTotal);
+      const difference = expectedDecimal.minus(financials.totalAmount).abs();
 
       if (difference.greaterThan(PRICE_TOLERANCE)) {
         this.logger.warn(
           {
-            clientTotal: clientDecimal.toString(),
-            serverTotal: serverTotal.toString(),
+            expectedTotal: expectedDecimal.toString(),
+            serverTotal: financials.totalAmount.toString(),
             difference: difference.toString(),
           },
           "Price mismatch detected",
         );
 
-        throw new BookingValidationException([
-          {
-            field: "clientTotalAmount",
-            message: "Price mismatch. Please refresh and try again.",
-          },
-        ]);
+        throw new BookingPriceChangedException(
+          expectedDecimal.toFixed(2),
+          BookingPricingPreviewService.mapFinancials(financials),
+        );
       }
     } catch (error) {
-      // Re-throw if it's already a BookingValidationException
-      if (error instanceof BookingValidationException) {
+      if (error instanceof BookingPriceChangedException) {
         throw error;
       }
-      // Otherwise it's an invalid format
       throw new BookingValidationException([
         {
-          field: "clientTotalAmount",
+          field: "expectedTotalAmount",
           message: "Invalid price format",
         },
       ]);

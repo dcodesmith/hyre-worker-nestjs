@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
@@ -83,48 +84,200 @@ describe("Bookings E2E Tests", () => {
   });
 
   describe("POST /api/bookings", () => {
-    const createValidBookingPayload = (carId: string) => ({
-      carId,
-      startDate: new Date(Date.now() + 86400000 * 2).toISOString(), // 2 days from now
-      endDate: new Date(Date.now() + 86400000 * 2 + 43200000).toISOString(), // 2 days + 12 hours
-      pickupAddress: "123 Main St, Lagos",
-      bookingType: "DAY",
-      pickupTime: "9:00 AM",
-      sameLocation: true,
-      includeSecurityDetail: false,
-      requiresFullTank: false,
-      useCredits: 0,
-      // Note: clientTotalAmount is optional - omitting it skips price validation
-    });
+    let bookingSequence = 0;
+    const createValidBookingPayload = async (carId: string, cookie?: string) => {
+      const dayOffset = 2 + bookingSequence++ * 3;
+      const payload = {
+        carId,
+        startDate: new Date(Date.now() + 86400000 * dayOffset).toISOString(),
+        endDate: new Date(Date.now() + 86400000 * dayOffset + 43200000).toISOString(),
+        pickupAddress: "123 Main St, Lagos",
+        bookingType: "DAY",
+        pickupTime: "9:00 AM",
+        sameLocation: true,
+        includeSecurityDetail: false,
+        requiresFullTank: false,
+        useCredits: 0,
+      };
+      const previewRequest = request(app.getHttpServer())
+        .post("/api/bookings/pricing-preview")
+        .send(payload);
+      if (cookie) previewRequest.set("Cookie", cookie);
+      const preview = await previewRequest;
+      return {
+        ...payload,
+        expectedTotalAmount:
+          preview.status === HttpStatus.OK ? String(preview.body.totalAmount) : "0",
+      };
+    };
 
-    const createGuestBookingPayload = (carId: string) => ({
-      ...createValidBookingPayload(carId),
+    const createGuestBookingPayload = async (carId: string) => ({
+      ...(await createValidBookingPayload(carId)),
       guestEmail: "guest@example.com",
       guestName: "Guest User",
       guestPhone: "08012345678",
     });
 
     describe("Authenticated User Bookings", () => {
-      it("should create a booking for authenticated user", async () => {
-        const payload = createValidBookingPayload(testCarId);
+      it("requires Idempotency-Key", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
 
         const response = await request(app.getHttpServer())
           .post("/api/bookings")
           .set("Cookie", testUserCookie)
           .send(payload);
 
-        expect(response.status).toBe(HttpStatus.CREATED);
-        expect(response.body).toHaveProperty("bookingId");
-        expect(response.body).toHaveProperty("checkoutUrl");
-        expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
+        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+        expect(response.body.errorCode).toBe("VALIDATION_ERROR");
       });
 
-      it("should return 404 for non-existent car", async () => {
-        const payload = createValidBookingPayload("non-existent-car-id");
+      it("should create a booking for authenticated user", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
 
         const response = await request(app.getHttpServer())
           .post("/api/bookings")
           .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        expect(response.body).toHaveProperty("bookingId");
+        expect(response.body).toHaveProperty("checkoutUrl");
+        expect(response.body).toEqual(
+          expect.objectContaining({
+            totalAmount: Number(payload.expectedTotalAmount),
+            currency: "NGN",
+            bookingStatus: "PENDING",
+          }),
+        );
+        expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
+      });
+
+      it("returns current pricing when the accepted price is stale", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send({ ...payload, expectedTotalAmount: "0" });
+
+        expect(response.status).toBe(HttpStatus.CONFLICT);
+        expect(response.body.errorCode).toBe("BOOKING_PRICE_CHANGED");
+        expect(response.body.details.currentPricing).toEqual(
+          expect.objectContaining({
+            totalAmount: Number(payload.expectedTotalAmount),
+            currency: "NGN",
+          }),
+        );
+      });
+
+      it("replays the original response without initializing payment twice", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const idempotencyKey = randomUUID();
+        const send = () =>
+          request(app.getHttpServer())
+            .post("/api/bookings")
+            .set("Cookie", testUserCookie)
+            .set("Idempotency-Key", idempotencyKey)
+            .send(payload);
+
+        const first = await send();
+        const replay = await send();
+
+        expect(first.status).toBe(HttpStatus.CREATED);
+        expect(replay.status).toBe(HttpStatus.CREATED);
+        expect(replay.body).toEqual(first.body);
+        expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
+      });
+
+      it("rejects reuse of a key with different normalized input", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const idempotencyKey = randomUUID();
+        const first = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", idempotencyKey)
+          .send(payload);
+        const reused = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", idempotencyKey)
+          .send({ ...payload, specialRequests: "Different request" });
+
+        expect(first.status).toBe(HttpStatus.CREATED);
+        expect(reused.status).toBe(HttpStatus.CONFLICT);
+        expect(reused.body.errorCode).toBe("IDEMPOTENCY_KEY_REUSED");
+      });
+
+      it("prevents a different key from creating an overlapping pending booking", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const first = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
+        const overlapping = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
+
+        expect(first.status).toBe(HttpStatus.CREATED);
+        expect(overlapping.status).toBe(HttpStatus.CONFLICT);
+        expect(overlapping.body.errorCode).toBe("CAR_NOT_AVAILABLE");
+      });
+
+      it("allows only one concurrent identical request to initialize payment", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const idempotencyKey = randomUUID();
+        const bookingCountBefore = await databaseService.booking.count();
+        let signalStarted!: () => void;
+        let releasePayment!: () => void;
+        const started = new Promise<void>((resolve) => {
+          signalStarted = resolve;
+        });
+        const paymentGate = new Promise<void>((resolve) => {
+          releasePayment = resolve;
+        });
+        vi.mocked(flutterwaveService.createPaymentIntent).mockImplementationOnce(async () => {
+          signalStarted();
+          await paymentGate;
+          return {
+            paymentIntentId: "flw_pi_concurrent",
+            checkoutUrl: "https://checkout.flutterwave.com/pay/concurrent",
+          };
+        });
+        const firstPromise = request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", idempotencyKey)
+          .send(payload)
+          .then((response) => response);
+        await started;
+        const concurrent = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", idempotencyKey)
+          .send(payload);
+        releasePayment();
+        const first = await firstPromise;
+
+        expect(first.status).toBe(HttpStatus.CREATED);
+        expect(concurrent.status).toBe(HttpStatus.CONFLICT);
+        expect(concurrent.body.errorCode).toBe("BOOKING_REQUEST_IN_PROGRESS");
+        expect(concurrent.headers["retry-after"]).toBe("5");
+        expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
+        expect(await databaseService.booking.count()).toBe(bookingCountBefore + 1);
+      });
+
+      it("should return 404 for non-existent car", async () => {
+        const payload = await createValidBookingPayload("non-existent-car-id", testUserCookie);
+
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
           .send(payload);
 
         expect(response.status).toBe(HttpStatus.NOT_FOUND);
@@ -133,9 +286,12 @@ describe("Bookings E2E Tests", () => {
 
     describe("Guest Bookings", () => {
       it("should create a booking for guest user", async () => {
-        const payload = createGuestBookingPayload(testCarId);
+        const payload = await createGuestBookingPayload(testCarId);
 
-        const response = await request(app.getHttpServer()).post("/api/bookings").send(payload);
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
 
         expect(response.status).toBe(HttpStatus.CREATED);
         expect(response.body).toHaveProperty("bookingId");
@@ -151,11 +307,12 @@ describe("Bookings E2E Tests", () => {
           checkoutUrl: mockCheckoutUrl,
         });
 
-        const payload = createValidBookingPayload(testCarId);
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
 
         const response = await request(app.getHttpServer())
           .post("/api/bookings")
           .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
           .send(payload);
 
         expect(response.status).toBe(HttpStatus.CREATED);
@@ -167,11 +324,12 @@ describe("Bookings E2E Tests", () => {
           new Error("Payment provider unavailable"),
         );
 
-        const payload = createValidBookingPayload(testCarId);
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
 
         const response = await request(app.getHttpServer())
           .post("/api/bookings")
           .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
           .send(payload);
 
         expect(response.status).toBeGreaterThanOrEqual(HttpStatus.BAD_REQUEST);

@@ -80,6 +80,7 @@ export interface PaymentIntentOptions {
   idempotencyKey?: string;
   callbackUrl: string;
   transactionType: "booking_creation" | "booking_extension";
+  sessionDurationMinutes?: number;
 }
 
 export interface PaymentIntentResponse {

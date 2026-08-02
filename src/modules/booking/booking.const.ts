@@ -17,6 +17,12 @@ export const AIRPORT_PICKUP_MIN_ADVANCE_MS = 60 * 60 * 1000; // 1 hour
  * Allows for minor rounding differences in Decimal calculations.
  */
 export const PRICE_TOLERANCE = new Decimal("0.01");
+export const BOOKING_PAYMENT_SESSION_DURATION_MINUTES = 10;
+export const BOOKING_PAYMENT_SESSION_DURATION_MS =
+  BOOKING_PAYMENT_SESSION_DURATION_MINUTES * 60 * 1000;
+export const BOOKING_IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const BOOKING_IDEMPOTENCY_PROCESSING_LEASE_MS = 60 * 1000;
+export const BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS = 5;
 
 /**
  * Constants for leg generation
