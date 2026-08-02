@@ -3,12 +3,14 @@ import { Cron } from "@nestjs/schedule";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { TIMEZONE } from "../../config/constants";
+import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "../booking/booking.const";
 import { BookingReservationService } from "../booking/booking-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 
 const EXPIRED_RESERVATION_BATCH_SIZE = 50;
+const RECONCILIATION_CONCURRENCY = 5;
 const EVERY_MINUTE = "* * * * *";
 const FINAL_UNPAID_STATUSES = new Set(["cancelled", "failed"]);
 
@@ -47,11 +49,19 @@ export class BookingReservationExpirationService {
   }
 
   private async reconcileExpiredReservationBatch(): Promise<number> {
+    const now = new Date();
+    const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservations = await this.databaseService.booking.findMany({
       where: {
         status: BookingStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
-        paymentSessionExpiresAt: { lte: new Date() },
+        OR: [
+          { paymentSessionExpiresAt: { lte: now } },
+          {
+            paymentSessionExpiresAt: null,
+            createdAt: { lte: orphanedBefore },
+          },
+        ],
       },
       select: {
         id: true,
@@ -62,8 +72,12 @@ export class BookingReservationExpirationService {
     });
 
     let reconciledCount = 0;
-    for (const reservation of reservations) {
-      if (await this.reconcileReservation(reservation)) reconciledCount += 1;
+    for (let index = 0; index < reservations.length; index += RECONCILIATION_CONCURRENCY) {
+      const batch = reservations.slice(index, index + RECONCILIATION_CONCURRENCY);
+      const reconciled = await Promise.all(
+        batch.map((reservation) => this.reconcileReservation(reservation)),
+      );
+      reconciledCount += reconciled.filter(Boolean).length;
     }
 
     return reconciledCount;

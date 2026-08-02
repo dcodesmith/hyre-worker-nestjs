@@ -25,3 +25,13 @@ export function buildBufferedBookingInterval(
     bufferedEnd: new Date(interval.endDate.getTime() + bufferMs),
   };
 }
+
+/**
+ * Builds the query interval used to compare an unbuffered stored booking with
+ * the exclusion constraint, which buffers both the stored and candidate rows.
+ */
+export function buildBookingConflictQueryInterval(
+  interval: BookingInterval,
+): BufferedBookingInterval {
+  return buildBufferedBookingInterval(interval, DEFAULT_BOOKING_BUFFER_HOURS * 2);
+}

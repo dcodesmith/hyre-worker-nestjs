@@ -336,7 +336,7 @@ describe("BookingCreationIdempotencyService", () => {
     await service.checkpointPaymentResult(
       "idem-1",
       "booking-1",
-      "booking-1",
+      "pi-1",
       new Date(reservationExpiresAt),
       response,
     );
@@ -344,7 +344,7 @@ describe("BookingCreationIdempotencyService", () => {
     expect(databaseService.booking.update).toHaveBeenCalledWith({
       where: { id: "booking-1" },
       data: {
-        paymentIntent: "booking-1",
+        paymentIntent: "pi-1",
         paymentSessionExpiresAt: new Date(reservationExpiresAt),
       },
     });

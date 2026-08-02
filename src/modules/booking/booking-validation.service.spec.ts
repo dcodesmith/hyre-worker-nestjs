@@ -605,7 +605,7 @@ describe("BookingValidationService", () => {
       );
     });
 
-    it("should use strict inequality (lt/gt) to allow exactly 2-hour buffer gaps", async () => {
+    it("should use strict inequality to allow exactly four hours between bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -624,13 +624,13 @@ describe("BookingValidationService", () => {
         endDate,
       });
 
-      // Verify strict inequality is used (lt/gt instead of lte/gte)
-      // This allows bookings with exactly 2-hour buffer gap to coexist
+      // Both rows receive a two-hour exclusion-constraint buffer, so the raw
+      // intervals need a four-hour gap and may meet exactly at the boundary.
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            startDate: { lt: expect.any(Date) },
-            endDate: { gt: expect.any(Date) },
+            startDate: { lt: new Date("2025-03-01T22:00:00.000Z") },
+            endDate: { gt: new Date("2025-03-01T10:00:00.000Z") },
           }),
         }),
       );

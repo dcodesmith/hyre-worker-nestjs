@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildBufferedBookingInterval } from "./availability-buffer.helper";
+import {
+  buildBookingConflictQueryInterval,
+  buildBufferedBookingInterval,
+} from "./availability-buffer.helper";
 
 describe("buildBufferedBookingInterval", () => {
   it("applies the default 2-hour buffer on both sides", () => {
@@ -20,5 +23,17 @@ describe("buildBufferedBookingInterval", () => {
 
     expect(result.bufferedStart.toISOString()).toBe("2026-03-10T09:00:00.000Z");
     expect(result.bufferedEnd.toISOString()).toBe("2026-03-10T15:00:00.000Z");
+  });
+});
+
+describe("buildBookingConflictQueryInterval", () => {
+  it("applies both sides of the database's 2-hour booking buffer", () => {
+    const result = buildBookingConflictQueryInterval({
+      startDate: new Date("2026-03-10T10:00:00.000Z"),
+      endDate: new Date("2026-03-10T14:00:00.000Z"),
+    });
+
+    expect(result.bufferedStart.toISOString()).toBe("2026-03-10T06:00:00.000Z");
+    expect(result.bufferedEnd.toISOString()).toBe("2026-03-10T18:00:00.000Z");
   });
 });

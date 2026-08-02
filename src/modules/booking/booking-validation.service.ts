@@ -5,7 +5,7 @@ import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import type { FieldError } from "src/common/errors/problem-details.interface";
 import { maskEmail } from "src/shared/helper";
-import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { DatabaseService } from "../database/database.service";
 import {
   AIRPORT_PICKUP_MIN_ADVANCE_MS,
@@ -248,8 +248,11 @@ export class BookingValidationService {
       );
     }
 
-    // Calculate buffered time window
-    const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval({ startDate, endDate });
+    // Match the exclusion constraint, which buffers both stored and candidate rows.
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
+      startDate,
+      endDate,
+    });
 
     // Find conflicting bookings
     const conflictingBookings = await reader.booking.findMany({

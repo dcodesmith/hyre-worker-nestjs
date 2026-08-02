@@ -68,6 +68,18 @@ describe("BookingReservationExpirationService", () => {
       }),
     );
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(databaseService.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              paymentSessionExpiresAt: null,
+              createdAt: { lte: expect.any(Date) },
+            }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it.each([null, { ...transaction, status: "failed" }])(
@@ -119,7 +131,7 @@ describe("BookingReservationExpirationService", () => {
     expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
   });
 
-  it("retains a missing-reference reservation when the fallback reference is successful", async () => {
+  it("completes payment when the fallback reference resolves a successful transaction", async () => {
     databaseService.booking.findMany.mockResolvedValue([{ id: "booking-1", paymentIntent: null }]);
     flutterwaveService.findTransactionByReference
       .mockResolvedValueOnce(null)
@@ -131,6 +143,42 @@ describe("BookingReservationExpirationService", () => {
       expect.objectContaining({ tx_ref: "booking_booking-1" }),
     );
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+  });
+
+  it("limits provider reconciliation to five concurrent reservations", async () => {
+    databaseService.booking.findMany.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `booking-${index + 1}`,
+        paymentIntent: `booking-${index + 1}`,
+      })),
+    );
+    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+
+    let activeCalls = 0;
+    let maxActiveCalls = 0;
+    const releases: Array<() => void> = [];
+    flutterwaveService.findTransactionByReference.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          activeCalls += 1;
+          maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+          releases.push(() => {
+            activeCalls -= 1;
+            resolve(null);
+          });
+        }),
+    );
+
+    const reconciliation = service.reconcileExpiredReservations();
+    await vi.waitFor(() => expect(releases).toHaveLength(5));
+    expect(maxActiveCalls).toBe(5);
+
+    for (const release of releases.splice(0)) release();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases[0]();
+
+    await expect(reconciliation).resolves.toBe(6);
+    expect(maxActiveCalls).toBe(5);
   });
 
   it("skips a run while reconciliation is already in progress", async () => {

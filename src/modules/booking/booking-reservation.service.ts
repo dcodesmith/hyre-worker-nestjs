@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService, lockCarRow } from "../database/database.service";
+import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "./booking.const";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 
 const EXPIRED_RESERVATION_REASON = "Payment session expired";
@@ -31,6 +32,7 @@ export class BookingReservationService {
       const [reservation] = await tx.$queryRaw<
         Array<{
           id: string;
+          createdAt: Date;
           paymentSessionExpiresAt: Date | null;
           paymentStatus: PaymentStatus;
           status: BookingStatus;
@@ -38,6 +40,7 @@ export class BookingReservationService {
       >(Prisma.sql`
         SELECT
           id,
+          "createdAt",
           "paymentSessionExpiresAt",
           "paymentStatus",
           status
@@ -46,12 +49,18 @@ export class BookingReservationService {
         FOR UPDATE
       `);
 
+      const now = new Date();
+      const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
+      let sessionExpired = false;
+      if (reservation) {
+        sessionExpired = reservation.paymentSessionExpiresAt
+          ? reservation.paymentSessionExpiresAt <= now
+          : reservation.createdAt <= orphanedBefore;
+      }
       if (
-        !reservation ||
-        reservation.status !== BookingStatus.PENDING ||
+        reservation?.status !== BookingStatus.PENDING ||
         reservation.paymentStatus !== PaymentStatus.UNPAID ||
-        !reservation.paymentSessionExpiresAt ||
-        reservation.paymentSessionExpiresAt > new Date()
+        !sessionExpired
       ) {
         return false;
       }
@@ -73,11 +82,17 @@ export class BookingReservationService {
           id: bookingId,
           status: BookingStatus.PENDING,
           paymentStatus: PaymentStatus.UNPAID,
-          paymentSessionExpiresAt: { lte: new Date() },
+          OR: [
+            { paymentSessionExpiresAt: { lte: now } },
+            {
+              paymentSessionExpiresAt: null,
+              createdAt: { lte: orphanedBefore },
+            },
+          ],
         },
         data: {
           status: BookingStatus.CANCELLED,
-          cancelledAt: new Date(),
+          cancelledAt: now,
           cancellationReason: EXPIRED_RESERVATION_REASON,
           referralCreditsReserved: 0,
           referralCreditsUsed: 0,

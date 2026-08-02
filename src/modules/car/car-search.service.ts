@@ -8,7 +8,7 @@ import {
   type VehicleType,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
@@ -250,6 +250,7 @@ export class CarSearchService {
               every: {
                 bookingsAsChauffeur: {
                   some: {
+                    deletedAt: null,
                     status: {
                       in: [...BLOCKING_BOOKING_STATUSES],
                     },
@@ -309,7 +310,7 @@ export class CarSearchService {
       return whereClause;
     }
 
-    const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval(interval);
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval(interval);
     return {
       AND: [
         whereClause,

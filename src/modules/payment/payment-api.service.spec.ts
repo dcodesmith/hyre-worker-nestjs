@@ -235,6 +235,7 @@ describe("PaymentApiService", () => {
       const result = await service.initializePayment(extensionDto, mockUserInfo);
 
       expect(result.paymentIntentId).toBe("pi-456");
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledWith(
         expect.objectContaining({
           transactionType: "booking_extension",

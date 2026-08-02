@@ -84,16 +84,29 @@ describe("BookingReservationService", () => {
   });
 
   it.each([
-    ["the payment session is still active", () => new Date(Date.now() + 60_000)],
-    ["the payment session expiry is missing", () => null],
-  ])("retains a reservation when %s", async (_description, getExpiresAt) => {
+    [
+      "the payment session is still active",
+      () => ({
+        createdAt: new Date(Date.now() - 60_000),
+        paymentSessionExpiresAt: new Date(Date.now() + 60_000),
+      }),
+    ],
+    [
+      "a new booking does not have a payment session yet",
+      () => ({
+        createdAt: new Date(),
+        paymentSessionExpiresAt: null,
+      }),
+    ],
+  ])("retains a reservation when %s", async (_description, getTiming) => {
     databaseService.booking.findUnique.mockResolvedValue({ carId: "car-1" });
+    const timing = getTiming();
     tx.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([
       {
         id: "booking-1",
         status: BookingStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
-        paymentSessionExpiresAt: getExpiresAt(),
+        ...timing,
       },
     ]);
 
@@ -102,6 +115,37 @@ describe("BookingReservationService", () => {
     expect(tx.payment.count).not.toHaveBeenCalled();
     expect(bookingEligibilityService.releaseReferralReservation).not.toHaveBeenCalled();
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("cancels a stale reservation that never received a payment-session expiry", async () => {
+    databaseService.booking.findUnique.mockResolvedValue({ carId: "car-1" });
+    tx.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([
+      {
+        id: "booking-1",
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        createdAt: new Date(Date.now() - 11 * 60_000),
+        paymentSessionExpiresAt: null,
+      },
+    ]);
+    tx.payment.count.mockResolvedValue(0);
+    bookingEligibilityService.releaseReferralReservation.mockResolvedValue({ released: true });
+    tx.booking.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(true);
+
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              paymentSessionExpiresAt: null,
+              createdAt: { lte: expect.any(Date) },
+            }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it("recognizes the PostgreSQL booking overlap constraint", () => {
