@@ -1,6 +1,3 @@
-// Unit tests assume UTC local time for Date#setHours-based booking windows.
-process.env.TZ = "UTC";
-
 // Intercept stdout/stderr BEFORE any imports to suppress NestJS logs
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
