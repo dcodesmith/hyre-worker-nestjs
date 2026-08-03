@@ -13,6 +13,7 @@ describe("CreateBookingSchema", () => {
     includeSecurityDetail: false,
     requiresFullTank: false,
     useCredits: 0,
+    expectedTotalAmount: "10000",
   };
 
   describe("AIRPORT_PICKUP validation", () => {
@@ -144,6 +145,35 @@ describe("CreateBookingSchema", () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe("expectedTotalAmount validation", () => {
+    it("requires a non-negative decimal string", () => {
+      expect(
+        createBookingSchema.safeParse({
+          ...validBaseBooking,
+          expectedTotalAmount: undefined,
+        }).success,
+      ).toBe(false);
+      expect(
+        createBookingSchema.safeParse({
+          ...validBaseBooking,
+          expectedTotalAmount: "-1",
+        }).success,
+      ).toBe(false);
+      expect(
+        createBookingSchema.safeParse({
+          ...validBaseBooking,
+          expectedTotalAmount: "1e3",
+        }).success,
+      ).toBe(false);
+      expect(
+        createBookingSchema.safeParse({
+          ...validBaseBooking,
+          expectedTotalAmount: "1000.50",
+        }).success,
+      ).toBe(true);
+    });
+  });
 });
 
 describe("CreateGuestBookingSchema", () => {
@@ -158,6 +188,7 @@ describe("CreateGuestBookingSchema", () => {
     includeSecurityDetail: false,
     requiresFullTank: false,
     useCredits: 0,
+    expectedTotalAmount: "10000",
     guestEmail: "guest@example.com",
     guestName: "Guest User",
     guestPhone: "08012345678",

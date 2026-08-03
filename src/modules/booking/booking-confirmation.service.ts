@@ -6,6 +6,7 @@ import {
   BookingStatus,
   type Payment,
   PaymentStatus,
+  Prisma,
   Status,
 } from "@prisma/client";
 import type { Queue } from "bullmq";
@@ -13,7 +14,7 @@ import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import type { BookingWithRelations } from "../../types";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
@@ -65,6 +66,37 @@ export class BookingConfirmationService {
     }
 
     const updatedBooking = await this.databaseService.$transaction(async (tx) => {
+      const [bookingIdentity] = await tx.$queryRaw<Array<{ carId: string }>>(Prisma.sql`
+        SELECT "carId"
+        FROM "Booking"
+        WHERE id = ${bookingId}
+      `);
+      if (!bookingIdentity) return null;
+
+      const carExists = await lockCarRow(tx, bookingIdentity.carId);
+      if (!carExists) return null;
+
+      const [pendingBooking] = await tx.$queryRaw<
+        Array<{
+          id: string;
+          carId: string;
+          status: BookingStatus;
+        }>
+      >(
+        Prisma.sql`
+          SELECT id, "carId", status
+          FROM "Booking"
+          WHERE id = ${bookingId}
+          FOR UPDATE
+        `,
+      );
+      if (pendingBooking?.status !== BookingStatus.PENDING) {
+        return null;
+      }
+      if (pendingBooking.carId !== bookingIdentity.carId) {
+        return null;
+      }
+
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.
       const updateResult = await tx.booking.updateMany({

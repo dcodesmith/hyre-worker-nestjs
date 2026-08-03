@@ -5,6 +5,9 @@ import swc from "unplugin-swc";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { defineConfig } from "vitest/config";
 
+// Unit tests assume UTC local time for Date#setHours-based booking windows.
+process.env.TZ = "UTC";
+
 export default defineConfig({
   test: {
     globals: true,

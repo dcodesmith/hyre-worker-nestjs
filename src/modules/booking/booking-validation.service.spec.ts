@@ -3,9 +3,15 @@ import { BookingStatus, CarApprovalStatus, PaymentStatus, Status } from "@prisma
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
+import {
+  createBooking,
+  createBookingFinancials,
+  createCar,
+  createUser,
+} from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import {
+  BLOCKING_BOOKING_STATUSES,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FULL_DAY_END_HOUR,
@@ -13,10 +19,12 @@ import {
   SAME_DAY_BOOKING_CUTOFF_HOUR,
 } from "./booking.const";
 import {
+  BookingPriceChangedException,
   BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
 } from "./booking.error";
+import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
 
@@ -407,7 +415,7 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalled();
     });
 
-    it("should block BOOKED status when an overlapping REFUND_PROCESSING active booking exists", async () => {
+    it("should block an overlapping active booking regardless of payment status", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -437,8 +445,8 @@ describe("BookingValidationService", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             carId: "car-123",
-            paymentStatus: { in: expect.arrayContaining([PaymentStatus.REFUND_PROCESSING]) },
-            status: { in: expect.arrayContaining([BookingStatus.ACTIVE]) },
+            deletedAt: null,
+            status: { in: [...BLOCKING_BOOKING_STATUSES] },
             startDate: expect.objectContaining({ lt: expect.any(Date) }),
             endDate: expect.objectContaining({ gt: expect.any(Date) }),
           }),
@@ -571,7 +579,7 @@ describe("BookingValidationService", () => {
       );
     });
 
-    it("should only check bookings with CONFIRMED/ACTIVE status and paid-like payment states", async () => {
+    it("should check paid bookings and every pending reservation", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -590,16 +598,14 @@ describe("BookingValidationService", () => {
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            paymentStatus: {
-              in: expect.arrayContaining([PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING]),
-            },
-            status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+            deletedAt: null,
+            status: { in: [...BLOCKING_BOOKING_STATUSES] },
           }),
         }),
       );
     });
 
-    it("should use strict inequality (lt/gt) to allow exactly 2-hour buffer gaps", async () => {
+    it("should use strict inequality to allow exactly two hours between bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -618,13 +624,12 @@ describe("BookingValidationService", () => {
         endDate,
       });
 
-      // Verify strict inequality is used (lt/gt instead of lte/gte)
-      // This allows bookings with exactly 2-hour buffer gap to coexist
+      // A two-hour turnaround gap may meet exactly at the range boundary.
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            startDate: { lt: expect.any(Date) },
-            endDate: { gt: expect.any(Date) },
+            startDate: { lt: new Date("2025-03-01T20:00:00.000Z") },
+            endDate: { gt: new Date("2025-03-01T12:00:00.000Z") },
           }),
         }),
       );
@@ -644,6 +649,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
       };
 
       await expect(service.validateGuestEmail(input)).resolves.toBeUndefined();
@@ -664,6 +670,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
         guestEmail: "newuser@example.com",
         guestName: "John Doe",
         guestPhone: "1234567890",
@@ -692,6 +699,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
         guestEmail: "existing@example.com",
         guestName: "John Doe",
         guestPhone: "1234567890",
@@ -701,29 +709,55 @@ describe("BookingValidationService", () => {
     });
   });
 
-  describe("validatePriceMatch", () => {
-    it("should not throw when no client total is provided", () => {
-      expect(() => service.validatePriceMatch(undefined, new Decimal("10000"))).not.toThrow();
-    });
-
+  describe("validateExpectedPrice", () => {
     it("should not throw when prices match exactly", () => {
-      expect(() => service.validatePriceMatch("10000", new Decimal("10000"))).not.toThrow();
+      expect(() =>
+        service.validateExpectedPrice(
+          "10000",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).not.toThrow();
     });
 
     it("should not throw when prices are within tolerance", () => {
-      expect(() => service.validatePriceMatch("10000.005", new Decimal("10000"))).not.toThrow();
+      expect(() =>
+        service.validateExpectedPrice(
+          "10000.005",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).not.toThrow();
     });
 
-    it("should throw BookingValidationException when prices differ significantly", () => {
-      expect(() => service.validatePriceMatch("9000", new Decimal("10000"))).toThrow(
-        BookingValidationException,
-      );
+    it("should throw BookingPriceChangedException when prices differ significantly", () => {
+      expect(() =>
+        service.validateExpectedPrice(
+          "9000",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).toThrow(BookingPriceChangedException);
     });
 
     it("should throw BookingValidationException for invalid price format", () => {
-      expect(() => service.validatePriceMatch("not-a-number", new Decimal("10000"))).toThrow(
-        BookingValidationException,
-      );
+      expect(() =>
+        service.validateExpectedPrice(
+          "not-a-number",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).toThrow(BookingValidationException);
+    });
+
+    it("should preserve server-side pricing mapping failures", () => {
+      const mappingError = new Error("pricing mapping failed");
+      vi.spyOn(BookingPricingPreviewService, "mapFinancials").mockImplementationOnce(() => {
+        throw mappingError;
+      });
+
+      expect(() =>
+        service.validateExpectedPrice(
+          "9000",
+          createBookingFinancials({ totalAmount: new Decimal("10000") }),
+        ),
+      ).toThrow(mappingError);
     });
   });
 
@@ -740,6 +774,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
       };
 
       expect(() => service.validateGuestRequirements(input, null)).toThrow(
@@ -759,6 +794,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
         guestEmail: "guest@example.com",
         guestName: "Guest User",
         guestPhone: "08012345678",
@@ -779,6 +815,7 @@ describe("BookingValidationService", () => {
         includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
+        expectedTotalAmount: "10000",
       };
 
       const sessionUser = { id: "user-123" };

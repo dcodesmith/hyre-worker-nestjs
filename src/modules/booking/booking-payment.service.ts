@@ -1,10 +1,11 @@
 import { Injectable } from "@nestjs/common";
+import type Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "./booking.const";
 import { PaymentIntentFailedException } from "./booking.error";
 import type { CustomerDetails } from "./booking.interface";
-import type { BookingFinancials } from "./booking-calculation.interface";
 
 @Injectable()
 export class BookingPaymentService {
@@ -17,7 +18,7 @@ export class BookingPaymentService {
 
   async createPaymentIntent(
     createdBooking: { id: string; bookingReference: string },
-    financials: BookingFinancials,
+    totalAmount: Decimal,
     customerDetails: CustomerDetails,
     callbackUrl?: string,
   ): Promise<{ checkoutUrl: string; paymentIntentId: string }> {
@@ -26,7 +27,7 @@ export class BookingPaymentService {
 
     try {
       const paymentResult = await this.flutterwaveService.createPaymentIntent({
-        amount: financials.totalAmount.toNumber(),
+        amount: totalAmount.toNumber(),
         customer: {
           email: customerDetails.email,
           name: customerDetails.name,
@@ -40,6 +41,7 @@ export class BookingPaymentService {
         callbackUrl: resolvedCallbackUrl,
         transactionType: "booking_creation",
         idempotencyKey: createdBooking.id,
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
       });
 
       return {

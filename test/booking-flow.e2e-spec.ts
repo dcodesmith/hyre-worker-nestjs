@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
@@ -7,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { BookingReservationService } from "../src/modules/booking/booking-reservation.service";
 import type { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
@@ -36,6 +38,7 @@ describe("Booking Flow E2E", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
+  let bookingReservationService: BookingReservationService;
   let factory: TestDataFactory;
   let webhookSecret: string;
 
@@ -61,6 +64,7 @@ describe("Booking Flow E2E", () => {
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
+    bookingReservationService = app.get(BookingReservationService);
     factory = new TestDataFactory(databaseService, app);
 
     const configService = app.get(ConfigService);
@@ -116,12 +120,22 @@ describe("Booking Flow E2E", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "0",
       ...overrides,
     };
+    if (!overrides.expectedTotalAmount) {
+      const preview = await request(app.getHttpServer())
+        .post("/api/bookings/pricing-preview")
+        .set("Cookie", cookie)
+        .send(bookingPayload);
+      expect(preview.status).toBe(HttpStatus.OK);
+      bookingPayload.expectedTotalAmount = String(preview.body.totalAmount);
+    }
 
     const bookingResponse = await request(app.getHttpServer())
       .post("/api/bookings")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", randomUUID())
       .send(bookingPayload);
 
     expect(bookingResponse.status).toBe(HttpStatus.CREATED);
@@ -417,7 +431,7 @@ describe("Booking Flow E2E", () => {
         {
           startDate,
           endDate,
-          clientTotalAmount: String(previewResponse.body.totalAmount),
+          expectedTotalAmount: String(previewResponse.body.totalAmount),
         },
         {
           referrerUserId: userA.id,
@@ -436,7 +450,7 @@ describe("Booking Flow E2E", () => {
     });
   });
 
-  it("re-applies the referral discount on a fresh booking after a failed payment release", async () => {
+  it("re-applies the referral discount after a failed payment hold expires", async () => {
     const car = await factory.createCar(fleetOwnerId);
 
     const { user: referrer } = await factory.authenticateAndGetUser(
@@ -476,12 +490,21 @@ describe("Booking Flow E2E", () => {
       requiresFullTank: false,
       useCredits: 0,
     };
+    const initialPreview = await request(app.getHttpServer())
+      .post("/api/bookings/pricing-preview")
+      .set("Cookie", cookie)
+      .send(bookingPayload);
+    expect(initialPreview.status).toBe(HttpStatus.OK);
 
     // Attempt 1: create booking with discount, then simulate a failed Flutterwave charge.
     const firstAttempt = await request(app.getHttpServer())
       .post("/api/bookings")
       .set("Cookie", cookie)
-      .send(bookingPayload);
+      .set("Idempotency-Key", randomUUID())
+      .send({
+        ...bookingPayload,
+        expectedTotalAmount: String(initialPreview.body.totalAmount),
+      });
     expect(firstAttempt.status).toBe(HttpStatus.CREATED);
 
     const firstBookingId = firstAttempt.body.bookingId as string;
@@ -567,8 +590,8 @@ describe("Booking Flow E2E", () => {
     expect(statsAfterRelease.totalReferrals).toBe(0);
     expect(statsAfterRelease.totalRewardsPending.toNumber()).toBe(0);
 
-    // Attempt 2: same payload — pricing preview must reflect the discount again and a
-    // fresh booking must reserve the discount with the original referrer.
+    // Pricing can reflect the released referral discount immediately, but the failed
+    // checkout still holds the car until its ten-minute Flutterwave session expires.
     const previewResponse = await request(app.getHttpServer())
       .post("/api/bookings/pricing-preview")
       .set("Cookie", cookie)
@@ -584,12 +607,34 @@ describe("Booking Flow E2E", () => {
     expect(previewResponse.status).toBe(HttpStatus.OK);
     expect(previewResponse.body.referralDiscountAmount).toBeGreaterThan(0);
 
+    const blockedRetryResponse = await request(app.getHttpServer())
+      .post("/api/bookings")
+      .set("Cookie", cookie)
+      .set("Idempotency-Key", randomUUID())
+      .send({
+        ...bookingPayload,
+        expectedTotalAmount: String(previewResponse.body.totalAmount),
+      });
+    expect(blockedRetryResponse.status).toBe(HttpStatus.CONFLICT);
+    expect(blockedRetryResponse.body.errorCode).toBe("CAR_NOT_AVAILABLE");
+
+    await databaseService.booking.update({
+      where: { id: firstBookingId },
+      data: { paymentSessionExpiresAt: new Date(Date.now() - 60_000) },
+    });
+    await expect(bookingReservationService.cancelExpiredReservation(firstBookingId)).resolves.toBe(
+      true,
+    );
+
+    // Attempt 2: after the checkout hold expires, a fresh booking can reserve the
+    // discount with the original referrer.
     const retryResponse = await request(app.getHttpServer())
       .post("/api/bookings")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", randomUUID())
       .send({
         ...bookingPayload,
-        clientTotalAmount: String(previewResponse.body.totalAmount),
+        expectedTotalAmount: String(previewResponse.body.totalAmount),
       });
     expect(retryResponse.status).toBe(HttpStatus.CREATED);
 

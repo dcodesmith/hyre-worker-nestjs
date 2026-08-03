@@ -61,6 +61,10 @@ export interface CustomerDetails {
 export interface CreateBookingResponse {
   bookingId: string;
   checkoutUrl: string;
+  totalAmount: number;
+  currency: "NGN";
+  bookingStatus: BookingStatus;
+  reservationExpiresAt: string;
 }
 
 export interface BookingPaymentStatusResponse {
@@ -72,6 +76,7 @@ export interface BookingPaymentStatusResponse {
   paymentId: string | null;
   totalAmount: number;
   isConfirmed: boolean;
+  reservationExpiresAt: string | null;
 }
 
 export interface CreateExtensionResponse {

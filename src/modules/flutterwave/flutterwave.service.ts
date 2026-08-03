@@ -161,6 +161,30 @@ export class FlutterwaveService {
     }
   }
 
+  async findTransactionByReference(txRef: string): Promise<FlutterwaveVerificationData | null> {
+    try {
+      const { data: response } = await this.httpClient.get<
+        FlutterwaveResponse<FlutterwaveVerificationData>
+      >("/v3/transactions/verify_by_reference", {
+        params: { tx_ref: txRef },
+      });
+
+      if (response.status === "success" && response.data) {
+        return response.data;
+      }
+      throw new FlutterwaveError(
+        response.message || "Unable to verify transaction reference",
+        "TRANSACTION_REFERENCE_VERIFICATION_FAILED",
+      );
+    } catch (error) {
+      const handledError = this.handleError(error, "findTransactionByReference");
+      if (handledError.statusCode === HttpStatus.NOT_FOUND) {
+        return null;
+      }
+      throw handledError;
+    }
+  }
+
   async initiateRefund(options: RefundOptions): Promise<RefundResponse> {
     const { transactionId, amount, callbackUrl, idempotencyKey } = options;
 
@@ -282,6 +306,9 @@ export class FlutterwaveService {
             ? "Payment for car booking"
             : "Payment for booking extension",
       },
+      ...(options.sessionDurationMinutes && {
+        configurations: { session_duration: options.sessionDurationMinutes },
+      }),
     };
 
     try {

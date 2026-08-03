@@ -1,19 +1,25 @@
 import { Injectable } from "@nestjs/common";
-import { Booking } from "@prisma/client";
+import type { Booking, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { MapsService } from "../maps/maps.service";
 import {
+  BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
+} from "./booking.const";
+import {
   BookingCreationFailedException,
   BookingException,
   BookingPaymentSyncFailedException,
+  BookingRequestInProgressException,
+  CarNotAvailableException,
   PaymentIntentFailedException,
 } from "./booking.error";
 import type {
@@ -26,11 +32,13 @@ import type {
 } from "./booking.interface";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
@@ -42,6 +50,7 @@ export type BookingCreationContext = {
 export type CreateBookingRequest = {
   input: CreateBookingInput;
   sessionUser: AuthSession["user"] | null;
+  idempotencyKey: string;
   context?: BookingCreationContext;
 };
 
@@ -69,6 +78,8 @@ export class BookingCreationService {
     private readonly eligibilityService: BookingEligibilityService,
     private readonly paymentService: BookingPaymentService,
     private readonly persistenceService: BookingPersistenceService,
+    private readonly reservationService: BookingReservationService,
+    private readonly idempotencyService: BookingCreationIdempotencyService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCreationService.name);
@@ -87,131 +98,117 @@ export class BookingCreationService {
    * @throws BookingCreationFailedException for other errors
    */
   async createBooking(request: CreateBookingRequest): Promise<CreateBookingResponse> {
-    const { input, sessionUser, context } = request;
+    const { input, sessionUser, idempotencyKey, context } = request;
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
-
-    this.logger.info(
-      {
-        carId: normalizedBooking.carId,
-        bookingType: normalizedBooking.bookingType,
-        startDate: normalizedBooking.startDate.toISOString(),
-        endDate: normalizedBooking.endDate.toISOString(),
-        isGuest: isGuestBooking(normalizedBooking),
-        userId: sessionUser?.id,
-      },
-      "Starting booking creation",
+    const customerScope = this.idempotencyService.getCustomerScope(normalizedBooking, sessionUser);
+    const requestHash = this.idempotencyService.createRequestHash(
+      normalizedBooking,
+      context ? { guestContactSource: context.guestContactSource } : undefined,
     );
-
-    this.validationService.validateDates({
-      startDate: normalizedBooking.startDate,
-      endDate: normalizedBooking.endDate,
-      bookingType: normalizedBooking.bookingType,
-    });
-
-    await this.validationService.checkCarAvailability({
-      carId: normalizedBooking.carId,
-      startDate: normalizedBooking.startDate,
-      endDate: normalizedBooking.endDate,
-    });
-
-    if (isGuestBooking(normalizedBooking)) {
-      await this.validationService.validateGuestEmail(normalizedBooking);
+    const claim = await this.idempotencyService.claim(customerScope, idempotencyKey, requestHash);
+    if (claim.kind === "replay") {
+      return claim.response;
+    }
+    if (claim.kind === "resume") {
+      return this.resumeBookingPayment(claim.id, claim.bookingId, normalizedBooking, sessionUser);
     }
 
-    let flightData: FlightDataForBooking | null = null;
-
-    if (normalizedBooking.bookingType === "AIRPORT_PICKUP" && normalizedBooking.flightNumber) {
-      // AIRPORT_PICKUP always has sameLocation=false (enforced by DTO validation)
-      // pickupAddress is the airport, dropOffAddress is the customer's destination
-      // Type narrowing: when sameLocation is false, dropOffAddress is guaranteed to exist
-      if (normalizedBooking.sameLocation === false) {
-        flightData = await this.validateAndGetFlightData(
-          normalizedBooking.flightNumber,
-          normalizedBooking.startDate,
-          normalizedBooking.dropOffAddress,
-        );
-      }
-    }
-
-    const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
-
-    const legs = this.legService.generateLegs(
-      buildLegGenerationInput({
-        bookingType: normalizedBooking.bookingType,
-        startDate: normalizedBooking.startDate,
-        endDate: normalizedBooking.endDate,
-        pickupTime: normalizedBooking.pickupTime,
-        flightArrivalTime: flightData?.arrivalTime,
-        driveTimeMinutes: flightData?.driveTimeMinutes,
-      }),
-    );
-
-    const baseFinancials = await this.calculationService.calculateBookingCost({
-      bookingType: normalizedBooking.bookingType,
-      legs,
-      car,
-      includeSecurityDetail: normalizedBooking.includeSecurityDetail,
-      requiresFullTank: normalizedBooking.requiresFullTank,
-      // Credits not implemented yet - would need to add creditsBalance to User model
-      userCreditsBalance: undefined,
-      creditsToUse: normalizedBooking.useCredits
-        ? new Decimal(normalizedBooking.useCredits)
-        : undefined,
-      referralDiscountAmount: new Decimal(0),
-    });
-
-    // Preliminary eligibility check for price calculation.
-    // Actual eligibility is verified inside the transaction with fresh DB query to prevent races.
-    const preliminaryReferralEligibility =
-      await this.eligibilityService.checkReferralEligibilityForPricing(
-        sessionUser,
-        baseFinancials.subtotalBeforeDiscounts,
-        normalizedBooking.bookingType,
+    try {
+      this.logger.info(
+        {
+          carId: normalizedBooking.carId,
+          bookingType: normalizedBooking.bookingType,
+          startDate: normalizedBooking.startDate.toISOString(),
+          endDate: normalizedBooking.endDate.toISOString(),
+          isGuest: isGuestBooking(normalizedBooking),
+          userId: sessionUser?.id,
+        },
+        "Starting booking creation",
       );
 
-    const financials = preliminaryReferralEligibility.discountAmount.gt(0)
-      ? await this.calculationService.calculateBookingCost({
+      this.validationService.validateDates({
+        startDate: normalizedBooking.startDate,
+        endDate: normalizedBooking.endDate,
+        bookingType: normalizedBooking.bookingType,
+      });
+
+      await this.validationService.checkCarAvailability({
+        carId: normalizedBooking.carId,
+        startDate: normalizedBooking.startDate,
+        endDate: normalizedBooking.endDate,
+      });
+
+      if (isGuestBooking(normalizedBooking)) {
+        await this.validationService.validateGuestEmail(normalizedBooking);
+      }
+
+      let flightData: FlightDataForBooking | null = null;
+      if (normalizedBooking.bookingType === "AIRPORT_PICKUP" && normalizedBooking.flightNumber) {
+        if (normalizedBooking.sameLocation === false) {
+          flightData = await this.validateAndGetFlightData(
+            normalizedBooking.flightNumber,
+            normalizedBooking.startDate,
+            normalizedBooking.dropOffAddress,
+          );
+        }
+      }
+
+      const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
+      const legs = this.legService.generateLegs(
+        buildLegGenerationInput({
           bookingType: normalizedBooking.bookingType,
-          legs,
-          car,
-          includeSecurityDetail: normalizedBooking.includeSecurityDetail,
-          requiresFullTank: normalizedBooking.requiresFullTank,
-          userCreditsBalance: undefined,
-          creditsToUse: normalizedBooking.useCredits
-            ? new Decimal(normalizedBooking.useCredits)
-            : undefined,
-          referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
-        })
-      : baseFinancials;
+          startDate: normalizedBooking.startDate,
+          endDate: normalizedBooking.endDate,
+          pickupTime: normalizedBooking.pickupTime,
+          flightArrivalTime: flightData?.arrivalTime,
+          driveTimeMinutes: flightData?.driveTimeMinutes,
+        }),
+      );
+      const baseFinancials = await this.calculateFinancials(
+        normalizedBooking,
+        car,
+        legs,
+        new Decimal(0),
+      );
+      const preliminaryReferralEligibility =
+        await this.eligibilityService.checkReferralEligibilityForPricing(
+          sessionUser,
+          baseFinancials.subtotalBeforeDiscounts,
+          normalizedBooking.bookingType,
+        );
+      const financials = preliminaryReferralEligibility.discountAmount.gt(0)
+        ? await this.calculateFinancials(
+            normalizedBooking,
+            car,
+            legs,
+            preliminaryReferralEligibility.discountAmount,
+          )
+        : baseFinancials;
 
-    this.validationService.validatePriceMatch(
-      normalizedBooking.clientTotalAmount,
-      financials.totalAmount,
-    );
+      this.validationService.validateExpectedPrice(
+        normalizedBooking.expectedTotalAmount,
+        financials,
+      );
+      const customerDetails = await this.getCustomerDetails(normalizedBooking, sessionUser);
+      const result = await this.createBookingWithPayment({
+        idempotencyId: claim.id,
+        booking: normalizedBooking,
+        sessionUser,
+        context,
+        legs,
+        financials,
+        customerDetails,
+        flightData,
+        preliminaryReferralEligibility,
+      });
 
-    const customerDetails = await this.getCustomerDetails(normalizedBooking, sessionUser);
-
-    const result = await this.createBookingWithPayment({
-      booking: normalizedBooking,
-      sessionUser,
-      context,
-      car,
-      legs,
-      financials,
-      customerDetails,
-      flightData,
-      preliminaryReferralEligibility,
-    });
-
-    this.logger.info(
-      {
-        bookingId: result.bookingId,
-      },
-      "Booking created successfully",
-    );
-
-    return result;
+      this.logger.info({ bookingId: result.bookingId }, "Booking created successfully");
+      return result;
+    } catch (error) {
+      await this.releaseIdempotencyClaim(claim.id);
+      throw error;
+    }
   }
 
   private normalizeInput(booking: CreateBookingInput): CreateBookingInput {
@@ -227,6 +224,68 @@ export class BookingCreationService {
       startDate: normalizedWindow.startDate,
       endDate: normalizedWindow.endDate,
     };
+  }
+
+  private calculateFinancials(
+    booking: CreateBookingInput,
+    car: CarWithPricing,
+    legs: GeneratedLeg[],
+    referralDiscountAmount: Decimal,
+    tx?: Prisma.TransactionClient,
+  ): Promise<BookingFinancials> {
+    return this.calculationService.calculateBookingCost(
+      {
+        bookingType: booking.bookingType,
+        legs,
+        car,
+        includeSecurityDetail: booking.includeSecurityDetail,
+        requiresFullTank: booking.requiresFullTank,
+        userCreditsBalance: undefined,
+        creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
+        referralDiscountAmount,
+      },
+      tx,
+    );
+  }
+
+  private async resumeBookingPayment(
+    idempotencyId: string,
+    bookingId: string,
+    bookingInput: CreateBookingInput,
+    sessionUser: AuthSession["user"] | null,
+  ): Promise<CreateBookingResponse> {
+    const booking = await this.databaseService.booking.findUnique({ where: { id: bookingId } });
+    if (!booking) {
+      throw new BookingCreationFailedException("Idempotent booking could not be recovered.");
+    }
+    if (booking.paymentIntent) {
+      // The marker is persisted before calling Flutterwave. With no checkpointed
+      // response, the provider outcome is uncertain, so retrying could create a
+      // second checkout. Keep the reservation and let reconciliation resolve it.
+      throw new BookingRequestInProgressException(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS);
+    }
+    const customerDetails = await this.getCustomerDetails(bookingInput, sessionUser);
+    return this.createPaymentAndSync(
+      idempotencyId,
+      booking,
+      booking.totalAmount,
+      customerDetails,
+      bookingInput.callbackUrl,
+    );
+  }
+
+  private async releaseIdempotencyClaim(idempotencyId: string): Promise<void> {
+    try {
+      await this.idempotencyService.release(idempotencyId);
+    } catch (error) {
+      this.logger.error(
+        {
+          idempotencyId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to release pre-side-effect booking idempotency claim",
+      );
+    }
   }
 
   /**
@@ -320,10 +379,10 @@ export class BookingCreationService {
    * all receive the one-time discount.
    */
   private async createBookingWithPayment(params: {
+    idempotencyId: string;
     booking: CreateBookingInput;
     sessionUser: AuthSession["user"] | null;
     context?: BookingCreationContext;
-    car: CarWithPricing;
     legs: GeneratedLeg[];
     financials: BookingFinancials;
     customerDetails: CustomerDetails;
@@ -331,10 +390,10 @@ export class BookingCreationService {
     preliminaryReferralEligibility: ReferralEligibility;
   }): Promise<CreateBookingResponse> {
     const {
+      idempotencyId,
       booking,
       sessionUser,
       context,
-      car,
       legs,
       financials,
       customerDetails,
@@ -365,6 +424,20 @@ export class BookingCreationService {
 
     try {
       createdBooking = await this.databaseService.$transaction(async (tx) => {
+        const carExists = await lockCarRow(tx, booking.carId);
+        if (!carExists) {
+          throw new BookingCreationFailedException("Car not found during booking creation.");
+        }
+        await this.validationService.checkCarAvailability(
+          {
+            carId: booking.carId,
+            startDate: booking.startDate,
+            endDate: booking.endDate,
+          },
+          tx,
+        );
+        const freshCar = await this.persistenceService.fetchCarWithPricing(booking.carId, tx);
+
         // CRITICAL: Verify and reserve referral discount FIRST with pessimistic locking.
         // This prevents concurrent active bookings from receiving the one-time discount.
         const verifiedReferralEligibility = sessionUser
@@ -375,16 +448,13 @@ export class BookingCreationService {
             )
           : preliminaryReferralEligibility;
 
-        const recalculatedFinancials = await this.calculationService.calculateBookingCost({
-          bookingType: booking.bookingType,
+        const recalculatedFinancials = await this.calculateFinancials(
+          booking,
+          freshCar,
           legs,
-          car,
-          includeSecurityDetail: booking.includeSecurityDetail,
-          requiresFullTank: booking.requiresFullTank,
-          userCreditsBalance: undefined,
-          creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
-          referralDiscountAmount: verifiedReferralEligibility.discountAmount,
-        });
+          verifiedReferralEligibility.discountAmount,
+          tx,
+        );
 
         const referralEligibilityChanged =
           verifiedReferralEligibility.eligible !== preliminaryReferralEligibility.eligible ||
@@ -404,14 +474,11 @@ export class BookingCreationService {
             },
             "Referral eligibility changed during booking transaction",
           );
-          throw new BookingCreationFailedException(
-            "Referral eligibility changed during booking creation. Please retry.",
-          );
         }
 
-        this.validationService.validatePriceMatch(
-          booking.clientTotalAmount,
-          recalculatedFinancials.totalAmount,
+        this.validationService.validateExpectedPrice(
+          booking.expectedTotalAmount,
+          recalculatedFinancials,
         );
         finalizedFinancials = recalculatedFinancials;
 
@@ -423,7 +490,7 @@ export class BookingCreationService {
 
         const bookingRecord = await this.persistenceService.createBookingRecord(tx, {
           bookingReference,
-          car,
+          car: freshCar,
           userId: sessionUser?.id ?? null,
           guestUser,
           booking,
@@ -440,13 +507,21 @@ export class BookingCreationService {
           verifiedReferralEligibility,
           sessionUser?.id ?? null,
         );
+        await tx.booking.update({
+          where: { id: bookingRecord.id },
+          data: { paymentIntent: bookingRecord.id },
+        });
+        await this.idempotencyService.attachBooking(tx, idempotencyId, bookingRecord.id);
 
-        return bookingRecord;
+        return { ...bookingRecord, paymentIntent: bookingRecord.id };
       });
     } catch (error) {
       // Re-throw domain-specific exceptions (includes ReferralDiscountNoLongerAvailableException)
       if (error instanceof BookingException || error instanceof FlightAwareException) {
         throw error;
+      }
+      if (this.reservationService.isOverlapConstraintViolation(error)) {
+        throw new CarNotAvailableException(booking.carId);
       }
 
       this.logger.error(
@@ -461,17 +536,13 @@ export class BookingCreationService {
       throw new BookingCreationFailedException();
     }
 
-    const checkoutUrl = await this.createPaymentAndSync(
+    return this.createPaymentAndSync(
+      idempotencyId,
       createdBooking,
-      finalizedFinancials,
+      finalizedFinancials.totalAmount,
       customerDetails,
       booking.callbackUrl,
     );
-
-    return {
-      bookingId: createdBooking.id,
-      checkoutUrl,
-    };
   }
 
   private resolvePreferredNotificationChannel(
@@ -488,20 +559,36 @@ export class BookingCreationService {
   }
 
   private async createPaymentAndSync(
+    idempotencyId: string,
     createdBooking: Booking,
-    finalizedFinancials: BookingFinancials,
+    totalAmount: Decimal,
     customerDetails: CustomerDetails,
-    callbackUrl: string,
-  ): Promise<string> {
+    callbackUrl?: string,
+  ): Promise<CreateBookingResponse> {
     try {
       const paymentResult = await this.paymentService.createPaymentIntent(
         createdBooking,
-        finalizedFinancials,
+        totalAmount,
         customerDetails,
         callbackUrl,
       );
-      await this.syncPaymentIntentWithBooking(createdBooking.id, paymentResult.paymentIntentId);
-      return paymentResult.checkoutUrl;
+      const reservationExpiresAt = new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS);
+      const response: CreateBookingResponse = {
+        bookingId: createdBooking.id,
+        checkoutUrl: paymentResult.checkoutUrl,
+        totalAmount: totalAmount.toNumber(),
+        currency: "NGN",
+        bookingStatus: createdBooking.status,
+        reservationExpiresAt: reservationExpiresAt.toISOString(),
+      };
+      await this.syncPaymentIntentWithBooking(
+        idempotencyId,
+        createdBooking.id,
+        paymentResult.paymentIntentId,
+        reservationExpiresAt,
+        response,
+      );
+      return response;
     } catch (error) {
       if (
         error instanceof BookingPaymentSyncFailedException ||
@@ -551,14 +638,21 @@ export class BookingCreationService {
   }
 
   private async syncPaymentIntentWithBooking(
+    idempotencyId: string,
     bookingId: string,
     paymentIntentId: string,
+    reservationExpiresAt: Date,
+    response: CreateBookingResponse,
   ): Promise<void> {
     try {
-      await this.databaseService.booking.update({
-        where: { id: bookingId },
-        data: { paymentIntent: paymentIntentId },
-      });
+      await this.idempotencyService.checkpointPaymentResult(
+        idempotencyId,
+        bookingId,
+        paymentIntentId,
+        reservationExpiresAt,
+        response,
+      );
+      await this.idempotencyService.complete(idempotencyId);
     } catch (updateError) {
       this.logger.error(
         {

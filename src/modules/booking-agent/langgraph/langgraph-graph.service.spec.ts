@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
+import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import { DatabaseService } from "../../database/database.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
@@ -164,6 +165,16 @@ describe("LangGraphGraphService", () => {
         { provide: BookingAgentSearchService, useValue: toolExecutorServiceMock },
         { provide: BookingAgentWindowPolicyService, useValue: windowPolicyServiceMock },
         { provide: BookingCreationService, useValue: bookingCreationServiceMock },
+        {
+          provide: BookingPricingPreviewService,
+          useValue: {
+            preview: vi.fn().mockResolvedValue({
+              subtotalBeforeDiscounts: 150000,
+              vatAmount: 0,
+              totalAmount: 150000,
+            }),
+          },
+        },
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },

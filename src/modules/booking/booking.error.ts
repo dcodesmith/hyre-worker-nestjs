@@ -1,6 +1,7 @@
 import { HttpStatus } from "@nestjs/common";
 import { AppException } from "../../common/errors/app.exception";
 import type { FieldError } from "../../common/errors/problem-details.interface";
+import type { BookingPricingPreviewResponseDto } from "./dto/pricing-preview.dto";
 
 /**
  * Error codes for booking-related errors.
@@ -25,6 +26,9 @@ export const BookingErrorCode = {
   BOOKING_CANCELLATION_FAILED: "BOOKING_CANCELLATION_FAILED",
   BOOKING_PAYMENT_SYNC_FAILED: "BOOKING_PAYMENT_SYNC_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
+  BOOKING_PRICE_CHANGED: "BOOKING_PRICE_CHANGED",
+  IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
+  BOOKING_REQUEST_IN_PROGRESS: "BOOKING_REQUEST_IN_PROGRESS",
 } as const;
 
 /**
@@ -56,6 +60,45 @@ export class CarNotAvailableException extends BookingException {
       reason ?? `Car ${carId} is not available for the selected dates`,
       HttpStatus.CONFLICT,
       { title: "Car Not Available" },
+    );
+  }
+}
+
+export class BookingPriceChangedException extends BookingException {
+  constructor(expectedTotalAmount: string, currentPricing: BookingPricingPreviewResponseDto) {
+    super(
+      BookingErrorCode.BOOKING_PRICE_CHANGED,
+      "The booking price changed. Review the updated price before continuing.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Booking Price Changed",
+        details: { expectedTotalAmount, currentPricing },
+      },
+    );
+  }
+}
+
+export class IdempotencyKeyReusedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.IDEMPOTENCY_KEY_REUSED,
+      "This Idempotency-Key was already used with a different booking request.",
+      HttpStatus.CONFLICT,
+      { title: "Idempotency Key Reused" },
+    );
+  }
+}
+
+export class BookingRequestInProgressException extends BookingException {
+  constructor(readonly retryAfterSeconds: number) {
+    super(
+      BookingErrorCode.BOOKING_REQUEST_IN_PROGRESS,
+      "An identical booking request is still being processed.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Booking Request In Progress",
+        details: { retryAfterSeconds },
+      },
     );
   }
 }

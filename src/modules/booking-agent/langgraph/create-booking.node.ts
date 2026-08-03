@@ -1,9 +1,17 @@
 import { Injectable } from "@nestjs/common";
+import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
-import { CarNotAvailableException, CarNotFoundException } from "../../booking/booking.error";
+import { PRICE_TOLERANCE } from "../../booking/booking.const";
+import {
+  BookingRequestInProgressException,
+  CarNotAvailableException,
+  CarNotFoundException,
+  IdempotencyKeyReusedException,
+} from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
+import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
@@ -23,6 +31,7 @@ const MAX_FALLBACK_OPTIONS = 5;
 export class CreateBookingNode {
   constructor(
     private readonly bookingCreationService: BookingCreationService,
+    private readonly bookingPricingPreviewService: BookingPricingPreviewService,
     private readonly databaseService: DatabaseService,
     private readonly bookingAgentSearchService: BookingAgentSearchService,
     private readonly whatsAppPersistenceService: WhatsAppPersistenceService,
@@ -80,8 +89,6 @@ export class CreateBookingNode {
         normalizedEndDate,
       } = buildBookingInputFromDraft(draft, selectedOption, guestIdentity);
 
-      this.logBookingCreationInput(bookingInput, normalizedStartDate, normalizedEndDate);
-
       const conversationLinkState = await this.whatsAppPersistenceService.getConversationLinkState(
         state.conversationId,
       );
@@ -89,14 +96,59 @@ export class CreateBookingNode {
         state.customerId,
         conversationLinkState,
       );
+      const sessionUser = linkedCustomerId
+        ? ({ id: linkedCustomerId } as AuthSession["user"])
+        : null;
+      const pricing = await this.bookingPricingPreviewService.preview(
+        {
+          carId: bookingInput.carId,
+          bookingType: bookingInput.bookingType,
+          startDate: bookingInput.startDate,
+          endDate: bookingInput.endDate,
+          pickupTime: bookingInput.pickupTime,
+          includeSecurityDetail: bookingInput.includeSecurityDetail,
+          requiresFullTank: bookingInput.requiresFullTank,
+        },
+        sessionUser,
+      );
+      if (
+        new Decimal(pricing.totalAmount)
+          .sub(selectedOption.estimatedTotalInclVat)
+          .abs()
+          .gt(PRICE_TOLERANCE)
+      ) {
+        return {
+          selectedOption: {
+            ...selectedOption,
+            estimatedSubtotal: pricing.subtotalBeforeDiscounts,
+            estimatedVatAmount: pricing.vatAmount,
+            estimatedTotalInclVat: pricing.totalAmount,
+          },
+          stage: "confirming",
+          statusMessage: `The final price is ₦${pricing.totalAmount.toLocaleString("en-NG")}. Please confirm this updated amount to continue.`,
+        };
+      }
+      const authoritativeBookingInput = {
+        ...bookingInput,
+        expectedTotalAmount: new Decimal(pricing.totalAmount).toString(),
+      };
+
+      this.logBookingCreationInput(
+        authoritativeBookingInput,
+        normalizedStartDate,
+        normalizedEndDate,
+      );
+
       const result = linkedCustomerId
         ? await this.bookingCreationService.createBooking({
-            input: this.buildAuthenticatedBookingInput(bookingInput),
-            sessionUser: { id: linkedCustomerId } as AuthSession["user"],
+            input: this.buildAuthenticatedBookingInput(authoritativeBookingInput),
+            sessionUser,
+            idempotencyKey: `whatsapp:${state.inboundMessageId}`,
           })
         : await this.bookingCreationService.createBooking({
-            input: bookingInput,
+            input: authoritativeBookingInput,
             sessionUser: null,
+            idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
               guestContactSource: "WHATSAPP_AGENT",
             },
@@ -138,6 +190,9 @@ export class CreateBookingNode {
             "That vehicle is no longer available for your selected date and time. Please adjust your date, booking type, or vehicle preference.",
         };
       }
+
+      const idempotencyResult = this.mapIdempotencyError(error);
+      if (idempotencyResult) return idempotencyResult;
 
       return {
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
@@ -196,7 +251,7 @@ export class CreateBookingNode {
       guestPhone?: string;
     };
 
-    return rest as CreateBookingInput;
+    return rest;
   }
 
   private validateDraftBeforeBookingCreation(draft: BookingDraft): LangGraphNodeResult | null {
@@ -270,13 +325,35 @@ export class CreateBookingNode {
     }
   }
 
+  private mapIdempotencyError(error: unknown): LangGraphNodeResult | null {
+    if (error instanceof BookingRequestInProgressException) {
+      return {
+        error: null,
+        statusMessage:
+          "Your booking request is still being processed. Please wait a few seconds, then confirm again.",
+        stage: "confirming",
+      };
+    }
+
+    if (error instanceof IdempotencyKeyReusedException) {
+      return {
+        error: null,
+        statusMessage:
+          "Your booking details changed while the previous request was processing. Please review them and confirm again.",
+        stage: "confirming",
+      };
+    }
+
+    return null;
+  }
+
   private logBookingCreationInput(
     bookingInput: {
       carId: string;
       pickupAddress: string;
       bookingType: string;
       pickupTime?: string;
-      clientTotalAmount?: string;
+      expectedTotalAmount: string;
       sameLocation?: boolean;
       guestEmail?: string;
     },
@@ -290,7 +367,7 @@ export class CreateBookingNode {
         endDate: normalizedEndDate.toISOString(),
         bookingType: bookingInput.bookingType,
         pickupTime: bookingInput.pickupTime,
-        clientTotalAmount: bookingInput.clientTotalAmount,
+        expectedTotalAmount: bookingInput.expectedTotalAmount,
         sameLocation: bookingInput.sameLocation,
         guestEmail: bookingInput.guestEmail ? maskEmail(bookingInput.guestEmail) : undefined,
       },

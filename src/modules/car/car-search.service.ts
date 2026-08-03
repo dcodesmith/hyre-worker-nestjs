@@ -1,17 +1,16 @@
 import { Injectable } from "@nestjs/common";
 import {
-  BookingStatus,
   BookingType,
   CarApprovalStatus,
-  PaymentStatus,
   Prisma,
   type ServiceTier,
   Status,
   type VehicleType,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { buildBufferedBookingInterval } from "../../shared/availability-buffer.helper";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
+import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
@@ -251,8 +250,9 @@ export class CarSearchService {
               every: {
                 bookingsAsChauffeur: {
                   some: {
+                    deletedAt: null,
                     status: {
-                      in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+                      in: [...BLOCKING_BOOKING_STATUSES],
                     },
                     AND: [{ startDate: { lte: endOfDay } }, { endDate: { gte: startOfDay } }],
                   },
@@ -310,15 +310,15 @@ export class CarSearchService {
       return whereClause;
     }
 
-    const { bufferedStart, bufferedEnd } = buildBufferedBookingInterval(interval);
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval(interval);
     return {
       AND: [
         whereClause,
         {
           bookings: {
             none: {
-              paymentStatus: PaymentStatus.PAID,
-              status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+              deletedAt: null,
+              status: { in: [...BLOCKING_BOOKING_STATUSES] },
               startDate: { lt: bufferedEnd },
               endDate: { gt: bufferedStart },
             },

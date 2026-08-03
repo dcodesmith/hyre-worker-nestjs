@@ -309,6 +309,40 @@ describe("FlutterwaveService", () => {
     });
   });
 
+  describe("findTransactionByReference", () => {
+    it("returns a transaction found by its reference", async () => {
+      const transaction = {
+        id: 12345,
+        tx_ref: "booking-123",
+        flw_ref: "flw-123",
+        amount: 10000,
+        charged_amount: 10000,
+        currency: "NGN",
+        status: "successful",
+        created_at: "2026-08-02T20:00:00.000Z",
+      };
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { status: "success", message: "ok", data: transaction },
+      });
+
+      await expect(service.findTransactionByReference("booking-123")).resolves.toEqual(transaction);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/transactions/verify_by_reference", {
+        params: { tx_ref: "booking-123" },
+      });
+    });
+
+    it("returns null when Flutterwave confirms the reference does not exist", async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(
+        createAxiosErrorWithResponse(404, {
+          status: "error",
+          message: "Transaction not found",
+        }),
+      );
+
+      await expect(service.findTransactionByReference("booking-123")).resolves.toBeNull();
+    });
+  });
+
   describe("initiatePayout", () => {
     it("should initiate payout successfully", async () => {
       const mockResponse = {

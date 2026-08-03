@@ -1,5 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
+import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -7,6 +9,7 @@ import { RatesService } from "./rates.service";
 
 describe("RatesService", () => {
   let service: RatesService;
+  let logger: PinoLogger;
   let databaseService: {
     platformFeeRate: { findMany: ReturnType<typeof vi.fn> };
     taxRate: { findFirst: ReturnType<typeof vi.fn> };
@@ -60,6 +63,7 @@ describe("RatesService", () => {
       .compile();
 
     service = module.get<RatesService>(RatesService);
+    logger = module.get(PinoLogger);
 
     // Reset mocks to default successful responses
     databaseService.platformFeeRate.findMany.mockResolvedValue(mockPlatformRates);
@@ -93,6 +97,29 @@ describe("RatesService", () => {
       expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
       expect(databaseService.taxRate.findFirst).toHaveBeenCalledTimes(1);
       expect(databaseService.addonRate.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("should identify transaction-scoped reads as uncached", async () => {
+      await service.getRates();
+      vi.clearAllMocks();
+
+      const transactionClient = {
+        platformFeeRate: { findMany: vi.fn().mockResolvedValue(mockPlatformRates) },
+        taxRate: { findFirst: vi.fn().mockResolvedValue(mockVatRate) },
+        addonRate: { findFirst: vi.fn().mockResolvedValue(mockSecurityDetailRate) },
+      };
+      await service.getRates(transactionClient as unknown as Prisma.TransactionClient);
+
+      expect(transactionClient.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
+      expect(transactionClient.taxRate.findFirst).toHaveBeenCalledTimes(1);
+      expect(transactionClient.addonRate.findFirst).toHaveBeenCalledTimes(1);
+      expect(databaseService.platformFeeRate.findMany).not.toHaveBeenCalled();
+      expect(databaseService.taxRate.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.addonRate.findFirst).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.any(Object),
+        "Rates fetched without caching",
+      );
     });
 
     it("should throw error when platform service fee rate is not found", async () => {

@@ -221,6 +221,35 @@ describe("BookingReadService", () => {
     ).rejects.toBeInstanceOf(BookingNotFoundException);
   });
 
+  it("returns the reservation expiry with payment status", async () => {
+    const reservationExpiresAt = new Date("2026-08-02T20:10:00.000Z");
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-123",
+      bookingReference: "BK-123",
+      paymentIntent: "booking-123",
+      paymentStatus: "UNPAID",
+      paymentId: null,
+      status: "PENDING",
+      userId: "user-1",
+      guestUser: null,
+      totalAmount: { toNumber: () => 12000 },
+      paymentSessionExpiresAt: reservationExpiresAt,
+    });
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "booking-123" },
+        customerSessionUser,
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        bookingId: "booking-123",
+        isConfirmed: false,
+        reservationExpiresAt: reservationExpiresAt.toISOString(),
+      }),
+    );
+  });
+
   it("throws BookingNotFoundException when user has no supported booking access role", async () => {
     await expect(service.getBookingById("booking-123", adminSessionUser)).rejects.toBeInstanceOf(
       BookingNotFoundException,

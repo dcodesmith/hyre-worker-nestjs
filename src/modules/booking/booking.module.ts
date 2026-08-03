@@ -11,6 +11,7 @@ import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 import { BookingCreationService } from "./booking-creation.service";
+import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingExtensionService } from "./booking-extension.service";
 import { BookingLegService } from "./booking-leg.service";
@@ -19,6 +20,7 @@ import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 import { ExtensionConfirmationService } from "./extension-confirmation.service";
@@ -44,10 +46,12 @@ import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
     BookingModificationPolicyService,
     BookingPaymentService,
     BookingPersistenceService,
+    BookingCreationIdempotencyService,
     BookingCreationService,
     BookingExtensionService,
     BookingPricingPreviewService,
     BookingReadService,
+    BookingReservationService,
     BookingUpdateService,
     BookingCancellationService,
     ExtensionConfirmationService,
@@ -64,6 +68,7 @@ import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
     BookingExtensionService,
     BookingPricingPreviewService,
     BookingReadService,
+    BookingReservationService,
     BookingUpdateService,
     BookingCancellationService,
     ExtensionConfirmationService,

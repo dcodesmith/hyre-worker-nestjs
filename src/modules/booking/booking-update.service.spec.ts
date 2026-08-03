@@ -14,8 +14,10 @@ import {
   BookingUpdateFailedException,
   BookingUpdateNotAllowedException,
   BookingValidationException,
+  CarNotAvailableException,
 } from "./booking.error";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
+import { BookingReservationService } from "./booking-reservation.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
 
@@ -44,10 +46,17 @@ describe("BookingUpdateService", () => {
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
+  const transactionMock = {
+    booking: databaseServiceMock.booking,
+    $queryRaw: databaseServiceMock.$queryRaw,
+  };
 
   const bookingValidationServiceMock = {
     validateDates: vi.fn(),
     checkCarAvailability: vi.fn(),
+  };
+  const bookingReservationServiceMock = {
+    isOverlapConstraintViolation: vi.fn().mockReturnValue(false),
   };
 
   const notificationOutboxServiceMock = {
@@ -122,11 +131,7 @@ describe("BookingUpdateService", () => {
           booking: typeof databaseServiceMock.booking;
           $queryRaw: typeof databaseServiceMock.$queryRaw;
         }) => Promise<unknown>,
-      ) =>
-        callback({
-          booking: databaseServiceMock.booking,
-          $queryRaw: databaseServiceMock.$queryRaw,
-        }),
+      ) => callback(transactionMock),
     );
     databaseServiceMock.$queryRaw.mockImplementation((query: unknown) => {
       const queryText = getQueryText(query);
@@ -144,6 +149,7 @@ describe("BookingUpdateService", () => {
         BookingUpdateService,
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: BookingValidationService, useValue: bookingValidationServiceMock },
+        { provide: BookingReservationService, useValue: bookingReservationServiceMock },
         {
           provide: BookingModificationPolicyService,
           useValue: bookingModificationPolicyServiceMock,
@@ -241,6 +247,7 @@ describe("BookingUpdateService", () => {
         carId: "car-1",
         excludeBookingId: "booking-1",
       }),
+      transactionMock,
     );
     expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
     expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();
@@ -343,6 +350,27 @@ describe("BookingUpdateService", () => {
     await expect(
       service.updateBooking("booking-1", "user-1", { pickupAddress: "New pickup" }),
     ).rejects.toBeInstanceOf(BookingUpdateFailedException);
+  });
+
+  it("maps a database overlap constraint to car not available", async () => {
+    const startDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate,
+      endDate: new Date(startDate.getTime() + 12 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    bookingReservationServiceMock.isOverlapConstraintViolation.mockReturnValueOnce(true);
+    databaseServiceMock.$transaction.mockRejectedValueOnce(new Error("23P01"));
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupTime: "10:30 AM" }),
+    ).rejects.toBeInstanceOf(CarNotAvailableException);
   });
 
   it("fails the update transaction when durable notification creation fails", async () => {

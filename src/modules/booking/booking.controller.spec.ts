@@ -1,5 +1,7 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
+import { BookingStatus } from "@prisma/client";
+import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
@@ -9,6 +11,7 @@ import { BookingController } from "./booking.controller";
 import {
   BookingFetchFailedException,
   BookingNotFoundException,
+  BookingRequestInProgressException,
   BookingValidationException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
@@ -48,6 +51,10 @@ describe("BookingController", () => {
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
     checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+    totalAmount: 56437.5,
+    currency: "NGN" as const,
+    bookingStatus: BookingStatus.PENDING,
+    reservationExpiresAt: "2026-08-02T20:10:00.000Z",
   };
   const mockCreateExtensionResponse = {
     extensionId: "extension-123",
@@ -111,7 +118,9 @@ describe("BookingController", () => {
     includeSecurityDetail: false,
     requiresFullTank: false,
     useCredits: 0,
+    expectedTotalAmount: "56437.50",
   });
+  const createMockResponse = () => ({ setHeader: vi.fn() }) as unknown as Response;
 
   const createValidGuestBookingDto = (): CreateGuestBookingDto => ({
     ...createValidBookingDto(),
@@ -183,7 +192,12 @@ describe("BookingController", () => {
         const dto = createValidBookingDto();
         const validatedDto = validateBookingInput(dto, true);
 
-        const result = await controller.createBooking(validatedDto, mockSessionUser);
+        const result = await controller.createBooking(
+          validatedDto,
+          mockSessionUser,
+          "booking-request-123",
+          createMockResponse(),
+        );
 
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
@@ -202,6 +216,7 @@ describe("BookingController", () => {
               createdAt: expect.any(Date),
               updatedAt: expect.any(Date),
             },
+            idempotencyKey: "booking-request-123",
           }),
         );
       });
@@ -227,7 +242,12 @@ describe("BookingController", () => {
         const dto = createValidGuestBookingDto();
         const validatedDto = validateBookingInput(dto, false);
 
-        const result = await controller.createBooking(validatedDto, null);
+        const result = await controller.createBooking(
+          validatedDto,
+          null,
+          "booking-request-123",
+          createMockResponse(),
+        );
 
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
@@ -239,6 +259,7 @@ describe("BookingController", () => {
               guestPhone: "08098765432",
             }),
             sessionUser: null,
+            idempotencyKey: "booking-request-123",
           }),
         );
       });
@@ -282,6 +303,23 @@ describe("BookingController", () => {
     });
 
     describe("validation", () => {
+      it("sets Retry-After when an identical request is processing", async () => {
+        const response = createMockResponse();
+        vi.mocked(bookingCreationService.createBooking).mockRejectedValueOnce(
+          new BookingRequestInProgressException(5),
+        );
+
+        await expect(
+          controller.createBooking(
+            createValidBookingDto(),
+            mockSessionUser,
+            "booking-request-123",
+            response,
+          ),
+        ).rejects.toThrow(BookingRequestInProgressException);
+        expect(response.setHeader).toHaveBeenCalledWith("Retry-After", "5");
+      });
+
       it("should validate dropOffAddress is required when sameLocation is false", async () => {
         const dto = {
           ...createValidBookingDto(),
@@ -301,7 +339,12 @@ describe("BookingController", () => {
         };
         const validatedDto = validateBookingInput(dto, true);
 
-        const result = await controller.createBooking(validatedDto, mockSessionUser);
+        const result = await controller.createBooking(
+          validatedDto,
+          mockSessionUser,
+          "booking-request-123",
+          createMockResponse(),
+        );
 
         expect(result).toEqual(mockCreateBookingResponse);
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(

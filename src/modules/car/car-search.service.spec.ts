@@ -1,13 +1,8 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import {
-  BookingStatus,
-  BookingType,
-  PaymentStatus,
-  ServiceTier,
-  VehicleType,
-} from "@prisma/client";
+import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
 import { ReviewsReadService } from "../reviews/reviews-read.service";
@@ -260,7 +255,23 @@ describe("CarSearchService", () => {
         limit: 12,
       });
 
-      expect(databaseServiceMock.user.findMany).toHaveBeenCalled();
+      expect(databaseServiceMock.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({
+                chauffeurs: expect.objectContaining({
+                  every: expect.objectContaining({
+                    bookingsAsChauffeur: {
+                      some: expect.objectContaining({ deletedAt: null }),
+                    },
+                  }),
+                }),
+              }),
+            ]),
+          }),
+        }),
+      );
       expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -298,8 +309,8 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    paymentStatus: PaymentStatus.PAID,
-                    status: { in: [BookingStatus.CONFIRMED, BookingStatus.ACTIVE] },
+                    deletedAt: null,
+                    status: { in: [...BLOCKING_BOOKING_STATUSES] },
                   }),
                 },
               }),

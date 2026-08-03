@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { PaymentStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -112,6 +112,7 @@ describe("BookingPersistenceService", () => {
           includeSecurityDetail: false,
           requiresFullTank: false,
           useCredits: 0,
+          expectedTotalAmount: "10000",
         },
         {
           flightId: "flight-1",
@@ -178,6 +179,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     await expect(
@@ -234,6 +236,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     const financials = createBookingFinancials({
@@ -274,6 +277,13 @@ describe("BookingPersistenceService", () => {
     ).resolves.toEqual({ id: "booking-1" });
 
     expect(createBooking).toHaveBeenCalledTimes(1);
+    expect(createBooking).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentSessionExpiresAt: expect.any(Date),
+      }),
+    });
   });
 
   it("throws when financials.numberOfLegs does not match legs length", async () => {
@@ -301,6 +311,7 @@ describe("BookingPersistenceService", () => {
       includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
+      expectedTotalAmount: "10000",
     };
 
     await expect(

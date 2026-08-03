@@ -4,6 +4,7 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
+import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
@@ -44,6 +45,7 @@ describe("PaymentApiService", () => {
     },
     booking: {
       findUnique: vi.fn(),
+      update: vi.fn(),
       updateMany: vi.fn(),
     },
     extension: {
@@ -127,12 +129,86 @@ describe("PaymentApiService", () => {
         callbackUrl: "https://example.com/callback",
         transactionType: "booking_creation",
         idempotencyKey: "booking_booking-123",
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
         metadata: {
           type: "booking",
           entityId: "booking-123",
           userId: mockUserInfo.id,
         },
       });
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "booking-123",
+          status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+          paymentStatus: PaymentStatus.UNPAID,
+          paymentIntent: null,
+          paymentSessionExpiresAt: null,
+        },
+        data: {
+          paymentIntent: "booking_booking-123",
+          paymentSessionExpiresAt: expect.any(Date),
+        },
+      });
+    });
+
+    it("claims the booking before calling Flutterwave", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValueOnce({
+        paymentIntentId: "booking_booking-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      await service.initializePayment(validBookingDto, mockUserInfo);
+
+      expect(
+        vi.mocked(databaseService.booking.updateMany).mock.invocationCallOrder[0],
+      ).toBeLessThan(vi.mocked(flutterwaveService.createPaymentIntent).mock.invocationCallOrder[0]);
+      expect(databaseService.booking.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects a concurrent booking payment initialization before provider access", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("retains the claimed reference when the provider outcome is uncertain", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+      vi.mocked(flutterwaveService.createPaymentIntent).mockRejectedValueOnce(
+        new Error("provider timeout"),
+      );
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        "provider timeout",
+      );
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            paymentIntent: "booking_booking-123",
+            paymentSessionExpiresAt: expect.any(Date),
+          },
+        }),
+      );
+      expect(databaseService.booking.update).not.toHaveBeenCalled();
     });
 
     it("should initialize payment for extension successfully", async () => {
@@ -159,6 +235,7 @@ describe("PaymentApiService", () => {
       const result = await service.initializePayment(extensionDto, mockUserInfo);
 
       expect(result.paymentIntentId).toBe("pi-456");
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledWith(
         expect.objectContaining({
           transactionType: "booking_extension",
@@ -201,6 +278,39 @@ describe("PaymentApiService", () => {
       await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
         PaymentEntityAlreadyPaidException,
       );
+    });
+
+    it("does not create a new checkout for an expired reservation", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentSessionExpiresAt: new Date(Date.now() - 60_000),
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not initialize a second checkout for an active reservation", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentIntent: "booking-123",
+        paymentSessionExpiresAt: new Date(Date.now() + 60_000),
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it.each([

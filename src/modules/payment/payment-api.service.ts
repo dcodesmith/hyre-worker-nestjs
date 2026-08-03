@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import {
+  BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
+} from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -73,7 +77,14 @@ export class PaymentApiService {
       throw new PaymentAmountMismatchException(serverAmount, dto.amount);
     }
 
-    // Create payment intent with Flutterwave using server-validated amount
+    const paymentReference = `${dto.type}_${dto.entityId}`;
+    if (dto.type === "booking") {
+      await this.claimBookingPaymentSession(dto.entityId, paymentReference);
+    }
+
+    // Create payment intent with Flutterwave using server-validated amount.
+    // Booking claims remain persisted when the provider outcome is uncertain so
+    // expiration reconciliation can verify the deterministic reference.
     const paymentIntent = await this.flutterwaveService.createPaymentIntent({
       amount: serverAmount,
       customer: {
@@ -82,12 +93,15 @@ export class PaymentApiService {
       },
       callbackUrl: dto.callbackUrl,
       transactionType: dto.type === "booking" ? "booking_creation" : "booking_extension",
-      idempotencyKey: `${dto.type}_${dto.entityId}`,
+      idempotencyKey: paymentReference,
       metadata: {
         type: dto.type,
         entityId: dto.entityId,
         userId: user.id,
       },
+      ...(dto.type === "booking" && {
+        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+      }),
     });
 
     this.logger.info(
@@ -100,6 +114,33 @@ export class PaymentApiService {
     );
 
     return paymentIntent;
+  }
+
+  private async claimBookingPaymentSession(
+    bookingId: string,
+    paymentReference: string,
+  ): Promise<void> {
+    const { count } = await this.databaseService.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentIntent: null,
+        paymentSessionExpiresAt: null,
+      },
+      data: {
+        paymentIntent: paymentReference,
+        paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
+      },
+    });
+
+    if (count === 0) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        bookingId,
+        "payment session is already initialized",
+      );
+    }
   }
 
   /**
@@ -468,7 +509,15 @@ export class PaymentApiService {
   private async validateBookingForPayment(entityId: string, userId: string): Promise<number> {
     const booking = await this.databaseService.booking.findUnique({
       where: { id: entityId },
-      select: { id: true, userId: true, status: true, paymentStatus: true, totalAmount: true },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        paymentStatus: true,
+        totalAmount: true,
+        paymentIntent: true,
+        paymentSessionExpiresAt: true,
+      },
     });
 
     if (!booking) {
@@ -496,6 +545,21 @@ export class PaymentApiService {
         "booking",
         entityId,
         `payment status is ${booking.paymentStatus.toLowerCase()}`,
+      );
+    }
+    const paymentSessionExpiresAt: Date | null = booking.paymentSessionExpiresAt;
+    if (paymentSessionExpiresAt && paymentSessionExpiresAt <= new Date()) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        "payment session has expired",
+      );
+    }
+    if (booking.paymentIntent) {
+      throw new PaymentEntityNotPayableException(
+        "booking",
+        entityId,
+        "payment session is already initialized",
       );
     }
 

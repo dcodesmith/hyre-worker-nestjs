@@ -100,6 +100,15 @@ describe("BookingConfirmationService", () => {
           provide: DatabaseService,
           useValue: {
             $transaction: vi.fn(async (callback) => callback(databaseService)),
+            $queryRaw: vi.fn().mockResolvedValue([
+              {
+                id: "booking-123",
+                carId: "car-123",
+                startDate: new Date("2026-08-10T08:00:00.000Z"),
+                endDate: new Date("2026-08-10T18:00:00.000Z"),
+                status: BookingStatus.PENDING,
+              },
+            ]),
             booking: {
               findUnique: vi.fn(),
               update: vi.fn(),
@@ -193,6 +202,25 @@ describe("BookingConfirmationService", () => {
         },
       });
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it("skips confirmation when the booking moved to a different car before locking", async () => {
+      vi.mocked(databaseService.$queryRaw)
+        .mockResolvedValueOnce([{ carId: "car-original" }])
+        .mockResolvedValueOnce([{ id: "car-original" }])
+        .mockResolvedValueOnce([
+          {
+            id: "booking-123",
+            carId: "car-reassigned",
+            status: BookingStatus.PENDING,
+          },
+        ]);
+
+      await expect(
+        service.confirmFromPayment(createMockPayment({ bookingId: "booking-123" })),
+      ).resolves.toBe(false);
+
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
     });
 
     it("should write booking confirmation notifications to the outbox transaction", async () => {
