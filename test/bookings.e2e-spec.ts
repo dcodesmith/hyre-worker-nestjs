@@ -256,6 +256,27 @@ describe("Bookings E2E Tests", () => {
         ).rejects.toThrow();
       });
 
+      it("allows exactly two hours between reservations at the database boundary", async () => {
+        const firstStartDate = new Date(Date.now() + 330 * 86400000);
+        const firstEndDate = new Date(firstStartDate.getTime() + 43200000);
+        const secondStartDate = new Date(firstEndDate.getTime() + 2 * 60 * 60 * 1000);
+        const secondEndDate = new Date(secondStartDate.getTime() + 43200000);
+
+        await factory.createBooking(testUserId, testCarId, {
+          startDate: firstStartDate,
+          endDate: firstEndDate,
+          bookingReference: `DB-BUFFER-FIRST-${randomUUID()}`,
+        });
+
+        await expect(
+          factory.createBooking(testUserId, testCarId, {
+            startDate: secondStartDate,
+            endDate: secondEndDate,
+            bookingReference: `DB-BUFFER-SECOND-${randomUUID()}`,
+          }),
+        ).resolves.toBeDefined();
+      });
+
       it("allows only one concurrent identical request to initialize payment", async () => {
         const payload = await createValidBookingPayload(testCarId, testUserCookie);
         const idempotencyKey = randomUUID();

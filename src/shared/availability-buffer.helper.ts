@@ -28,10 +28,12 @@ export function buildBufferedBookingInterval(
 
 /**
  * Builds the query interval used to compare an unbuffered stored booking with
- * the exclusion constraint, which buffers both the stored and candidate rows.
+ * the exclusion constraint. The database extends each booking's end by two
+ * hours, so querying raw start/end columns requires extending both sides of
+ * the candidate interval by the same two-hour turnaround gap.
  */
 export function buildBookingConflictQueryInterval(
   interval: BookingInterval,
 ): BufferedBookingInterval {
-  return buildBufferedBookingInterval(interval, DEFAULT_BOOKING_BUFFER_HOURS * 2);
+  return buildBufferedBookingInterval(interval);
 }

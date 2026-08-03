@@ -27,13 +27,13 @@ describe("buildBufferedBookingInterval", () => {
 });
 
 describe("buildBookingConflictQueryInterval", () => {
-  it("applies both sides of the database's 2-hour booking buffer", () => {
+  it("applies the database's total 2-hour turnaround gap", () => {
     const result = buildBookingConflictQueryInterval({
       startDate: new Date("2026-03-10T10:00:00.000Z"),
       endDate: new Date("2026-03-10T14:00:00.000Z"),
     });
 
-    expect(result.bufferedStart.toISOString()).toBe("2026-03-10T06:00:00.000Z");
-    expect(result.bufferedEnd.toISOString()).toBe("2026-03-10T18:00:00.000Z");
+    expect(result.bufferedStart.toISOString()).toBe("2026-03-10T08:00:00.000Z");
+    expect(result.bufferedEnd.toISOString()).toBe("2026-03-10T16:00:00.000Z");
   });
 });

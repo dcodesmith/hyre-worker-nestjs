@@ -340,8 +340,8 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    startDate: { lt: new Date("2024-03-10T23:00:00.000Z") },
-                    endDate: { gt: new Date("2024-03-10T03:00:00.000Z") },
+                    startDate: { lt: new Date("2024-03-10T21:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T05:00:00.000Z") },
                   }),
                 },
               }),
@@ -371,8 +371,8 @@ describe("CarSearchService", () => {
               expect.objectContaining({
                 bookings: {
                   none: expect.objectContaining({
-                    startDate: { lt: new Date("2024-03-11T09:00:00.000Z") },
-                    endDate: { gt: new Date("2024-03-10T19:00:00.000Z") },
+                    startDate: { lt: new Date("2024-03-11T07:00:00.000Z") },
+                    endDate: { gt: new Date("2024-03-10T21:00:00.000Z") },
                   }),
                 },
               }),

@@ -131,8 +131,8 @@ async function initializeWorkerIsolation(): Promise<void> {
             EXCLUDE USING gist (
               "carId" WITH =,
               tsrange(
-                LEAST("startDate" - INTERVAL '2 hours', "endDate" + INTERVAL '2 hours'),
-                GREATEST("startDate" - INTERVAL '2 hours', "endDate" + INTERVAL '2 hours'),
+                "startDate",
+                "endDate" + INTERVAL '2 hours',
                 '[)'
               ) WITH &&
             )

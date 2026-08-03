@@ -605,7 +605,7 @@ describe("BookingValidationService", () => {
       );
     });
 
-    it("should use strict inequality to allow exactly four hours between bookings", async () => {
+    it("should use strict inequality to allow exactly two hours between bookings", async () => {
       vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce(
         createCar({
           id: "car-123",
@@ -624,13 +624,12 @@ describe("BookingValidationService", () => {
         endDate,
       });
 
-      // Both rows receive a two-hour exclusion-constraint buffer, so the raw
-      // intervals need a four-hour gap and may meet exactly at the boundary.
+      // A two-hour turnaround gap may meet exactly at the range boundary.
       expect(databaseService.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            startDate: { lt: new Date("2025-03-01T22:00:00.000Z") },
-            endDate: { gt: new Date("2025-03-01T10:00:00.000Z") },
+            startDate: { lt: new Date("2025-03-01T20:00:00.000Z") },
+            endDate: { gt: new Date("2025-03-01T12:00:00.000Z") },
           }),
         }),
       );
