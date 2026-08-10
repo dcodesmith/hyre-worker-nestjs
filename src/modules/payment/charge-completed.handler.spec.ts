@@ -292,6 +292,40 @@ describe("ChargeCompletedHandler", () => {
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["both booking and extension", "booking-456", "extension-789"],
+    ["neither booking nor extension", null, null],
+  ])(
+    "blocks confirmation when payment is associated with %s",
+    async (_association, bookingId, extensionId) => {
+      const invalidPayment = createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId,
+        extensionId,
+        amountExpected: new Decimal(10000),
+        amountCharged: new Decimal(10000),
+        currency: "NGN",
+      });
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "ok",
+        data: { ...mockChargeData },
+      });
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+        createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+      );
+      vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(invalidPayment);
+
+      await handler.handle(mockChargeData);
+
+      expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+      expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    },
+  );
+
   it("confirms booking on retry when persisted charged amount/currency are missing but verification is valid", async () => {
     const createdPayment = {
       ...createPaymentRecord({

@@ -145,12 +145,22 @@ export class ChargeCompletedHandler {
       return;
     }
 
-    if (payment.bookingId) {
+    const hasBooking = payment.bookingId !== null;
+    const hasExtension = payment.extensionId !== null;
+    if (hasBooking === hasExtension) {
+      this.logger.error(
+        { paymentId: payment.id, txRef },
+        "Payment must be associated with exactly one payable entity",
+      );
+      return;
+    }
+
+    if (hasBooking) {
       await this.bookingConfirmationService.confirmFromPayment(payment);
       return;
     }
 
-    if (payment.extensionId) {
+    if (hasExtension) {
       await this.extensionConfirmationService.confirmFromPayment(payment);
     }
   }
