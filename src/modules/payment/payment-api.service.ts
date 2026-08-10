@@ -2,13 +2,18 @@ import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import type { AuthSession } from "../auth/guards/session.guard";
 import {
   BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
   BOOKING_PAYMENT_SESSION_DURATION_MS,
 } from "../booking/booking.const";
+import type { BookingPaymentStatusResponse } from "../booking/booking.interface";
+import { BookingReadService } from "../booking/booking-read.service";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { ChargeCompletedHandler } from "./charge-completed.handler";
+import type { ConfirmBookingPaymentDto } from "./dto/confirm-booking-payment.dto";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
 import {
@@ -38,9 +43,28 @@ export class PaymentApiService {
     private readonly flutterwaveService: FlutterwaveService,
     private readonly databaseService: DatabaseService,
     private readonly refundFinalizationService: RefundFinalizationService,
+    private readonly bookingReadService: BookingReadService,
+    private readonly chargeCompletedHandler: ChargeCompletedHandler,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentApiService.name);
+  }
+
+  async confirmBookingPayment(
+    dto: ConfirmBookingPaymentDto,
+    sessionUser: AuthSession["user"] | null,
+    paymentStatusToken?: string,
+  ): Promise<BookingPaymentStatusResponse> {
+    const query = { bookingId: dto.bookingId, txRef: dto.txRef };
+    const current = await this.bookingReadService.getBookingPaymentStatus(
+      query,
+      sessionUser,
+      paymentStatusToken,
+    );
+    if (current.lifecycleState === "CONFIRMED") return current;
+
+    await this.chargeCompletedHandler.confirmByTransactionId(dto.txRef, dto.transactionId);
+    return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
   }
 
   /**

@@ -313,6 +313,14 @@ describe("BookingCreationService", () => {
 
       expect(calculationService.calculateBookingCost).toHaveBeenCalled();
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalled();
+      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith(
+        "idempotency-123",
+        "booking-123",
+        "pi-123",
+        expect.any(Date),
+        null,
+        result,
+      );
     });
 
     it("should create a booking successfully for guest user", async () => {
@@ -329,9 +337,18 @@ describe("BookingCreationService", () => {
         currency: "NGN",
         bookingStatus: BookingStatus.PENDING,
         reservationExpiresAt: expect.any(String),
+        paymentStatusToken: expect.any(String),
       });
 
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
+      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith(
+        "idempotency-123",
+        "booking-123",
+        "pi-123",
+        expect.any(Date),
+        expect.any(String),
+        result,
+      );
     });
 
     it("normalizes DAY booking window before validation", async () => {

@@ -4,6 +4,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingFetchFailedException, BookingNotFoundException } from "./booking.error";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
+import { hashBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import { BookingReadService } from "./booking-read.service";
 
 describe("BookingReadService", () => {
@@ -234,6 +235,8 @@ describe("BookingReadService", () => {
       guestUser: null,
       totalAmount: { toNumber: () => 12000 },
       paymentSessionExpiresAt: reservationExpiresAt,
+      paymentStatusTokenHash: null,
+      customerPayments: [],
     });
 
     await expect(
@@ -244,10 +247,104 @@ describe("BookingReadService", () => {
     ).resolves.toEqual(
       expect.objectContaining({
         bookingId: "booking-123",
-        isConfirmed: false,
+        lifecycleState: "PENDING",
         reservationExpiresAt: reservationExpiresAt.toISOString(),
       }),
     );
+  });
+
+  it("requires the opaque status token for guest payment status", async () => {
+    const paymentStatusToken = "guest-payment-status-token";
+    const guestBooking = {
+      id: "booking-123",
+      bookingReference: "BK-123",
+      paymentIntent: "tx-ref-123",
+      paymentStatus: "UNPAID",
+      paymentId: null,
+      status: "PENDING",
+      userId: null,
+      guestUser: { email: "guest@example.com" },
+      totalAmount: { toNumber: () => 12000 },
+      paymentSessionExpiresAt: new Date("2099-08-02T20:10:00.000Z"),
+      paymentStatusTokenHash: hashBookingPaymentStatusToken(paymentStatusToken),
+      customerPayments: [],
+    };
+    databaseServiceMock.booking.findFirst.mockResolvedValue(guestBooking);
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        null,
+        paymentStatusToken,
+      ),
+    ).resolves.toMatchObject({ lifecycleState: "PENDING" });
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        customerSessionUser,
+        paymentStatusToken,
+      ),
+    ).resolves.toMatchObject({ lifecycleState: "PENDING" });
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        customerSessionUser,
+        "wrong-token",
+      ),
+    ).rejects.toBeInstanceOf(BookingNotFoundException);
+
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      ...guestBooking,
+      paymentSessionExpiresAt: new Date("2020-08-02T20:10:00.000Z"),
+    });
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        null,
+        paymentStatusToken,
+      ),
+    ).rejects.toBeInstanceOf(BookingNotFoundException);
+  });
+
+  it("returns terminal failed and expired payment lifecycle states", async () => {
+    const baseBooking = {
+      id: "booking-123",
+      bookingReference: "BK-123",
+      paymentIntent: "tx-ref-123",
+      paymentStatus: "UNPAID",
+      paymentId: null,
+      userId: "user-1",
+      guestUser: null,
+      totalAmount: { toNumber: () => 12000 },
+      paymentSessionExpiresAt: new Date("2026-08-02T20:10:00.000Z"),
+      paymentStatusTokenHash: null,
+    };
+    databaseServiceMock.booking.findFirst
+      .mockResolvedValueOnce({
+        ...baseBooking,
+        status: "PENDING",
+        customerPayments: [{ status: "FAILED" }],
+      })
+      .mockResolvedValueOnce({
+        ...baseBooking,
+        status: "CANCELLED",
+        customerPayments: [],
+      });
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        customerSessionUser,
+      ),
+    ).resolves.toMatchObject({ lifecycleState: "FAILED" });
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        customerSessionUser,
+      ),
+    ).resolves.toMatchObject({ lifecycleState: "EXPIRED" });
   });
 
   it("throws BookingNotFoundException when user has no supported booking access role", async () => {

@@ -1,12 +1,27 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
+import type { BookingPaymentStatusResponse } from "../booking/booking.interface";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import {
   type FlutterwaveWebhookPayload,
   flutterwaveWebhookPayloadSchema,
 } from "../flutterwave/flutterwave-webhook.schema";
+import {
+  type ConfirmBookingPaymentDto,
+  confirmBookingPaymentSchema,
+} from "./dto/confirm-booking-payment.dto";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
 import { FlutterwaveWebhookGuard } from "./guards/flutterwave-webhook.guard";
@@ -49,6 +64,17 @@ export class PaymentController {
     @CurrentUser() user: AuthSession["user"],
   ): Promise<PaymentStatusResponse> {
     return this.paymentApiService.getPaymentStatus(txRef, user.id);
+  }
+
+  @Post("booking-confirmation")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalSessionGuard)
+  async confirmBookingPayment(
+    @ZodBody(confirmBookingPaymentSchema) dto: ConfirmBookingPaymentDto,
+    @CurrentUser() sessionUser: AuthSession["user"] | null,
+    @Headers("x-payment-status-token") paymentStatusToken?: string,
+  ): Promise<BookingPaymentStatusResponse> {
+    return this.paymentApiService.confirmBookingPayment(dto, sessionUser, paymentStatusToken);
   }
 
   /**

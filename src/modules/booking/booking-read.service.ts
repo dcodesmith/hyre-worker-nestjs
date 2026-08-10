@@ -1,18 +1,23 @@
 import { Injectable } from "@nestjs/common";
-import { PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { FLEET_OWNER, USER } from "../auth/auth.const";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
+import { BOOKING_PAYMENT_STATUS_TOKEN_GRACE_MS } from "./booking.const";
 import {
   BookingException,
   BookingFetchFailedException,
   BookingNotFoundException,
 } from "./booking.error";
-import type { BookingPaymentStatusResponse } from "./booking.interface";
+import type {
+  BookingPaymentLifecycleState,
+  BookingPaymentStatusResponse,
+} from "./booking.interface";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
+import { matchesBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import type { BookingPaymentStatusQueryDto } from "./dto/get-booking-payment-status.dto";
 
 @Injectable()
@@ -150,6 +155,7 @@ export class BookingReadService {
   async getBookingPaymentStatus(
     query: BookingPaymentStatusQueryDto,
     sessionUser: AuthSession["user"] | null,
+    paymentStatusToken?: string,
   ): Promise<BookingPaymentStatusResponse> {
     try {
       const booking = await this.databaseService.booking.findFirst({
@@ -165,9 +171,15 @@ export class BookingReadService {
           paymentId: true,
           status: true,
           userId: true,
-          guestUser: true,
           totalAmount: true,
           paymentSessionExpiresAt: true,
+          paymentStatusTokenHash: true,
+          customerPayments: {
+            where: { txRef: query.txRef },
+            orderBy: { initiatedAt: "desc" },
+            take: 1,
+            select: { status: true },
+          },
         },
       });
 
@@ -175,26 +187,13 @@ export class BookingReadService {
         throw new BookingNotFoundException();
       }
 
-      if (sessionUser) {
-        if (!booking.userId || booking.userId !== sessionUser.id) {
-          throw new BookingNotFoundException();
-        }
-      } else {
-        const requestedGuestEmail = query.guestEmail?.trim().toLowerCase();
-        const bookingGuestEmail = this.extractGuestEmail(booking.guestUser)?.toLowerCase();
-
-        if (
-          !requestedGuestEmail ||
-          !bookingGuestEmail ||
-          requestedGuestEmail !== bookingGuestEmail
-        ) {
-          throw new BookingNotFoundException();
-        }
-      }
-
-      const isConfirmed =
-        booking.paymentStatus === PaymentStatus.PAID &&
-        (booking.status === "CONFIRMED" || booking.status === "ACTIVE");
+      this.assertPaymentStatusAccess(booking, sessionUser, paymentStatusToken);
+      const paymentAttemptStatus = booking.customerPayments[0]?.status;
+      const lifecycleState = this.resolvePaymentLifecycleState(
+        booking.status,
+        booking.paymentStatus,
+        paymentAttemptStatus,
+      );
 
       return {
         bookingId: booking.id,
@@ -204,8 +203,8 @@ export class BookingReadService {
         paymentStatus: booking.paymentStatus,
         paymentId: booking.paymentId ?? null,
         totalAmount: booking.totalAmount.toNumber(),
-        isConfirmed,
         reservationExpiresAt: booking.paymentSessionExpiresAt?.toISOString() ?? null,
+        lifecycleState,
       };
     } catch (error) {
       if (error instanceof BookingException) {
@@ -226,14 +225,58 @@ export class BookingReadService {
     }
   }
 
-  private extractGuestEmail(guestUser: unknown): string | undefined {
-    if (guestUser && typeof guestUser === "object") {
-      const email = (guestUser as { email?: unknown }).email;
-      if (typeof email === "string" && email.trim()) {
-        return email.trim();
+  private assertPaymentStatusAccess(
+    booking: {
+      userId: string | null;
+      paymentSessionExpiresAt: Date | null;
+      paymentStatusTokenHash: string | null;
+    },
+    sessionUser: AuthSession["user"] | null,
+    paymentStatusToken?: string,
+  ): void {
+    if (paymentStatusToken) {
+      const tokenExpiresAt =
+        (booking.paymentSessionExpiresAt?.getTime() ?? 0) + BOOKING_PAYMENT_STATUS_TOKEN_GRACE_MS;
+      if (
+        Date.now() >= tokenExpiresAt ||
+        !matchesBookingPaymentStatusToken(paymentStatusToken, booking.paymentStatusTokenHash)
+      ) {
+        throw new BookingNotFoundException();
       }
+      return;
     }
-    return undefined;
+
+    if (sessionUser) {
+      if (!booking.userId || booking.userId !== sessionUser.id) {
+        throw new BookingNotFoundException();
+      }
+      return;
+    }
+
+    throw new BookingNotFoundException();
+  }
+
+  private resolvePaymentLifecycleState(
+    bookingStatus: BookingStatus,
+    paymentStatus: PaymentStatus,
+    paymentAttemptStatus: PaymentAttemptStatus | undefined,
+  ): BookingPaymentLifecycleState {
+    const isConfirmed =
+      paymentStatus === PaymentStatus.PAID &&
+      (bookingStatus === BookingStatus.CONFIRMED ||
+        bookingStatus === BookingStatus.ACTIVE ||
+        bookingStatus === BookingStatus.COMPLETED);
+    if (isConfirmed) return "CONFIRMED";
+    if (bookingStatus === BookingStatus.CANCELLED) {
+      return "EXPIRED";
+    }
+    if (
+      bookingStatus === BookingStatus.REJECTED ||
+      paymentAttemptStatus === PaymentAttemptStatus.FAILED
+    ) {
+      return "FAILED";
+    }
+    return "PENDING";
   }
 
   private serializeValue<T>(value: T): T {

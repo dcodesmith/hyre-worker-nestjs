@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingCreationIdempotencyState, BookingStatus, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -68,6 +69,12 @@ describe("BookingCreationIdempotencyService", () => {
       providers: [
         BookingCreationIdempotencyService,
         { provide: DatabaseService, useValue: databaseService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn().mockReturnValue("test-secret-with-at-least-32-characters"),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -120,6 +127,7 @@ describe("BookingCreationIdempotencyService", () => {
           currency: "NGN",
           bookingStatus: BookingStatus.PENDING,
           reservationExpiresAt,
+          paymentStatusTokenRequired: true,
         },
       }),
     );
@@ -127,7 +135,11 @@ describe("BookingCreationIdempotencyService", () => {
     const result = await service.claim("user:user-1", "request-key", "hash-1");
     expect(result).toEqual({
       kind: "replay",
-      response: expect.objectContaining({ bookingId: "booking-1", totalAmount: 100 }),
+      response: expect.objectContaining({
+        bookingId: "booking-1",
+        totalAmount: 100,
+        paymentStatusToken: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      }),
     });
   });
 
@@ -148,6 +160,7 @@ describe("BookingCreationIdempotencyService", () => {
           currency: "NGN",
           bookingStatus: BookingStatus.PENDING,
           reservationExpiresAt,
+          paymentStatusTokenRequired: false,
         },
       }),
     );
@@ -331,6 +344,7 @@ describe("BookingCreationIdempotencyService", () => {
       currency: "NGN" as const,
       bookingStatus: BookingStatus.PENDING,
       reservationExpiresAt,
+      paymentStatusToken: "guest-status-token",
     };
 
     await service.checkpointPaymentResult(
@@ -338,6 +352,7 @@ describe("BookingCreationIdempotencyService", () => {
       "booking-1",
       "pi-1",
       new Date(reservationExpiresAt),
+      "status-token-hash",
       response,
     );
 
@@ -346,6 +361,7 @@ describe("BookingCreationIdempotencyService", () => {
       data: {
         paymentIntent: "pi-1",
         paymentSessionExpiresAt: new Date(reservationExpiresAt),
+        paymentStatusTokenHash: "status-token-hash",
       },
     });
     expect(databaseService.bookingCreationIdempotency.updateMany).toHaveBeenCalledWith(
@@ -355,7 +371,17 @@ describe("BookingCreationIdempotencyService", () => {
           bookingId: "booking-1",
           state: BookingCreationIdempotencyState.PROCESSING,
         }),
-        data: { response },
+        data: {
+          response: {
+            bookingId: "booking-1",
+            checkoutUrl: "https://checkout.example/1",
+            totalAmount: 100,
+            currency: "NGN",
+            bookingStatus: BookingStatus.PENDING,
+            reservationExpiresAt,
+            paymentStatusTokenRequired: true,
+          },
+        },
       }),
     );
   });
