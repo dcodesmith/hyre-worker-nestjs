@@ -1,5 +1,6 @@
 import { BookingType } from "@prisma/client";
 import { z } from "zod";
+import { bookingCreditsSchema } from "./create-booking.dto";
 import { pickupTimeRegex } from "./pickup-time.regex";
 
 export const pricingPreviewBodySchema = z
@@ -11,6 +12,7 @@ export const pricingPreviewBodySchema = z
     pickupTime: z.string().min(1, "Pickup time is required"),
     includeSecurityDetail: z.boolean().default(false),
     requiresFullTank: z.boolean().default(false),
+    useCredits: bookingCreditsSchema,
   })
   .refine((data) => data.endDate > data.startDate, {
     message: "End date must be after start date",

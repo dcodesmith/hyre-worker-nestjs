@@ -822,4 +822,18 @@ describe("BookingValidationService", () => {
       expect(() => service.validateGuestRequirements(input, sessionUser)).not.toThrow();
     });
   });
+
+  describe("validateCreditsRequireAuthentication", () => {
+    it("rejects referral credits for guest bookings", () => {
+      expect(() => service.validateCreditsRequireAuthentication(5000, null)).toThrow(
+        BookingValidationException,
+      );
+    });
+
+    it("allows credits for authenticated bookings", () => {
+      expect(() =>
+        service.validateCreditsRequireAuthentication(5000, { id: "user-123" }),
+      ).not.toThrow();
+    });
+  });
 });

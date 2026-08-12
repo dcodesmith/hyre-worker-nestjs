@@ -9,6 +9,7 @@ import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPersistenceService } from "./booking-persistence.service";
+import { BookingValidationService } from "./booking-validation.service";
 import type {
   BookingPricingPreviewResponseDto,
   PricingPreviewBodyDto,
@@ -27,6 +28,7 @@ export class BookingPricingPreviewService {
     private readonly bookingLegService: BookingLegService,
     private readonly bookingCalculationService: BookingCalculationService,
     private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly bookingValidationService: BookingValidationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingPricingPreviewService.name);
@@ -45,8 +47,13 @@ export class BookingPricingPreviewService {
         pickupTime: input.pickupTime ?? null,
         includeSecurityDetail: input.includeSecurityDetail,
         requiresFullTank: input.requiresFullTank,
+        useCredits: input.useCredits,
       },
       "Received pricing-preview request",
+    );
+    this.bookingValidationService.validateCreditsRequireAuthentication(
+      input.useCredits,
+      sessionUser,
     );
 
     const normalized = normalizeBookingTimeWindow({
@@ -85,25 +92,31 @@ export class BookingPricingPreviewService {
       creditsToUse: new Decimal(0),
       referralDiscountAmount: new Decimal(0),
     });
-    const referralEligibility =
-      await this.bookingEligibilityService.checkReferralEligibilityForPricing(
+    const [referralEligibility, referralCreditBalance] = await Promise.all([
+      this.bookingEligibilityService.checkReferralEligibilityForPricing(
         sessionUser,
         baseFinancials.subtotalBeforeDiscounts,
         input.bookingType,
-      );
+      ),
+      this.bookingEligibilityService.getReferralCreditBalanceForPricing(
+        sessionUser,
+        input.useCredits,
+      ),
+    ]);
 
-    const financials = referralEligibility.discountAmount.gt(0)
-      ? await this.bookingCalculationService.calculateBookingCost({
-          bookingType: input.bookingType,
-          legs,
-          car,
-          includeSecurityDetail: input.includeSecurityDetail,
-          requiresFullTank: input.requiresFullTank,
-          userCreditsBalance: new Decimal(0),
-          creditsToUse: new Decimal(0),
-          referralDiscountAmount: referralEligibility.discountAmount,
-        })
-      : baseFinancials;
+    const financials =
+      referralEligibility.discountAmount.gt(0) || referralCreditBalance.gt(0)
+        ? await this.bookingCalculationService.calculateBookingCost({
+            bookingType: input.bookingType,
+            legs,
+            car,
+            includeSecurityDetail: input.includeSecurityDetail,
+            requiresFullTank: input.requiresFullTank,
+            userCreditsBalance: referralCreditBalance,
+            creditsToUse: new Decimal(input.useCredits),
+            referralDiscountAmount: referralEligibility.discountAmount,
+          })
+        : baseFinancials;
 
     const response = BookingPricingPreviewService.mapFinancials(financials);
     this.logger.debug(

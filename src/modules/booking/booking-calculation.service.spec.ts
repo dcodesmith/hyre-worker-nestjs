@@ -341,7 +341,7 @@ describe("BookingCalculationService", () => {
       expect(result.referralDiscountAmount.equals(new Decimal(5000))).toBe(true);
     });
 
-    it("should cap referral discount at subtotal (cannot go negative)", async () => {
+    it("should preserve a positive payable subtotal when capping referral discount", async () => {
       const input: BookingCalculationInput = {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
@@ -354,9 +354,9 @@ describe("BookingCalculationService", () => {
       const result = await service.calculateBookingCost(input);
 
       // Net: 25,000, Platform fee: 2,500, Subtotal: 27,500
-      // Referral capped at 27,500
-      expect(result.referralDiscountAmount.equals(result.subtotalBeforeDiscounts)).toBe(true);
-      expect(result.subtotalAfterDiscounts.equals(new Decimal(0))).toBe(true);
+      // Referral leaves ₦1 for the provider-backed payment flow.
+      expect(result.referralDiscountAmount.equals(new Decimal(27499))).toBe(true);
+      expect(result.subtotalAfterDiscounts.equals(new Decimal(1))).toBe(true);
     });
 
     it("should handle zero referral discount", async () => {
@@ -422,7 +422,7 @@ describe("BookingCalculationService", () => {
       expect(result.creditsUsed.equals(new Decimal(3000))).toBe(true); // Capped at balance
     });
 
-    it("should cap credits at remaining subtotal after referral discount", async () => {
+    it("should preserve a positive payable subtotal when capping credits", async () => {
       const input: BookingCalculationInput = {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
@@ -438,8 +438,9 @@ describe("BookingCalculationService", () => {
 
       // Net: 25,000, Platform fee: 2,500, Subtotal: 27,500
       // After referral: 27,500 - 20,000 = 7,500
-      // Credits capped at 7,500
-      expect(result.creditsUsed.equals(new Decimal(7500))).toBe(true);
+      // Credits leave ₦1 for the provider-backed payment flow.
+      expect(result.creditsUsed.equals(new Decimal(7499))).toBe(true);
+      expect(result.totalAmount.gt(0)).toBe(true);
     });
 
     it("should handle zero credits", async () => {
@@ -697,12 +698,8 @@ describe("BookingCalculationService", () => {
 
       const result = await service.calculateBookingCost(input);
 
-      // Subtotal should be 0, not negative
-      expect(result.subtotalAfterDiscounts.gte(new Decimal(0))).toBe(true);
-      // VAT on 0 should be 0
-      expect(result.vatAmount.equals(new Decimal(0))).toBe(true);
-      // Total should be 0
-      expect(result.totalAmount.equals(new Decimal(0))).toBe(true);
+      expect(result.subtotalAfterDiscounts.equals(new Decimal(1))).toBe(true);
+      expect(result.totalAmount.gt(0)).toBe(true);
     });
   });
 

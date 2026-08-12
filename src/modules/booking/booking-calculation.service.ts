@@ -15,6 +15,8 @@ import type {
   LegPrice,
 } from "./booking-calculation.interface";
 
+const MINIMUM_PAYABLE_SUBTOTAL = new Decimal(1);
+
 /**
  * Service for calculating booking financials.
  *
@@ -337,13 +339,13 @@ export class BookingCalculationService {
   }
 
   /**
-   * Apply a discount capped at the available amount.
+   * Apply a discount while preserving the provider-backed payment flow.
    */
   private applyDiscount(discount: Decimal, availableAmount: Decimal): Decimal {
     if (discount.lte(0)) {
       return new Decimal(0);
     }
-    return Decimal.min(discount, availableAmount);
+    return Decimal.min(discount, Decimal.max(0, availableAmount.minus(MINIMUM_PAYABLE_SUBTOTAL)));
   }
 
   /**
@@ -352,7 +354,7 @@ export class BookingCalculationService {
    * Credits are capped at:
    * 1. The requested amount
    * 2. The user's available balance
-   * 3. The remaining subtotal (can't go negative)
+   * 3. The remaining subtotal, preserving a positive provider payment
    */
   private calculateEffectiveCredits(
     creditsToUse: Decimal,
@@ -364,7 +366,7 @@ export class BookingCalculationService {
     }
 
     const cappedAtBalance = Decimal.min(creditsToUse, userBalance);
-
-    return Decimal.min(cappedAtBalance, remainingSubtotal);
+    const maximumCredits = Decimal.max(0, remainingSubtotal.minus(MINIMUM_PAYABLE_SUBTOTAL));
+    return Decimal.min(cappedAtBalance, maximumCredits);
   }
 }

@@ -126,9 +126,10 @@ describe("BookingCreationService", () => {
             },
             flight: { upsert: vi.fn(), updateMany: vi.fn() },
             referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
-            referralReward: { create: vi.fn() },
+            referralReward: { create: vi.fn(), aggregate: vi.fn() },
             userReferralStats: { upsert: vi.fn() },
             $transaction: mockTransaction,
+            $queryRaw: vi.fn(),
           },
         },
         {
@@ -136,6 +137,7 @@ describe("BookingCreationService", () => {
           useValue: {
             validateDates: vi.fn(),
             validateGuestRequirements: vi.fn(),
+            validateCreditsRequireAuthentication: vi.fn(),
             checkCarAvailability: vi.fn(),
             validateGuestEmail: vi.fn(),
             validateExpectedPrice: vi.fn(),
@@ -224,6 +226,7 @@ describe("BookingCreationService", () => {
     const setupSuccessfulMocks = () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.validateGuestRequirements).mockReturnValue(undefined);
+      vi.mocked(validationService.validateCreditsRequireAuthentication).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
       vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
@@ -244,6 +247,10 @@ describe("BookingCreationService", () => {
       );
 
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralReward.aggregate).mockResolvedValue({
+        _sum: { amount: new Decimal(10000) },
+      } as never);
+      vi.mocked(databaseService.$queryRaw).mockResolvedValue([{ amount: new Decimal(0) }] as never);
 
       vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
         "https://api.example.com/api/payments/callback",
@@ -267,7 +274,10 @@ describe("BookingCreationService", () => {
             update: vi.fn(),
           },
           referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
-          referralReward: { create: vi.fn() },
+          referralReward: {
+            create: vi.fn(),
+            aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
+          },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
           $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
@@ -320,6 +330,23 @@ describe("BookingCreationService", () => {
         expect.any(Date),
         null,
         result,
+      );
+    });
+
+    it("rechecks and applies referral credits inside the booking transaction", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput({ useCredits: 5000 }),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(calculationService.calculateBookingCost).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          userCreditsBalance: new Decimal(10000),
+          creditsToUse: new Decimal(5000),
+        }),
+        expect.anything(),
       );
     });
 

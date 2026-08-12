@@ -105,6 +105,10 @@ export class BookingCreationService {
     const { input, sessionUser, idempotencyKey, context } = request;
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
+    this.validationService.validateCreditsRequireAuthentication(
+      normalizedBooking.useCredits,
+      sessionUser,
+    );
     const customerScope = this.idempotencyService.getCustomerScope(normalizedBooking, sessionUser);
     const requestHash = this.idempotencyService.createRequestHash(
       normalizedBooking,
@@ -174,21 +178,30 @@ export class BookingCreationService {
         car,
         legs,
         new Decimal(0),
+        new Decimal(0),
       );
-      const preliminaryReferralEligibility =
-        await this.eligibilityService.checkReferralEligibilityForPricing(
+      const [preliminaryReferralEligibility, preliminaryReferralCreditBalance] = await Promise.all([
+        this.eligibilityService.checkReferralEligibilityForPricing(
           sessionUser,
           baseFinancials.subtotalBeforeDiscounts,
           normalizedBooking.bookingType,
-        );
-      const financials = preliminaryReferralEligibility.discountAmount.gt(0)
-        ? await this.calculateFinancials(
-            normalizedBooking,
-            car,
-            legs,
-            preliminaryReferralEligibility.discountAmount,
-          )
-        : baseFinancials;
+        ),
+        this.eligibilityService.getReferralCreditBalanceForPricing(
+          sessionUser,
+          normalizedBooking.useCredits,
+        ),
+      ]);
+      const financials =
+        preliminaryReferralEligibility.discountAmount.gt(0) ||
+        preliminaryReferralCreditBalance.gt(0)
+          ? await this.calculateFinancials(
+              normalizedBooking,
+              car,
+              legs,
+              preliminaryReferralEligibility.discountAmount,
+              preliminaryReferralCreditBalance,
+            )
+          : baseFinancials;
 
       this.validationService.validateExpectedPrice(
         normalizedBooking.expectedTotalAmount,
@@ -235,6 +248,7 @@ export class BookingCreationService {
     car: CarWithPricing,
     legs: GeneratedLeg[],
     referralDiscountAmount: Decimal,
+    userCreditsBalance: Decimal,
     tx?: Prisma.TransactionClient,
   ): Promise<BookingFinancials> {
     return this.calculationService.calculateBookingCost(
@@ -244,8 +258,8 @@ export class BookingCreationService {
         car,
         includeSecurityDetail: booking.includeSecurityDetail,
         requiresFullTank: booking.requiresFullTank,
-        userCreditsBalance: undefined,
-        creditsToUse: booking.useCredits ? new Decimal(booking.useCredits) : undefined,
+        userCreditsBalance,
+        creditsToUse: new Decimal(booking.useCredits),
         referralDiscountAmount,
       },
       tx,
@@ -452,12 +466,20 @@ export class BookingCreationService {
               preliminaryReferralEligibility,
             )
           : preliminaryReferralEligibility;
+        const verifiedReferralCreditBalance = sessionUser
+          ? await this.eligibilityService.verifyReferralCreditBalanceInTransaction(
+              tx,
+              sessionUser.id,
+              booking.useCredits,
+            )
+          : new Decimal(0);
 
         const recalculatedFinancials = await this.calculateFinancials(
           booking,
           freshCar,
           legs,
           verifiedReferralEligibility.discountAmount,
+          verifiedReferralCreditBalance,
           tx,
         );
 

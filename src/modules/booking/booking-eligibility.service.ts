@@ -95,6 +95,35 @@ export class BookingEligibilityService {
     };
   }
 
+  async getReferralCreditBalanceForPricing(
+    sessionUser: AuthSession["user"] | null,
+    requestedCredits: number,
+  ): Promise<Decimal> {
+    if (!sessionUser || requestedCredits <= 0) {
+      return new Decimal(0);
+    }
+    return this.getCappedReferralCreditBalance(this.databaseService, sessionUser.id);
+  }
+
+  async verifyReferralCreditBalanceInTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    requestedCredits: number,
+  ): Promise<Decimal> {
+    if (requestedCredits <= 0) {
+      return new Decimal(0);
+    }
+
+    const users = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE
+    `;
+    if (!users[0]) {
+      return new Decimal(0);
+    }
+
+    return this.getCappedReferralCreditBalance(tx, userId);
+  }
+
   async verifyAndReserveReferralDiscountInTransaction(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -407,6 +436,52 @@ export class BookingEligibilityService {
       },
       "Created pending referral reward",
     );
+  }
+
+  private async getCappedReferralCreditBalance(
+    database: Pick<
+      Prisma.TransactionClient,
+      "$queryRaw" | "referralProgramConfig" | "referralReward"
+    >,
+    userId: string,
+  ): Promise<Decimal> {
+    const [releasedRewards, committedCredits, configMap] = await Promise.all([
+      database.referralReward.aggregate({
+        where: {
+          referrerUserId: userId,
+          status: ReferralRewardStatus.RELEASED,
+        },
+        _sum: { amount: true },
+      }),
+      database.$queryRaw<Array<{ amount: Prisma.Decimal }>>`
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN "paymentStatus" = 'PAID' THEN "referralCreditsUsed"
+            WHEN "paymentStatus" = 'UNPAID' AND "status" <> 'CANCELLED'
+              THEN "referralCreditsReserved"
+            ELSE 0
+          END
+        ), 0)::decimal AS amount
+        FROM "Booking"
+        WHERE "userId" = ${userId}
+      `,
+      this.getReferralConfigMap(database.referralProgramConfig, [
+        "REFERRAL_MAX_CREDITS_PER_BOOKING",
+      ]),
+    ]);
+
+    const totalEarned = new Decimal(releasedRewards._sum.amount ?? 0);
+    const totalCommitted = new Decimal(committedCredits[0]?.amount ?? 0);
+    const availableCredits = Decimal.max(0, totalEarned.minus(totalCommitted));
+    const maxCreditsPerBooking = Decimal.max(
+      0,
+      this.parseDecimalConfig(
+        configMap.REFERRAL_MAX_CREDITS_PER_BOOKING ?? 30000,
+        "REFERRAL_MAX_CREDITS_PER_BOOKING",
+      ),
+    );
+
+    return Decimal.min(availableCredits, maxCreditsPerBooking);
   }
 
   private async getReferralPricingConfig(): Promise<{
