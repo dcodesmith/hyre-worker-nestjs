@@ -118,7 +118,7 @@
   },
   "pnpm": {
     "overrides": {
-      "brace-expansion": "5.0.8",
+      "brace-expansion": "5.0.9",
       "body-parser": "2.2.1",
       "effect": "3.20.0",
       "fast-xml-parser": "5.5.7",
@@ -145,6 +145,7 @@
       "postcss": "8.5.18",
       "sharp": "0.35.0",
       "@grpc/grpc-js": "1.14.4",
+      "socket.io-parser": "4.2.7",
       "undici": "7.29.0",
       "ws": "8.21.1",
       "@opentelemetry/core": "2.9.0"
