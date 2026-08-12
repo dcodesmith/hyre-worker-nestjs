@@ -287,6 +287,7 @@ model Booking {
   type                                    BookingType               @default(DAY)
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?
+  paymentStatusTokenHash                  String?
   fleetOwnerPayoutAmountNet               Decimal?                  @db.Decimal(10, 2)
   netTotal                                Decimal?                  @db.Decimal(10, 2)
   overallPayoutStatus                     PayoutTransactionStatus?

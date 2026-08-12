@@ -133,6 +133,38 @@ describe("ChargeCompletedHandler", () => {
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
 
+  it("confirms a callback transaction through the same verified finalization path", async () => {
+    const createdPayment = {
+      ...createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+        amountExpected: new Decimal(10000),
+        amountCharged: new Decimal(10000),
+        currency: "NGN",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(createdPayment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await handler.confirmByTransactionId("tx-ref-123", "12345");
+
+    expect(flutterwaveService.verifyTransaction).toHaveBeenCalledOnce();
+    expect(flutterwaveService.verifyTransaction).toHaveBeenCalledWith("12345");
+    expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
+  });
+
   it("creates payment but blocks confirmation when charged amount differs from expected", async () => {
     const createdPayment = {
       ...createPaymentRecord({
@@ -259,6 +291,41 @@ describe("ChargeCompletedHandler", () => {
     expect(extensionConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["both booking and extension", "booking-456", "extension-789"],
+    ["neither booking nor extension", null, null],
+  ])(
+    "blocks confirmation when payment is associated with %s",
+    async (_association, bookingId, extensionId) => {
+      const invalidPayment = createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId,
+        extensionId,
+        amountExpected: new Decimal(10000),
+        amountCharged: new Decimal(10000),
+        currency: "NGN",
+      });
+      vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+        status: "success",
+        message: "ok",
+        data: { ...mockChargeData },
+      });
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+        createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+      );
+      vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(invalidPayment);
+
+      await handler.handle(mockChargeData);
+
+      expect(databaseService.payment.upsert).toHaveBeenCalledOnce();
+      expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+      expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    },
+  );
 
   it("confirms booking on retry when persisted charged amount/currency are missing but verification is valid", async () => {
     const createdPayment = {

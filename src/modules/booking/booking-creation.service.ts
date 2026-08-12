@@ -1,8 +1,10 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { Booking, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -37,6 +39,7 @@ import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPaymentService } from "./booking-payment.service";
+import { createBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
@@ -80,6 +83,7 @@ export class BookingCreationService {
     private readonly persistenceService: BookingPersistenceService,
     private readonly reservationService: BookingReservationService,
     private readonly idempotencyService: BookingCreationIdempotencyService,
+    private readonly configService: ConfigService<EnvConfig, true>,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCreationService.name);
@@ -271,6 +275,7 @@ export class BookingCreationService {
       booking.totalAmount,
       customerDetails,
       bookingInput.callbackUrl,
+      sessionUser === null,
     );
   }
 
@@ -542,6 +547,7 @@ export class BookingCreationService {
       finalizedFinancials.totalAmount,
       customerDetails,
       booking.callbackUrl,
+      sessionUser === null,
     );
   }
 
@@ -564,6 +570,7 @@ export class BookingCreationService {
     totalAmount: Decimal,
     customerDetails: CustomerDetails,
     callbackUrl?: string,
+    isGuest = false,
   ): Promise<CreateBookingResponse> {
     try {
       const paymentResult = await this.paymentService.createPaymentIntent(
@@ -573,6 +580,12 @@ export class BookingCreationService {
         callbackUrl,
       );
       const reservationExpiresAt = new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS);
+      const paymentStatusCredential = isGuest
+        ? createBookingPaymentStatusToken(
+            createdBooking.id,
+            this.configService.get("SESSION_SECRET", { infer: true }),
+          )
+        : null;
       const response: CreateBookingResponse = {
         bookingId: createdBooking.id,
         checkoutUrl: paymentResult.checkoutUrl,
@@ -580,12 +593,14 @@ export class BookingCreationService {
         currency: "NGN",
         bookingStatus: createdBooking.status,
         reservationExpiresAt: reservationExpiresAt.toISOString(),
+        ...(paymentStatusCredential ? { paymentStatusToken: paymentStatusCredential.token } : {}),
       };
       await this.syncPaymentIntentWithBooking(
         idempotencyId,
         createdBooking.id,
         paymentResult.paymentIntentId,
         reservationExpiresAt,
+        paymentStatusCredential?.tokenHash ?? null,
         response,
       );
       return response;
@@ -642,6 +657,7 @@ export class BookingCreationService {
     bookingId: string,
     paymentIntentId: string,
     reservationExpiresAt: Date,
+    paymentStatusTokenHash: string | null,
     response: CreateBookingResponse,
   ): Promise<void> {
     try {
@@ -650,6 +666,7 @@ export class BookingCreationService {
         bookingId,
         paymentIntentId,
         reservationExpiresAt,
+        paymentStatusTokenHash,
         response,
       );
       await this.idempotencyService.complete(idempotencyId);

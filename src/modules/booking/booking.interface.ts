@@ -65,7 +65,10 @@ export interface CreateBookingResponse {
   currency: "NGN";
   bookingStatus: BookingStatus;
   reservationExpiresAt: string;
+  paymentStatusToken?: string;
 }
+
+export type BookingPaymentLifecycleState = "PENDING" | "CONFIRMED" | "FAILED" | "EXPIRED";
 
 export interface BookingPaymentStatusResponse {
   bookingId: string;
@@ -75,8 +78,8 @@ export interface BookingPaymentStatusResponse {
   paymentStatus: PaymentStatus;
   paymentId: string | null;
   totalAmount: number;
-  isConfirmed: boolean;
   reservationExpiresAt: string | null;
+  lifecycleState: BookingPaymentLifecycleState;
 }
 
 export interface CreateExtensionResponse {

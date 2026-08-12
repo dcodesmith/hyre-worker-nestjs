@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Cron } from "@nestjs/schedule";
 import { BookingCreationIdempotencyState, BookingStatus, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import type { EnvConfig } from "../../config/env.config";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -17,6 +19,7 @@ import {
   IdempotencyKeyReusedException,
 } from "./booking.error";
 import type { CreateBookingResponse } from "./booking.interface";
+import { createBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
 
@@ -32,6 +35,7 @@ export class BookingCreationIdempotencyService {
 
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly configService: ConfigService<EnvConfig, true>,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingCreationIdempotencyService.name);
@@ -185,14 +189,21 @@ export class BookingCreationIdempotencyService {
     bookingId: string,
     paymentIntentId: string,
     reservationExpiresAt: Date,
+    paymentStatusTokenHash: string | null,
     response: CreateBookingResponse,
   ): Promise<void> {
+    const { paymentStatusToken, ...publicResponse } = response;
+    const persistedResponse = {
+      ...publicResponse,
+      paymentStatusTokenRequired: Boolean(paymentStatusToken),
+    };
     await this.databaseService.$transaction(async (tx) => {
       await tx.booking.update({
         where: { id: bookingId },
         data: {
           paymentIntent: paymentIntentId,
           paymentSessionExpiresAt: reservationExpiresAt,
+          paymentStatusTokenHash,
         },
       });
       const checkpointed = await tx.bookingCreationIdempotency.updateMany({
@@ -201,7 +212,7 @@ export class BookingCreationIdempotencyService {
           bookingId,
           state: BookingCreationIdempotencyState.PROCESSING,
         },
-        data: { response: response as unknown as Prisma.InputJsonValue },
+        data: { response: persistedResponse as Prisma.InputJsonValue },
       });
       if (checkpointed.count !== 1) {
         throw new BookingCreationFailedException("Booking payment checkpoint was lost.");
@@ -301,7 +312,8 @@ export class BookingCreationIdempotencyService {
       typeof value.bookingStatus !== "string" ||
       !this.isBookingStatus(value.bookingStatus) ||
       typeof value.reservationExpiresAt !== "string" ||
-      Number.isNaN(Date.parse(value.reservationExpiresAt))
+      Number.isNaN(Date.parse(value.reservationExpiresAt)) ||
+      typeof value.paymentStatusTokenRequired !== "boolean"
     ) {
       throw new BookingCreationFailedException("Stored booking response is invalid.");
     }
@@ -312,6 +324,14 @@ export class BookingCreationIdempotencyService {
       currency: value.currency,
       bookingStatus: value.bookingStatus,
       reservationExpiresAt: value.reservationExpiresAt,
+      ...(value.paymentStatusTokenRequired
+        ? {
+            paymentStatusToken: createBookingPaymentStatusToken(
+              value.bookingId,
+              this.configService.get("SESSION_SECRET", { infer: true }),
+            ).token,
+          }
+        : {}),
     };
   }
 

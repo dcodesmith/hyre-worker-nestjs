@@ -7,6 +7,7 @@ import { BookingConfirmationService } from "../booking/booking-confirmation.serv
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
 import { DatabaseService } from "../database/database.service";
+import type { FlutterwaveVerificationData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 
@@ -53,6 +54,32 @@ export class ChargeCompletedHandler {
     }
   }
 
+  async confirmByTransactionId(txRef: string, transactionId: string): Promise<void> {
+    const numericTransactionId = Number(transactionId);
+    const verification = await this.flutterwaveService.verifyTransaction(transactionId);
+    const verificationData = this.getMatchingVerificationData(
+      verification,
+      txRef,
+      numericTransactionId,
+    );
+    if (!verificationData) return;
+
+    await this.finalizeVerifiedCharge(
+      {
+        id: verificationData.id,
+        tx_ref: verificationData.tx_ref,
+        flw_ref: verificationData.flw_ref,
+        amount: verificationData.amount,
+        charged_amount: verificationData.charged_amount,
+        currency: verificationData.currency,
+        status: verificationData.status,
+        payment_type: verificationData.payment_type ?? "unknown",
+        created_at: verificationData.created_at,
+      },
+      verificationData,
+    );
+  }
+
   private async processVerifiedCharge(data: FlutterwaveChargeWebhookData): Promise<void> {
     const {
       tx_ref: txRef,
@@ -73,8 +100,21 @@ export class ChargeCompletedHandler {
       return;
     }
 
+    await this.finalizeVerifiedCharge(data, verificationData);
+  }
+
+  private async finalizeVerifiedCharge(
+    data: FlutterwaveChargeWebhookData,
+    verificationData: FlutterwaveVerificationData,
+  ): Promise<void> {
+    const txRef = data.tx_ref;
+    const normalizedStatus = verificationData.status?.trim().toLowerCase();
+    if (!["successful", "failed", "cancelled"].includes(normalizedStatus)) {
+      return;
+    }
+
     const paymentStatus =
-      verificationData.status?.toLowerCase() === "successful"
+      normalizedStatus === "successful"
         ? PaymentAttemptStatus.SUCCESSFUL
         : PaymentAttemptStatus.FAILED;
 
@@ -91,7 +131,7 @@ export class ChargeCompletedHandler {
         status: paymentStatus,
         verifiedStatus: verificationData.status,
       },
-      "Payment created from webhook",
+      "Payment finalized from verified transaction",
     );
 
     if (payment.status !== PaymentAttemptStatus.SUCCESSFUL) {
@@ -105,12 +145,22 @@ export class ChargeCompletedHandler {
       return;
     }
 
-    if (payment.bookingId) {
+    const hasBooking = payment.bookingId !== null;
+    const hasExtension = payment.extensionId !== null;
+    if (hasBooking === hasExtension) {
+      this.logger.error(
+        { paymentId: payment.id, txRef },
+        "Payment must be associated with exactly one payable entity",
+      );
+      return;
+    }
+
+    if (hasBooking) {
       await this.bookingConfirmationService.confirmFromPayment(payment);
       return;
     }
 
-    if (payment.extensionId) {
+    if (hasExtension) {
       await this.extensionConfirmationService.confirmFromPayment(payment);
     }
   }
@@ -121,7 +171,44 @@ export class ChargeCompletedHandler {
     transactionId: number,
     chargedAmount: number,
     webhookCurrency: string,
-  ): { status: string; charged_amount: number; currency: string } | null {
+  ): FlutterwaveVerificationData | null {
+    const data = this.getMatchingVerificationData(verification, txRef, transactionId);
+    if (!data) return null;
+
+    if (data.charged_amount !== chargedAmount) {
+      this.logger.warn(
+        {
+          txRef,
+          transactionId,
+          webhookChargedAmount: chargedAmount,
+          verifiedChargedAmount: data.charged_amount,
+        },
+        "Transaction verification charged_amount mismatch",
+      );
+      return null;
+    }
+
+    if ((data.currency ?? "").toUpperCase() !== (webhookCurrency ?? "").toUpperCase()) {
+      this.logger.warn(
+        {
+          txRef,
+          transactionId,
+          webhookCurrency: (webhookCurrency ?? "").toUpperCase(),
+          verifiedCurrency: (data.currency ?? "").toUpperCase(),
+        },
+        "Transaction verification currency mismatch",
+      );
+      return null;
+    }
+
+    return data;
+  }
+
+  private getMatchingVerificationData(
+    verification: Awaited<ReturnType<typeof this.flutterwaveService.verifyTransaction>>,
+    txRef: string,
+    transactionId: number,
+  ): FlutterwaveVerificationData | null {
     if (verification.status !== "success") {
       this.logger.warn(
         {
@@ -164,37 +251,7 @@ export class ChargeCompletedHandler {
       return null;
     }
 
-    if (data.charged_amount !== chargedAmount) {
-      this.logger.warn(
-        {
-          txRef,
-          transactionId,
-          webhookChargedAmount: chargedAmount,
-          verifiedChargedAmount: data.charged_amount,
-        },
-        "Transaction verification charged_amount mismatch",
-      );
-      return null;
-    }
-
-    if ((data.currency ?? "").toUpperCase() !== (webhookCurrency ?? "").toUpperCase()) {
-      this.logger.warn(
-        {
-          txRef,
-          transactionId,
-          webhookCurrency: (webhookCurrency ?? "").toUpperCase(),
-          verifiedCurrency: (data.currency ?? "").toUpperCase(),
-        },
-        "Transaction verification currency mismatch",
-      );
-      return null;
-    }
-
-    return {
-      status: data.status,
-      charged_amount: data.charged_amount,
-      currency: data.currency,
-    };
+    return data;
   }
 
   private matchesExpectedAmountAndCurrency(

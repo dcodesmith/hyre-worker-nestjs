@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
 import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "../booking/booking.const";
+import { BookingReadService } from "../booking/booking-read.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { ChargeCompletedHandler } from "./charge-completed.handler";
 import {
   PaymentAccessForbiddenException,
   PaymentAmountMismatchException,
@@ -32,6 +34,12 @@ describe("PaymentApiService", () => {
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
   let refundFinalizationService: RefundFinalizationService;
+  const bookingReadService = {
+    getBookingPaymentStatus: vi.fn(),
+  };
+  const chargeCompletedHandler = {
+    confirmByTransactionId: vi.fn(),
+  };
 
   const mockUserInfo = {
     id: "user-123",
@@ -84,6 +92,8 @@ describe("PaymentApiService", () => {
             finalize: vi.fn().mockResolvedValue(true),
           },
         },
+        { provide: BookingReadService, useValue: bookingReadService },
+        { provide: ChargeCompletedHandler, useValue: chargeCompletedHandler },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -94,6 +104,73 @@ describe("PaymentApiService", () => {
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
     refundFinalizationService = module.get<RefundFinalizationService>(RefundFinalizationService);
   });
+
+  describe("confirmBookingPayment", () => {
+    const pendingStatus = {
+      bookingId: "booking-123",
+      bookingReference: "BK-123",
+      txRef: "tx-ref-123",
+      bookingStatus: BookingStatus.PENDING,
+      paymentStatus: PaymentStatus.UNPAID,
+      paymentId: null,
+      totalAmount: 10000,
+      reservationExpiresAt: "2026-08-10T18:30:00.000Z",
+      lifecycleState: "PENDING" as const,
+    };
+
+    it("verifies the callback only after checking booking access", async () => {
+      bookingReadService.getBookingPaymentStatus
+        .mockResolvedValueOnce(pendingStatus)
+        .mockResolvedValueOnce({
+          ...pendingStatus,
+          bookingStatus: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          lifecycleState: "CONFIRMED",
+        });
+
+      const result = await service.confirmBookingPayment(
+        {
+          bookingId: "booking-123",
+          txRef: "tx-ref-123",
+          transactionId: "12345",
+        },
+        mockUserInfo as never,
+      );
+
+      expect(bookingReadService.getBookingPaymentStatus).toHaveBeenNthCalledWith(
+        1,
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        mockUserInfo,
+        undefined,
+      );
+      expect(chargeCompletedHandler.confirmByTransactionId).toHaveBeenCalledWith(
+        "tx-ref-123",
+        "12345",
+      );
+      expect(result.lifecycleState).toBe("CONFIRMED");
+    });
+
+    it("does not reverify an already confirmed booking", async () => {
+      bookingReadService.getBookingPaymentStatus.mockResolvedValueOnce({
+        ...pendingStatus,
+        bookingStatus: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        lifecycleState: "CONFIRMED",
+      });
+
+      await service.confirmBookingPayment(
+        {
+          bookingId: "booking-123",
+          txRef: "tx-ref-123",
+          transactionId: "12345",
+        },
+        mockUserInfo as never,
+      );
+
+      expect(chargeCompletedHandler.confirmByTransactionId).not.toHaveBeenCalled();
+    });
+  });
+
   describe("initializePayment", () => {
     const validBookingDto = {
       type: "booking" as const,

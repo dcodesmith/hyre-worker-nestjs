@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Patch,
@@ -127,8 +128,9 @@ export class BookingController {
   async getBookingPaymentStatus(
     @ZodQuery(bookingPaymentStatusQuerySchema) query: BookingPaymentStatusQueryDto,
     @CurrentUser() sessionUser: AuthSession["user"] | null,
+    @Headers("x-payment-status-token") paymentStatusToken?: string,
   ) {
-    return this.bookingReadService.getBookingPaymentStatus(query, sessionUser);
+    return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
   }
 
   @Get(":bookingId")
