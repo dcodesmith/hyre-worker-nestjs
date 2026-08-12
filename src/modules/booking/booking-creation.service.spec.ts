@@ -137,7 +137,6 @@ describe("BookingCreationService", () => {
           useValue: {
             validateDates: vi.fn(),
             validateGuestRequirements: vi.fn(),
-            validateCreditsRequireAuthentication: vi.fn(),
             checkCarAvailability: vi.fn(),
             validateGuestEmail: vi.fn(),
             validateExpectedPrice: vi.fn(),
@@ -226,7 +225,6 @@ describe("BookingCreationService", () => {
     const setupSuccessfulMocks = () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.validateGuestRequirements).mockReturnValue(undefined);
-      vi.mocked(validationService.validateCreditsRequireAuthentication).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
       vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);

@@ -5,11 +5,11 @@ import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.hel
 import type { AuthSession } from "../auth/guards/session.guard";
 import type { BookingFinancials, LegPrice } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { validateCreditsRequireAuthentication } from "./booking-credits.auth";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
 import { BookingPersistenceService } from "./booking-persistence.service";
-import { BookingValidationService } from "./booking-validation.service";
 import type {
   BookingPricingPreviewResponseDto,
   PricingPreviewBodyDto,
@@ -28,7 +28,6 @@ export class BookingPricingPreviewService {
     private readonly bookingLegService: BookingLegService,
     private readonly bookingCalculationService: BookingCalculationService,
     private readonly bookingEligibilityService: BookingEligibilityService,
-    private readonly bookingValidationService: BookingValidationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingPricingPreviewService.name);
@@ -51,10 +50,7 @@ export class BookingPricingPreviewService {
       },
       "Received pricing-preview request",
     );
-    this.bookingValidationService.validateCreditsRequireAuthentication(
-      input.useCredits,
-      sessionUser,
-    );
+    validateCreditsRequireAuthentication(input.useCredits, sessionUser);
 
     const normalized = normalizeBookingTimeWindow({
       bookingType: input.bookingType,

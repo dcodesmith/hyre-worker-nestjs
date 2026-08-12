@@ -372,18 +372,6 @@ export class BookingValidationService {
     }
   }
 
-  validateCreditsRequireAuthentication(
-    useCredits: number,
-    sessionUser: { id: string } | null,
-  ): void {
-    if (!sessionUser && useCredits > 0) {
-      throw new BookingValidationException(
-        [{ field: "useCredits", message: "Sign in to apply referral credits" }],
-        "Referral credits require authentication",
-      );
-    }
-  }
-
   /**
    * Validate that unauthenticated users provide required guest fields.
    */

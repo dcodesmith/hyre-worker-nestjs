@@ -35,6 +35,7 @@ import type {
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
+import { validateCreditsRequireAuthentication } from "./booking-credits.auth";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
@@ -105,10 +106,7 @@ export class BookingCreationService {
     const { input, sessionUser, idempotencyKey, context } = request;
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
-    this.validationService.validateCreditsRequireAuthentication(
-      normalizedBooking.useCredits,
-      sessionUser,
-    );
+    validateCreditsRequireAuthentication(normalizedBooking.useCredits, sessionUser);
     const customerScope = this.idempotencyService.getCustomerScope(normalizedBooking, sessionUser);
     const requestHash = this.idempotencyService.createRequestHash(
       normalizedBooking,

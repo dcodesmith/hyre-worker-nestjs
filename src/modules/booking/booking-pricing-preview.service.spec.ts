@@ -9,7 +9,6 @@ import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
-import { BookingValidationService } from "./booking-validation.service";
 
 describe("BookingPricingPreviewService", () => {
   let service: BookingPricingPreviewService;
@@ -45,12 +44,6 @@ describe("BookingPricingPreviewService", () => {
           useValue: {
             checkReferralEligibilityForPricing: vi.fn(),
             getReferralCreditBalanceForPricing: vi.fn(),
-          },
-        },
-        {
-          provide: BookingValidationService,
-          useValue: {
-            validateCreditsRequireAuthentication: vi.fn(),
           },
         },
       ],
