@@ -321,6 +321,7 @@ describe("ChargeCompletedHandler", () => {
 
       await handler.handle(mockChargeData);
 
+      expect(databaseService.payment.upsert).toHaveBeenCalledOnce();
       expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
       expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     },
