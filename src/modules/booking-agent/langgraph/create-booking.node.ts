@@ -108,6 +108,7 @@ export class CreateBookingNode {
           pickupTime: bookingInput.pickupTime,
           includeSecurityDetail: bookingInput.includeSecurityDetail,
           requiresFullTank: bookingInput.requiresFullTank,
+          useCredits: 0,
         },
         sessionUser,
       );

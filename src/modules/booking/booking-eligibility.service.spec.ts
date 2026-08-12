@@ -44,6 +44,76 @@ describe("BookingEligibilityService", () => {
     });
   });
 
+  it("caps referral credit balance at the configured per-booking maximum", async () => {
+    const databaseService = {
+      referralReward: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(50000) } }),
+      },
+      referralProgramConfig: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([{ key: "REFERRAL_MAX_CREDITS_PER_BOOKING", value: 30000 }]),
+      },
+      $queryRaw: vi.fn().mockResolvedValue([{ amount: new Decimal(10000) }]),
+    };
+    const service = (
+      await Test.createTestingModule({
+        providers: [
+          BookingEligibilityService,
+          { provide: DatabaseService, useValue: databaseService },
+        ],
+      })
+        .useMocker(mockPinoLoggerToken)
+        .compile()
+    ).get<BookingEligibilityService>(BookingEligibilityService);
+
+    const balance = await service.getReferralCreditBalanceForPricing(
+      { id: "user-1" } as never,
+      5000,
+    );
+
+    expect(balance).toEqual(new Decimal(30000));
+  });
+
+  it("locks the user before reading referral credits for reservation", async () => {
+    const queryRaw = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: "user-1" }])
+      .mockResolvedValueOnce([{ amount: new Decimal(12000) }]);
+    const tx = {
+      $queryRaw: queryRaw,
+      referralReward: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(40000) } }),
+      },
+      referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = (
+      await Test.createTestingModule({
+        providers: [
+          BookingEligibilityService,
+          {
+            provide: DatabaseService,
+            useValue: {
+              user: { findUnique: vi.fn() },
+              referralProgramConfig: { findMany: vi.fn() },
+            },
+          },
+        ],
+      })
+        .useMocker(mockPinoLoggerToken)
+        .compile()
+    ).get<BookingEligibilityService>(BookingEligibilityService);
+
+    const balance = await service.verifyReferralCreditBalanceInTransaction(
+      tx as never,
+      "user-1",
+      5000,
+    );
+
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+    expect(balance).toEqual(new Decimal(28000));
+  });
+
   it("returns eligible with configured discount when user is referred", async () => {
     const databaseService = {
       user: {

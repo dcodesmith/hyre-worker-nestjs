@@ -5,6 +5,7 @@ import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.hel
 import type { AuthSession } from "../auth/guards/session.guard";
 import type { BookingFinancials, LegPrice } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { validateCreditsRequireAuthentication } from "./booking-credits.auth";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
 import { buildLegGenerationInput } from "./booking-leg-input.builder";
@@ -45,9 +46,11 @@ export class BookingPricingPreviewService {
         pickupTime: input.pickupTime ?? null,
         includeSecurityDetail: input.includeSecurityDetail,
         requiresFullTank: input.requiresFullTank,
+        useCredits: input.useCredits,
       },
       "Received pricing-preview request",
     );
+    validateCreditsRequireAuthentication(input.useCredits, sessionUser);
 
     const normalized = normalizeBookingTimeWindow({
       bookingType: input.bookingType,
@@ -85,25 +88,31 @@ export class BookingPricingPreviewService {
       creditsToUse: new Decimal(0),
       referralDiscountAmount: new Decimal(0),
     });
-    const referralEligibility =
-      await this.bookingEligibilityService.checkReferralEligibilityForPricing(
+    const [referralEligibility, referralCreditBalance] = await Promise.all([
+      this.bookingEligibilityService.checkReferralEligibilityForPricing(
         sessionUser,
         baseFinancials.subtotalBeforeDiscounts,
         input.bookingType,
-      );
+      ),
+      this.bookingEligibilityService.getReferralCreditBalanceForPricing(
+        sessionUser,
+        input.useCredits,
+      ),
+    ]);
 
-    const financials = referralEligibility.discountAmount.gt(0)
-      ? await this.bookingCalculationService.calculateBookingCost({
-          bookingType: input.bookingType,
-          legs,
-          car,
-          includeSecurityDetail: input.includeSecurityDetail,
-          requiresFullTank: input.requiresFullTank,
-          userCreditsBalance: new Decimal(0),
-          creditsToUse: new Decimal(0),
-          referralDiscountAmount: referralEligibility.discountAmount,
-        })
-      : baseFinancials;
+    const financials =
+      referralEligibility.discountAmount.gt(0) || referralCreditBalance.gt(0)
+        ? await this.bookingCalculationService.calculateBookingCost({
+            bookingType: input.bookingType,
+            legs,
+            car,
+            includeSecurityDetail: input.includeSecurityDetail,
+            requiresFullTank: input.requiresFullTank,
+            userCreditsBalance: referralCreditBalance,
+            creditsToUse: new Decimal(input.useCredits),
+            referralDiscountAmount: referralEligibility.discountAmount,
+          })
+        : baseFinancials;
 
     const response = BookingPricingPreviewService.mapFinancials(financials);
     this.logger.debug(

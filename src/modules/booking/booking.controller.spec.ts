@@ -435,6 +435,7 @@ describe("BookingController", () => {
         pickupTime: "9:00 AM",
         includeSecurityDetail: false,
         requiresFullTank: false,
+        useCredits: 0,
       };
 
       const result = await controller.getPricingPreview(body, null);

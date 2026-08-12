@@ -3,6 +3,12 @@ import { callbackUrlSchema } from "../../../common/validation/callback-url";
 import { pickupTimeRegex } from "./pickup-time.regex";
 
 const nonNegativeDecimalStringRegex = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+export const bookingCreditsSchema = z
+  .number()
+  .min(0)
+  .max(99_999_999.99)
+  .multipleOf(0.01)
+  .default(0);
 
 /**
  * Booking type enum values matching Prisma schema
@@ -27,7 +33,7 @@ const coreBookingFields = z.object({
   includeSecurityDetail: z.boolean().default(false),
   requiresFullTank: z.boolean().default(false),
   specialRequests: z.string().optional(),
-  useCredits: z.number().min(0).default(0),
+  useCredits: bookingCreditsSchema,
   expectedTotalAmount: z
     .string()
     .regex(nonNegativeDecimalStringRegex, "Expected total amount must be a non-negative decimal"),

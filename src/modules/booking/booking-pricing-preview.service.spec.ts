@@ -43,6 +43,7 @@ describe("BookingPricingPreviewService", () => {
           provide: BookingEligibilityService,
           useValue: {
             checkReferralEligibilityForPricing: vi.fn(),
+            getReferralCreditBalanceForPricing: vi.fn(),
           },
         },
       ],
@@ -60,6 +61,9 @@ describe("BookingPricingPreviewService", () => {
       referrerUserId: null,
       discountAmount: new Decimal(0),
     });
+    vi.mocked(bookingEligibilityService.getReferralCreditBalanceForPricing).mockResolvedValue(
+      new Decimal(0),
+    );
   });
 
   it("returns PARTIAL coverage and promo/standard segments", async () => {
@@ -149,6 +153,7 @@ describe("BookingPricingPreviewService", () => {
       pickupTime: "9:00 AM",
       includeSecurityDetail: false,
       requiresFullTank: false,
+      useCredits: 0,
     });
 
     expect(result.discountCoverage).toBe("PARTIAL");
@@ -239,6 +244,7 @@ describe("BookingPricingPreviewService", () => {
       pickupTime: "10:00 AM",
       includeSecurityDetail: false,
       requiresFullTank: false,
+      useCredits: 0,
     });
 
     expect(bookingLegService.generateLegs).toHaveBeenCalledWith(
@@ -256,7 +262,7 @@ describe("BookingPricingPreviewService", () => {
     });
   });
 
-  it("applies authenticated user's referral discount to the preview total", async () => {
+  it("applies authenticated user's referral discount and credits to the preview total", async () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
@@ -308,9 +314,10 @@ describe("BookingPricingPreviewService", () => {
     const discountedFinancials: BookingFinancials = {
       ...baseFinancials,
       referralDiscountAmount: new Decimal(5000),
-      subtotalAfterDiscounts: new Decimal(47500),
-      vatAmount: new Decimal(3562.5),
-      totalAmount: new Decimal(51062.5),
+      creditsUsed: new Decimal(2000),
+      subtotalAfterDiscounts: new Decimal(45500),
+      vatAmount: new Decimal(3412.5),
+      totalAmount: new Decimal(48912.5),
     };
     vi.mocked(bookingCalculationService.calculateBookingCost)
       .mockResolvedValueOnce(baseFinancials)
@@ -320,6 +327,9 @@ describe("BookingPricingPreviewService", () => {
       referrerUserId: "referrer-1",
       discountAmount: new Decimal(5000),
     });
+    vi.mocked(bookingEligibilityService.getReferralCreditBalanceForPricing).mockResolvedValue(
+      new Decimal(2000),
+    );
 
     const sessionUser = {
       id: "user-1",
@@ -341,6 +351,7 @@ describe("BookingPricingPreviewService", () => {
         pickupTime: "9:00 AM",
         includeSecurityDetail: false,
         requiresFullTank: false,
+        useCredits: 2000,
       },
       sessionUser,
     );
@@ -353,10 +364,13 @@ describe("BookingPricingPreviewService", () => {
     expect(bookingCalculationService.calculateBookingCost).toHaveBeenLastCalledWith(
       expect.objectContaining({
         referralDiscountAmount: new Decimal(5000),
+        userCreditsBalance: new Decimal(2000),
+        creditsToUse: new Decimal(2000),
       }),
     );
     expect(result.referralDiscountAmount).toBe(5000);
-    expect(result.subtotalAfterDiscounts).toBe(47500);
-    expect(result.totalAmount).toBe(51062.5);
+    expect(result.creditsUsed).toBe(2000);
+    expect(result.subtotalAfterDiscounts).toBe(45500);
+    expect(result.totalAmount).toBe(48912.5);
   });
 });

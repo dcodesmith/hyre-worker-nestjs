@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBookingSchema, createGuestBookingSchema } from "./create-booking.dto";
+import { pricingPreviewBodySchema } from "./pricing-preview.dto";
 
 describe("CreateBookingSchema", () => {
   const validBaseBooking = {
@@ -172,6 +173,27 @@ describe("CreateBookingSchema", () => {
           expectedTotalAmount: "1000.50",
         }).success,
       ).toBe(true);
+    });
+  });
+
+  describe("referral credits validation", () => {
+    it("accepts currency precision and rejects smaller fractions", () => {
+      expect(
+        createBookingSchema.safeParse({ ...validBaseBooking, useCredits: 1234.56 }).success,
+      ).toBe(true);
+      expect(
+        createBookingSchema.safeParse({ ...validBaseBooking, useCredits: 1234.567 }).success,
+      ).toBe(false);
+      expect(
+        pricingPreviewBodySchema.safeParse({
+          carId: "car-123",
+          bookingType: "DAY",
+          startDate: validBaseBooking.startDate,
+          endDate: validBaseBooking.endDate,
+          pickupTime: "9 AM",
+          useCredits: 1234.567,
+        }).success,
+      ).toBe(false);
     });
   });
 });
