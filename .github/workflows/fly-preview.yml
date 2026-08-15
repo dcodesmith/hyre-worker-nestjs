@@ -402,19 +402,3 @@ jobs:
             echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Tear down if PR closed during deploy
-        if: always() && steps.deploy.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIEW_APP: ${{ needs.setup.outputs.preview_app }}
-          REDIS_APP: hyre-worker-redis-pr-${{ github.event.number }}
-          NEON_BRANCH: ${{ needs.setup.outputs.neon_branch }}
-          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-        run: |
-          STATE="$(gh pr view "${{ github.event.number }}" --json state --jq .state)"
-          if [ "$STATE" != "OPEN" ]; then
-            echo "PR is ${STATE}; destroying preview resources from this deploy."
-            bash scripts/cleanup-preview-resources.sh
-          fi
-

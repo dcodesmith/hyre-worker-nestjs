@@ -9,8 +9,10 @@ on:
       - closed
 
 concurrency:
-  group: preview-cleanup-pr-${{ github.event.number }}
-  cancel-in-progress: false
+  # Match fly-preview.yml so closing a PR cancels any in-flight deployment
+  # before teardown starts.
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

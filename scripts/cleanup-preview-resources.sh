@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Destroy PR preview resources. Missing resources are success; unexpected
 # errors fail the script after attempting every resource.
-# Keep missing-resource needles in sync with scripts/preview-cleanup.ts.
 set -u
 
-is_missing() {
+is_missing_neon_branch() {
   local output="$1"
-  printf '%s' "$output" | grep -Eiq 'not found|could not find app|could not find|does not exist|no app found|app not found'
+  local branch="$2"
+  printf '%s' "$output" | grep -Fqi "Branch $branch not found"
+}
+
+is_missing_fly_app() {
+  local output="$1"
+  local app="$2"
+  printf '%s' "$output" | grep -Fqi "Could not find App \"$app\""
 }
 
 destroy_neon_branch() {
@@ -14,13 +20,13 @@ destroy_neon_branch() {
   local project_id="${NEON_PROJECT_ID:-}"
 
   if [ -z "$branch" ] || [ -z "$project_id" ]; then
-    echo "Skipping Neon delete: NEON_BRANCH or NEON_PROJECT_ID is unset."
-    return 0
+    echo "Failed to destroy Neon branch: NEON_BRANCH or NEON_PROJECT_ID is unset."
+    return 1
   fi
 
   if ! command -v neonctl >/dev/null 2>&1; then
-    echo "Skipping Neon delete: neonctl is not installed."
-    return 0
+    echo "Failed to destroy Neon branch '$branch': neonctl is not installed."
+    return 1
   fi
 
   local output=""
@@ -32,7 +38,7 @@ destroy_neon_branch() {
     return 0
   fi
 
-  if is_missing "$output"; then
+  if is_missing_neon_branch "$output" "$branch"; then
     echo "Neon branch '$branch' already gone."
     return 0
   fi
@@ -46,8 +52,8 @@ destroy_fly_app() {
   local app="$1"
 
   if [ -z "$app" ]; then
-    echo "Skipping Fly destroy: app name is empty."
-    return 0
+    echo "Failed to destroy Fly app: app name is empty."
+    return 1
   fi
 
   if ! command -v flyctl >/dev/null 2>&1; then
@@ -64,7 +70,7 @@ destroy_fly_app() {
     return 0
   fi
 
-  if is_missing "$output"; then
+  if is_missing_fly_app "$output" "$app"; then
     echo "Fly app '$app' already gone."
     return 0
   fi
