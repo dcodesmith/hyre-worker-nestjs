@@ -1,3 +1,5 @@
+# Deploy-only. Teardown lives in fly-preview-cleanup.yml so it still runs
+# from main after the PR branch is deleted.
 name: Preview Environment (Neon + Fly)
 
 on:
@@ -6,7 +8,6 @@ on:
       - opened
       - reopened
       - synchronize
-      - closed
 
 concurrency:
   group: preview-pr-${{ github.event.number }}
@@ -400,44 +401,4 @@ jobs:
             echo "- Redis: \`${{ needs.provision_redis.outputs.redis_app }}\`"
             echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
-
-
-  cleanup:
-    name: Delete preview resources
-    needs: setup
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-    steps:
-      - name: Delete Neon branch
-        uses: neondatabase/delete-branch-action@c2005bb7d7caeba12ba3ec63857e9c9f9a4d695a
-        with:
-          project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch: ${{ needs.setup.outputs.neon_branch }}
-          api_key: ${{ secrets.NEON_API_KEY }}
-
-      - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
-
-      - name: Destroy Fly preview app
-        run: |
-          if flyctl apps destroy "${{ needs.setup.outputs.preview_app }}" --yes; then
-            echo "Destroyed preview app '${{ needs.setup.outputs.preview_app }}'."
-          else
-            status=$?
-            echo "Failed to destroy preview app '${{ needs.setup.outputs.preview_app }}' (exit=${status})."
-          fi
-
-      - name: Destroy PR Redis app
-        run: |
-          if flyctl apps destroy "hyre-worker-redis-pr-${{ github.event.number }}" --yes; then
-            echo "Destroyed redis app 'hyre-worker-redis-pr-${{ github.event.number }}'."
-          else
-            status=$?
-            echo "Failed to destroy redis app 'hyre-worker-redis-pr-${{ github.event.number }}' (exit=${status})."
-          fi
 

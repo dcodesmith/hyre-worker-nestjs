@@ -1,0 +1,47 @@
+# Runs from the base branch so cleanup still happens after the PR branch is deleted.
+# pull_request_target is safe here: we only destroy apps named after the PR number
+# and never check out or execute untrusted PR code beyond this workflow file on main.
+name: Preview Cleanup (Neon + Fly)
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+concurrency:
+  # Match fly-preview.yml so closing a PR cancels any in-flight deployment
+  # before teardown starts.
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete preview resources
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      PREVIEW_APP: hyre-worker-nestjs-pr-${{ github.event.number }}
+      REDIS_APP: hyre-worker-redis-pr-${{ github.event.number }}
+      NEON_BRANCH: preview/pr-${{ github.event.number }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install neonctl
+        run: npm i -g neonctl@v2
+
+      - name: Destroy preview resources
+        run: bash scripts/cleanup-preview-resources.sh
