@@ -6,7 +6,8 @@ set -u
 is_missing_neon_branch() {
   local output="$1"
   local branch="$2"
-  printf '%s' "$output" | grep -Fqi "Branch $branch not found"
+  printf '%s' "$output" | grep -Fqi "Branch $branch not found" ||
+    printf '%s' "$output" | grep -Fqi "Branch '$branch' not found in project"
 }
 
 is_missing_fly_app() {

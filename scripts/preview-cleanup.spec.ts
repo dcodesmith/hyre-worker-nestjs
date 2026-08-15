@@ -90,6 +90,16 @@ exit "\${FLY_EXIT:-0}"
     expect(result.output).toContain("Neon branch 'preview/pr-185' already gone.");
   });
 
+  it("accepts Neon CLI's quoted missing-branch response", () => {
+    const result = runCleanup({
+      NEON_EXIT: "1",
+      NEON_OUTPUT: "ERROR: Branch 'preview/pr-185' not found in project 'neon-project'.",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Neon branch 'preview/pr-185' already gone.");
+  });
+
   it("accepts the exact missing Fly app response", () => {
     const result = runCleanup({
       FLY_EXIT: "1",
