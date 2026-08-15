@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["src/**/*.{test,spec}.ts"],
+    include: ["src/**/*.{test,spec}.ts", "scripts/**/*.{test,spec}.ts"],
     exclude: ["node_modules/**", "dist/**", "**/*.e2e-spec.ts"],
     setupFiles: ["./test/setup.ts"],
     pool: "threads",
