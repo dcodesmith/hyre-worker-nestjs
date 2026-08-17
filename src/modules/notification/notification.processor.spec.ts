@@ -4,8 +4,11 @@ import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import * as emailTemplates from "../../templates/emails";
+import { createBookingCompletionToken } from "../booking/booking-completion-token.helper";
+import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import {
+  CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
   OPERATIONS_RECIPIENT_TYPE,
@@ -36,6 +39,7 @@ describe("NotificationProcessor", () => {
   let whatsAppService: WhatsAppService;
   let pushService: PushService;
   let pushTokenService: PushTokenService;
+  let databaseService: DatabaseService;
   let logger: PinoLogger;
 
   const createJob = (
@@ -75,7 +79,39 @@ describe("NotificationProcessor", () => {
     newStatus: "confirmed",
   };
 
+  const createAirportCompletionJobData = (
+    overrides: Partial<NotificationJobData> = {},
+  ): NotificationJobData => ({
+    id: "airport-completion-notification",
+    type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+    audience: NotificationAudience.CHAUFFEUR,
+    channels: [NotificationChannel.EMAIL],
+    bookingId: "booking-airport",
+    airportCompletionLink: true,
+    recipients: {
+      [CHAUFFEUR_RECIPIENT_TYPE]: {
+        userId: "chauffeur-1",
+        email: "chauffeur@example.com",
+      },
+    },
+    templateData: {
+      templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
+      subject: "Airport trip ready",
+      recipientName: "Chauffeur",
+      flightNumber: "BA74",
+      bookingReference: "HYR-001",
+      updateTitle: "Airport trip ready",
+      updateBody: "After drop-off, use your secure link to complete this trip.",
+      expectedArrival: "29 Jul 2026, 4:00 PM WAT",
+      pickupActivationTime: "29 Jul 2026, 4:40 PM WAT",
+      arrivalLocation: "LOS",
+    },
+    ...overrides,
+  });
+
   beforeEach(async () => {
+    process.env.SESSION_SECRET = "test-secret-at-least-32-characters-long";
+    process.env.AUTH_BASE_URL = "https://api.example.com";
     // Spy on the template functions
     vi.spyOn(emailTemplates, "renderBookingStatusUpdateEmail").mockResolvedValue(
       "<html>Status email</html>",
@@ -128,6 +164,14 @@ describe("NotificationProcessor", () => {
             revokeTokens: vi.fn(),
           },
         },
+        {
+          provide: DatabaseService,
+          useValue: {
+            booking: {
+              findUnique: vi.fn(),
+            },
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -138,6 +182,7 @@ describe("NotificationProcessor", () => {
     whatsAppService = module.get<WhatsAppService>(WhatsAppService);
     pushService = module.get<PushService>(PushService);
     pushTokenService = module.get<PushTokenService>(PushTokenService);
+    databaseService = module.get<DatabaseService>(DatabaseService);
     logger = module.get<PinoLogger>(PinoLogger);
   });
 
@@ -397,6 +442,71 @@ describe("NotificationProcessor", () => {
         "8": "LOS, Terminal 2, Gate G2",
       },
     });
+  });
+
+  it("resolves an airport completion URL only when the worker dispatches it", async () => {
+    const expiresAt = new Date("2099-08-18T12:00:00.000Z");
+    const completionToken = createBookingCompletionToken(
+      "booking-airport",
+      expiresAt,
+      process.env.SESSION_SECRET,
+    );
+    vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce({
+      completionTokenHash: completionToken.tokenHash,
+      completionTokenExpiresAt: expiresAt,
+    } as never);
+    const job = createJob("airport-completion-job", createAirportCompletionJobData());
+    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
+      data: { id: "email-airport-1" },
+      error: null,
+      headers: {},
+    });
+
+    await processor.process(job);
+
+    expect(emailTemplates.renderFlightOperationalUpdateEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updateBody: expect.stringContaining(
+          `https://api.example.com/chauffeur/airport-trips/booking-airport/complete?token=${completionToken.token}`,
+        ),
+      }),
+    );
+    expect(JSON.stringify(job.data)).not.toContain(completionToken.token);
+  });
+
+  it("rejects an airport completion link for a non-chauffeur audience", async () => {
+    const job = createJob(
+      "airport-completion-customer-job",
+      createAirportCompletionJobData({ audience: NotificationAudience.CUSTOMER }),
+    );
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Airport completion links can only be delivered to chauffeur recipients",
+    );
+    expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects an airport completion link with a non-chauffeur recipient", async () => {
+    const job = createJob(
+      "airport-completion-mixed-job",
+      createAirportCompletionJobData({
+        recipients: {
+          [CHAUFFEUR_RECIPIENT_TYPE]: {
+            userId: "chauffeur-1",
+            email: "chauffeur@example.com",
+          },
+          [CLIENT_RECIPIENT_TYPE]: {
+            userId: "customer-1",
+            email: "customer@example.com",
+          },
+        },
+      }),
+    );
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Airport completion links can only be delivered to chauffeur recipients",
+    );
+    expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
   });
 
   it("uses the booking status WhatsApp template for booking updates", async () => {

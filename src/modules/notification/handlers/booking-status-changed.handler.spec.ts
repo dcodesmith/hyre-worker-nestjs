@@ -1,7 +1,13 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createBooking, createCar, createOwner, createUser } from "../../../shared/helper.fixtures";
+import {
+  createBooking,
+  createCar,
+  createChauffeur,
+  createOwner,
+  createUser,
+} from "../../../shared/helper.fixtures";
 import { NotificationService } from "../notification.service";
 import { BookingStatusChangedHandler } from "./booking-status-changed.handler";
 
@@ -16,10 +22,16 @@ const sampleJobData = {
 
 describe("BookingStatusChangedHandler", () => {
   let handler: BookingStatusChangedHandler;
-  let notificationService: { buildBookingStatusChangeJobData: ReturnType<typeof vi.fn> };
+  let notificationService: {
+    buildBookingStatusChangeJobData: ReturnType<typeof vi.fn>;
+    buildFlightUpdateJobData: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
-    notificationService = { buildBookingStatusChangeJobData: vi.fn() };
+    notificationService = {
+      buildBookingStatusChangeJobData: vi.fn(),
+      buildFlightUpdateJobData: vi.fn(),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingStatusChangedHandler,
@@ -139,5 +151,42 @@ describe("BookingStatusChangedHandler", () => {
     });
 
     expect(events).toEqual([]);
+  });
+
+  it("defers the chauffeur completion link until notification dispatch", async () => {
+    notificationService.buildBookingStatusChangeJobData.mockResolvedValueOnce(sampleJobData);
+    notificationService.buildFlightUpdateJobData.mockReturnValueOnce({
+      ...sampleJobData,
+      id: "airport-completion-booking-1",
+    });
+    const booking = createBooking({
+      id: "booking-1",
+      type: "AIRPORT_PICKUP",
+      chauffeurId: "chauffeur-1",
+      chauffeur: createChauffeur({ id: "chauffeur-1" }),
+      car: createCar({ owner: createOwner() }),
+      updatedAt: new Date("2026-05-09T11:00:00Z"),
+    });
+
+    const events = await handler.buildEvents({
+      booking,
+      oldStatus: "CONFIRMED",
+      newStatus: "ACTIVE",
+      includeChauffeurCompletionLink: true,
+    });
+
+    expect(notificationService.buildFlightUpdateJobData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        booking,
+        title: "Airport trip ready",
+        body: expect.not.stringContaining("token="),
+      }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      userId: "chauffeur-1",
+      subtype: "AIRPORT_COMPLETION_LINK",
+      dedupeKey: "airport-completion-link:booking-1:chauffeur-1:2026-05-09T11:00:00.000Z",
+      jobData: expect.objectContaining({ airportCompletionLink: true }),
+    });
   });
 });

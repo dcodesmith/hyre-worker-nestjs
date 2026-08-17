@@ -8,13 +8,7 @@ import { JobThrottlerGuard } from "./job-throttler.guard";
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        name: "manual-triggers",
-        ttl: 3600,
-        limit: 1,
-      },
-    ]),
+    ThrottlerModule,
     BullModule.registerQueue({ name: REMINDERS_QUEUE }, { name: STATUS_UPDATES_QUEUE }),
   ],
   controllers: [JobController],

@@ -1,9 +1,11 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { EventEmitterModule } from "@nestjs/event-emitter";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { validateEnvironment } from "./config/env.config";
 import { AccountModule } from "./modules/account/account.module";
 import { AiSearchModule } from "./modules/ai-search/ai-search.module";
+import { AI_SEARCH_THROTTLE_CONFIG } from "./modules/ai-search/ai-search-throttling.config";
 import { AuthModule } from "./modules/auth/auth.module";
 import { BookingAgentModule } from "./modules/booking-agent/booking-agent.module";
 import { CarModule } from "./modules/car/car.module";
@@ -17,12 +19,15 @@ import { AdminOpsModule } from "./modules/infra/admin-ops/admin-ops.module";
 import { ObservabilityModule } from "./modules/infra/observability/observability.module";
 import { QueueInfraModule } from "./modules/infra/queue-infra/queue-infra.module";
 import { JobModule } from "./modules/job/job.module";
+import { JOB_THROTTLE_CONFIG } from "./modules/job/job-throttling.config";
+import { PLACES_THROTTLE_CONFIG } from "./modules/maps/places-throttling.config";
 import { MessagingModule } from "./modules/messaging/messaging.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { PaymentModule } from "./modules/payment/payment.module";
 import { PromotionModule } from "./modules/promotion/promotion.module";
 import { RatesModule } from "./modules/rates/rates.module";
 import { ReferralModule } from "./modules/referral/referral.module";
+import { REFERRAL_THROTTLE_CONFIG } from "./modules/referral/referral-throttling.config";
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
@@ -36,6 +41,33 @@ import { RootController } from "./root.controller";
       validate: validateEnvironment,
     }),
     EventEmitterModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        name: "default",
+        ttl: 60_000,
+        limit: 10,
+      },
+      {
+        name: JOB_THROTTLE_CONFIG.name,
+        ttl: JOB_THROTTLE_CONFIG.ttlMs,
+        limit: JOB_THROTTLE_CONFIG.limit,
+      },
+      {
+        name: AI_SEARCH_THROTTLE_CONFIG.name,
+        ttl: AI_SEARCH_THROTTLE_CONFIG.ttlMs,
+        limit: AI_SEARCH_THROTTLE_CONFIG.limit,
+      },
+      {
+        name: PLACES_THROTTLE_CONFIG.name,
+        ttl: PLACES_THROTTLE_CONFIG.ttlMs,
+        limit: PLACES_THROTTLE_CONFIG.limits.autocomplete,
+      },
+      {
+        name: REFERRAL_THROTTLE_CONFIG.name,
+        ttl: REFERRAL_THROTTLE_CONFIG.ttlMs,
+        limit: REFERRAL_THROTTLE_CONFIG.userLimit,
+      },
+    ]),
     ObservabilityModule,
     QueueInfraModule,
     AdminOpsModule,

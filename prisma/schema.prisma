@@ -74,6 +74,7 @@ model User {
   bankDetails               BankDetails?               @relation("UserBankDetails")
   attributedBookings        Booking[]                  @relation("BookingAcquisitionPartner")
   bookingsAsChauffeur       Booking[]                  @relation("BookingChauffeur")
+  bookingsCompleted         Booking[]                  @relation("BookingCompletedBy")
   bookingReferrals          Booking[]                  @relation("BookingReferrals")
   bookings                  Booking[]                  @relation("BookingCustomer")
   cars                      Car[]
@@ -126,7 +127,7 @@ model UserPushToken {
 /// `CREATE INDEX CONCURRENTLY` in a dedicated single-statement migration (plain
 /// `CREATE INDEX` blocks writes for the duration of the build on hot tables).
 model NotificationInbox {
-  id        String               @id @default(cuid())
+  id        String                @id @default(cuid())
   userId    String
   type      NotificationInboxType
   title     String
@@ -134,33 +135,33 @@ model NotificationInbox {
   payload   Json?
   /// Same key as the sibling outbox row (when present). Uniqueness gives
   /// idempotent inbox writes for inbox-only events (no jobData / no outbox row).
-  dedupeKey String?              @unique
+  dedupeKey String?               @unique
   readAt    DateTime?
-  createdAt DateTime             @default(now())
-  updatedAt DateTime             @updatedAt
-  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
   @@index([createdAt])
 }
 
 model NotificationOutboxEvent {
-  id           String                   @id @default(cuid())
-  userId       String?
-  eventType    NotificationOutboxEventType
-  status       NotificationOutboxStatus @default(PENDING)
-  dedupeKey    String                   @unique
+  id            String                      @id @default(cuid())
+  userId        String?
+  eventType     NotificationOutboxEventType
+  status        NotificationOutboxStatus    @default(PENDING)
+  dedupeKey     String                      @unique
   /// Intentionally not a relation to Booking. Outbox rows must remain durable
   /// for retry/audit purposes even if a booking is deleted.
-  bookingId    String
-  payload      Json?
-  attempts     Int                      @default(0)
-  nextAttemptAt DateTime                @default(now())
-  lastError    String?
-  processedAt  DateTime?
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  user         User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bookingId     String
+  payload       Json?
+  attempts      Int                         @default(0)
+  nextAttemptAt DateTime                    @default(now())
+  lastError     String?
+  processedAt   DateTime?
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+  user          User?                       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([status, nextAttemptAt])
   @@index([bookingId])
@@ -266,14 +267,14 @@ model FlightStatusEvent {
 }
 
 model Booking {
-  id                                      String                    @id @default(cuid())
-  createdAt                               DateTime                  @default(now())
-  updatedAt                               DateTime                  @updatedAt
-  status                                  BookingStatus             @default(PENDING)
+  id                                      String                      @id @default(cuid())
+  createdAt                               DateTime                    @default(now())
+  updatedAt                               DateTime                    @updatedAt
+  status                                  BookingStatus               @default(PENDING)
   startDate                               DateTime
   endDate                                 DateTime
-  totalAmount                             Decimal                   @db.Decimal(10, 2)
-  paymentStatus                           PaymentStatus             @default(UNPAID)
+  totalAmount                             Decimal                     @db.Decimal(10, 2)
+  paymentStatus                           PaymentStatus               @default(UNPAID)
   paymentId                               String?
   carId                                   String
   userId                                  String?
@@ -281,50 +282,57 @@ model Booking {
   returnLocation                          String
   specialRequests                         String?
   chauffeurId                             String?
+  completedAt                             DateTime?
+  completedByUserId                       String?
+  completionSource                        BookingCompletionSource?
+  completionTokenHash                     String?
+  completionTokenExpiresAt                DateTime?
+  airportScheduleConflictAt               DateTime?
   cancelledAt                             DateTime?
   cancellationReason                      String?
   guestUser                               Json?
-  type                                    BookingType               @default(DAY)
+  type                                    BookingType                 @default(DAY)
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?
   paymentStatusTokenHash                  String?
-  fleetOwnerPayoutAmountNet               Decimal?                  @db.Decimal(10, 2)
-  netTotal                                Decimal?                  @db.Decimal(10, 2)
+  fleetOwnerPayoutAmountNet               Decimal?                    @db.Decimal(10, 2)
+  netTotal                                Decimal?                    @db.Decimal(10, 2)
   overallPayoutStatus                     PayoutTransactionStatus?
-  platformCustomerServiceFeeAmount        Decimal?                  @db.Decimal(10, 2)
-  platformCustomerServiceFeeRatePercent   Decimal?                  @db.Decimal(5, 2)
-  platformFleetOwnerCommissionAmount      Decimal?                  @db.Decimal(10, 2)
-  platformFleetOwnerCommissionRatePercent Decimal?                  @db.Decimal(5, 2)
-  subtotalBeforeVat                       Decimal?                  @db.Decimal(10, 2)
-  vatAmount                               Decimal?                  @db.Decimal(10, 2)
-  vatRatePercent                          Decimal?                  @db.Decimal(5, 2)
-  bookingReference                        String                    @unique
-  securityDetailCost                      Decimal?                  @db.Decimal(10, 2)
-  fuelUpgradeCost                         Decimal?                  @db.Decimal(10, 2)
-  referralDiscountAmount                  Decimal                   @default(0) @db.Decimal(10, 2)
+  platformCustomerServiceFeeAmount        Decimal?                    @db.Decimal(10, 2)
+  platformCustomerServiceFeeRatePercent   Decimal?                    @db.Decimal(5, 2)
+  platformFleetOwnerCommissionAmount      Decimal?                    @db.Decimal(10, 2)
+  platformFleetOwnerCommissionRatePercent Decimal?                    @db.Decimal(5, 2)
+  subtotalBeforeVat                       Decimal?                    @db.Decimal(10, 2)
+  vatAmount                               Decimal?                    @db.Decimal(10, 2)
+  vatRatePercent                          Decimal?                    @db.Decimal(5, 2)
+  bookingReference                        String                      @unique
+  securityDetailCost                      Decimal?                    @db.Decimal(10, 2)
+  fuelUpgradeCost                         Decimal?                    @db.Decimal(10, 2)
+  referralDiscountAmount                  Decimal                     @default(0) @db.Decimal(10, 2)
   referralReferrerUserId                  String?
-  referralStatus                          BookingReferralStatus     @default(NONE)
-  referralCreditsUsed                     Decimal                   @default(0) @db.Decimal(10, 2)
-  referralCreditsReserved                 Decimal                   @default(0) @db.Decimal(10, 2)
+  referralStatus                          BookingReferralStatus       @default(NONE)
+  referralCreditsUsed                     Decimal                     @default(0) @db.Decimal(10, 2)
+  referralCreditsReserved                 Decimal                     @default(0) @db.Decimal(10, 2)
   flightNumber                            String?
   estimatedDuration                       Int?
   flightId                                String?
   deletedAt                               DateTime?
-  acquisitionChannel                      BookingAcquisitionChannel @default(GLOBAL)
+  acquisitionChannel                      BookingAcquisitionChannel   @default(GLOBAL)
   acquisitionPartnerOwnerId               String?
   acquisitionPartnerSlug                  String?
-  acquisitionPartnerOwner                 User?                     @relation("BookingAcquisitionPartner", fields: [acquisitionPartnerOwnerId], references: [id])
-  car                                     Car                       @relation(fields: [carId], references: [id])
-  chauffeur                               User?                     @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
-  flight                                  Flight?                   @relation("BookingFlight", fields: [flightId], references: [id])
-  referralReferrer                        User?                     @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
-  user                                    User?                     @relation("BookingCustomer", fields: [userId], references: [id])
+  acquisitionPartnerOwner                 User?                       @relation("BookingAcquisitionPartner", fields: [acquisitionPartnerOwnerId], references: [id])
+  car                                     Car                         @relation(fields: [carId], references: [id])
+  chauffeur                               User?                       @relation("BookingChauffeur", fields: [chauffeurId], references: [id])
+  completedBy                             User?                       @relation("BookingCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  flight                                  Flight?                     @relation("BookingFlight", fields: [flightId], references: [id])
+  referralReferrer                        User?                       @relation("BookingReferrals", fields: [referralReferrerUserId], references: [id])
+  user                                    User?                       @relation("BookingCustomer", fields: [userId], references: [id])
   legs                                    BookingLeg[]
-  customerPayments                        Payment[]                 @relation("BookingCustomerPayments")
-  payoutTransactions                      PayoutTransaction[]       @relation("BookingPayouts")
+  customerPayments                        Payment[]                   @relation("BookingCustomerPayments")
+  payoutTransactions                      PayoutTransaction[]         @relation("BookingPayouts")
   referralRewards                         ReferralReward[]
-  review                                  Review?                   @relation("BookingReview")
-  linkedDrafts                            BookingDraft[]            @relation("LinkedBookingDraft")
+  review                                  Review?                     @relation("BookingReview")
+  linkedDrafts                            BookingDraft[]              @relation("LinkedBookingDraft")
   creationIdempotency                     BookingCreationIdempotency?
 
   @@index([bookingReference])
@@ -332,6 +340,7 @@ model Booking {
   @@index([userId])
   @@index([status])
   @@index([chauffeurId])
+  @@index([completedByUserId])
   @@index([paymentStatus])
   @@index([paymentIntent])
   @@index([status, paymentStatus, paymentSessionExpiresAt])
@@ -428,35 +437,35 @@ model Extension {
 }
 
 model Payment {
-  id                       String               @id @default(cuid())
-  bookingId                String?
-  extensionId              String?
-  txRef                    String               @unique
-  flutterwaveTransactionId String?              @unique
-  flutterwaveReference     String?              @unique
-  amountExpected           Decimal              @db.Decimal(10, 2)
-  amountCharged            Decimal?             @db.Decimal(10, 2)
-  currency                 String
-  feeChargedByProvider     Decimal?             @db.Decimal(10, 2)
-  status                   PaymentAttemptStatus
-  paymentProviderStatus    String?
-  paymentMethod            String?
-  initiatedAt              DateTime             @default(now())
-  confirmedAt              DateTime?
-  lastVerifiedAt           DateTime?
-  webhookPayload           Json?
-  verificationResponse     Json?
-  refundIdempotencyKey     String?              @unique
-  refundProviderId               String?              @unique
-  refundProviderStatus           String?
-  refundRequestedAmount          Decimal?             @db.Decimal(10, 2)
-  refundRequestedAt              DateTime?
-  refundLastCheckedAt            DateTime?
-  refundReconciliationAttempts   Int                  @default(0)
-  refundVerificationFailures     Int                  @default(0)
+  id                           String               @id @default(cuid())
+  bookingId                    String?
+  extensionId                  String?
+  txRef                        String               @unique
+  flutterwaveTransactionId     String?              @unique
+  flutterwaveReference         String?              @unique
+  amountExpected               Decimal              @db.Decimal(10, 2)
+  amountCharged                Decimal?             @db.Decimal(10, 2)
+  currency                     String
+  feeChargedByProvider         Decimal?             @db.Decimal(10, 2)
+  status                       PaymentAttemptStatus
+  paymentProviderStatus        String?
+  paymentMethod                String?
+  initiatedAt                  DateTime             @default(now())
+  confirmedAt                  DateTime?
+  lastVerifiedAt               DateTime?
+  webhookPayload               Json?
+  verificationResponse         Json?
+  refundIdempotencyKey         String?              @unique
+  refundProviderId             String?              @unique
+  refundProviderStatus         String?
+  refundRequestedAmount        Decimal?             @db.Decimal(10, 2)
+  refundRequestedAt            DateTime?
+  refundLastCheckedAt          DateTime?
+  refundReconciliationAttempts Int                  @default(0)
+  refundVerificationFailures   Int                  @default(0)
   refundManualReviewNotifiedAt DateTime?
-  booking                  Booking?             @relation("BookingCustomerPayments", fields: [bookingId], references: [id])
-  extension                Extension?           @relation("ExtensionCustomerPayments", fields: [extensionId], references: [id])
+  booking                      Booking?             @relation("BookingCustomerPayments", fields: [bookingId], references: [id])
+  extension                    Extension?           @relation("ExtensionCustomerPayments", fields: [extensionId], references: [id])
 
   @@index([bookingId])
   @@index([extensionId])
@@ -469,27 +478,27 @@ model Payment {
 }
 
 model PayoutTransaction {
-  id                      String                  @id @default(cuid())
-  fleetOwnerId            String
-  bookingId               String?                 @unique(map: "PayoutTransaction_bookingId_key")
-  extensionId             String?
-  amountToPay             Decimal                 @db.Decimal(10, 2)
-  amountPaid              Decimal?                @db.Decimal(10, 2)
-  currency                String
-  status                  PayoutTransactionStatus
-  payoutProviderReference String?                  @unique
-  payoutMethodDetails     String?
-  payoutBankCode          String?
-  payoutAccountLast4      String?
-  processingLeaseId       String?
+  id                       String                  @id @default(cuid())
+  fleetOwnerId             String
+  bookingId                String?                 @unique(map: "PayoutTransaction_bookingId_key")
+  extensionId              String?
+  amountToPay              Decimal                 @db.Decimal(10, 2)
+  amountPaid               Decimal?                @db.Decimal(10, 2)
+  currency                 String
+  status                   PayoutTransactionStatus
+  payoutProviderReference  String?                 @unique
+  payoutMethodDetails      String?
+  payoutBankCode           String?
+  payoutAccountLast4       String?
+  processingLeaseId        String?
   processingLeaseExpiresAt DateTime?
-  initiatedAt             DateTime                @default(now())
-  processedAt             DateTime?
-  completedAt             DateTime?
-  notes                   String?
-  booking                 Booking?                @relation("BookingPayouts", fields: [bookingId], references: [id])
-  extension               Extension?              @relation("ExtensionPayouts", fields: [extensionId], references: [id])
-  fleetOwner              User                    @relation("FleetOwnerPayouts", fields: [fleetOwnerId], references: [id])
+  initiatedAt              DateTime                @default(now())
+  processedAt              DateTime?
+  completedAt              DateTime?
+  notes                    String?
+  booking                  Booking?                @relation("BookingPayouts", fields: [bookingId], references: [id])
+  extension                Extension?              @relation("ExtensionPayouts", fields: [extensionId], references: [id])
+  fleetOwner               User                    @relation("FleetOwnerPayouts", fields: [fleetOwnerId], references: [id])
 
   @@index([fleetOwnerId])
   @@index([status])
@@ -498,16 +507,17 @@ model PayoutTransaction {
 }
 
 model FinancialReconciliationAudit {
-  id                String                         @id @default(cuid())
+  id                String                              @id @default(cuid())
   resourceType      FinancialReconciliationResourceType
   resourceId        String
   actorUserId       String
-  outcome           FinancialReconciliationOutcome @default(STARTED)
+  outcome           FinancialReconciliationOutcome      @default(STARTED)
   providerReference String?
   providerStatus    String?
   error             String?
-  createdAt         DateTime                       @default(now())
-  updatedAt         DateTime                       @updatedAt
+  createdAt         DateTime                            @default(now())
+  updatedAt         DateTime                            @updatedAt
+
   @@index([resourceType, resourceId, createdAt], map: "FinancialRecon_resource_created_idx")
 }
 
@@ -622,18 +632,18 @@ model AddonRate {
 }
 
 model Promotion {
-  id            String       @id @default(cuid())
+  id            String   @id @default(cuid())
   ownerId       String
   carId         String?
   name          String?
-  discountValue Decimal      @db.Decimal(10, 2)
+  discountValue Decimal  @db.Decimal(10, 2)
   startDate     DateTime
   endDate       DateTime
-  isActive      Boolean      @default(true)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  owner         User         @relation("OwnerPromotions", fields: [ownerId], references: [id], onDelete: Cascade)
-  car           Car?         @relation("CarPromotions", fields: [carId], references: [id], onDelete: Cascade)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  owner         User     @relation("OwnerPromotions", fields: [ownerId], references: [id], onDelete: Cascade)
+  car           Car?     @relation("CarPromotions", fields: [carId], references: [id], onDelete: Cascade)
 
   @@index([ownerId])
   @@index([carId])
@@ -895,6 +905,13 @@ enum BookingStatus {
   REJECTED
 }
 
+enum BookingCompletionSource {
+  SCHEDULED
+  CHAUFFEUR_LINK
+  FLEET_OWNER
+  OPERATIONS
+}
+
 enum BookingCreationIdempotencyState {
   PROCESSING
   COMPLETED
@@ -1015,7 +1032,6 @@ enum PlatformFeeType {
 enum AddonType {
   SECURITY_DETAIL
 }
-
 
 enum ReferralAttributionSource {
   LINK

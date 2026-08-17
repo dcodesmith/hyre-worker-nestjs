@@ -95,6 +95,52 @@ describe("StatusChangeSchedulingService", () => {
     expect(statusUpdateQueue.add).toHaveBeenCalledTimes(2);
   });
 
+  it("removes conflicted activation jobs and excludes them from rescheduling", async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    statusUpdateQueue.getJob.mockResolvedValueOnce({ remove }).mockResolvedValueOnce(null);
+    databaseService.booking.findMany.mockResolvedValueOnce([{ id: "booking-safe" }]);
+    const activationAt = new Date(Date.now() + 60_000);
+
+    await service.scheduleAirportActivationsForFlight("flight-1", activationAt, [
+      "booking-conflict",
+    ]);
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(databaseService.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { notIn: ["booking-conflict"] },
+        }),
+      }),
+    );
+    expect(statusUpdateQueue.add).toHaveBeenCalledOnce();
+    expect(statusUpdateQueue.add).toHaveBeenCalledWith(
+      "activate-airport-booking",
+      expect.objectContaining({ bookingId: "booking-safe" }),
+      expect.any(Object),
+    );
+  });
+
+  it("continues scheduling when a conflicted active job cannot be removed", async () => {
+    const remove = vi.fn().mockRejectedValueOnce(new Error("Job is locked"));
+    statusUpdateQueue.getJob.mockResolvedValueOnce({ remove }).mockResolvedValueOnce(null);
+    databaseService.booking.findMany.mockResolvedValueOnce([{ id: "booking-safe" }]);
+
+    await service.scheduleAirportActivationsForFlight("flight-1", new Date(), ["booking-conflict"]);
+
+    expect(statusUpdateQueue.getJob).toHaveBeenNthCalledWith(
+      1,
+      "activate-airport-booking-booking-conflict",
+    );
+    expect(remove).toHaveBeenCalledOnce();
+    expect(databaseService.booking.findMany).toHaveBeenCalledOnce();
+    expect(statusUpdateQueue.add).toHaveBeenCalledWith(
+      "activate-airport-booking",
+      expect.objectContaining({ bookingId: "booking-safe" }),
+      expect.any(Object),
+    );
+  });
+
   it("propagates errors when eligible flight bookings cannot be fetched", async () => {
     const databaseError = new Error("Database unavailable");
     databaseService.booking.findMany.mockRejectedValueOnce(databaseError);

@@ -5,6 +5,7 @@ import { ThrottlerStorage } from "@nestjs/throttler";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JobRateLimitExceededException } from "./errors";
 import { JobThrottlerGuard } from "./job-throttler.guard";
+import { JOB_THROTTLE_CONFIG } from "./job-throttling.config";
 
 class TestableJobThrottlerGuard extends JobThrottlerGuard {
   async callThrowThrottlingException(
@@ -12,6 +13,10 @@ class TestableJobThrottlerGuard extends JobThrottlerGuard {
     throttlerConfig?: { ttl: number },
   ): Promise<void> {
     return this.throwThrottlingException(context, throttlerConfig);
+  }
+
+  getThrottlerNames(): Array<string | undefined> {
+    return this.throttlers.map(({ name }) => name);
   }
 }
 
@@ -35,7 +40,17 @@ describe("JobThrottlerGuard", () => {
         },
         {
           provide: "THROTTLER:MODULE_OPTIONS",
-          useValue: [{ name: "manual-triggers", ttl: 3600, limit: 1 }],
+          useValue: [
+            { name: "default", ttl: 60_000, limit: 10 },
+            {
+              name: JOB_THROTTLE_CONFIG.name,
+              ttl: JOB_THROTTLE_CONFIG.ttlMs,
+              limit: JOB_THROTTLE_CONFIG.limit,
+            },
+            { name: "ai-search-public", ttl: 60_000, limit: 20 },
+            { name: "places-public", ttl: 60_000, limit: 30 },
+            { name: "referral-validation", ttl: 3_600_000, limit: 10 },
+          ],
         },
         {
           provide: ThrottlerStorage,
@@ -46,6 +61,12 @@ describe("JobThrottlerGuard", () => {
     }).compile();
 
     guard = module.get<TestableJobThrottlerGuard>(TestableJobThrottlerGuard);
+  });
+
+  it("evaluates only the manual-triggers profile when all profiles are registered", async () => {
+    await guard.onModuleInit();
+
+    expect(guard.getThrottlerNames()).toStrictEqual([JOB_THROTTLE_CONFIG.name]);
   });
 
   it("converts millisecond ttl to seconds for retryAfter", async () => {

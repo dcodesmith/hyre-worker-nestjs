@@ -63,6 +63,7 @@ describe("StatusChangeEventsListener", () => {
     const payload: FlightArrivalUpdatedEventPayload = {
       flightId: "flight-1",
       activationAt: "2030-01-01T11:40:00.000Z",
+      conflictedBookingIds: ["booking-conflict"],
     };
 
     await listener.onFlightArrivalUpdated(payload);
@@ -70,6 +71,7 @@ describe("StatusChangeEventsListener", () => {
     expect(schedulingService.scheduleAirportActivationsForFlight).toHaveBeenCalledWith(
       "flight-1",
       new Date("2030-01-01T11:40:00.000Z"),
+      ["booking-conflict"],
     );
   });
 });

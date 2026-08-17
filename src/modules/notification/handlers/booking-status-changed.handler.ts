@@ -1,6 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import { BookingType, NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import { formatFlightOperationalTime } from "../../../shared/flight-notification.helper";
 import type { BookingWithRelations } from "../../../types";
+import { CHAUFFEUR_RECIPIENT_TYPE } from "../notification.const";
+import { NotificationType } from "../notification.interface";
 import { NotificationService } from "../notification.service";
 import type { HandlerEvent, OutboxEventHandler } from "./outbox-event-handler.interface";
 
@@ -11,6 +14,7 @@ export type BookingStatusChangedInput = {
   oldStatus: string;
   newStatus: string;
   showReviewRequest?: boolean;
+  includeChauffeurCompletionLink?: boolean;
 };
 
 @Injectable()
@@ -24,6 +28,7 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
     oldStatus,
     newStatus,
     showReviewRequest = false,
+    includeChauffeurCompletionLink = false,
   }: BookingStatusChangedInput): Promise<HandlerEvent[]> {
     const jobData = await this.notificationService.buildBookingStatusChangeJobData({
       booking,
@@ -51,10 +56,39 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
       };
     }
 
-    if (!event.inbox && !event.jobData) {
-      return [];
+    const events: HandlerEvent[] = [];
+    if (event.inbox || event.jobData) {
+      events.push(event);
     }
 
-    return [event];
+    if (
+      includeChauffeurCompletionLink &&
+      booking.type === BookingType.AIRPORT_PICKUP &&
+      booking.chauffeurId
+    ) {
+      const chauffeurJob = this.notificationService.buildFlightUpdateJobData({
+        statusEventId: `airport-active-${booking.updatedAt.toISOString()}`,
+        booking,
+        recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+        type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+        title: "Airport trip ready",
+        body: "After drop-off, use your secure link to complete this trip.",
+        flightNumber: booking.flightNumber ?? "Airport pickup",
+        expectedArrival: formatFlightOperationalTime(booking.startDate),
+        pickupActivationTime: formatFlightOperationalTime(booking.startDate),
+        arrivalLocation: booking.pickupLocation,
+      });
+      if (chauffeurJob) {
+        chauffeurJob.airportCompletionLink = true;
+        events.push({
+          jobData: chauffeurJob,
+          dedupeKey: `airport-completion-link:${booking.id}:${booking.chauffeurId}:${booking.updatedAt.toISOString()}`,
+          userId: booking.chauffeurId,
+          subtype: "AIRPORT_COMPLETION_LINK",
+        });
+      }
+    }
+
+    return events;
   }
 }

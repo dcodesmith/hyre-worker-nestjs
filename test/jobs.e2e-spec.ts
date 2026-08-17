@@ -48,6 +48,11 @@ describe("Jobs E2E Tests", () => {
         success: true,
         message,
       });
+      expect(
+        Object.keys(firstResponse.headers).filter((header) =>
+          header.startsWith("x-ratelimit-limit"),
+        ),
+      ).toStrictEqual(["x-ratelimit-limit-manual-triggers"]);
 
       const secondResponse = await request(app.getHttpServer()).post(endpoint);
 
