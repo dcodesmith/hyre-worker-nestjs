@@ -29,10 +29,13 @@ printf '%s\\n%s\\n' "$DATABASE_URL" "$*" > "$CALLS_FILE"
   });
 
   function runMigration(overrides: NodeJS.ProcessEnv = {}) {
+    const environment = { ...process.env };
+    delete environment.DIRECT_DATABASE_URL;
+
     const result = spawnSync("sh", [migrationScript], {
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...environment,
         DATABASE_URL:
           "postgresql://user:password@ep-example-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require",
         PRISMA_BIN: prismaBinary,
