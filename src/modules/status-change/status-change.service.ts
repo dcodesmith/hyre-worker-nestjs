@@ -9,7 +9,6 @@ import {
   Status,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { getEmailPublicEnv } from "../../email-public-env";
 import type { BookingWithRelations } from "../../types";
 import { BookingNotFoundException } from "../booking/booking.error";
 import { createBookingCompletionToken } from "../booking/booking-completion-token.helper";
@@ -156,8 +155,11 @@ export class StatusChangeService {
     const normalizedBookingId = bookingId.trim();
 
     try {
-      const completionToken = createBookingCompletionToken();
       const completionTokenExpiresAt = new Date(Date.now() + AIRPORT_COMPLETION_TOKEN_TTL_MS);
+      const completionToken = createBookingCompletionToken(
+        normalizedBookingId,
+        completionTokenExpiresAt,
+      );
       const updatedCount = await this.databaseService.booking.updateMany({
         where: {
           id: normalizedBookingId,
@@ -165,6 +167,7 @@ export class StatusChangeService {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           deletedAt: null,
+          airportScheduleConflictAt: null,
           chauffeurId: { not: null },
           car: { status: Status.BOOKED },
         },
@@ -200,7 +203,7 @@ export class StatusChangeService {
         BookingStatus.ACTIVE,
         false,
         undefined,
-        this.buildAirportCompletionUrl(updatedBooking.id, completionToken.token),
+        true,
       );
 
       this.logger.info(
@@ -225,7 +228,7 @@ export class StatusChangeService {
       where: {
         id: bookingId,
         type: BookingType.AIRPORT_PICKUP,
-        status: BookingStatus.ACTIVE,
+        status: { in: [BookingStatus.ACTIVE, BookingStatus.COMPLETED] },
         paymentStatus: PaymentStatus.PAID,
         completionTokenHash,
         completionTokenExpiresAt: { gt: new Date() },
@@ -326,7 +329,7 @@ export class StatusChangeService {
       let accessWhere: Prisma.BookingWhereInput;
       if (isChauffeurLink) {
         accessWhere = {
-          status: BookingStatus.ACTIVE,
+          status: { in: [BookingStatus.ACTIVE, BookingStatus.COMPLETED] },
           completionTokenHash: input.completionTokenHash,
           completionTokenExpiresAt: { gt: new Date() },
         };
@@ -432,8 +435,6 @@ export class StatusChangeService {
         completedAt,
         completedByUserId: input.completedByUserId,
         completionSource: input.source,
-        completionTokenHash: null,
-        completionTokenExpiresAt: null,
       },
     });
     if (updated.count === 0) {
@@ -513,12 +514,12 @@ export class StatusChangeService {
     newStatus: string,
     showReviewRequest = false,
     tx?: NotificationOutboxTransactionClient,
-    chauffeurCompletionUrl?: string,
+    includeChauffeurCompletionLink = false,
   ): Promise<void> {
     try {
       await this.notificationOutboxService.create(
         this.bookingStatusChangedHandler,
-        { booking, oldStatus, newStatus, showReviewRequest, chauffeurCompletionUrl },
+        { booking, oldStatus, newStatus, showReviewRequest, includeChauffeurCompletionLink },
         tx,
       );
     } catch (error) {
@@ -526,15 +527,6 @@ export class StatusChangeService {
       this.logger.error({ bookingId, error: errorMessage }, "Failed to queue status notification");
       // Continue without failing booking status updates
     }
-  }
-
-  private buildAirportCompletionUrl(bookingId: string, token: string): string {
-    const url = new URL(
-      `/chauffeur/airport-trips/${bookingId}/complete`,
-      process.env.AUTH_BASE_URL ?? getEmailPublicEnv().websiteUrl,
-    );
-    url.searchParams.set("token", token);
-    return url.toString();
   }
 
   private toAirportCompletionResponse(booking: {

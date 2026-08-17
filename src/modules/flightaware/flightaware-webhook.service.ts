@@ -9,7 +9,7 @@ import {
   calculatePickupActivationTime,
   formatFlightOperationalTime,
 } from "../../shared/flight-notification.helper";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, lockCarRow } from "../database/database.service";
 import type { FlightStatusUpdatedInput } from "../notification/handlers/flight-status-updated.handler";
 import { FlightStatusUpdatedHandler } from "../notification/handlers/flight-status-updated.handler";
 import { NotificationType } from "../notification/notification.interface";
@@ -621,7 +621,8 @@ export class FlightAwareWebhookService {
     startDate: Date,
   ): Promise<string[]> {
     const conflictedBookingIds: string[] = [];
-    for (const booking of bookings) {
+    const bookingsByCar = [...bookings].sort((a, b) => a.carId.localeCompare(b.carId));
+    for (const booking of bookingsByCar) {
       if (booking.status !== BookingStatus.CONFIRMED || booking.legs?.length !== 1) {
         continue;
       }
@@ -636,6 +637,7 @@ export class FlightAwareWebhookService {
       const endDate = new Date(startDate.getTime() + durationMs);
       const turnaroundEndDate = new Date(endDate.getTime() + 2 * 60 * 60 * 1000);
       const bufferedStartDate = new Date(startDate.getTime() - 2 * 60 * 60 * 1000);
+      await lockCarRow(tx, booking.carId);
       const conflict = await tx.booking.findFirst({
         where: {
           id: { not: booking.id },
@@ -650,6 +652,10 @@ export class FlightAwareWebhookService {
         select: { id: true },
       });
       if (conflict) {
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: { airportScheduleConflictAt: new Date() },
+        });
         conflictedBookingIds.push(booking.id);
         continue;
       }
@@ -659,7 +665,7 @@ export class FlightAwareWebhookService {
 
       await tx.booking.update({
         where: { id: booking.id },
-        data: { startDate, endDate },
+        data: { startDate, endDate, airportScheduleConflictAt: null },
       });
       await tx.bookingLeg.update({
         where: { id: leg.id },

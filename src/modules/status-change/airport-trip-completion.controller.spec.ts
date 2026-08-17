@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ADMIN, FLEET_OWNER } from "../auth/auth.const";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { BookingNotFoundException } from "../booking/booking.error";
 import { hashBookingCompletionToken } from "../booking/booking-completion-token.helper";
 import {
   AirportTripCompletionPageController,
@@ -84,6 +85,16 @@ describe("airport trip completion controllers", () => {
     const html = await pageController.showCompletionPage("booking-1", {});
 
     expect(statusChangeService.getAirportCompletionDetails).not.toHaveBeenCalled();
+    expect(html).toContain("invalid or no longer active");
+  });
+
+  it("renders the invalid page when the token is rejected", async () => {
+    statusChangeService.getAirportCompletionDetails.mockRejectedValueOnce(
+      new BookingNotFoundException(),
+    );
+
+    const html = await pageController.showCompletionPage("booking-1", { token: "wrong-token" });
+
     expect(html).toContain("invalid or no longer active");
   });
 

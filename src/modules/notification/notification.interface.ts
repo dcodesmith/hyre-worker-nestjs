@@ -78,6 +78,11 @@ export interface NotificationJobData {
   audience?: NotificationAudience;
   channels: NotificationChannel[];
   bookingId: string;
+  /**
+   * Resolve the short-lived chauffeur completion URL only in the worker,
+   * keeping its bearer token out of durable outbox and queue payloads.
+   */
+  airportCompletionLink?: true;
   pushPayload?: {
     title: string;
     body: string;

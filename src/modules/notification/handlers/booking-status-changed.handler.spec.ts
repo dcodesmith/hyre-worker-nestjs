@@ -153,7 +153,7 @@ describe("BookingStatusChangedHandler", () => {
     expect(events).toEqual([]);
   });
 
-  it("adds a chauffeur completion link when an airport trip becomes active", async () => {
+  it("defers the chauffeur completion link until notification dispatch", async () => {
     notificationService.buildBookingStatusChangeJobData.mockResolvedValueOnce(sampleJobData);
     notificationService.buildFlightUpdateJobData.mockReturnValueOnce({
       ...sampleJobData,
@@ -172,21 +172,21 @@ describe("BookingStatusChangedHandler", () => {
       booking,
       oldStatus: "CONFIRMED",
       newStatus: "ACTIVE",
-      chauffeurCompletionUrl:
-        "https://tripdly.com/chauffeur/airport-trips/booking-1/complete?token=x",
+      includeChauffeurCompletionLink: true,
     });
 
     expect(notificationService.buildFlightUpdateJobData).toHaveBeenCalledWith(
       expect.objectContaining({
         booking,
         title: "Airport trip ready",
-        body: expect.stringContaining("token=x"),
+        body: expect.not.stringContaining("token="),
       }),
     );
     expect(events.at(-1)).toMatchObject({
       userId: "chauffeur-1",
       subtype: "AIRPORT_COMPLETION_LINK",
       dedupeKey: "airport-completion-link:booking-1:chauffeur-1:2026-05-09T11:00:00.000Z",
+      jobData: expect.objectContaining({ airportCompletionLink: true }),
     });
   });
 });

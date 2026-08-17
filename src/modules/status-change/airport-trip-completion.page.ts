@@ -1,6 +1,7 @@
 import { BookingStatus } from "@prisma/client";
 
 export type AirportCompletionPageBooking = {
+  id: string;
   bookingReference: string;
   status: BookingStatus;
   pickupLocation: string;
@@ -63,7 +64,8 @@ export function renderAirportCompletionPage(
     `<h1>Confirm trip completed</h1>
     ${details}
     <p>Open this page after drop-off, then confirm. Opening the link does not complete the trip.</p>
-    <form method="post" action="?token=${encodeURIComponent(token)}">
+    <form method="post" action="/chauffeur/airport-trips/${encodeURIComponent(booking.id)}/complete">
+      <input type="hidden" name="token" value="${escapeHtml(token)}">
       <button type="submit">Confirm trip completed</button>
     </form>`,
   );

@@ -287,6 +287,7 @@ model Booking {
   completionSource                        BookingCompletionSource?
   completionTokenHash                     String?
   completionTokenExpiresAt                DateTime?
+  airportScheduleConflictAt               DateTime?
   cancelledAt                             DateTime?
   cancellationReason                      String?
   guestUser                               Json?

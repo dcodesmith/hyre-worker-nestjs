@@ -34,6 +34,7 @@ export const notificationJobDataSchema = z.object({
   audience: z.enum(notificationAudienceValues).optional(),
   channels: z.array(z.enum(notificationChannelValues)).min(1),
   bookingId: z.string().min(1),
+  airportCompletionLink: z.literal(true).optional(),
   pushPayload: z
     .object({
       title: z.string(),

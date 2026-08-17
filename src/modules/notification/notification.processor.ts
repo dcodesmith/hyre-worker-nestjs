@@ -3,6 +3,7 @@ import { Inject } from "@nestjs/common";
 import { Job, UnrecoverableError } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
+import { getEmailPublicEnv } from "../../email-public-env";
 import {
   renderBookingConfirmationEmail,
   renderBookingExtensionConfirmationEmail,
@@ -17,6 +18,8 @@ import {
   renderReviewReceivedEmailForOwner,
   renderUserBookingCancellationEmail,
 } from "../../templates/emails";
+import { createBookingCompletionToken } from "../booking/booking-completion-token.helper";
+import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
@@ -79,6 +82,7 @@ export class NotificationProcessor extends WorkerHost {
     private readonly whatsAppService: WhatsAppService,
     private readonly pushService: PushService,
     private readonly pushTokenService: PushTokenService,
+    private readonly databaseService: DatabaseService,
     @Inject(PinoLogger) private readonly logger: PinoLogger,
   ) {
     super();
@@ -102,10 +106,11 @@ export class NotificationProcessor extends WorkerHost {
   async process(
     job: Job<NotificationJobData, NotificationResult[], string>,
   ): Promise<NotificationResult[]> {
-    const { id, type, channels, recipients, templateData } = job.data;
+    const preparedData = await this.resolveAirportCompletionLink(job.data);
+    const { id, type, channels, recipients, templateData } = preparedData;
 
     this.logger.info(
-      { notificationId: id, type, channels, bookingId: job.data.bookingId },
+      { notificationId: id, type, channels, bookingId: preparedData.bookingId },
       "Processing notification",
     );
 
@@ -128,9 +133,9 @@ export class NotificationProcessor extends WorkerHost {
         type,
         recipients,
         templateData,
-        bookingId: job.data.bookingId,
-        pushPayload: job.data.pushPayload,
-        audience: job.data.audience,
+        bookingId: preparedData.bookingId,
+        pushPayload: preparedData.pushPayload,
+        audience: preparedData.audience,
       });
       if (result) results.push(result);
       if (result?.success) {
@@ -162,6 +167,48 @@ export class NotificationProcessor extends WorkerHost {
     }
 
     return results;
+  }
+
+  private async resolveAirportCompletionLink(
+    jobData: NotificationJobData,
+  ): Promise<NotificationJobData> {
+    if (!jobData.airportCompletionLink) {
+      return jobData;
+    }
+
+    const booking = await this.databaseService.booking.findUnique({
+      where: { id: jobData.bookingId },
+      select: {
+        completionTokenHash: true,
+        completionTokenExpiresAt: true,
+      },
+    });
+    const expiresAt = booking?.completionTokenExpiresAt;
+    if (!booking?.completionTokenHash || !expiresAt || expiresAt <= new Date()) {
+      throw new UnrecoverableError("Airport completion link is unavailable or expired");
+    }
+
+    const completionToken = createBookingCompletionToken(jobData.bookingId, expiresAt);
+    if (completionToken.tokenHash !== booking.completionTokenHash) {
+      throw new UnrecoverableError("Airport completion token state is invalid");
+    }
+    if (jobData.templateData.templateKind !== FLIGHT_UPDATE_TEMPLATE_KIND) {
+      throw new UnrecoverableError("Airport completion notification template is invalid");
+    }
+
+    const completionUrl = new URL(
+      `/chauffeur/airport-trips/${jobData.bookingId}/complete`,
+      process.env.AUTH_BASE_URL ?? getEmailPublicEnv().websiteUrl,
+    );
+    completionUrl.searchParams.set("token", completionToken.token);
+
+    return {
+      ...jobData,
+      templateData: {
+        ...jobData.templateData,
+        updateBody: `After drop-off, complete this trip: ${completionUrl.toString()}`,
+      },
+    };
   }
 
   private async processChannel({

@@ -29,6 +29,7 @@ describe("StatusChangeService", () => {
   let mockDomainOutboxService: DomainOutboxService;
 
   beforeEach(async () => {
+    process.env.SESSION_SECRET = "test-secret-at-least-32-characters-long";
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StatusChangeService,
@@ -379,6 +380,7 @@ describe("StatusChangeService", () => {
           id: "airport-1",
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
+          airportScheduleConflictAt: null,
         }),
         data: {
           status: BookingStatus.ACTIVE,
@@ -403,9 +405,7 @@ describe("StatusChangeService", () => {
         oldStatus: BookingStatus.CONFIRMED,
         newStatus: BookingStatus.ACTIVE,
         showReviewRequest: false,
-        chauffeurCompletionUrl: expect.stringContaining(
-          "/chauffeur/airport-trips/airport-1/complete?token=",
-        ),
+        includeChauffeurCompletionLink: true,
       }),
       undefined,
     );
@@ -425,17 +425,21 @@ describe("StatusChangeService", () => {
       completedAt: null,
       car: createCar({ id: "car-airport", status: Status.BOOKED }),
     });
-    vi.mocked(mockDatabaseService.booking.findFirst)
-      .mockResolvedValueOnce(booking)
-      .mockResolvedValueOnce(null);
-    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
-    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValueOnce({
+    const completedBooking = {
       ...booking,
       status: BookingStatus.COMPLETED,
       completedAt,
       completionSource: BookingCompletionSource.CHAUFFEUR_LINK,
       completedByUserId: "chauffeur-1",
-    });
+    };
+    vi.mocked(mockDatabaseService.booking.findFirst)
+      .mockResolvedValueOnce(booking)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(completedBooking);
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValueOnce(
+      completedBooking,
+    );
     vi.mocked(mockDatabaseService.review.findUnique).mockResolvedValueOnce(null);
     vi.mocked(mockDatabaseService.$transaction).mockImplementation(
       async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
@@ -446,13 +450,17 @@ describe("StatusChangeService", () => {
       "airport-complete-1",
       "token-hash",
     );
+    const repeatedResult = await service.completeAirportBookingWithToken(
+      "airport-complete-1",
+      "token-hash",
+    );
 
     expect(mockDatabaseService.booking.findFirst).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         where: expect.objectContaining({
           id: "airport-complete-1",
-          status: BookingStatus.ACTIVE,
+          status: { in: [BookingStatus.ACTIVE, BookingStatus.COMPLETED] },
           completionTokenHash: "token-hash",
           completionTokenExpiresAt: { gt: expect.any(Date) },
         }),
@@ -464,12 +472,16 @@ describe("StatusChangeService", () => {
           status: BookingStatus.COMPLETED,
           completedByUserId: "chauffeur-1",
           completionSource: BookingCompletionSource.CHAUFFEUR_LINK,
-          completionTokenHash: null,
-          completionTokenExpiresAt: null,
         }),
       }),
     );
+    expect(mockDatabaseService.booking.updateMany).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
+      id: "airport-complete-1",
+      status: BookingStatus.COMPLETED,
+      completedAt,
+    });
+    expect(repeatedResult).toMatchObject({
       id: "airport-complete-1",
       status: BookingStatus.COMPLETED,
       completedAt,
@@ -486,7 +498,7 @@ describe("StatusChangeService", () => {
     expect(mockDatabaseService.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: BookingStatus.ACTIVE,
+          status: { in: [BookingStatus.ACTIVE, BookingStatus.COMPLETED] },
           completionTokenHash: "expired-token-hash",
           completionTokenExpiresAt: { gt: expect.any(Date) },
         }),
@@ -508,6 +520,35 @@ describe("StatusChangeService", () => {
         BookingCompletionSource.FLEET_OWNER,
       ),
     ).rejects.toBeInstanceOf(BookingNotFoundException);
+    expect(mockDatabaseService.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("allows operations to complete an airport booking without an ownership filter", async () => {
+    const completedBooking = createBooking({
+      id: "airport-complete-1",
+      type: BookingType.AIRPORT_PICKUP,
+      status: BookingStatus.COMPLETED,
+      paymentStatus: PaymentStatus.PAID,
+      completedAt: new Date("2026-08-17T12:00:00.000Z"),
+      car: createCar({ id: "car-airport" }),
+    });
+    vi.mocked(mockDatabaseService.booking.findFirst).mockResolvedValueOnce(completedBooking);
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+
+    await service.completeAirportBookingForUser(
+      "airport-complete-1",
+      "operations-user",
+      BookingCompletionSource.OPERATIONS,
+    );
+
+    expect(mockDatabaseService.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ car: expect.anything() }),
+      }),
+    );
     expect(mockDatabaseService.booking.updateMany).not.toHaveBeenCalled();
   });
 

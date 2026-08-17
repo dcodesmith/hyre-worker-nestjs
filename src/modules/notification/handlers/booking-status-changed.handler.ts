@@ -14,7 +14,7 @@ export type BookingStatusChangedInput = {
   oldStatus: string;
   newStatus: string;
   showReviewRequest?: boolean;
-  chauffeurCompletionUrl?: string;
+  includeChauffeurCompletionLink?: boolean;
 };
 
 @Injectable()
@@ -28,7 +28,7 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
     oldStatus,
     newStatus,
     showReviewRequest = false,
-    chauffeurCompletionUrl,
+    includeChauffeurCompletionLink = false,
   }: BookingStatusChangedInput): Promise<HandlerEvent[]> {
     const jobData = await this.notificationService.buildBookingStatusChangeJobData({
       booking,
@@ -62,7 +62,7 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
     }
 
     if (
-      chauffeurCompletionUrl &&
+      includeChauffeurCompletionLink &&
       booking.type === BookingType.AIRPORT_PICKUP &&
       booking.chauffeurId
     ) {
@@ -72,13 +72,14 @@ export class BookingStatusChangedHandler implements OutboxEventHandler<BookingSt
         recipientType: CHAUFFEUR_RECIPIENT_TYPE,
         type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
         title: "Airport trip ready",
-        body: `After drop-off, complete this trip: ${chauffeurCompletionUrl}`,
+        body: "After drop-off, use your secure link to complete this trip.",
         flightNumber: booking.flightNumber ?? "Airport pickup",
         expectedArrival: formatFlightOperationalTime(booking.startDate),
         pickupActivationTime: formatFlightOperationalTime(booking.startDate),
         arrivalLocation: booking.pickupLocation,
       });
       if (chauffeurJob) {
+        chauffeurJob.airportCompletionLink = true;
         events.push({
           jobData: chauffeurJob,
           dedupeKey: `airport-completion-link:${booking.id}:${booking.chauffeurId}:${booking.updatedAt.toISOString()}`,

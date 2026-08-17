@@ -13,6 +13,7 @@ import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 
 type TransactionClient = {
   $executeRaw: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
   flight: {
     findUniqueOrThrow: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
@@ -91,6 +92,7 @@ describe("FlightAwareWebhookService", () => {
   beforeEach(async () => {
     transactionClient = {
       $executeRaw: vi.fn().mockResolvedValue(1),
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "car-1" }]),
       flight: {
         findUniqueOrThrow: vi.fn().mockResolvedValue(flightRecord),
         update: vi.fn(),
@@ -328,6 +330,7 @@ describe("FlightAwareWebhookService", () => {
       data: {
         startDate: new Date("2030-01-01T11:25:00.000Z"),
         endDate: new Date("2030-01-01T13:25:00.000Z"),
+        airportScheduleConflictAt: null,
       },
     });
     expect(transactionClient.bookingLeg.update).toHaveBeenCalledWith({
@@ -369,8 +372,12 @@ describe("FlightAwareWebhookService", () => {
       }),
     );
 
-    expect(transactionClient.booking.update).not.toHaveBeenCalled();
+    expect(transactionClient.booking.update).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: { airportScheduleConflictAt: expect.any(Date) },
+    });
     expect(transactionClient.bookingLeg.update).not.toHaveBeenCalled();
+    expect(transactionClient.$queryRaw).toHaveBeenCalledTimes(1);
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       flightStatusUpdatedHandler,
       expect.objectContaining({
@@ -731,20 +738,30 @@ describe("FlightAwareWebhookService", () => {
   });
 
   it("keeps registered and guest bookings returned by the eligibility query", async () => {
-    transactionClient.booking.findMany.mockResolvedValueOnce([
-      { id: "confirmed", userId: "customer-1", status: BookingStatus.CONFIRMED },
-      { id: "guest", userId: null, status: BookingStatus.CONFIRMED },
-    ]);
+    const bookings = [
+      {
+        id: "confirmed",
+        carId: "car-1",
+        userId: "customer-1",
+        status: BookingStatus.CONFIRMED,
+        legs: [],
+      },
+      {
+        id: "guest",
+        carId: "car-2",
+        userId: null,
+        status: BookingStatus.CONFIRMED,
+        legs: [],
+      },
+    ];
+    transactionClient.booking.findMany.mockResolvedValueOnce(bookings);
 
     const result = await handleWebhook(createPayload());
 
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       flightStatusUpdatedHandler,
       expect.objectContaining({
-        bookings: [
-          { id: "confirmed", userId: "customer-1", status: BookingStatus.CONFIRMED },
-          { id: "guest", userId: null, status: BookingStatus.CONFIRMED },
-        ],
+        bookings,
       }),
       transactionClient,
     );

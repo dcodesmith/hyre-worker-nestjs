@@ -7,7 +7,8 @@ ADD COLUMN "completedAt" TIMESTAMP(3),
 ADD COLUMN "completedByUserId" TEXT,
 ADD COLUMN "completionSource" "BookingCompletionSource",
 ADD COLUMN "completionTokenHash" TEXT,
-ADD COLUMN "completionTokenExpiresAt" TIMESTAMP(3);
+ADD COLUMN "completionTokenExpiresAt" TIMESTAMP(3),
+ADD COLUMN "airportScheduleConflictAt" TIMESTAMP(3);
 
 -- CreateIndex
 CREATE INDEX "Booking_completedByUserId_idx" ON "Booking"("completedByUserId");
@@ -16,4 +17,8 @@ CREATE INDEX "Booking_completedByUserId_idx" ON "Booking"("completedByUserId");
 ALTER TABLE "Booking"
 ADD CONSTRAINT "Booking_completedByUserId_fkey"
 FOREIGN KEY ("completedByUserId") REFERENCES "User"("id")
-ON DELETE SET NULL ON UPDATE CASCADE;
+ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
+
+-- ValidateForeignKey
+ALTER TABLE "Booking"
+VALIDATE CONSTRAINT "Booking_completedByUserId_fkey";

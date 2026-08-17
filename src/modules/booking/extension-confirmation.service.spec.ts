@@ -30,6 +30,7 @@ describe("ExtensionConfirmationService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -124,7 +125,16 @@ describe("ExtensionConfirmationService", () => {
     });
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       bookingExtensionConfirmedHandler,
-      { extension: expect.objectContaining({ id: "extension-1" }) },
+      {
+        extension: expect.objectContaining({
+          id: "extension-1",
+          bookingLeg: expect.objectContaining({
+            booking: expect.objectContaining({
+              endDate: new Date("2026-02-20T12:00:00.000Z"),
+            }),
+          }),
+        }),
+      },
       txMock,
     );
   });

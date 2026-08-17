@@ -67,7 +67,7 @@ export class StatusChangeSchedulingService {
   ): Promise<void> {
     let bookings: Array<{ id: string }>;
     try {
-      await Promise.all(
+      const removalResults = await Promise.allSettled(
         conflictedBookingIds.map(async (bookingId) => {
           const existingJob = await this.statusUpdateQueue.getJob(
             this.getAirportActivationJobId(bookingId),
@@ -75,6 +75,17 @@ export class StatusChangeSchedulingService {
           await existingJob?.remove();
         }),
       );
+      for (const [index, result] of removalResults.entries()) {
+        if (result.status === "rejected") {
+          this.logger.warn(
+            {
+              bookingId: conflictedBookingIds[index],
+              error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+            },
+            "Failed to remove conflicted airport activation job",
+          );
+        }
+      }
       bookings = await this.databaseService.booking.findMany({
         where: {
           flightId,

@@ -197,6 +197,7 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     completionSource: null,
     completionTokenHash: null,
     completionTokenExpiresAt: null,
+    airportScheduleConflictAt: null,
     deletedAt: null,
     totalAmount: new Decimal(10000),
     paymentId: null,
