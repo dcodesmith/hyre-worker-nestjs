@@ -154,6 +154,7 @@ describe("Bookings E2E Tests", () => {
         expect(response.body).toHaveProperty("checkoutUrl");
         expect(response.body).toEqual(
           expect.objectContaining({
+            txRef: expect.any(String),
             totalAmount: Number(payload.expectedTotalAmount),
             currency: "NGN",
             bookingStatus: "PENDING",
@@ -161,6 +162,41 @@ describe("Bookings E2E Tests", () => {
           }),
         );
         expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
+      });
+
+      it("reconciles an expired unpaid booking before returning payment status", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const created = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
+        expect(created.status).toBe(HttpStatus.CREATED);
+
+        const booking = await databaseService.booking.update({
+          where: { id: created.body.bookingId as string },
+          data: { paymentSessionExpiresAt: new Date(Date.now() - 1_000) },
+          select: { id: true, paymentIntent: true },
+        });
+        vi.spyOn(flutterwaveService, "findTransactionByReference").mockResolvedValue(null);
+
+        const response = await request(app.getHttpServer())
+          .post("/api/payments/booking-expiration")
+          .set("Cookie", testUserCookie)
+          .send({
+            bookingId: booking.id,
+            txRef: booking.paymentIntent,
+          });
+
+        expect(response.status).toBe(HttpStatus.OK);
+        expect(response.body).toEqual(
+          expect.objectContaining({
+            bookingId: booking.id,
+            bookingStatus: "CANCELLED",
+            paymentStatus: "UNPAID",
+            lifecycleState: "EXPIRED",
+          }),
+        );
       });
 
       it("returns current pricing when the accepted price is stale", async () => {

@@ -48,6 +48,32 @@ export class BookingReservationExpirationService {
     }
   }
 
+  async reconcileExpiredReservation(bookingId: string): Promise<boolean> {
+    const now = new Date();
+    const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
+    const reservation = await this.databaseService.booking.findFirst({
+      where: {
+        id: bookingId,
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        OR: [
+          { paymentSessionExpiresAt: { lte: now } },
+          {
+            paymentSessionExpiresAt: null,
+            createdAt: { lte: orphanedBefore },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        paymentIntent: true,
+      },
+    });
+
+    if (!reservation) return false;
+    return this.reconcileReservation(reservation);
+  }
+
   private async reconcileExpiredReservationBatch(): Promise<number> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);

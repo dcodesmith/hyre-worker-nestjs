@@ -193,6 +193,7 @@ export class BookingReadService {
         booking.status,
         booking.paymentStatus,
         paymentAttemptStatus,
+        booking.paymentSessionExpiresAt,
       );
 
       return {
@@ -260,6 +261,7 @@ export class BookingReadService {
     bookingStatus: BookingStatus,
     paymentStatus: PaymentStatus,
     paymentAttemptStatus: PaymentAttemptStatus | undefined,
+    paymentSessionExpiresAt: Date | null,
   ): BookingPaymentLifecycleState {
     const isConfirmed =
       paymentStatus === PaymentStatus.PAID &&
@@ -269,6 +271,14 @@ export class BookingReadService {
     if (isConfirmed) return "CONFIRMED";
     if (bookingStatus === BookingStatus.CANCELLED) {
       return "EXPIRED";
+    }
+    if (
+      bookingStatus === BookingStatus.PENDING &&
+      paymentStatus === PaymentStatus.UNPAID &&
+      paymentSessionExpiresAt !== null &&
+      paymentSessionExpiresAt <= new Date()
+    ) {
+      return "VERIFYING";
     }
     if (
       bookingStatus === BookingStatus.REJECTED ||

@@ -60,6 +60,7 @@ export interface CustomerDetails {
 
 export interface CreateBookingResponse {
   bookingId: string;
+  txRef: string;
   checkoutUrl: string;
   totalAmount: number;
   currency: "NGN";
@@ -68,7 +69,12 @@ export interface CreateBookingResponse {
   paymentStatusToken?: string;
 }
 
-export type BookingPaymentLifecycleState = "PENDING" | "CONFIRMED" | "FAILED" | "EXPIRED";
+export type BookingPaymentLifecycleState =
+  | "PENDING"
+  | "VERIFYING"
+  | "CONFIRMED"
+  | "FAILED"
+  | "EXPIRED";
 
 export interface BookingPaymentStatusResponse {
   bookingId: string;

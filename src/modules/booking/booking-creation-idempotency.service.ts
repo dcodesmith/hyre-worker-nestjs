@@ -306,6 +306,7 @@ export class BookingCreationIdempotencyService {
       value === null ||
       Array.isArray(value) ||
       typeof value.bookingId !== "string" ||
+      typeof value.txRef !== "string" ||
       typeof value.checkoutUrl !== "string" ||
       typeof value.totalAmount !== "number" ||
       value.currency !== "NGN" ||
@@ -319,6 +320,7 @@ export class BookingCreationIdempotencyService {
     }
     return {
       bookingId: value.bookingId,
+      txRef: value.txRef,
       checkoutUrl: value.checkoutUrl,
       totalAmount: value.totalAmount,
       currency: value.currency,
