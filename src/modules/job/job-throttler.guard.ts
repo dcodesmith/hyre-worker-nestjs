@@ -2,6 +2,7 @@ import { ExecutionContext, Injectable } from "@nestjs/common";
 import { ThrottlerGuard } from "@nestjs/throttler";
 import { computeRetryAfterEpoch } from "../../common/throttling/throttling.helper";
 import { JobRateLimitExceededException } from "./errors";
+import { JOB_THROTTLE_CONFIG } from "./job-throttling.config";
 
 /**
  * Custom throttler guard that includes the jobType parameter in the tracking key
@@ -21,6 +22,19 @@ import { JobRateLimitExceededException } from "./errors";
  */
 @Injectable()
 export class JobThrottlerGuard extends ThrottlerGuard {
+  async onModuleInit(): Promise<void> {
+    await super.onModuleInit();
+
+    const manualTriggersThrottler = this.throttlers.find(
+      ({ name }) => name === JOB_THROTTLE_CONFIG.name,
+    );
+    if (!manualTriggersThrottler) {
+      throw new Error(`Missing throttler configuration: ${JOB_THROTTLE_CONFIG.name}`);
+    }
+
+    this.throttlers = [manualTriggersThrottler];
+  }
+
   private toTtlSeconds(ttl: number | undefined): number {
     if (typeof ttl !== "number" || ttl <= 0) {
       return 3600;

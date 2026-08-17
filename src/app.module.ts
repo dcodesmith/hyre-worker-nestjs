@@ -19,6 +19,7 @@ import { AdminOpsModule } from "./modules/infra/admin-ops/admin-ops.module";
 import { ObservabilityModule } from "./modules/infra/observability/observability.module";
 import { QueueInfraModule } from "./modules/infra/queue-infra/queue-infra.module";
 import { JobModule } from "./modules/job/job.module";
+import { JOB_THROTTLE_CONFIG } from "./modules/job/job-throttling.config";
 import { PLACES_THROTTLE_CONFIG } from "./modules/maps/places-throttling.config";
 import { MessagingModule } from "./modules/messaging/messaging.module";
 import { NotificationModule } from "./modules/notification/notification.module";
@@ -47,9 +48,9 @@ import { RootController } from "./root.controller";
         limit: 10,
       },
       {
-        name: "manual-triggers",
-        ttl: 60 * 60 * 1000,
-        limit: 1,
+        name: JOB_THROTTLE_CONFIG.name,
+        ttl: JOB_THROTTLE_CONFIG.ttlMs,
+        limit: JOB_THROTTLE_CONFIG.limit,
       },
       {
         name: AI_SEARCH_THROTTLE_CONFIG.name,
