@@ -176,6 +176,17 @@ export class NotificationProcessor extends WorkerHost {
       return jobData;
     }
 
+    const recipientTypes = Object.keys(jobData.recipients);
+    if (
+      jobData.audience !== NotificationAudience.CHAUFFEUR ||
+      recipientTypes.length === 0 ||
+      recipientTypes.some((recipientType) => recipientType !== CHAUFFEUR_RECIPIENT_TYPE)
+    ) {
+      throw new UnrecoverableError(
+        "Airport completion links can only be delivered to chauffeur recipients",
+      );
+    }
+
     const booking = await this.databaseService.booking.findUnique({
       where: { id: jobData.bookingId },
       select: {

@@ -79,6 +79,36 @@ describe("NotificationProcessor", () => {
     newStatus: "confirmed",
   };
 
+  const createAirportCompletionJobData = (
+    overrides: Partial<NotificationJobData> = {},
+  ): NotificationJobData => ({
+    id: "airport-completion-notification",
+    type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+    audience: NotificationAudience.CHAUFFEUR,
+    channels: [NotificationChannel.EMAIL],
+    bookingId: "booking-airport",
+    airportCompletionLink: true,
+    recipients: {
+      [CHAUFFEUR_RECIPIENT_TYPE]: {
+        userId: "chauffeur-1",
+        email: "chauffeur@example.com",
+      },
+    },
+    templateData: {
+      templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
+      subject: "Airport trip ready",
+      recipientName: "Chauffeur",
+      flightNumber: "BA74",
+      bookingReference: "HYR-001",
+      updateTitle: "Airport trip ready",
+      updateBody: "After drop-off, use your secure link to complete this trip.",
+      expectedArrival: "29 Jul 2026, 4:00 PM WAT",
+      pickupActivationTime: "29 Jul 2026, 4:40 PM WAT",
+      arrivalLocation: "LOS",
+    },
+    ...overrides,
+  });
+
   beforeEach(async () => {
     process.env.SESSION_SECRET = "test-secret-at-least-32-characters-long";
     process.env.AUTH_BASE_URL = "https://api.example.com";
@@ -425,32 +455,7 @@ describe("NotificationProcessor", () => {
       completionTokenHash: completionToken.tokenHash,
       completionTokenExpiresAt: expiresAt,
     } as never);
-    const job = createJob("airport-completion-job", {
-      id: "airport-completion-notification",
-      type: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
-      audience: NotificationAudience.CHAUFFEUR,
-      channels: [NotificationChannel.EMAIL],
-      bookingId: "booking-airport",
-      airportCompletionLink: true,
-      recipients: {
-        [CHAUFFEUR_RECIPIENT_TYPE]: {
-          userId: "chauffeur-1",
-          email: "chauffeur@example.com",
-        },
-      },
-      templateData: {
-        templateKind: FLIGHT_UPDATE_TEMPLATE_KIND,
-        subject: "Airport trip ready",
-        recipientName: "Chauffeur",
-        flightNumber: "BA74",
-        bookingReference: "HYR-001",
-        updateTitle: "Airport trip ready",
-        updateBody: "After drop-off, use your secure link to complete this trip.",
-        expectedArrival: "29 Jul 2026, 4:00 PM WAT",
-        pickupActivationTime: "29 Jul 2026, 4:40 PM WAT",
-        arrivalLocation: "LOS",
-      },
-    });
+    const job = createJob("airport-completion-job", createAirportCompletionJobData());
     vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
       data: { id: "email-airport-1" },
       error: null,
@@ -467,6 +472,41 @@ describe("NotificationProcessor", () => {
       }),
     );
     expect(JSON.stringify(job.data)).not.toContain(completionToken.token);
+  });
+
+  it("rejects an airport completion link for a non-chauffeur audience", async () => {
+    const job = createJob(
+      "airport-completion-customer-job",
+      createAirportCompletionJobData({ audience: NotificationAudience.CUSTOMER }),
+    );
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Airport completion links can only be delivered to chauffeur recipients",
+    );
+    expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects an airport completion link with a non-chauffeur recipient", async () => {
+    const job = createJob(
+      "airport-completion-mixed-job",
+      createAirportCompletionJobData({
+        recipients: {
+          [CHAUFFEUR_RECIPIENT_TYPE]: {
+            userId: "chauffeur-1",
+            email: "chauffeur@example.com",
+          },
+          [CLIENT_RECIPIENT_TYPE]: {
+            userId: "customer-1",
+            email: "customer@example.com",
+          },
+        },
+      }),
+    );
+
+    await expect(processor.process(job)).rejects.toThrow(
+      "Airport completion links can only be delivered to chauffeur recipients",
+    );
+    expect(databaseService.booking.findUnique).not.toHaveBeenCalled();
   });
 
   it("uses the booking status WhatsApp template for booking updates", async () => {

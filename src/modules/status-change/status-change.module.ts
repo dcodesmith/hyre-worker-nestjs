@@ -24,7 +24,7 @@ import { StatusChangeSchedulingService } from "./status-change-scheduling.servic
     DatabaseModule,
     NotificationModule,
     DomainOutboxModule,
-    ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 10 }]),
+    ThrottlerModule,
     BullModule.registerQueue({ name: STATUS_UPDATES_QUEUE }),
     BullBoardModule.forFeature({
       name: STATUS_UPDATES_QUEUE,

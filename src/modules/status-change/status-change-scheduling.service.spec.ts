@@ -128,6 +128,11 @@ describe("StatusChangeSchedulingService", () => {
 
     await service.scheduleAirportActivationsForFlight("flight-1", new Date(), ["booking-conflict"]);
 
+    expect(statusUpdateQueue.getJob).toHaveBeenNthCalledWith(
+      1,
+      "activate-airport-booking-booking-conflict",
+    );
+    expect(remove).toHaveBeenCalledOnce();
     expect(databaseService.booking.findMany).toHaveBeenCalledOnce();
     expect(statusUpdateQueue.add).toHaveBeenCalledWith(
       "activate-airport-booking",
