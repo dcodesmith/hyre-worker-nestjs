@@ -342,11 +342,15 @@ describe("FlutterwaveService", () => {
       await expect(service.findTransactionByReference("booking-123")).resolves.toBeNull();
     });
 
-    it("returns null when Flutterwave reports a missing transaction as bad request", async () => {
+    it.each([
+      "No transaction was found for this id",
+      "Transaction not found",
+      "no transaction was found for this id.",
+    ])("returns null for a missing transaction message: %s", async (message) => {
       mockAxiosInstance.get.mockRejectedValueOnce(
         createAxiosErrorWithResponse(400, {
           status: "error",
-          message: "No transaction was found for this id",
+          message,
         }),
       );
 
@@ -361,9 +365,10 @@ describe("FlutterwaveService", () => {
         }),
       );
 
-      await expect(service.findTransactionByReference("booking-123")).rejects.toThrow(
-        "Invalid transaction reference",
-      );
+      await expect(service.findTransactionByReference("booking-123")).rejects.toMatchObject({
+        message: "Invalid transaction reference",
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
     });
   });
 
