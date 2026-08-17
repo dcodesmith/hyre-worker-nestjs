@@ -341,6 +341,30 @@ describe("FlutterwaveService", () => {
 
       await expect(service.findTransactionByReference("booking-123")).resolves.toBeNull();
     });
+
+    it("returns null when Flutterwave reports a missing transaction as bad request", async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(
+        createAxiosErrorWithResponse(400, {
+          status: "error",
+          message: "No transaction was found for this id",
+        }),
+      );
+
+      await expect(service.findTransactionByReference("booking-123")).resolves.toBeNull();
+    });
+
+    it("preserves unrelated bad request errors", async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(
+        createAxiosErrorWithResponse(400, {
+          status: "error",
+          message: "Invalid transaction reference",
+        }),
+      );
+
+      await expect(service.findTransactionByReference("booking-123")).rejects.toThrow(
+        "Invalid transaction reference",
+      );
+    });
   });
 
   describe("initiatePayout", () => {
