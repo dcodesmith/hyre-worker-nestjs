@@ -150,6 +150,7 @@ export class FlightAwareWebhookService {
           resolvedStatus: currentFlight.status,
           bookingCount,
           activationAt: null,
+          conflictedBookingIds: [],
         };
       }
 
@@ -169,6 +170,22 @@ export class FlightAwareWebhookService {
           legs: { include: { extensions: true } },
         },
       });
+
+      let conflictedBookingIds: string[] = [];
+      if (activationAt && this.shouldEmitActivationEvent(newStatus)) {
+        conflictedBookingIds = await this.syncConfirmedAirportBookingWindows(
+          tx,
+          bookings,
+          activationAt,
+        );
+        if (conflictedBookingIds.length > 0) {
+          notifications.push({
+            type: NotificationType.AIRPORT_SCHEDULE_CONFLICT,
+            operationalTitle: "Airport pickup schedule conflict",
+            operationalBody: `${currentFlight.flightNumber}'s updated pickup time conflicts with another booking. Reassign a car before pickup.`,
+          });
+        }
+      }
 
       await tx.flight.update({
         where: { id: flightRecord.id },
@@ -208,6 +225,7 @@ export class FlightAwareWebhookService {
         resolvedStatus: newStatus,
         bookingCount: bookings.length,
         activationAt,
+        conflictedBookingIds,
       };
     });
 
@@ -222,6 +240,7 @@ export class FlightAwareWebhookService {
         this.eventEmitter.emit(FLIGHT_ARRIVAL_UPDATED_EVENT, {
           flightId: flightRecord.id,
           activationAt: txResult.activationAt.toISOString(),
+          conflictedBookingIds: txResult.conflictedBookingIds,
         });
       } catch (error) {
         this.logger.error(
@@ -585,6 +604,73 @@ export class FlightAwareWebhookService {
 
   private shouldEmitActivationEvent(status: FlightStatus): boolean {
     return status !== FlightStatus.CANCELLED && status !== FlightStatus.DIVERTED;
+  }
+
+  private async syncConfirmedAirportBookingWindows(
+    tx: Prisma.TransactionClient,
+    bookings: Array<{
+      id: string;
+      carId: string;
+      status: BookingStatus;
+      legs: Array<{
+        id: string;
+        legStartTime: Date;
+        legEndTime: Date;
+      }>;
+    }>,
+    startDate: Date,
+  ): Promise<string[]> {
+    const conflictedBookingIds: string[] = [];
+    for (const booking of bookings) {
+      if (booking.status !== BookingStatus.CONFIRMED || booking.legs?.length !== 1) {
+        continue;
+      }
+      const [leg] = booking.legs;
+      if (!leg) continue;
+
+      const durationMs = leg.legEndTime.getTime() - leg.legStartTime.getTime();
+      if (durationMs <= 0 || leg.legStartTime.getTime() === startDate.getTime()) {
+        continue;
+      }
+
+      const endDate = new Date(startDate.getTime() + durationMs);
+      const turnaroundEndDate = new Date(endDate.getTime() + 2 * 60 * 60 * 1000);
+      const bufferedStartDate = new Date(startDate.getTime() - 2 * 60 * 60 * 1000);
+      const conflict = await tx.booking.findFirst({
+        where: {
+          id: { not: booking.id },
+          carId: booking.carId,
+          deletedAt: null,
+          status: {
+            in: [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE],
+          },
+          startDate: { lt: turnaroundEndDate },
+          endDate: { gt: bufferedStartDate },
+        },
+        select: { id: true },
+      });
+      if (conflict) {
+        conflictedBookingIds.push(booking.id);
+        continue;
+      }
+      const legDate = new Date(
+        Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()),
+      );
+
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: { startDate, endDate },
+      });
+      await tx.bookingLeg.update({
+        where: { id: leg.id },
+        data: {
+          legDate,
+          legStartTime: startDate,
+          legEndTime: endDate,
+        },
+      });
+    }
+    return conflictedBookingIds;
   }
 
   private resolveExpectedArrivalTime(

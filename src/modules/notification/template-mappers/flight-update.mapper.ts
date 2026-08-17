@@ -18,6 +18,7 @@ const FLIGHT_NOTIFICATION_TYPES = new Set<NotificationType>([
   NotificationType.FLIGHT_DELAY_RECOVERED,
   NotificationType.FLIGHT_REINSTATED,
   NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+  NotificationType.AIRPORT_SCHEDULE_CONFLICT,
 ]);
 
 export class FlightUpdateMapper extends BaseTemplateMapper {

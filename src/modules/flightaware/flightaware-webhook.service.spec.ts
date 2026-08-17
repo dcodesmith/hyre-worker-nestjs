@@ -24,7 +24,12 @@ type TransactionClient = {
   };
   booking: {
     findMany: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+  };
+  bookingLeg: {
+    update: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -100,6 +105,7 @@ describe("FlightAwareWebhookService", () => {
       },
       booking: {
         count: vi.fn().mockResolvedValue(1),
+        findFirst: vi.fn().mockResolvedValue(null),
         findMany: vi.fn().mockResolvedValue([
           {
             id: "booking-1",
@@ -107,6 +113,10 @@ describe("FlightAwareWebhookService", () => {
             status: BookingStatus.CONFIRMED,
           },
         ]),
+        update: vi.fn(),
+      },
+      bookingLeg: {
+        update: vi.fn(),
       },
     };
 
@@ -233,6 +243,7 @@ describe("FlightAwareWebhookService", () => {
     expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
       flightId: "flight-1",
       activationAt: "2030-01-01T10:45:00.000Z",
+      conflictedBookingIds: [],
     });
     expect(result).toEqual({
       duplicate: false,
@@ -282,6 +293,100 @@ describe("FlightAwareWebhookService", () => {
       transactionClient,
     );
     expect(result.newStatus).toBe(FlightStatus.EN_ROUTE);
+  });
+
+  it("shifts a confirmed airport booking window when expected arrival changes", async () => {
+    transactionClient.flight.findUniqueOrThrow.mockResolvedValueOnce({
+      ...flightRecord,
+      status: FlightStatus.EN_ROUTE,
+    });
+    transactionClient.booking.findMany.mockResolvedValueOnce([
+      {
+        id: "booking-1",
+        carId: "car-1",
+        userId: "customer-1",
+        status: BookingStatus.CONFIRMED,
+        legs: [
+          {
+            id: "leg-1",
+            legStartTime: new Date("2030-01-01T10:40:00.000Z"),
+            legEndTime: new Date("2030-01-01T12:40:00.000Z"),
+          },
+        ],
+      },
+    ]);
+
+    await handleWebhook(
+      createPayload({
+        event_code: "change",
+        flight: { estimated_in: "2030-01-01T10:45:00.000Z" },
+      }),
+    );
+
+    expect(transactionClient.booking.update).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: {
+        startDate: new Date("2030-01-01T11:25:00.000Z"),
+        endDate: new Date("2030-01-01T13:25:00.000Z"),
+      },
+    });
+    expect(transactionClient.bookingLeg.update).toHaveBeenCalledWith({
+      where: { id: "leg-1" },
+      data: {
+        legDate: new Date("2030-01-01T00:00:00.000Z"),
+        legStartTime: new Date("2030-01-01T11:25:00.000Z"),
+        legEndTime: new Date("2030-01-01T13:25:00.000Z"),
+      },
+    });
+  });
+
+  it("preserves the existing window and raises an operational conflict notification", async () => {
+    transactionClient.flight.findUniqueOrThrow.mockResolvedValueOnce({
+      ...flightRecord,
+      status: FlightStatus.EN_ROUTE,
+    });
+    transactionClient.booking.findMany.mockResolvedValueOnce([
+      {
+        id: "booking-1",
+        carId: "car-1",
+        userId: "customer-1",
+        status: BookingStatus.CONFIRMED,
+        legs: [
+          {
+            id: "leg-1",
+            legStartTime: new Date("2030-01-01T10:40:00.000Z"),
+            legEndTime: new Date("2030-01-01T12:40:00.000Z"),
+          },
+        ],
+      },
+    ]);
+    transactionClient.booking.findFirst.mockResolvedValueOnce({ id: "booking-2" });
+
+    await handleWebhook(
+      createPayload({
+        event_code: "change",
+        flight: { estimated_in: "2030-01-01T10:45:00.000Z" },
+      }),
+    );
+
+    expect(transactionClient.booking.update).not.toHaveBeenCalled();
+    expect(transactionClient.bookingLeg.update).not.toHaveBeenCalled();
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      flightStatusUpdatedHandler,
+      expect.objectContaining({
+        notifications: expect.arrayContaining([
+          expect.objectContaining({
+            type: NotificationType.AIRPORT_SCHEDULE_CONFLICT,
+          }),
+        ]),
+      }),
+      transactionClient,
+    );
+    expect(eventEmitter.emit).toHaveBeenCalledWith(FLIGHT_ARRIVAL_UPDATED_EVENT, {
+      flightId: "flight-1",
+      activationAt: "2030-01-01T11:25:00.000Z",
+      conflictedBookingIds: ["booking-1"],
+    });
   });
 
   it("does not notify customers for sub-threshold arrival delays", async () => {

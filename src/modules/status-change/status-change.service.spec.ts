@@ -1,8 +1,16 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, DomainOutboxEventType, PaymentStatus, Status } from "@prisma/client";
+import {
+  BookingCompletionSource,
+  BookingStatus,
+  BookingType,
+  DomainOutboxEventType,
+  PaymentStatus,
+  Status,
+} from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createCar } from "../../shared/helper.fixtures";
+import { BookingNotFoundException } from "../booking/booking.error";
 import { DatabaseService } from "../database/database.service";
 import { DomainOutboxService } from "../domain-outbox/domain-outbox.service";
 import { BookingStatusChangedHandler } from "../notification/handlers/booking-status-changed.handler";
@@ -30,6 +38,7 @@ describe("StatusChangeService", () => {
             booking: {
               findMany: vi.fn(),
               findUnique: vi.fn(),
+              findUniqueOrThrow: vi.fn(),
               findFirst: vi.fn(),
               update: vi.fn(),
               updateMany: vi.fn(),
@@ -173,6 +182,21 @@ describe("StatusChangeService", () => {
 
     const result = await service.updateBookingsFromActiveToCompleted();
 
+    expect(mockDatabaseService.booking.findMany).toHaveBeenCalledWith({
+      where: {
+        status: BookingStatus.ACTIVE,
+        paymentStatus: PaymentStatus.PAID,
+        type: { not: BookingType.AIRPORT_PICKUP },
+        endDate: { lte: expect.any(Date) },
+        car: { status: Status.BOOKED },
+      },
+      include: {
+        car: { include: { owner: true } },
+        user: true,
+        chauffeur: true,
+        legs: { include: { extensions: true } },
+      },
+    });
     expect(result).toBe("No bookings to update");
   });
 
@@ -192,15 +216,16 @@ describe("StatusChangeService", () => {
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
 
-    const bookingUpdateMock = vi
-      .fn()
-      .mockResolvedValue({ ...mockBooking, status: BookingStatus.COMPLETED });
     const bookingFindFirstMock = vi.fn().mockResolvedValue(null);
     const carUpdateMock = vi.fn().mockResolvedValue({ id: "car-1", status: Status.AVAILABLE });
 
     const reviewFindUniqueMock = vi.fn().mockResolvedValue(null);
 
-    vi.mocked(mockDatabaseService.booking.update).mockImplementation(bookingUpdateMock);
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValue({
+      ...mockBooking,
+      status: BookingStatus.COMPLETED,
+    });
     vi.mocked(mockDatabaseService.booking.findFirst).mockImplementation(bookingFindFirstMock);
     vi.mocked(mockDatabaseService.car.update).mockImplementation(carUpdateMock);
     vi.mocked(mockDatabaseService.review.findUnique).mockImplementation(reviewFindUniqueMock);
@@ -272,7 +297,8 @@ describe("StatusChangeService", () => {
     });
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
-    vi.mocked(mockDatabaseService.booking.update).mockResolvedValue({
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValue({
       ...mockBooking,
       status: BookingStatus.COMPLETED,
     });
@@ -309,7 +335,8 @@ describe("StatusChangeService", () => {
     });
 
     vi.mocked(mockDatabaseService.booking.findMany).mockResolvedValue([mockBooking]);
-    vi.mocked(mockDatabaseService.booking.update).mockResolvedValue({
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValue({
       ...mockBooking,
       status: BookingStatus.COMPLETED,
     });
@@ -353,7 +380,11 @@ describe("StatusChangeService", () => {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
         }),
-        data: { status: BookingStatus.ACTIVE },
+        data: {
+          status: BookingStatus.ACTIVE,
+          completionTokenHash: expect.any(String),
+          completionTokenExpiresAt: expect.any(Date),
+        },
       }),
     );
     expect(mockDatabaseService.booking.findUnique).toHaveBeenCalledWith({
@@ -372,10 +403,112 @@ describe("StatusChangeService", () => {
         oldStatus: BookingStatus.CONFIRMED,
         newStatus: BookingStatus.ACTIVE,
         showReviewRequest: false,
+        chauffeurCompletionUrl: expect.stringContaining(
+          "/chauffeur/airport-trips/airport-1/complete?token=",
+        ),
       }),
       undefined,
     );
     expect(result).toBe("Activated airport booking airport-1");
+  });
+
+  it("completes an active airport booking with its chauffeur token", async () => {
+    const completedAt = new Date("2026-08-17T12:00:00.000Z");
+    const booking = createBooking({
+      id: "airport-complete-1",
+      type: BookingType.AIRPORT_PICKUP,
+      status: BookingStatus.ACTIVE,
+      paymentStatus: PaymentStatus.PAID,
+      chauffeurId: "chauffeur-1",
+      completionTokenHash: "token-hash",
+      completionTokenExpiresAt: new Date("2099-08-17T12:00:00.000Z"),
+      completedAt: null,
+      car: createCar({ id: "car-airport", status: Status.BOOKED }),
+    });
+    vi.mocked(mockDatabaseService.booking.findFirst)
+      .mockResolvedValueOnce(booking)
+      .mockResolvedValueOnce(null);
+    vi.mocked(mockDatabaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(mockDatabaseService.booking.findUniqueOrThrow).mockResolvedValueOnce({
+      ...booking,
+      status: BookingStatus.COMPLETED,
+      completedAt,
+      completionSource: BookingCompletionSource.CHAUFFEUR_LINK,
+      completedByUserId: "chauffeur-1",
+    });
+    vi.mocked(mockDatabaseService.review.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+
+    const result = await service.completeAirportBookingWithToken(
+      "airport-complete-1",
+      "token-hash",
+    );
+
+    expect(mockDatabaseService.booking.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "airport-complete-1",
+          status: BookingStatus.ACTIVE,
+          completionTokenHash: "token-hash",
+          completionTokenExpiresAt: { gt: expect.any(Date) },
+        }),
+      }),
+    );
+    expect(mockDatabaseService.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: BookingStatus.COMPLETED,
+          completedByUserId: "chauffeur-1",
+          completionSource: BookingCompletionSource.CHAUFFEUR_LINK,
+          completionTokenHash: null,
+          completionTokenExpiresAt: null,
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      id: "airport-complete-1",
+      status: BookingStatus.COMPLETED,
+      completedAt,
+    });
+  });
+
+  it("rejects an expired chauffeur completion token", async () => {
+    vi.mocked(mockDatabaseService.booking.findFirst).mockResolvedValueOnce(null);
+
+    await expect(
+      service.getAirportCompletionDetails("airport-complete-1", "expired-token-hash"),
+    ).rejects.toBeInstanceOf(BookingNotFoundException);
+
+    expect(mockDatabaseService.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: BookingStatus.ACTIVE,
+          completionTokenHash: "expired-token-hash",
+          completionTokenExpiresAt: { gt: expect.any(Date) },
+        }),
+      }),
+    );
+  });
+
+  it("rejects a fleet owner who does not own the airport booking", async () => {
+    vi.mocked(mockDatabaseService.booking.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(mockDatabaseService.$transaction).mockImplementation(
+      async <T>(callback: (tx: DatabaseService) => Promise<T>): Promise<T> =>
+        callback(mockDatabaseService),
+    );
+
+    await expect(
+      service.completeAirportBookingForUser(
+        "airport-complete-1",
+        "wrong-owner",
+        BookingCompletionSource.FLEET_OWNER,
+      ),
+    ).rejects.toBeInstanceOf(BookingNotFoundException);
+    expect(mockDatabaseService.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("should skip airport activation when updated booking cannot be refetched", async () => {

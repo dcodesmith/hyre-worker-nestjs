@@ -12,4 +12,5 @@ export interface BookingConfirmedEventPayload {
 export interface FlightArrivalUpdatedEventPayload {
   flightId: string;
   activationAt: string;
+  conflictedBookingIds: string[];
 }

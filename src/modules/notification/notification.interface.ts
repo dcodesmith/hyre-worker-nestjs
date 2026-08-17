@@ -38,6 +38,7 @@ export enum NotificationType {
   FLIGHT_DELAY_RECOVERED = "flight-delay-recovered",
   FLIGHT_REINSTATED = "flight-reinstated",
   FLIGHT_ASSIGNMENT_SNAPSHOT = "flight-assignment-snapshot",
+  AIRPORT_SCHEDULE_CONFLICT = "airport-schedule-conflict",
 }
 
 export type FlightNotificationType =
@@ -50,7 +51,8 @@ export type FlightNotificationType =
   | NotificationType.FLIGHT_TERMINAL_CHANGED
   | NotificationType.FLIGHT_DELAY_RECOVERED
   | NotificationType.FLIGHT_REINSTATED
-  | NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT;
+  | NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT
+  | NotificationType.AIRPORT_SCHEDULE_CONFLICT;
 
 export interface EmailNotificationData {
   to: string;

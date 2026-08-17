@@ -20,6 +20,9 @@ describe("ExtensionConfirmationService", () => {
     bookingLeg: {
       updateMany: vi.fn(),
     },
+    booking: {
+      updateMany: vi.fn(),
+    },
   };
   const databaseServiceMock = {
     $transaction: vi.fn((fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
@@ -111,6 +114,13 @@ describe("ExtensionConfirmationService", () => {
         },
       },
       data: { legEndTime: new Date("2026-02-20T12:00:00.000Z") },
+    });
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        endDate: { lt: new Date("2026-02-20T12:00:00.000Z") },
+      },
+      data: { endDate: new Date("2026-02-20T12:00:00.000Z") },
     });
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       bookingExtensionConfirmedHandler,
@@ -227,6 +237,13 @@ describe("ExtensionConfirmationService", () => {
         legEndTime: { lt: shorterExtensionEnd },
       },
       data: { legEndTime: shorterExtensionEnd },
+    });
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        endDate: { lt: shorterExtensionEnd },
+      },
+      data: { endDate: shorterExtensionEnd },
     });
     expect(notificationOutboxService.create).toHaveBeenCalled();
   });

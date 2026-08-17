@@ -50,6 +50,7 @@ export class StatusChangeEventsListener {
     await this.schedulingService.scheduleAirportActivationsForFlight(
       payload.flightId,
       activationAt,
+      payload.conflictedBookingIds,
     );
   }
 }

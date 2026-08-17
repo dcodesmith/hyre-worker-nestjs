@@ -60,12 +60,25 @@ export class StatusChangeSchedulingService {
     }
   }
 
-  async scheduleAirportActivationsForFlight(flightId: string, activationAt: Date): Promise<void> {
+  async scheduleAirportActivationsForFlight(
+    flightId: string,
+    activationAt: Date,
+    conflictedBookingIds: string[] = [],
+  ): Promise<void> {
     let bookings: Array<{ id: string }>;
     try {
+      await Promise.all(
+        conflictedBookingIds.map(async (bookingId) => {
+          const existingJob = await this.statusUpdateQueue.getJob(
+            this.getAirportActivationJobId(bookingId),
+          );
+          await existingJob?.remove();
+        }),
+      );
       bookings = await this.databaseService.booking.findMany({
         where: {
           flightId,
+          id: { notIn: conflictedBookingIds },
           type: BookingType.AIRPORT_PICKUP,
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
@@ -79,7 +92,7 @@ export class StatusChangeSchedulingService {
           flightId,
           error: error instanceof Error ? error.message : String(error),
         },
-        "Failed to fetch airport bookings for flight activation scheduling",
+        "Failed to prepare airport bookings for flight activation scheduling",
       );
       throw error;
     }

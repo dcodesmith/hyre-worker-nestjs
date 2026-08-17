@@ -73,6 +73,13 @@ export class ExtensionConfirmationService {
         },
         data: { legEndTime: extension.extensionEndTime },
       });
+      await tx.booking.updateMany({
+        where: {
+          id: extension.bookingLeg.booking.id,
+          endDate: { lt: extension.extensionEndTime },
+        },
+        data: { endDate: extension.extensionEndTime },
+      });
 
       await this.notificationOutboxService.create(
         this.bookingExtensionConfirmedHandler,
