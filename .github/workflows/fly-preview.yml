@@ -270,11 +270,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Ensure DATABASE_URL is available
+      - name: Ensure Neon database URLs are available
         env:
-          DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+          DB_URL_DIRECT: ${{ steps.neon_db.outputs.db_url }}
+          DB_URL_POOLED: ${{ steps.neon_db.outputs.db_url_pooled }}
         run: |
-          if [ -z "${DATABASE_URL}" ]; then
+          if [ -z "${DB_URL_DIRECT}" ]; then
+            echo "Neon direct database URL is empty."
+            exit 1
+          fi
+          if [ -z "${DB_URL_POOLED}" ]; then
             echo "DATABASE_URL is empty. Neon pooled URL could not be resolved in preflight."
             exit 1
           fi
@@ -282,7 +287,7 @@ jobs:
       - name: Run Prisma migrations on preview branch
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
-        run: pnpm exec prisma migrate deploy
+        run: sh scripts/run-prisma-migrations.sh
 
       - name: Build app
         env:

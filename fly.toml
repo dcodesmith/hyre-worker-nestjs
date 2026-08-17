@@ -9,6 +9,9 @@ primary_region = 'lhr'
 [env]
   TZ = 'Africa/Lagos'
 
+[deploy]
+  release_command = '/bin/sh scripts/run-prisma-migrations.sh'
+
 [http_service]
   internal_port = 3000
   force_https = true
