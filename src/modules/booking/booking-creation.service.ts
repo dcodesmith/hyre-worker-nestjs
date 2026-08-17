@@ -608,6 +608,7 @@ export class BookingCreationService {
         : null;
       const response: CreateBookingResponse = {
         bookingId: createdBooking.id,
+        txRef: paymentResult.paymentIntentId,
         checkoutUrl: paymentResult.checkoutUrl,
         totalAmount: totalAmount.toNumber(),
         currency: "NGN",

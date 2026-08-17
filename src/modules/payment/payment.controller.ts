@@ -23,6 +23,10 @@ import {
   confirmBookingPaymentSchema,
 } from "./dto/confirm-booking-payment.dto";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
+import {
+  type ReconcileBookingExpirationDto,
+  reconcileBookingExpirationSchema,
+} from "./dto/reconcile-booking-expiration.dto";
 import { type RefundPaymentDto, refundPaymentSchema } from "./dto/refund-payment.dto";
 import { FlutterwaveWebhookGuard } from "./guards/flutterwave-webhook.guard";
 import { InvalidFlutterwaveWebhookPayloadException } from "./payment.error";
@@ -75,6 +79,17 @@ export class PaymentController {
     @Headers("x-payment-status-token") paymentStatusToken?: string,
   ): Promise<BookingPaymentStatusResponse> {
     return this.paymentApiService.confirmBookingPayment(dto, sessionUser, paymentStatusToken);
+  }
+
+  @Post("booking-expiration")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalSessionGuard)
+  async reconcileBookingExpiration(
+    @ZodBody(reconcileBookingExpirationSchema) dto: ReconcileBookingExpirationDto,
+    @CurrentUser() sessionUser: AuthSession["user"] | null,
+    @Headers("x-payment-status-token") paymentStatusToken?: string,
+  ): Promise<BookingPaymentStatusResponse> {
+    return this.paymentApiService.reconcileBookingExpiration(dto, sessionUser, paymentStatusToken);
   }
 
   /**

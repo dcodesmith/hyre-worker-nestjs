@@ -51,6 +51,7 @@ COPY --from=builder /tmp/node_modules_prod ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
+COPY --from=builder /app/scripts/run-prisma-migrations.sh ./scripts/run-prisma-migrations.sh
 
 # Install Prisma CLI with the exact same version as @prisma/client.
 # A mismatch here can break runtime imports like ".prisma/client/default".
@@ -74,5 +75,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
 # Security: Run as non-root user 'node'
 USER node
 
-# Start with entrypoint (runs migrations then starts app)
+# Start the app. Database migrations run once per deployment.
 CMD ["./entrypoint.sh"]

@@ -50,6 +50,7 @@ describe("BookingController", () => {
 
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
+    txRef: "booking-123",
     checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
     totalAmount: 56437.5,
     currency: "NGN" as const,

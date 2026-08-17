@@ -122,6 +122,7 @@ describe("BookingCreationIdempotencyService", () => {
         bookingId: "booking-1",
         response: {
           bookingId: "booking-1",
+          txRef: "pi-1",
           checkoutUrl: "https://checkout.example/1",
           totalAmount: 100,
           currency: "NGN",
@@ -137,10 +138,39 @@ describe("BookingCreationIdempotencyService", () => {
       kind: "replay",
       response: expect.objectContaining({
         bookingId: "booking-1",
+        txRef: "pi-1",
         totalAmount: 100,
         paymentStatusToken: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       }),
     });
+  });
+
+  it("rejects a stored response without a transaction reference", async () => {
+    databaseService.bookingCreationIdempotency.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    databaseService.bookingCreationIdempotency.findUnique.mockResolvedValue(
+      record({
+        state: BookingCreationIdempotencyState.COMPLETED,
+        bookingId: "booking-1",
+        response: {
+          bookingId: "booking-1",
+          checkoutUrl: "https://checkout.example/1",
+          totalAmount: 100,
+          currency: "NGN",
+          bookingStatus: BookingStatus.PENDING,
+          reservationExpiresAt,
+          paymentStatusTokenRequired: false,
+        },
+      }),
+    );
+
+    await expect(service.claim("user:user-1", "request-key", "hash-1")).rejects.toThrow(
+      "Stored booking response is invalid.",
+    );
   });
 
   it("finalizes and replays a checkpointed provider response", async () => {
@@ -155,6 +185,7 @@ describe("BookingCreationIdempotencyService", () => {
         bookingId: "booking-1",
         response: {
           bookingId: "booking-1",
+          txRef: "pi-1",
           checkoutUrl: "https://checkout.example/1",
           totalAmount: 100,
           currency: "NGN",
@@ -339,6 +370,7 @@ describe("BookingCreationIdempotencyService", () => {
     databaseService.bookingCreationIdempotency.updateMany.mockResolvedValue({ count: 1 });
     const response = {
       bookingId: "booking-1",
+      txRef: "pi-1",
       checkoutUrl: "https://checkout.example/1",
       totalAmount: 100,
       currency: "NGN" as const,
@@ -374,6 +406,7 @@ describe("BookingCreationIdempotencyService", () => {
         data: {
           response: {
             bookingId: "booking-1",
+            txRef: "pi-1",
             checkoutUrl: "https://checkout.example/1",
             totalAmount: 100,
             currency: "NGN",

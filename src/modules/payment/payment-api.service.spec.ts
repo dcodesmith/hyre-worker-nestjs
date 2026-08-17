@@ -8,6 +8,7 @@ import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "../booking/booking.con
 import { BookingReadService } from "../booking/booking-read.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import {
   PaymentAccessForbiddenException,
@@ -39,6 +40,9 @@ describe("PaymentApiService", () => {
   };
   const chargeCompletedHandler = {
     confirmByTransactionId: vi.fn(),
+  };
+  const bookingReservationExpirationService = {
+    reconcileExpiredReservation: vi.fn(),
   };
 
   const mockUserInfo = {
@@ -94,6 +98,10 @@ describe("PaymentApiService", () => {
         },
         { provide: BookingReadService, useValue: bookingReadService },
         { provide: ChargeCompletedHandler, useValue: chargeCompletedHandler },
+        {
+          provide: BookingReservationExpirationService,
+          useValue: bookingReservationExpirationService,
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -169,6 +177,62 @@ describe("PaymentApiService", () => {
 
       expect(chargeCompletedHandler.confirmByTransactionId).not.toHaveBeenCalled();
     });
+  });
+
+  describe("reconcileBookingExpiration", () => {
+    const verifyingStatus = {
+      bookingId: "booking-123",
+      bookingReference: "BK-123",
+      txRef: "tx-ref-123",
+      bookingStatus: BookingStatus.PENDING,
+      paymentStatus: PaymentStatus.UNPAID,
+      paymentId: null,
+      totalAmount: 10000,
+      reservationExpiresAt: "2026-08-10T18:30:00.000Z",
+      lifecycleState: "VERIFYING" as const,
+    };
+
+    it("reconciles an accessible expired booking before returning its latest state", async () => {
+      bookingReadService.getBookingPaymentStatus
+        .mockResolvedValueOnce(verifyingStatus)
+        .mockResolvedValueOnce({
+          ...verifyingStatus,
+          bookingStatus: BookingStatus.CANCELLED,
+          lifecycleState: "EXPIRED",
+        });
+      bookingReservationExpirationService.reconcileExpiredReservation.mockResolvedValueOnce(true);
+
+      await expect(
+        service.reconcileBookingExpiration(
+          { bookingId: "booking-123", txRef: "tx-ref-123" },
+          mockUserInfo as never,
+        ),
+      ).resolves.toMatchObject({ lifecycleState: "EXPIRED" });
+
+      expect(bookingReservationExpirationService.reconcileExpiredReservation).toHaveBeenCalledWith(
+        "booking-123",
+      );
+      expect(bookingReadService.getBookingPaymentStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(["CONFIRMED", "EXPIRED"] as const)(
+      "does not reconcile an already terminal %s booking",
+      async (lifecycleState) => {
+        bookingReadService.getBookingPaymentStatus.mockResolvedValueOnce({
+          ...verifyingStatus,
+          lifecycleState,
+        });
+
+        await service.reconcileBookingExpiration(
+          { bookingId: "booking-123", txRef: "tx-ref-123" },
+          mockUserInfo as never,
+        );
+
+        expect(
+          bookingReservationExpirationService.reconcileExpiredReservation,
+        ).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe("initializePayment", () => {

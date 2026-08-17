@@ -12,9 +12,11 @@ import { BookingReadService } from "../booking/booking-read.service";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import type { ConfirmBookingPaymentDto } from "./dto/confirm-booking-payment.dto";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
+import type { ReconcileBookingExpirationDto } from "./dto/reconcile-booking-expiration.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
 import {
   PaymentAccessForbiddenException,
@@ -45,6 +47,7 @@ export class PaymentApiService {
     private readonly refundFinalizationService: RefundFinalizationService,
     private readonly bookingReadService: BookingReadService,
     private readonly chargeCompletedHandler: ChargeCompletedHandler,
+    private readonly bookingReservationExpirationService: BookingReservationExpirationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentApiService.name);
@@ -64,6 +67,25 @@ export class PaymentApiService {
     if (current.lifecycleState === "CONFIRMED") return current;
 
     await this.chargeCompletedHandler.confirmByTransactionId(dto.txRef, dto.transactionId);
+    return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
+  }
+
+  async reconcileBookingExpiration(
+    dto: ReconcileBookingExpirationDto,
+    sessionUser: AuthSession["user"] | null,
+    paymentStatusToken?: string,
+  ): Promise<BookingPaymentStatusResponse> {
+    const query = { bookingId: dto.bookingId, txRef: dto.txRef };
+    const current = await this.bookingReadService.getBookingPaymentStatus(
+      query,
+      sessionUser,
+      paymentStatusToken,
+    );
+    if (current.lifecycleState === "CONFIRMED" || current.lifecycleState === "EXPIRED") {
+      return current;
+    }
+
+    await this.bookingReservationExpirationService.reconcileExpiredReservation(dto.bookingId);
     return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
   }
 

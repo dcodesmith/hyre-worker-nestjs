@@ -223,7 +223,7 @@ describe("BookingReadService", () => {
   });
 
   it("returns the reservation expiry with payment status", async () => {
-    const reservationExpiresAt = new Date("2026-08-02T20:10:00.000Z");
+    const reservationExpiresAt = new Date("2099-08-02T20:10:00.000Z");
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
       id: "booking-123",
       bookingReference: "BK-123",
@@ -251,6 +251,30 @@ describe("BookingReadService", () => {
         reservationExpiresAt: reservationExpiresAt.toISOString(),
       }),
     );
+  });
+
+  it("returns VERIFYING when the unpaid reservation window has elapsed", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-123",
+      bookingReference: "BK-123",
+      paymentIntent: "booking-123",
+      paymentStatus: "UNPAID",
+      paymentId: null,
+      status: "PENDING",
+      userId: "user-1",
+      guestUser: null,
+      totalAmount: { toNumber: () => 12000 },
+      paymentSessionExpiresAt: new Date(Date.now() - 1),
+      paymentStatusTokenHash: null,
+      customerPayments: [],
+    });
+
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "booking-123" },
+        customerSessionUser,
+      ),
+    ).resolves.toMatchObject({ lifecycleState: "VERIFYING" });
   });
 
   it("requires the opaque status token for guest payment status", async () => {
@@ -318,7 +342,7 @@ describe("BookingReadService", () => {
       userId: "user-1",
       guestUser: null,
       totalAmount: { toNumber: () => 12000 },
-      paymentSessionExpiresAt: new Date("2026-08-02T20:10:00.000Z"),
+      paymentSessionExpiresAt: new Date("2099-08-02T20:10:00.000Z"),
       paymentStatusTokenHash: null,
     };
     databaseServiceMock.booking.findFirst

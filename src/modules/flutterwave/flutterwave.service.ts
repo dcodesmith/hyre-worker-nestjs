@@ -178,11 +178,24 @@ export class FlutterwaveService {
       );
     } catch (error) {
       const handledError = this.handleError(error, "findTransactionByReference");
-      if (handledError.statusCode === HttpStatus.NOT_FOUND) {
+      if (this.isMissingTransactionReference(handledError)) {
         return null;
       }
       throw handledError;
     }
+  }
+
+  private isMissingTransactionReference(error: FlutterwaveError): boolean {
+    if (error.statusCode === HttpStatus.NOT_FOUND) return true;
+    if (error.statusCode !== HttpStatus.BAD_REQUEST) return false;
+
+    const message = error.message
+      .trim()
+      .toLowerCase()
+      .replace(/[.!]+$/, "");
+    return (
+      message === "no transaction was found for this id" || message === "transaction not found"
+    );
   }
 
   async initiateRefund(options: RefundOptions): Promise<RefundResponse> {

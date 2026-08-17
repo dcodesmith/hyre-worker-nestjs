@@ -300,6 +300,7 @@ describe("BookingCreationService", () => {
 
       expect(result).toEqual({
         bookingId: "booking-123",
+        txRef: "pi-123",
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
         totalAmount: 56437.5,
         currency: "NGN",
@@ -357,6 +358,7 @@ describe("BookingCreationService", () => {
 
       expect(result).toEqual({
         bookingId: "booking-123",
+        txRef: "pi-123",
         checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
         totalAmount: 56437.5,
         currency: "NGN",

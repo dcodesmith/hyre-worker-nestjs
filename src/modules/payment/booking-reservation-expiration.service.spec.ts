@@ -22,7 +22,7 @@ const transaction = {
 describe("BookingReservationExpirationService", () => {
   let service: BookingReservationExpirationService;
   const databaseService = {
-    booking: { findMany: vi.fn() },
+    booking: { findFirst: vi.fn(), findMany: vi.fn() },
   };
   const flutterwaveService = {
     findTransactionByReference: vi.fn(),
@@ -114,6 +114,36 @@ describe("BookingReservationExpirationService", () => {
 
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
+  });
+
+  it("reconciles one expired reservation on demand", async () => {
+    databaseService.booking.findFirst.mockResolvedValue({
+      id: "booking-1",
+      paymentIntent: "booking-1",
+    });
+    flutterwaveService.findTransactionByReference.mockResolvedValue(null);
+    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+
+    await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe(true);
+
+    expect(databaseService.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "booking-1",
+          status: "PENDING",
+          paymentStatus: "UNPAID",
+        }),
+      }),
+    );
+    expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+  });
+
+  it("does not query Flutterwave when an on-demand reservation is not expired", async () => {
+    databaseService.booking.findFirst.mockResolvedValue(null);
+
+    await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe(false);
+
+    expect(flutterwaveService.findTransactionByReference).not.toHaveBeenCalled();
   });
 
   it("reconciles both deterministic references when the stored payment intent is missing", async () => {
