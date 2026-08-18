@@ -40,6 +40,7 @@ describe("CarCategoriesService", () => {
     vehicleType: VehicleType.SEDAN,
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
     promotion: null,
     averageRating: 0,
     totalReviews: 0,
@@ -318,6 +319,22 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]?.id).toBe("car-1");
       expect(result.allCars[0]?.promotion).toBeNull();
       expect(result.allCars[0]).not.toHaveProperty("ownerId");
+    });
+
+    it("includes createdAt on public cars for New-badge clients", async () => {
+      const createdAt = new Date("2026-08-11T09:00:00.000Z");
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([
+        createMockCar({ id: "car-1", createdAt }),
+      ]);
+
+      const result = await service.getCategorizedCars({ limit: 50 });
+
+      expect(result.allCars[0]?.createdAt).toEqual(createdAt);
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ createdAt: true }),
+        }),
+      );
     });
 
     it("enriches cars with ratings from batch lookup", async () => {

@@ -30,6 +30,8 @@ export interface PublicCarDto {
   vehicleType: VehicleType;
   serviceTier: ServiceTier;
   images: { url: string }[];
+  /** Listing created time (ISO-8601 in JSON). Used by clients for the New badge. */
+  createdAt: Date;
   promotion: CarPromotionDto | null;
   /** Visible-review average (0 when none). */
   averageRating: number;

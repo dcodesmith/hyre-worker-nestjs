@@ -58,6 +58,7 @@ describe("CarSearchService", () => {
     vehicleType: VehicleType.SEDAN,
     serviceTier: ServiceTier.STANDARD,
     images: [{ url: "https://example.com/car.jpg" }],
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
     owner: { username: "fleetowner1", name: "Fleet Owner" },
     promotion: null,
     averageRating: 0,
@@ -521,6 +522,7 @@ describe("CarSearchService", () => {
       expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           select: expect.objectContaining({
+            createdAt: true,
             images: expect.objectContaining({
               select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
@@ -662,6 +664,7 @@ describe("CarSearchService", () => {
 
       expect(result).toMatchObject({
         id: "car-123",
+        createdAt: new Date("2026-08-01T00:00:00.000Z"),
         owner: { username: "fleetowner1", name: "Fleet Owner" },
         promotion: null,
         averageRating: 0,
@@ -674,6 +677,7 @@ describe("CarSearchService", () => {
             id: "car-123",
           }),
           select: expect.objectContaining({
+            createdAt: true,
             images: expect.objectContaining({
               select: { url: true },
               orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],

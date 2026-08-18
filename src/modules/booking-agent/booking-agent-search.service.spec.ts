@@ -47,6 +47,7 @@ describe("BookingAgentSearchService", () => {
     vehicleType: "SUV",
     serviceTier: "STANDARD",
     images: [{ url: `https://cdn.tripdly.test/${id}.jpg` }],
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
     owner: { username: "fleet-owner", name: "Fleet Owner" },
     promotion: null,
     averageRating: 0,
