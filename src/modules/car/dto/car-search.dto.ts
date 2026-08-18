@@ -135,6 +135,8 @@ export interface SearchCarDto {
   vehicleType: VehicleType;
   serviceTier: ServiceTier;
   images: { url: string }[];
+  /** Listing created time (ISO-8601 in JSON). Used by clients for the New badge. */
+  createdAt: Date;
   owner: CarOwnerDto;
   promotion: CarPromotionDto | null;
   /** Visible-review average (0 when none). */

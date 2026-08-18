@@ -73,6 +73,7 @@ export class CarCategoriesService {
           pricingIncludesFuel: true,
           vehicleType: true,
           serviceTier: true,
+          createdAt: true,
           images: { select: { url: true }, orderBy: { createdAt: "asc" }, take: 3 },
         },
         orderBy: [{ updatedAt: "desc" }, { dayRate: "asc" }],

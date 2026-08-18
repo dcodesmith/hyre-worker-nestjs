@@ -427,6 +427,7 @@ export class CarSearchService {
             pricingIncludesFuel: true,
             vehicleType: true,
             serviceTier: true,
+            createdAt: true,
             // hireApp parity: an approved car shows all its images regardless of
             // per-image status. The car is already gated on approvalStatus above.
             images: {
@@ -528,6 +529,7 @@ export class CarSearchService {
           pricingIncludesFuel: true,
           vehicleType: true,
           serviceTier: true,
+          createdAt: true,
           // hireApp parity: an approved car shows all its images regardless of
           // per-image status. The car is already gated on approvalStatus above.
           images: {
