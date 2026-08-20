@@ -1,7 +1,9 @@
 Preview Environment Requirements
 ===============================
 
-This repository's PR preview workflow is defined in `.github/workflows/neon-preview.yml`.
+This repository's PR preview workflow is defined in `.github/workflows/fly-preview.yml`.
+Teardown is `.github/workflows/fly-preview-cleanup.yml`.
+How preview relates to long-lived dev is in `docs/environments.md`.
 
 What it does
 ------------
