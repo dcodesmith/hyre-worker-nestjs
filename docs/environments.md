@@ -17,4 +17,4 @@
 
 ## Merge this PR
 
-Create a GitHub Environment named `development` and copy any environment-scoped vars/secrets from `production`. Repo-level secrets keep working.
+Create a GitHub Environment named `development`. Add the deploy job's environment-scoped vars (`OPERATIONS_EMAIL` and the Twilio content SIDs) with the test/dev values already used by `hyre-worker-nestjs`. Do not copy future live/prod credential values. Repo-level secrets keep working.
