@@ -15,6 +15,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlightAwareService } from "../src/modules/flightaware/flightaware.service";
 import { FlightAwareCacheService } from "../src/modules/flightaware/flightaware-cache.service";
+import { FLIGHT_SEARCH_THROTTLE_CONFIG } from "../src/modules/flightaware/flightaware-throttling.config";
 import { NotificationOutboxService } from "../src/modules/notification/notification-outbox.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -106,6 +107,48 @@ describe("FlightAware E2E Tests", () => {
       },
     });
     expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith("DL54", upcomingDate);
+  });
+
+  it("GET /api/search-flight returns 429 after exceeding the IP rate limit", async () => {
+    vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+      flight: {
+        flightNumber: "DL54",
+        flightId: "DAL54-rate-limit",
+        origin: "KATL",
+        originIATA: "ATL",
+        destination: "DNMM",
+        destinationIATA: "LOS",
+        scheduledArrival: "2026-07-20T08:45:00.000Z",
+        arrivalTime: "2026-07-20T08:45:00.000Z",
+        arrivalTimeSource: "scheduled",
+        status: "Scheduled",
+        isLive: false,
+      },
+    });
+
+    let response: request.Response | undefined;
+    const maxAttempts = FLIGHT_SEARCH_THROTTLE_CONFIG.limit + 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      response = await request(app.getHttpServer())
+        .get(`/api/search-flight?flightNumber=DL54&date=${upcomingDate}`)
+        .set("x-forwarded-for", "198.51.100.20");
+
+      if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
+        break;
+      }
+    }
+
+    expect(response?.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(response?.body.detail).toBe(
+      "Too many flight search requests. Please try again shortly.",
+    );
+    expect(response?.headers["retry-after"]).toBeDefined();
+    expect(response?.headers["ratelimit-limit"]).toBe(String(FLIGHT_SEARCH_THROTTLE_CONFIG.limit));
+    expect(response?.headers["ratelimit-remaining"]).toBe("0");
+    expect(response?.headers["ratelimit-policy"]).toBe(
+      `${FLIGHT_SEARCH_THROTTLE_CONFIG.limit};w=${FLIGHT_SEARCH_THROTTLE_CONFIG.ttlSeconds}`,
+    );
   });
 
   it("shares flight search results through Redis", async () => {
