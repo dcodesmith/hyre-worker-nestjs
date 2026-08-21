@@ -38,6 +38,7 @@ jobs:
       - name: Deploy to Fly.io
         run: |
           flyctl deploy --remote-only \
+            --env "APP_ENV=development" \
             --env "OPERATIONS_EMAIL=$OPERATIONS_EMAIL" \
             --env "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID=$TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID" \
             --env "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID=$TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID" \

@@ -15,6 +15,7 @@ concurrency:
 
 env:
   NODE_ENV: production
+  APP_ENV: preview
   APP_NAME: Tripdly API Preview
   SENDER_NAME: Yomide
   AWS_REGION: eu-west-2
@@ -341,6 +342,7 @@ jobs:
           ha: false
           secrets: >-
             NODE_ENV=${{ env.NODE_ENV }}
+            APP_ENV=${{ env.APP_ENV }}
             DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
             REDIS_URL=${{ steps.redis_url.outputs.redis_url }}
             RESEND_API_KEY=${{ env.RESEND_API_KEY }}

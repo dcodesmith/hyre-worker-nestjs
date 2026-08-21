@@ -8,6 +8,7 @@ primary_region = 'lhr'
 
 [env]
   TZ = 'Africa/Lagos'
+  APP_ENV = 'development'
 
 [deploy]
   release_command = '/bin/sh scripts/run-prisma-migrations.sh'

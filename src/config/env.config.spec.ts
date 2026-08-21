@@ -112,3 +112,34 @@ describe("envSchema booking modification cutoff", () => {
     expect(result.BOOKING_MODIFICATION_CUTOFF_HOURS).toBe(24);
   });
 });
+
+describe("envSchema APP_ENV", () => {
+  it("defaults to development", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+    });
+
+    expect(result.APP_ENV).toBe("development");
+  });
+
+  it("accepts preview", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      APP_ENV: "preview",
+    });
+
+    expect(result.APP_ENV).toBe("preview");
+  });
+
+  it("accepts production", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      APP_ENV: "production",
+    });
+
+    expect(result.APP_ENV).toBe("production");
+  });
+});

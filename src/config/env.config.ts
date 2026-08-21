@@ -84,6 +84,7 @@ export const envSchema = z
     SMTP_PASS: z.string().min(1).optional(),
 
     APP_NAME: z.string().min(1, "APP_NAME is required"),
+    APP_ENV: z.enum(["preview", "development", "production"]).default("development"),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z
