@@ -12,6 +12,7 @@ import { CarModule } from "./modules/car/car.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { DocumentsModule } from "./modules/documents/documents.module";
+import { FLIGHT_SEARCH_THROTTLE_CONFIG } from "./modules/flightaware/flightaware-throttling.config";
 import { FlutterwaveModule } from "./modules/flutterwave/flutterwave.module";
 import { HealthModule } from "./modules/health/health.module";
 import { HttpClientModule } from "./modules/http-client/http-client.module";
@@ -20,6 +21,7 @@ import { ObservabilityModule } from "./modules/infra/observability/observability
 import { QueueInfraModule } from "./modules/infra/queue-infra/queue-infra.module";
 import { JobModule } from "./modules/job/job.module";
 import { JOB_THROTTLE_CONFIG } from "./modules/job/job-throttling.config";
+import { TRIP_DURATION_THROTTLE_CONFIG } from "./modules/maps/maps-throttling.config";
 import { PLACES_THROTTLE_CONFIG } from "./modules/maps/places-throttling.config";
 import { MessagingModule } from "./modules/messaging/messaging.module";
 import { NotificationModule } from "./modules/notification/notification.module";
@@ -61,6 +63,16 @@ import { RootController } from "./root.controller";
         name: PLACES_THROTTLE_CONFIG.name,
         ttl: PLACES_THROTTLE_CONFIG.ttlMs,
         limit: PLACES_THROTTLE_CONFIG.limits.autocomplete,
+      },
+      {
+        name: TRIP_DURATION_THROTTLE_CONFIG.name,
+        ttl: TRIP_DURATION_THROTTLE_CONFIG.ttlMs,
+        limit: TRIP_DURATION_THROTTLE_CONFIG.limit,
+      },
+      {
+        name: FLIGHT_SEARCH_THROTTLE_CONFIG.name,
+        ttl: FLIGHT_SEARCH_THROTTLE_CONFIG.ttlMs,
+        limit: FLIGHT_SEARCH_THROTTLE_CONFIG.limit,
       },
       {
         name: REFERRAL_THROTTLE_CONFIG.name,

@@ -6,6 +6,7 @@ primary_region = "lhr"
 [env]
   # Intentional: app/business logic uses Lagos local time while Fly region uses nearest suitable region.
   TZ = "Africa/Lagos"
+  APP_ENV = "preview"
 
 [http_service]
   internal_port = 3000

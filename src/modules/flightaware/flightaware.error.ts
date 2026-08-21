@@ -12,6 +12,7 @@ export const FlightAwareErrorCode = {
   NON_LAGOS_DESTINATION: "NON_LAGOS_DESTINATION",
   API_ERROR: "FLIGHTAWARE_API_ERROR",
   FLIGHT_RECORD_NOT_FOUND: "FLIGHT_RECORD_NOT_FOUND",
+  FLIGHT_SEARCH_RATE_LIMIT_EXCEEDED: "FLIGHT_SEARCH_RATE_LIMIT_EXCEEDED",
 } as const;
 
 /**
@@ -92,6 +93,17 @@ export class FlightNonLagosDestinationException extends FlightAwareException {
 export class FlightAwareApiException extends FlightAwareException {
   constructor(message: string) {
     super(FlightAwareErrorCode.API_ERROR, message, HttpStatus.BAD_GATEWAY, "FlightAware API Error");
+  }
+}
+
+export class FlightSearchRateLimitExceededException extends FlightAwareException {
+  constructor() {
+    super(
+      FlightAwareErrorCode.FLIGHT_SEARCH_RATE_LIMIT_EXCEEDED,
+      "Too many flight search requests. Please try again shortly.",
+      HttpStatus.TOO_MANY_REQUESTS,
+      "Too Many Requests",
+    );
   }
 }
 

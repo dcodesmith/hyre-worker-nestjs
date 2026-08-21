@@ -1,12 +1,17 @@
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { FlightStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { FlightAwareController } from "./flightaware.controller";
 import { FlightNonLagosDestinationException } from "./flightaware.error";
 import { FlightAwareService } from "./flightaware.service";
+import { FlightSearchThrottlerGuard } from "./flightaware-throttler.guard";
+import { FLIGHT_SEARCH_THROTTLE_CONFIG } from "./flightaware-throttling.config";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
+import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
 
 describe("FlightAwareController", () => {
   let controller: FlightAwareController;
@@ -15,6 +20,15 @@ describe("FlightAwareController", () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
+      imports: [
+        ThrottlerModule.forRoot([
+          {
+            name: FLIGHT_SEARCH_THROTTLE_CONFIG.name,
+            ttl: FLIGHT_SEARCH_THROTTLE_CONFIG.ttlMs,
+            limit: FLIGHT_SEARCH_THROTTLE_CONFIG.limit,
+          },
+        ]),
+      ],
       controllers: [FlightAwareController],
       providers: [
         {
@@ -29,6 +43,7 @@ describe("FlightAwareController", () => {
             handleWebhook: vi.fn(),
           },
         },
+        FlightSearchThrottlerGuard,
         {
           provide: ConfigService,
           useValue: {
@@ -125,5 +140,20 @@ describe("FlightAwareController", () => {
       bookingCount: 2,
       newStatus: FlightStatus.LANDED,
     });
+  });
+
+  it("applies FlightSearchThrottlerGuard on search-flight only", () => {
+    const searchGuards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      FlightAwareController.prototype.searchFlight,
+    );
+    const webhookGuards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      FlightAwareController.prototype.handleFlightAwareWebhook,
+    );
+
+    expect(searchGuards).toContain(FlightSearchThrottlerGuard);
+    expect(webhookGuards).toContain(FlightAwareWebhookGuard);
+    expect(webhookGuards).not.toContain(FlightSearchThrottlerGuard);
   });
 });

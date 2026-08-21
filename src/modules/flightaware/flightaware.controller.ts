@@ -15,6 +15,7 @@ import type { SearchFlightQueryDto } from "./dto/search-flight.dto";
 import { searchFlightQuerySchema } from "./dto/search-flight.dto";
 import { type FlightAwareWebhookResult, type SearchFlightResult } from "./flightaware.interface";
 import { FlightAwareService } from "./flightaware.service";
+import { FlightSearchThrottlerGuard } from "./flightaware-throttler.guard";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
 
@@ -27,6 +28,7 @@ export class FlightAwareController {
 
   @Get("search-flight")
   @Header("Cache-Control", "no-store")
+  @UseGuards(FlightSearchThrottlerGuard)
   async searchFlight(
     @ZodQuery(searchFlightQuerySchema) query: SearchFlightQueryDto,
   ): Promise<SearchFlightResult> {

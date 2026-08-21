@@ -1,3 +1,4 @@
+import type { CanActivate, Type } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -140,15 +141,15 @@ describe("PlacesController", () => {
     const autocompleteGuards = Reflect.getMetadata(
       GUARDS_METADATA,
       PlacesController.prototype.autocompleteAddress,
-    ) as unknown[];
+    ) as Type<CanActivate>[];
     const resolveGuards = Reflect.getMetadata(
       GUARDS_METADATA,
       PlacesController.prototype.resolvePlace,
-    ) as unknown[];
+    ) as Type<CanActivate>[];
     const validateGuards = Reflect.getMetadata(
       GUARDS_METADATA,
       PlacesController.prototype.validatePlace,
-    ) as unknown[];
+    ) as Type<CanActivate>[];
 
     expect(autocompleteGuards).toContain(PlacesThrottlerGuard);
     expect(resolveGuards).toContain(PlacesThrottlerGuard);

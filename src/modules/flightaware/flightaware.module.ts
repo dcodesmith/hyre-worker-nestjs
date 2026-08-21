@@ -3,6 +3,7 @@ import { BullBoardModule } from "@bull-board/nestjs";
 import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ThrottlerModule } from "@nestjs/throttler";
 import Redis from "ioredis";
 import { PinoLogger } from "nestjs-pino";
 import { FLIGHT_ALERTS_QUEUE } from "../../config/constants";
@@ -15,12 +16,14 @@ import { FlightAlertProcessor } from "./flightaware-alert.processor";
 import { FlightAwareAlertScheduler } from "./flightaware-alert.scheduler";
 import { FlightAwareAlertService } from "./flightaware-alert.service";
 import { FLIGHTAWARE_REDIS_CLIENT, FlightAwareCacheService } from "./flightaware-cache.service";
+import { FlightSearchThrottlerGuard } from "./flightaware-throttler.guard";
 import { FlightAwareWebhookService } from "./flightaware-webhook.service";
 import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
 
 @Module({
   imports: [
     ConfigModule,
+    ThrottlerModule,
     DatabaseModule,
     NotificationModule,
     BullModule.registerQueue({
@@ -69,6 +72,7 @@ import { FlightAwareWebhookGuard } from "./guards/flightaware-webhook.guard";
     FlightAwareAlertScheduler,
     FlightAwareWebhookService,
     FlightAwareWebhookGuard,
+    FlightSearchThrottlerGuard,
   ],
   exports: [FlightAwareService, FlightAwareAlertService, BullModule],
 })

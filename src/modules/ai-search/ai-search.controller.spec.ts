@@ -1,3 +1,4 @@
+import type { CanActivate, Type } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -56,7 +57,7 @@ describe("AiSearchController", () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       AiSearchController.prototype.search,
-    ) as unknown[];
+    ) as Type<CanActivate>[];
     expect(guards).toContain(AiSearchThrottlerGuard);
   });
 });
