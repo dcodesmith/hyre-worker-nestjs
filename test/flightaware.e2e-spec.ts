@@ -151,6 +151,40 @@ describe("FlightAware E2E Tests", () => {
     );
   });
 
+  it("GET /api/search-flight does not block a different IP after one IP is limited", async () => {
+    vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+      flight: {
+        flightNumber: "DL54",
+        flightId: "DAL54-rate-limit-other-ip",
+        origin: "KATL",
+        originIATA: "ATL",
+        destination: "DNMM",
+        destinationIATA: "LOS",
+        scheduledArrival: "2026-07-20T08:45:00.000Z",
+        arrivalTime: "2026-07-20T08:45:00.000Z",
+        arrivalTimeSource: "scheduled",
+        status: "Scheduled",
+        isLive: false,
+      },
+    });
+
+    const exhaustedIp = "198.51.100.40";
+    const otherIp = "198.51.100.41";
+    const path = `/api/search-flight?flightNumber=DL54&date=${upcomingDate}`;
+
+    for (let attempt = 0; attempt < FLIGHT_SEARCH_THROTTLE_CONFIG.limit + 1; attempt += 1) {
+      await request(app.getHttpServer()).get(path).set("x-forwarded-for", exhaustedIp);
+    }
+
+    const blocked = await request(app.getHttpServer())
+      .get(path)
+      .set("x-forwarded-for", exhaustedIp);
+    const allowed = await request(app.getHttpServer()).get(path).set("x-forwarded-for", otherIp);
+
+    expect(blocked.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(allowed.status).toBe(HttpStatus.OK);
+  });
+
   it("shares flight search results through Redis", async () => {
     const flight = {
       flightNumber: "DL54",

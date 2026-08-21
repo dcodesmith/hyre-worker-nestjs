@@ -94,4 +94,28 @@ describe("Maps E2E Tests", () => {
       `${TRIP_DURATION_THROTTLE_CONFIG.limit};w=${TRIP_DURATION_THROTTLE_CONFIG.ttlSeconds}`,
     );
   });
+
+  it("GET /api/calculate-trip-duration does not block a different IP after one IP is limited", async () => {
+    vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
+      durationMinutes: 48,
+      distanceMeters: 25000,
+      isEstimate: false,
+    });
+
+    const exhaustedIp = "198.51.100.42";
+    const otherIp = "198.51.100.43";
+    const path = "/api/calculate-trip-duration?destination=Victoria%20Island%2C%20Lagos";
+
+    for (let attempt = 0; attempt < TRIP_DURATION_THROTTLE_CONFIG.limit + 1; attempt += 1) {
+      await request(app.getHttpServer()).get(path).set("x-forwarded-for", exhaustedIp);
+    }
+
+    const blocked = await request(app.getHttpServer())
+      .get(path)
+      .set("x-forwarded-for", exhaustedIp);
+    const allowed = await request(app.getHttpServer()).get(path).set("x-forwarded-for", otherIp);
+
+    expect(blocked.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(allowed.status).toBe(HttpStatus.OK);
+  });
 });
