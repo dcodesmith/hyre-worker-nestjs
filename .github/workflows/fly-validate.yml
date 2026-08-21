@@ -24,16 +24,16 @@ jobs:
           --health-retries 10
     # if: false  # Temporarily disabled - remove this line to re-enable
     steps:
-      # Pin to v6.0.1 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
-      - uses: actions/checkout@v6.0.1
+      # Pin to v7 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
+      - uses: actions/checkout@v7
 
       # Pin to v4 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
-      # Pin to v4 - check for updates with: gh api repos/actions/setup-node/tags --jq '.[0].name'
+      # Pin to v7 - check for updates with: gh api repos/actions/setup-node/tags --jq '.[0].name'
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -41,9 +41,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       
-      # Pin to v3.12.0 - check for updates with: gh api repos/docker/setup-buildx-action/tags --jq '.[0].name'
+      # Pin to v4.2.0 - check for updates with: gh api repos/docker/setup-buildx-action/tags --jq '.[0].name'
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3.12.0
+        uses: docker/setup-buildx-action@v4.2.0
       
       - name: Setup Fly.io CLI
         # Pin to v1.4 - check for updates with: gh api repos/superfly/flyctl-actions/tags --jq '.[0].name'
