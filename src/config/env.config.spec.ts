@@ -113,6 +113,101 @@ describe("envSchema booking modification cutoff", () => {
   });
 });
 
+describe("envSchema storage driver", () => {
+  const r2Env = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+    STORAGE_DRIVER: "r2",
+    AWS_REGION: undefined,
+    AWS_ACCESS_KEY_ID: undefined,
+    AWS_SECRET_ACCESS_KEY: undefined,
+    AWS_BUCKET_NAME: undefined,
+    R2_ACCOUNT_ID: "ea5151b6637ce5379c9fea75e7e52aaa",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_IMAGES_BUCKET_NAME: "hyre-assets-images-development",
+    ASSET_PUBLIC_BASE_URL: "https://images-dev.tripdly.com",
+  };
+
+  it("defaults to s3", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+    });
+
+    expect(result.STORAGE_DRIVER).toBe("s3");
+  });
+
+  it("requires AWS credentials when STORAGE_DRIVER is s3", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      AWS_ACCESS_KEY_ID: undefined,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["AWS_ACCESS_KEY_ID"],
+            message: "AWS_ACCESS_KEY_ID is required when STORAGE_DRIVER=s3",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("accepts R2 configuration without AWS credentials", () => {
+    const result = envSchema.safeParse(r2Env);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.STORAGE_DRIVER).toBe("r2");
+      expect(result.data.R2_IMAGES_BUCKET_NAME).toBe("hyre-assets-images-development");
+    }
+  });
+
+  it("requires R2 credentials when STORAGE_DRIVER is r2", () => {
+    const result = envSchema.safeParse({
+      ...r2Env,
+      R2_ACCESS_KEY_ID: undefined,
+      ASSET_PUBLIC_BASE_URL: undefined,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["R2_ACCESS_KEY_ID"],
+            message: "R2_ACCESS_KEY_ID is required when STORAGE_DRIVER=r2",
+          }),
+          expect.objectContaining({
+            path: ["ASSET_PUBLIC_BASE_URL"],
+            message: "ASSET_PUBLIC_BASE_URL is required when STORAGE_DRIVER=r2",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("treats blank unused storage keys as omitted", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      R2_ACCOUNT_ID: "",
+      ASSET_PUBLIC_BASE_URL: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.R2_ACCOUNT_ID).toBeUndefined();
+      expect(result.data.ASSET_PUBLIC_BASE_URL).toBeUndefined();
+    }
+  });
+});
+
 describe("envSchema APP_ENV", () => {
   it("defaults to development", () => {
     const result = envSchema.parse({

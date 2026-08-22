@@ -9,6 +9,10 @@ const optionalTwilioContentSidSchema = z.preprocess(
   (value) => (value === "" ? undefined : value),
   twilioContentSidSchema.optional(),
 );
+const optionalNonEmptyString = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
 const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
   "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
@@ -22,12 +26,53 @@ const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID",
 ] as const;
 
-function validateProductionConfiguration(
+type EnvIssueContext = {
+  addIssue(issue: { code: "custom"; path: string[]; message: string }): void;
+};
+
+function requireEnvKeys(
   env: Record<string, unknown>,
-  ctx: {
-    addIssue(issue: { code: "custom"; path: string[]; message: string }): void;
-  },
+  ctx: EnvIssueContext,
+  keys: readonly string[],
+  reason: string,
 ): void {
+  for (const key of keys) {
+    if (typeof env[key] !== "string" || env[key].length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: `${key} is required ${reason}`,
+      });
+    }
+  }
+}
+
+function validateStorageConfiguration(env: Record<string, unknown>, ctx: EnvIssueContext): void {
+  if (env.STORAGE_DRIVER === "r2") {
+    requireEnvKeys(
+      env,
+      ctx,
+      [
+        "R2_ACCOUNT_ID",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_IMAGES_BUCKET_NAME",
+        "ASSET_PUBLIC_BASE_URL",
+      ],
+      "when STORAGE_DRIVER=r2",
+    );
+    return;
+  }
+
+  requireEnvKeys(
+    env,
+    ctx,
+    ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_BUCKET_NAME"],
+    "when STORAGE_DRIVER=s3",
+  );
+}
+
+function validateProductionConfiguration(env: Record<string, unknown>, ctx: EnvIssueContext): void {
   if (env.NODE_ENV !== "production") {
     return;
   }
@@ -177,11 +222,24 @@ export const envSchema = z
       ),
     SENDER_NAME: z.string().min(2, "SENDER_NAME is required"),
 
-    // S3 storage configuration (for car uploads)
-    AWS_REGION: z.string().min(1, "AWS_REGION is required for S3 uploads"),
-    AWS_ACCESS_KEY_ID: z.string().min(1, "AWS_ACCESS_KEY_ID is required for S3 uploads"),
-    AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS_SECRET_ACCESS_KEY is required for S3 uploads"),
-    AWS_BUCKET_NAME: z.string().min(1, "AWS_BUCKET_NAME is required for S3 uploads"),
+    // Object storage (S3 today; set STORAGE_DRIVER=r2 to use Cloudflare R2)
+    STORAGE_DRIVER: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.enum(["s3", "r2"]).default("s3"),
+    ),
+    AWS_REGION: optionalNonEmptyString,
+    AWS_ACCESS_KEY_ID: optionalNonEmptyString,
+    AWS_SECRET_ACCESS_KEY: optionalNonEmptyString,
+    AWS_BUCKET_NAME: optionalNonEmptyString,
+    R2_ACCOUNT_ID: optionalNonEmptyString,
+    R2_ACCESS_KEY_ID: optionalNonEmptyString,
+    R2_SECRET_ACCESS_KEY: optionalNonEmptyString,
+    R2_IMAGES_BUCKET_NAME: optionalNonEmptyString,
+    R2_DOCS_BUCKET_NAME: optionalNonEmptyString,
+    ASSET_PUBLIC_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.url("ASSET_PUBLIC_BASE_URL must be a valid URL").optional(),
+    ),
 
     // LangGraph Agent configuration
     ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
@@ -230,6 +288,7 @@ export const envSchema = z
       }
     }
 
+    validateStorageConfiguration(env, ctx);
     validateProductionConfiguration(env, ctx);
   });
 
