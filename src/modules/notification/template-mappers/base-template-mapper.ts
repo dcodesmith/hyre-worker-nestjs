@@ -29,4 +29,15 @@ export abstract class BaseTemplateMapper implements TemplateVariableMapper {
     recipientType: RecipientType,
   ): Record<string, string | number>;
   abstract canHandle(type: NotificationType): boolean;
+
+  /**
+   * Persist JSON may omit per-kind fields after the outbox only checks
+   * `templateKind`. Keep the old empty-string fallback without bag access.
+   */
+  protected text(
+    value: string | number | null | undefined,
+    fallback: string | number = "",
+  ): string | number {
+    return value ?? fallback;
+  }
 }

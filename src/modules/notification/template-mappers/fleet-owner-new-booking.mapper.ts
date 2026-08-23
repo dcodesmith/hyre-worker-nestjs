@@ -24,15 +24,15 @@ export class FleetOwnerNewBookingMapper extends BaseTemplateMapper {
       return {};
     }
     return {
-      "1": templateData.ownerName,
-      "2": templateData.carName,
-      "3": templateData.customerName,
-      "4": templateData.startDate,
-      "5": templateData.endDate,
-      "6": templateData.pickupLocation,
-      "7": templateData.returnLocation,
-      "8": templateData.totalAmount,
-      "9": templateData.id,
+      "1": this.text(templateData.ownerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.customerName),
+      "4": this.text(templateData.startDate),
+      "5": this.text(templateData.endDate),
+      "6": this.text(templateData.pickupLocation),
+      "7": this.text(templateData.returnLocation),
+      "8": this.text(templateData.totalAmount),
+      "9": this.text(templateData.id),
     };
   }
 }

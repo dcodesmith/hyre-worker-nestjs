@@ -33,25 +33,25 @@ export class BookingReminderEndMapper extends BaseTemplateMapper {
     }
     if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
       return {
-        "1": templateData.chauffeurName,
-        "2": templateData.carName,
-        "3": templateData.legStartTime,
-        "4": templateData.legEndTime,
-        "5": templateData.pickupLocation,
-        "6": templateData.returnLocation,
-        "7": templateData.customerName,
+        "1": this.text(templateData.chauffeurName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.legStartTime),
+        "4": this.text(templateData.legEndTime),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.customerName),
       };
     }
     if (recipientType === CLIENT_RECIPIENT_TYPE) {
       return {
-        "1": templateData.customerName,
-        "2": templateData.carName,
-        "3": templateData.legStartTime,
-        "4": templateData.legEndTime,
-        "5": templateData.pickupLocation,
-        "6": templateData.returnLocation,
-        "7": templateData.chauffeurName,
-        "8": templateData.bookingId,
+        "1": this.text(templateData.customerName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.legStartTime),
+        "4": this.text(templateData.legEndTime),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.chauffeurName),
+        "8": this.text(templateData.bookingId),
       };
     }
     return {};

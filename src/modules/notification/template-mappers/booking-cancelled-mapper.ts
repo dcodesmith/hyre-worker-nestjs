@@ -32,27 +32,27 @@ export class BookingCancelledMapper extends BaseTemplateMapper {
 
     if (recipientType === FLEET_OWNER_RECIPIENT_TYPE) {
       return {
-        "1": templateData.ownerName,
-        "2": templateData.carName,
-        "3": templateData.cancellationReason,
-        "4": templateData.customerName,
-        "5": templateData.startDate,
-        "6": templateData.endDate,
-        "7": templateData.pickupLocation,
-        "8": templateData.returnLocation,
-        "9": templateData.totalAmount,
+        "1": this.text(templateData.ownerName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.cancellationReason),
+        "4": this.text(templateData.customerName),
+        "5": this.text(templateData.startDate),
+        "6": this.text(templateData.endDate),
+        "7": this.text(templateData.pickupLocation),
+        "8": this.text(templateData.returnLocation),
+        "9": this.text(templateData.totalAmount),
       };
     }
 
     return {
-      "1": templateData.customerName,
-      "2": templateData.carName,
-      "3": templateData.totalAmount,
-      "4": templateData.cancellationReason,
-      "5": templateData.startDate,
-      "6": templateData.endDate,
-      "7": templateData.pickupLocation,
-      "8": templateData.returnLocation,
+      "1": this.text(templateData.customerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.totalAmount),
+      "4": this.text(templateData.cancellationReason),
+      "5": this.text(templateData.startDate),
+      "6": this.text(templateData.endDate),
+      "7": this.text(templateData.pickupLocation),
+      "8": this.text(templateData.returnLocation),
     };
   }
 }

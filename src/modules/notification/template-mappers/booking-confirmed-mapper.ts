@@ -21,13 +21,13 @@ export class BookingConfirmedMapper extends BaseTemplateMapper {
       return {};
     }
     return {
-      "1": templateData.customerName,
-      "2": templateData.carName,
-      "3": templateData.startDate,
-      "4": templateData.endDate,
-      "5": templateData.pickupLocation,
-      "6": templateData.returnLocation,
-      "7": templateData.totalAmount,
+      "1": this.text(templateData.customerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.startDate),
+      "4": this.text(templateData.endDate),
+      "5": this.text(templateData.pickupLocation),
+      "6": this.text(templateData.returnLocation),
+      "7": this.text(templateData.totalAmount),
     };
   }
 }

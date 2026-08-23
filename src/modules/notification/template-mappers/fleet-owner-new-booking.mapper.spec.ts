@@ -79,6 +79,23 @@ describe("FleetOwnerNewBookingMapper", () => {
       });
     });
 
+    it("should return empty string for omitted fields", () => {
+      const incompleteData = {
+        templateKind: FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+        subject: "New Booking Alert",
+        ownerName: "Fleet Owner",
+        carName: "BMW X5",
+      } as FleetOwnerNewBookingTemplateData;
+
+      const variables = mapper.mapVariables(incompleteData, "fleetOwner");
+
+      expect(variables["1"]).toBe("Fleet Owner");
+      expect(variables["2"]).toBe("BMW X5");
+      expect(variables["3"]).toBe("");
+      expect(variables["4"]).toBe("");
+      expect(variables["9"]).toBe("");
+    });
+
     it("should return empty string for missing fields", () => {
       const incompleteData = {
         ...mockTemplateData,

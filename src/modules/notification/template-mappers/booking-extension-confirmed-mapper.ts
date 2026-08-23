@@ -24,12 +24,12 @@ export class BookingExtensionConfirmedMapper extends BaseTemplateMapper {
       return {};
     }
     return {
-      "1": templateData.customerName,
-      "2": templateData.carName,
-      "3": templateData.legDate,
-      "4": this.formatExtensionHours(templateData.extensionHours),
-      "5": templateData.from,
-      "6": templateData.to,
+      "1": this.text(templateData.customerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.legDate),
+      "4": this.formatExtensionHours(Number(this.text(templateData.extensionHours, 0))),
+      "5": this.text(templateData.from),
+      "6": this.text(templateData.to),
     };
   }
 

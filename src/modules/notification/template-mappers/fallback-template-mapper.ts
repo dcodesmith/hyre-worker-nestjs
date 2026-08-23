@@ -28,14 +28,14 @@ export class FallbackTemplateMapper extends BaseTemplateMapper {
   ): Record<string, string | number> {
     if (templateData.templateKind === BOOKING_REMINDER_TEMPLATE_KIND) {
       return {
-        "1": templateData.customerName,
-        "2": templateData.carName,
-        "3": templateData.legStartTime,
-        "4": templateData.legEndTime,
-        "5": templateData.pickupLocation,
-        "6": templateData.returnLocation,
-        "7": templateData.chauffeurName,
-        "8": templateData.bookingId,
+        "1": this.text(templateData.customerName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.legStartTime),
+        "4": this.text(templateData.legEndTime),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.chauffeurName),
+        "8": this.text(templateData.bookingId),
       };
     }
 
@@ -47,14 +47,14 @@ export class FallbackTemplateMapper extends BaseTemplateMapper {
       templateData.templateKind === FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
     ) {
       return {
-        "1": templateData.customerName,
-        "2": templateData.carName,
-        "3": templateData.startDate,
-        "4": templateData.endDate,
-        "5": templateData.pickupLocation,
-        "6": templateData.returnLocation,
-        "7": templateData.chauffeurName,
-        "8": templateData.id,
+        "1": this.text(templateData.customerName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.startDate),
+        "4": this.text(templateData.endDate),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.chauffeurName),
+        "8": this.text(templateData.id),
       };
     }
 
