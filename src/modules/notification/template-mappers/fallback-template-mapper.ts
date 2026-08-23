@@ -1,5 +1,13 @@
 import { NotificationType } from "../notification.interface";
-import { type TemplateData } from "../template-data.interface";
+import {
+  BOOKING_CANCELLED_TEMPLATE_KIND,
+  BOOKING_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
+  BOOKING_REMINDER_TEMPLATE_KIND,
+  BOOKING_STATUS_TEMPLATE_KIND,
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  type TemplateData,
+} from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 
@@ -18,16 +26,47 @@ export class FallbackTemplateMapper extends BaseTemplateMapper {
     templateData: TemplateData,
     _recipientType: string,
   ): Record<string, string | number> {
-    // Fallback to basic variables that work across templates
+    if (templateData.templateKind === BOOKING_REMINDER_TEMPLATE_KIND) {
+      return {
+        "1": templateData.customerName,
+        "2": templateData.carName,
+        "3": templateData.legStartTime,
+        "4": templateData.legEndTime,
+        "5": templateData.pickupLocation,
+        "6": templateData.returnLocation,
+        "7": templateData.chauffeurName,
+        "8": templateData.bookingId,
+      };
+    }
+
+    if (
+      templateData.templateKind === BOOKING_STATUS_TEMPLATE_KIND ||
+      templateData.templateKind === BOOKING_CONFIRMED_TEMPLATE_KIND ||
+      templateData.templateKind === BOOKING_CANCELLED_TEMPLATE_KIND ||
+      templateData.templateKind === BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND ||
+      templateData.templateKind === FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND
+    ) {
+      return {
+        "1": templateData.customerName,
+        "2": templateData.carName,
+        "3": templateData.startDate,
+        "4": templateData.endDate,
+        "5": templateData.pickupLocation,
+        "6": templateData.returnLocation,
+        "7": templateData.chauffeurName,
+        "8": templateData.id,
+      };
+    }
+
     return {
-      "1": this.getValue(templateData, "customerName"),
-      "2": this.getValue(templateData, "carName"),
-      "3": this.getValue(templateData, "legStartTime") || this.getValue(templateData, "startDate"),
-      "4": this.getValue(templateData, "legEndTime") || this.getValue(templateData, "endDate"),
-      "5": this.getValue(templateData, "pickupLocation"),
-      "6": this.getValue(templateData, "returnLocation"),
-      "7": this.getValue(templateData, "chauffeurName"),
-      "8": this.getValue(templateData, "bookingId"),
+      "1": "",
+      "2": "",
+      "3": "",
+      "4": "",
+      "5": "",
+      "6": "",
+      "7": "",
+      "8": "",
     };
   }
 }

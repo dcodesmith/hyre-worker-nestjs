@@ -29,15 +29,4 @@ export abstract class BaseTemplateMapper implements TemplateVariableMapper {
     recipientType: RecipientType,
   ): Record<string, string | number>;
   abstract canHandle(type: NotificationType): boolean;
-
-  /**
-   * Helper method to safely get template data values
-   */
-  protected getValue(
-    templateData: TemplateData,
-    key: string,
-    fallback: string | number = "",
-  ): string | number {
-    return (templateData as any)?.[key] ?? fallback;
-  }
 }

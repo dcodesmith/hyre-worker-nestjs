@@ -1,5 +1,8 @@
 import { NotificationType } from "../notification.interface";
-import { type TemplateData } from "../template-data.interface";
+import {
+  FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND,
+  type TemplateData,
+} from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 
@@ -17,16 +20,19 @@ export class FleetOwnerNewBookingMapper extends BaseTemplateMapper {
     templateData: TemplateData,
     _recipientType: string,
   ): Record<string, string | number> {
+    if (templateData.templateKind !== FLEET_OWNER_NEW_BOOKING_TEMPLATE_KIND) {
+      return {};
+    }
     return {
-      "1": this.getValue(templateData, "ownerName"),
-      "2": this.getValue(templateData, "carName"),
-      "3": this.getValue(templateData, "customerName"),
-      "4": this.getValue(templateData, "startDate"),
-      "5": this.getValue(templateData, "endDate"),
-      "6": this.getValue(templateData, "pickupLocation"),
-      "7": this.getValue(templateData, "returnLocation"),
-      "8": this.getValue(templateData, "totalAmount"),
-      "9": this.getValue(templateData, "id"),
+      "1": templateData.ownerName,
+      "2": templateData.carName,
+      "3": templateData.customerName,
+      "4": templateData.startDate,
+      "5": templateData.endDate,
+      "6": templateData.pickupLocation,
+      "7": templateData.returnLocation,
+      "8": templateData.totalAmount,
+      "9": templateData.id,
     };
   }
 }

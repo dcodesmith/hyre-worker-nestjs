@@ -1,5 +1,6 @@
 import { NotificationType } from "../notification.interface";
 import {
+  BOOKING_CANCELLED_TEMPLATE_KIND,
   CLIENT_RECIPIENT_TYPE,
   FLEET_OWNER_RECIPIENT_TYPE,
   type TemplateData,
@@ -25,29 +26,33 @@ export class BookingCancelledMapper extends BaseTemplateMapper {
   }
 
   mapVariables(templateData: TemplateData, recipientType: string): Record<string, string | number> {
+    if (templateData.templateKind !== BOOKING_CANCELLED_TEMPLATE_KIND) {
+      return {};
+    }
+
     if (recipientType === FLEET_OWNER_RECIPIENT_TYPE) {
       return {
-        "1": this.getValue(templateData, "ownerName"),
-        "2": this.getValue(templateData, "carName"),
-        "3": this.getValue(templateData, "cancellationReason"),
-        "4": this.getValue(templateData, "customerName"),
-        "5": this.getValue(templateData, "startDate"),
-        "6": this.getValue(templateData, "endDate"),
-        "7": this.getValue(templateData, "pickupLocation"),
-        "8": this.getValue(templateData, "returnLocation"),
-        "9": this.getValue(templateData, "totalAmount"),
+        "1": templateData.ownerName,
+        "2": templateData.carName,
+        "3": templateData.cancellationReason,
+        "4": templateData.customerName,
+        "5": templateData.startDate,
+        "6": templateData.endDate,
+        "7": templateData.pickupLocation,
+        "8": templateData.returnLocation,
+        "9": templateData.totalAmount,
       };
     }
 
     return {
-      "1": this.getValue(templateData, "customerName"),
-      "2": this.getValue(templateData, "carName"),
-      "3": this.getValue(templateData, "totalAmount"),
-      "4": this.getValue(templateData, "cancellationReason"),
-      "5": this.getValue(templateData, "startDate"),
-      "6": this.getValue(templateData, "endDate"),
-      "7": this.getValue(templateData, "pickupLocation"),
-      "8": this.getValue(templateData, "returnLocation"),
+      "1": templateData.customerName,
+      "2": templateData.carName,
+      "3": templateData.totalAmount,
+      "4": templateData.cancellationReason,
+      "5": templateData.startDate,
+      "6": templateData.endDate,
+      "7": templateData.pickupLocation,
+      "8": templateData.returnLocation,
     };
   }
 }

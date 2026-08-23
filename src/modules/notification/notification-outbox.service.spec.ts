@@ -95,7 +95,7 @@ describe("NotificationOutboxService", () => {
       channels: ["email"] as const,
       bookingId,
       recipients: { client: { email: "client@example.com" } },
-      templateData: { templateKind: "bookingStatusChange" } as Record<string, unknown>,
+      templateData: { templateKind: "bookingStatusChange" },
     });
 
     const buildHandler = <TInput>(
@@ -319,7 +319,7 @@ describe("NotificationOutboxService", () => {
             pushTokens: ["t1"],
           },
         },
-        templateData: { templateKind: "bookingStatusChange" } as Record<string, unknown>,
+        templateData: { templateKind: "bookingStatusChange" },
       };
 
       const handler = buildHandler(
@@ -584,7 +584,7 @@ describe("NotificationOutboxService", () => {
           channels: ["email"],
           bookingId: `booking-attempt-${attempts}`,
           recipients: { client: { email: "x@example.com" } },
-          templateData: {},
+          templateData: { templateKind: "bookingStatusChange" },
         },
       },
     });
