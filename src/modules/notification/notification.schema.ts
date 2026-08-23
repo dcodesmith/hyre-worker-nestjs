@@ -20,8 +20,9 @@ const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
 ];
 
 /**
- * Boundary check for persisted `templateData`. We only require the discriminator
- * so existing outbox rows keep parsing; per-kind fields stay on `TemplateData`.
+ * Boundary check for persisted `templateData`. A known `templateKind` is
+ * required; rows without it fail parse and are dead-lettered. Per-kind fields
+ * stay loose so incomplete rows with a valid discriminator still parse.
  */
 export const templateDataSchema = z.looseObject({
   templateKind: z.enum(TEMPLATE_KINDS),
