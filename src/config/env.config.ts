@@ -57,6 +57,7 @@ function validateStorageConfiguration(env: Record<string, unknown>, ctx: EnvIssu
         "R2_ACCESS_KEY_ID",
         "R2_SECRET_ACCESS_KEY",
         "R2_IMAGES_BUCKET_NAME",
+        "R2_DOCS_BUCKET_NAME",
         "ASSET_PUBLIC_BASE_URL",
       ],
       "when STORAGE_DRIVER=r2",

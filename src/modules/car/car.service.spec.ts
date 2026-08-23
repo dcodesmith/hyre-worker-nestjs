@@ -481,10 +481,10 @@ describe("CarService", () => {
     it("replaces a rejected document and resets it to PENDING", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.pdf");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/documents/new.pdf");
       databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
         id: "doc-1",
-        documentUrl: "https://cdn.test/new.pdf",
+        documentUrl: "owner-1/car-1/documents/new.pdf",
         status: DocumentStatus.PENDING,
       });
 
@@ -499,7 +499,7 @@ describe("CarService", () => {
       expect(databaseServiceMock.documentApproval.update).toHaveBeenCalledWith({
         where: { id: "doc-1", status: DocumentStatus.REJECTED },
         data: {
-          documentUrl: "https://cdn.test/new.pdf",
+          documentUrl: "owner-1/car-1/documents/new.pdf",
           status: DocumentStatus.PENDING,
           notes: null,
           approvedById: null,
@@ -567,6 +567,31 @@ describe("CarService", () => {
 
       expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
         expect.stringContaining("owner-1/car-1/documents/"),
+      );
+    });
+
+    it("deletes a replaced document stored as an object key", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce({
+        ...rejectedDocument,
+        documentUrl: "owner-1/car-1/documents/old.pdf",
+      });
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/documents/new.pdf");
+      databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+        id: "doc-1",
+        documentUrl: "owner-1/car-1/documents/new.pdf",
+        status: DocumentStatus.PENDING,
+      });
+
+      await service.replaceCarDocument(
+        "car-1",
+        "owner-1",
+        "doc-1",
+        createMockFile("new.pdf", "application/pdf"),
+      );
+
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
+        "owner-1/car-1/documents/old.pdf",
       );
     });
   });

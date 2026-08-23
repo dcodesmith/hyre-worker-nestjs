@@ -525,7 +525,9 @@ export class CarService {
   /** Best-effort cleanup of the replaced S3 object; failures are only logged. */
   private async deleteReplacedObject(previousUrl: string): Promise<void> {
     try {
-      const key = new URL(previousUrl).pathname.slice(1);
+      const key = previousUrl.includes("://")
+        ? new URL(previousUrl).pathname.slice(1)
+        : previousUrl;
       if (key) {
         await this.storageService.deleteObjectByKey(key);
       }
