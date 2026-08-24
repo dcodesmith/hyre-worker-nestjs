@@ -4,6 +4,7 @@ import { Injectable } from "@nestjs/common";
 import { AxiosError } from "axios";
 import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
+import { StorageService } from "../storage/storage.service";
 import type { ProxiedPdfResult } from "./document.interface";
 import {
   DocumentFileFetchFailedException,
@@ -16,6 +17,7 @@ export class DocumentProxyService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly httpClientService: HttpClientService,
+    private readonly storageService: StorageService,
   ) {}
 
   async getPdfByDocumentId(documentId: string): Promise<ProxiedPdfResult> {
@@ -28,6 +30,32 @@ export class DocumentProxyService {
       throw new DocumentNotFoundException();
     }
 
+    if (this.isHttpUrl(document.documentUrl)) {
+      return this.fetchHttpPdf(documentId, document.documentUrl);
+    }
+
+    return this.fetchStoredPdf(documentId, document.documentUrl);
+  }
+
+  private async fetchStoredPdf(documentId: string, key: string): Promise<ProxiedPdfResult> {
+    try {
+      const stored = await this.storageService.getObjectStream(key);
+      return {
+        stream: stored.stream,
+        fileName: this.resolveFileName(documentId, key),
+        contentType: this.resolveContentType(stored.contentType),
+        contentLength: stored.contentLength,
+      };
+    } catch (error) {
+      if (this.isMissingStoredObject(error)) {
+        throw new DocumentFileNotFoundException();
+      }
+
+      throw new DocumentFileFetchFailedException();
+    }
+  }
+
+  private async fetchHttpPdf(documentId: string, documentUrl: string): Promise<ProxiedPdfResult> {
     const httpClient = this.httpClientService.createClient({
       serviceName: "DocumentProxy",
       headers: {
@@ -36,13 +64,13 @@ export class DocumentProxyService {
     });
 
     try {
-      const response = await httpClient.get<Readable>(document.documentUrl, {
+      const response = await httpClient.get<Readable>(documentUrl, {
         responseType: "stream",
       });
 
       return {
         stream: response.data,
-        fileName: this.resolveFileName(documentId, document.documentUrl),
+        fileName: this.resolveFileName(documentId, documentUrl),
         contentType: this.resolveContentType(response.headers["content-type"]),
         contentLength: this.resolveContentLength(response.headers["content-length"]),
       };
@@ -55,10 +83,27 @@ export class DocumentProxyService {
     }
   }
 
+  private isHttpUrl(value: string): boolean {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === "http:" || protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  private isMissingStoredObject(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return error.name === "NoSuchKey" || error.name === "NotFound";
+  }
+
   private resolveFileName(documentId: string, sourceUrl: string): string {
     try {
-      const url = new URL(sourceUrl);
-      const fileName = basename(url.pathname);
+      const pathName = this.isHttpUrl(sourceUrl) ? new URL(sourceUrl).pathname : sourceUrl;
+      const fileName = basename(pathName);
       if (fileName?.toLowerCase().endsWith(".pdf")) {
         return fileName;
       }

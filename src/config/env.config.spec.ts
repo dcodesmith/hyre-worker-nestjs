@@ -126,6 +126,7 @@ describe("envSchema storage driver", () => {
     R2_ACCESS_KEY_ID: "r2-access-key",
     R2_SECRET_ACCESS_KEY: "r2-secret-key",
     R2_IMAGES_BUCKET_NAME: "hyre-assets-images-development",
+    R2_DOCS_BUCKET_NAME: "hyre-assets-docs-development",
     ASSET_PUBLIC_BASE_URL: "https://images-dev.tripdly.com",
   };
 
@@ -165,6 +166,7 @@ describe("envSchema storage driver", () => {
     if (result.success) {
       expect(result.data.STORAGE_DRIVER).toBe("r2");
       expect(result.data.R2_IMAGES_BUCKET_NAME).toBe("hyre-assets-images-development");
+      expect(result.data.R2_DOCS_BUCKET_NAME).toBe("hyre-assets-docs-development");
     }
   });
 
@@ -172,6 +174,7 @@ describe("envSchema storage driver", () => {
     const result = envSchema.safeParse({
       ...r2Env,
       R2_ACCESS_KEY_ID: undefined,
+      R2_DOCS_BUCKET_NAME: undefined,
       ASSET_PUBLIC_BASE_URL: undefined,
     });
 
@@ -182,6 +185,10 @@ describe("envSchema storage driver", () => {
           expect.objectContaining({
             path: ["R2_ACCESS_KEY_ID"],
             message: "R2_ACCESS_KEY_ID is required when STORAGE_DRIVER=r2",
+          }),
+          expect.objectContaining({
+            path: ["R2_DOCS_BUCKET_NAME"],
+            message: "R2_DOCS_BUCKET_NAME is required when STORAGE_DRIVER=r2",
           }),
           expect.objectContaining({
             path: ["ASSET_PUBLIC_BASE_URL"],

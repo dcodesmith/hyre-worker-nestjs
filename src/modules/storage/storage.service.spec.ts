@@ -24,6 +24,7 @@ const r2Env = {
   R2_ACCESS_KEY_ID: "r2-access-key",
   R2_SECRET_ACCESS_KEY: "r2-secret-key",
   R2_IMAGES_BUCKET_NAME: "hyre-assets-images-development",
+  R2_DOCS_BUCKET_NAME: "hyre-assets-docs-development",
   ASSET_PUBLIC_BASE_URL: "https://images-dev.tripdly.com/",
 } as const;
 
@@ -38,6 +39,7 @@ describe("resolveStorageSettings", () => {
     const settings = resolveStorageSettings(mockConfigService(s3Env));
 
     expect(settings.bucketName).toBe("s3-car-rentals-dev-bucket");
+    expect(settings.docsBucketName).toBe("s3-car-rentals-dev-bucket");
     expect(settings.publicObjectUrlPrefix).toBe(
       "https://s3-car-rentals-dev-bucket.s3.eu-west-2.amazonaws.com",
     );
@@ -54,6 +56,7 @@ describe("resolveStorageSettings", () => {
     const settings = resolveStorageSettings(mockConfigService(r2Env));
 
     expect(settings.bucketName).toBe("hyre-assets-images-development");
+    expect(settings.docsBucketName).toBe("hyre-assets-docs-development");
     expect(settings.publicObjectUrlPrefix).toBe("https://images-dev.tripdly.com");
     expect(settings.clientConfig).toEqual({
       region: "auto",
@@ -72,6 +75,7 @@ describe("StorageService", () => {
   const settings: StorageSettings = {
     clientConfig: { region: "eu-west-2" },
     bucketName: "s3-car-rentals-dev-bucket",
+    docsBucketName: "hyre-assets-docs-development",
     publicObjectUrlPrefix: "https://s3-car-rentals-dev-bucket.s3.eu-west-2.amazonaws.com",
   };
 
@@ -113,6 +117,51 @@ describe("StorageService", () => {
     expect(send.mock.calls[0][0].input).toEqual({
       Bucket: "s3-car-rentals-dev-bucket",
       Key: "owner/car/images/file.jpg",
+    });
+  });
+
+  it("uploads documents to the docs bucket and returns the object key", async () => {
+    const buffer = Buffer.from("pdf-bytes");
+    const key = "owner/car/documents/file.pdf";
+
+    const stored = await service.uploadBuffer(buffer, key, "application/pdf");
+
+    expect(send.mock.calls[0][0].input).toEqual({
+      Bucket: "hyre-assets-docs-development",
+      Key: key,
+      Body: buffer,
+      ContentType: "application/pdf",
+    });
+    expect(stored).toBe(key);
+  });
+
+  it("deletes documents from the docs bucket", async () => {
+    await service.deleteObjectByKey("owner/car/documents/file.pdf");
+
+    expect(send.mock.calls[0][0].input).toEqual({
+      Bucket: "hyre-assets-docs-development",
+      Key: "owner/car/documents/file.pdf",
+    });
+  });
+
+  it("streams a stored document from the docs bucket", async () => {
+    const stream = { pipe: vi.fn() };
+    send.mockResolvedValueOnce({
+      Body: stream,
+      ContentType: "application/pdf",
+      ContentLength: 12,
+    });
+
+    const result = await service.getObjectStream("owner/car/documents/file.pdf");
+
+    expect(send.mock.calls[0][0].input).toEqual({
+      Bucket: "hyre-assets-docs-development",
+      Key: "owner/car/documents/file.pdf",
+    });
+    expect(result).toEqual({
+      stream,
+      contentType: "application/pdf",
+      contentLength: 12,
     });
   });
 });

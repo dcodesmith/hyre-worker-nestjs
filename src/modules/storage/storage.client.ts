@@ -8,6 +8,7 @@ export const STORAGE_SETTINGS = Symbol("STORAGE_SETTINGS");
 export type StorageSettings = {
   clientConfig: S3ClientConfig;
   bucketName: string;
+  docsBucketName: string;
   publicObjectUrlPrefix: string;
 };
 
@@ -27,6 +28,7 @@ export function resolveStorageSettings(configService: ConfigService<EnvConfig>):
         },
       },
       bucketName: get("R2_IMAGES_BUCKET_NAME"),
+      docsBucketName: get("R2_DOCS_BUCKET_NAME"),
       publicObjectUrlPrefix: get("ASSET_PUBLIC_BASE_URL").replace(/\/+$/, ""),
     };
   }
@@ -42,6 +44,7 @@ export function resolveStorageSettings(configService: ConfigService<EnvConfig>):
       },
     },
     bucketName,
+    docsBucketName: bucketName,
     publicObjectUrlPrefix: `https://${bucketName}.s3.${region}.amazonaws.com`,
   };
 }
