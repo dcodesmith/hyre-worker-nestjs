@@ -33,6 +33,7 @@ import { REFERRAL_THROTTLE_CONFIG } from "./modules/referral/referral-throttling
 import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
+import { UsersModule } from "./modules/users/users.module";
 import { RootController } from "./root.controller";
 
 @Module({
@@ -88,6 +89,7 @@ import { RootController } from "./root.controller";
     DatabaseModule,
     AiSearchModule,
     AccountModule,
+    UsersModule,
     FlutterwaveModule,
     DocumentsModule,
     MessagingModule,
