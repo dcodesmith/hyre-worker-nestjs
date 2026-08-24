@@ -2,12 +2,14 @@ import { Injectable } from "@nestjs/common";
 import { NotificationOutboxStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import pLimit from "p-limit";
+import type { z } from "zod";
 import { DatabaseService } from "../database/database.service";
 import type { HandlerEvent, OutboxEventHandler } from "./handlers/outbox-event-handler.interface";
 import { HIGH_PRIORITY_JOB_OPTIONS } from "./notification.const";
 import { NotificationJobData } from "./notification.interface";
-import { outboxPayloadSchema } from "./notification.schema";
+import { notificationJobDataSchema, outboxPayloadSchema } from "./notification.schema";
 import { NotificationService } from "./notification.service";
+import type { TemplateData } from "./template-data.interface";
 
 export type NotificationOutboxTransactionClient = {
   notificationInbox: Pick<Prisma.TransactionClient["notificationInbox"], "createMany">;
@@ -318,7 +320,7 @@ export class NotificationOutboxService {
     if (!parsed.success) {
       return null;
     }
-    return parsed.data.notificationJobData as unknown as NotificationJobData;
+    return toNotificationJobData(parsed.data.notificationJobData);
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -328,4 +330,14 @@ export class NotificationOutboxService {
   private toPrismaInputJsonValue(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; // NOSONAR S7784 — JSON round-trip omits undefined & normalizes Dates for Prisma Json; structuredClone is wrong here
   }
+}
+
+function toNotificationJobData(
+  job: z.infer<typeof notificationJobDataSchema>,
+): NotificationJobData {
+  return {
+    ...job,
+    recipients: job.recipients,
+    templateData: job.templateData as unknown as TemplateData,
+  };
 }

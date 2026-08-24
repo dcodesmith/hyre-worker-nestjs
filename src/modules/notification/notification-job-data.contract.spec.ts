@@ -13,9 +13,9 @@ import type { notificationJobDataSchema } from "./notification.schema";
  * - `recipients` — TS uses `Partial<Record<RecipientType, ...>>` (closed key
  *   set); the schema uses `Record<string, ...>` (open) because RecipientType
  *   is a string-literal union not worth round-tripping through Zod.
- * - `templateData` — TS uses the rich `TemplateData` discriminated union; the
- *   schema treats it as opaque `Record<string, unknown>` because Zod can't
- *   ergonomically express the per-template-kind variants.
+ * - `templateData` — the schema requires a known `templateKind` (rows without
+ *   it fail boundary validation) and keeps remaining fields loose; TS uses the
+ *   rich per-kind `TemplateData` union.
  *
  * Drift on every other envelope field (id, type, channels, bookingId,
  * pushPayload, priority) fails this file at compile time via the vanilla

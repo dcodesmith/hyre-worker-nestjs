@@ -31,13 +31,13 @@ export abstract class BaseTemplateMapper implements TemplateVariableMapper {
   abstract canHandle(type: NotificationType): boolean;
 
   /**
-   * Helper method to safely get template data values
+   * Persist JSON may omit per-kind fields after the outbox only checks
+   * `templateKind`. Keep the old empty-string fallback without bag access.
    */
-  protected getValue(
-    templateData: TemplateData,
-    key: string,
+  protected text(
+    value: string | number | null | undefined,
     fallback: string | number = "",
   ): string | number {
-    return (templateData as any)?.[key] ?? fallback;
+    return value ?? fallback;
   }
 }

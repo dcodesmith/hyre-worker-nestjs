@@ -1,5 +1,5 @@
 import { NotificationType } from "../notification.interface";
-import { type TemplateData } from "../template-data.interface";
+import { BOOKING_STATUS_TEMPLATE_KIND, type TemplateData } from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 
@@ -21,16 +21,19 @@ export class BookingStatusMapper extends BaseTemplateMapper {
     templateData: TemplateData,
     _recipientType: string,
   ): Record<string, string | number> {
+    if (templateData.templateKind !== BOOKING_STATUS_TEMPLATE_KIND) {
+      return {};
+    }
     return {
-      "1": this.getValue(templateData, "customerName"),
-      "2": this.getValue(templateData, "carName"),
-      "3": this.getValue(templateData, "title"),
-      "4": this.getValue(templateData, "status"),
-      "5": this.getValue(templateData, "startDate"),
-      "6": this.getValue(templateData, "endDate"),
-      "7": this.getValue(templateData, "pickupLocation"),
-      "8": this.getValue(templateData, "returnLocation"),
-      "9": this.getValue(templateData, "totalAmount"),
+      "1": this.text(templateData.customerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.title),
+      "4": this.text(templateData.status),
+      "5": this.text(templateData.startDate),
+      "6": this.text(templateData.endDate),
+      "7": this.text(templateData.pickupLocation),
+      "8": this.text(templateData.returnLocation),
+      "9": this.text(templateData.totalAmount),
     };
   }
 }

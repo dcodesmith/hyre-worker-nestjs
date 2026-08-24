@@ -2,6 +2,7 @@ import { NotificationOutboxEventType } from "@prisma/client";
 import { z } from "zod";
 import { NotificationAudience, NotificationChannel } from "./notification.interface";
 import { notificationTypeSchema, pushNotificationDataSchema } from "./notification-target";
+import { TEMPLATE_KINDS } from "./template-data.interface";
 
 const notificationChannelValues = Object.values(NotificationChannel) as [
   NotificationChannel,
@@ -19,10 +20,17 @@ const outboxEventTypeValues = Object.values(NotificationOutboxEventType) as [
 ];
 
 /**
+ * Boundary check for persisted `templateData`. A known `templateKind` is
+ * required; rows without it fail parse and are dead-lettered. Per-kind fields
+ * stay loose so incomplete rows with a valid discriminator still parse.
+ */
+export const templateDataSchema = z.looseObject({
+  templateKind: z.enum(TEMPLATE_KINDS),
+});
+
+/**
  * Structural Zod validator for `NotificationJobData` envelopes durably stored
- * in the outbox. This guards the JSON ↔ runtime boundary; semantic typing of
- * `templateData` (the discriminated union of template kinds) is enforced by
- * the `NotificationJobData` TS interface in `notification.interface.ts`.
+ * in the outbox. This guards the JSON ↔ runtime boundary.
  *
  * Drift between this envelope and the TS interface is locked by
  * `notification-job-data.contract.spec.ts`.
@@ -52,7 +60,7 @@ export const notificationJobDataSchema = z.object({
       pushTokens: z.array(z.string()).optional(),
     }),
   ),
-  templateData: z.record(z.string(), z.unknown()),
+  templateData: templateDataSchema,
   priority: z.number().optional(),
 });
 

@@ -1,5 +1,8 @@
 import { NotificationType } from "../notification.interface";
-import { type TemplateData } from "../template-data.interface";
+import {
+  BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND,
+  type TemplateData,
+} from "../template-data.interface";
 import { Template } from "../whatsapp.service";
 import { BaseTemplateMapper } from "./base-template-mapper";
 
@@ -17,13 +20,16 @@ export class BookingExtensionConfirmedMapper extends BaseTemplateMapper {
     templateData: TemplateData,
     _recipientType: string,
   ): Record<string, string | number> {
+    if (templateData.templateKind !== BOOKING_EXTENSION_CONFIRMED_TEMPLATE_KIND) {
+      return {};
+    }
     return {
-      "1": this.getValue(templateData, "customerName"),
-      "2": this.getValue(templateData, "carName"),
-      "3": this.getValue(templateData, "legDate"),
-      "4": this.formatExtensionHours(Number(this.getValue(templateData, "extensionHours", 0))),
-      "5": this.getValue(templateData, "from"),
-      "6": this.getValue(templateData, "to"),
+      "1": this.text(templateData.customerName),
+      "2": this.text(templateData.carName),
+      "3": this.text(templateData.legDate),
+      "4": this.formatExtensionHours(Number(this.text(templateData.extensionHours, 0))),
+      "5": this.text(templateData.from),
+      "6": this.text(templateData.to),
     };
   }
 

@@ -1,5 +1,6 @@
 import { NotificationType } from "../notification.interface";
 import {
+  BOOKING_REMINDER_TEMPLATE_KIND,
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
   RecipientType,
@@ -27,32 +28,32 @@ export class BookingReminderEndMapper extends BaseTemplateMapper {
   }
 
   mapVariables(templateData: TemplateData, recipientType: string): Record<string, string | number> {
+    if (templateData.templateKind !== BOOKING_REMINDER_TEMPLATE_KIND) {
+      return {};
+    }
     if (recipientType === CHAUFFEUR_RECIPIENT_TYPE) {
-      // ChauffeurBookingLegEndReminder template variables
       return {
-        "1": this.getValue(templateData, "chauffeurName"),
-        "2": this.getValue(templateData, "carName"),
-        "3": this.getValue(templateData, "legStartTime"),
-        "4": this.getValue(templateData, "legEndTime"),
-        "5": this.getValue(templateData, "pickupLocation"),
-        "6": this.getValue(templateData, "returnLocation"),
-        "7": this.getValue(templateData, "customerName"), // Customer name for chauffeur
+        "1": this.text(templateData.chauffeurName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.legStartTime),
+        "4": this.text(templateData.legEndTime),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.customerName),
       };
     }
     if (recipientType === CLIENT_RECIPIENT_TYPE) {
-      // ClientBookingLegEndReminder template variables
       return {
-        "1": this.getValue(templateData, "customerName"),
-        "2": this.getValue(templateData, "carName"),
-        "3": this.getValue(templateData, "legStartTime"),
-        "4": this.getValue(templateData, "legEndTime"),
-        "5": this.getValue(templateData, "pickupLocation"),
-        "6": this.getValue(templateData, "returnLocation"),
-        "7": this.getValue(templateData, "chauffeurName"), // Chauffeur name for client
-        "8": this.getValue(templateData, "bookingId"), // Booking ID for end reminders
+        "1": this.text(templateData.customerName),
+        "2": this.text(templateData.carName),
+        "3": this.text(templateData.legStartTime),
+        "4": this.text(templateData.legEndTime),
+        "5": this.text(templateData.pickupLocation),
+        "6": this.text(templateData.returnLocation),
+        "7": this.text(templateData.chauffeurName),
+        "8": this.text(templateData.bookingId),
       };
     }
-    // Unsupported recipient type
     return {};
   }
 }
