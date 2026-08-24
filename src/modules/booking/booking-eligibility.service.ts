@@ -4,13 +4,13 @@ import {
   BookingStatus,
   PaymentStatus,
   Prisma,
-  ReferralReleaseCondition,
   ReferralRewardStatus,
 } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
+import { loadReferralProgramConfig } from "../referral/referral-program-config";
 import { ReferralDiscountNoLongerAvailableException } from "./booking.error";
 import type { ReferralEligibility } from "./booking.interface";
 
@@ -385,23 +385,11 @@ export class BookingEligibilityService {
       return;
     }
 
-    const rewardConfigMap = await this.getReferralConfigMap(tx.referralProgramConfig, [
-      "REFERRAL_REWARD_AMOUNT",
-      "REFERRAL_DISCOUNT_AMOUNT",
-      "REFERRAL_RELEASE_CONDITION",
-    ]);
-
-    const rewardAmount = this.parseDecimalConfig(
-      rewardConfigMap.REFERRAL_REWARD_AMOUNT ?? rewardConfigMap.REFERRAL_DISCOUNT_AMOUNT,
-      "REFERRAL_REWARD_AMOUNT",
-    );
+    const config = await loadReferralProgramConfig(tx.referralProgramConfig);
+    const rewardAmount = new Decimal(config.rewardAmount);
     if (!rewardAmount.gt(0)) {
       return;
     }
-
-    const releaseCondition = this.parseReleaseConditionConfig(
-      rewardConfigMap.REFERRAL_RELEASE_CONDITION,
-    );
 
     await tx.referralReward.create({
       data: {
@@ -410,7 +398,7 @@ export class BookingEligibilityService {
         booking: { connect: { id: bookingId } },
         amount: rewardAmount,
         status: ReferralRewardStatus.PENDING,
-        releaseCondition,
+        releaseCondition: config.releaseCondition,
       },
     });
 
@@ -445,7 +433,7 @@ export class BookingEligibilityService {
     >,
     userId: string,
   ): Promise<Decimal> {
-    const [releasedRewards, committedCredits, configMap] = await Promise.all([
+    const [releasedRewards, committedCredits, config] = await Promise.all([
       database.referralReward.aggregate({
         where: {
           referrerUserId: userId,
@@ -465,21 +453,13 @@ export class BookingEligibilityService {
         FROM "Booking"
         WHERE "userId" = ${userId}
       `,
-      this.getReferralConfigMap(database.referralProgramConfig, [
-        "REFERRAL_MAX_CREDITS_PER_BOOKING",
-      ]),
+      loadReferralProgramConfig(database.referralProgramConfig),
     ]);
 
     const totalEarned = new Decimal(releasedRewards._sum.amount ?? 0);
     const totalCommitted = new Decimal(committedCredits[0]?.amount ?? 0);
     const availableCredits = Decimal.max(0, totalEarned.minus(totalCommitted));
-    const maxCreditsPerBooking = Decimal.max(
-      0,
-      this.parseDecimalConfig(
-        configMap.REFERRAL_MAX_CREDITS_PER_BOOKING ?? 30000,
-        "REFERRAL_MAX_CREDITS_PER_BOOKING",
-      ),
-    );
+    const maxCreditsPerBooking = Decimal.max(0, new Decimal(config.maxCreditsPerBooking));
 
     return Decimal.min(availableCredits, maxCreditsPerBooking);
   }
@@ -491,99 +471,14 @@ export class BookingEligibilityService {
     eligibleTypes: string[];
     expiryDays: number;
   }> {
-    const configMap = await this.getReferralConfigMap(this.databaseService.referralProgramConfig, [
-      "REFERRAL_ENABLED",
-      "REFERRAL_DISCOUNT_AMOUNT",
-      "REFERRAL_MIN_BOOKING_AMOUNT",
-      "REFERRAL_ELIGIBLE_TYPES",
-      "REFERRAL_EXPIRY_DAYS",
-    ]);
+    const config = await loadReferralProgramConfig(this.databaseService.referralProgramConfig);
 
     return {
-      enabled: this.parseEnabledConfig(configMap.REFERRAL_ENABLED ?? true),
-      discountAmount: this.parseDecimalConfig(
-        configMap.REFERRAL_DISCOUNT_AMOUNT ?? 10000,
-        "REFERRAL_DISCOUNT_AMOUNT",
-      ),
-      minBookingAmount: this.parseDecimalConfig(
-        configMap.REFERRAL_MIN_BOOKING_AMOUNT ?? 20000,
-        "REFERRAL_MIN_BOOKING_AMOUNT",
-      ),
-      eligibleTypes: this.parseStringArrayConfig(configMap.REFERRAL_ELIGIBLE_TYPES, [
-        "DAY",
-        "NIGHT",
-        "FULL_DAY",
-      ]),
-      expiryDays: this.parseNumberConfig(configMap.REFERRAL_EXPIRY_DAYS ?? 30, 30),
+      enabled: config.enabled,
+      discountAmount: new Decimal(config.discountAmount),
+      minBookingAmount: new Decimal(config.minBookingAmount),
+      eligibleTypes: config.eligibleTypes,
+      expiryDays: config.expiryDays,
     };
-  }
-
-  private async getReferralConfigMap(
-    referralProgramConfigModel: Pick<Prisma.TransactionClient["referralProgramConfig"], "findMany">,
-    keys: string[],
-  ): Promise<Record<string, unknown>> {
-    const configs = await referralProgramConfigModel.findMany({
-      where: { key: { in: keys } },
-    });
-
-    return configs.reduce<Record<string, unknown>>((acc, c) => {
-      acc[c.key] = c.value;
-      return acc;
-    }, {});
-  }
-
-  private parseEnabledConfig(rawEnabled: unknown): boolean {
-    if (typeof rawEnabled === "boolean") {
-      return rawEnabled;
-    }
-    if (typeof rawEnabled === "string") {
-      return rawEnabled.toLowerCase() === "true";
-    }
-    return false;
-  }
-
-  private parseDecimalConfig(rawValue: unknown, key: string): Decimal {
-    if (rawValue === undefined || rawValue === null) {
-      return new Decimal(0);
-    }
-    if (typeof rawValue === "number") {
-      return new Decimal(rawValue);
-    }
-    if (typeof rawValue === "string") {
-      const parsed = Number(rawValue);
-      return Number.isFinite(parsed) ? new Decimal(parsed) : new Decimal(0);
-    }
-
-    this.logger.warn(
-      {
-        type: typeof rawValue,
-        value: rawValue,
-      },
-      `Invalid ${key} config value type`,
-    );
-    return new Decimal(0);
-  }
-
-  private parseNumberConfig(rawValue: unknown, fallback: number): number {
-    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
-      return rawValue;
-    }
-    if (typeof rawValue === "string") {
-      const parsed = Number(rawValue);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    }
-    return fallback;
-  }
-
-  private parseStringArrayConfig(rawValue: unknown, fallback: string[]): string[] {
-    if (!Array.isArray(rawValue)) {
-      return fallback;
-    }
-    const strings = rawValue.filter((item): item is string => typeof item === "string");
-    return strings.length > 0 ? strings : fallback;
-  }
-
-  private parseReleaseConditionConfig(rawValue: unknown): ReferralReleaseCondition {
-    return rawValue === "PAID" ? ReferralReleaseCondition.PAID : ReferralReleaseCondition.COMPLETED;
   }
 }
