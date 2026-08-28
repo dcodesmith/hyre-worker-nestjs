@@ -180,6 +180,30 @@ describe("Cars E2E Tests", () => {
     expect(response.body.status).toBe("HOLD");
   });
 
+  it("PATCH /api/fleet-owner/cars/:carId protects booked status while allowing rate changes", async () => {
+    const bookedCar = await factory.createCar(ownerId, {
+      registrationNumber: "BOK-123AA",
+      status: "BOOKED",
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch(`/api/fleet-owner/cars/${bookedCar.id}`)
+      .set("Cookie", ownerCookie)
+      .send({ status: "AVAILABLE" });
+
+    expect(response.status).toBe(HttpStatus.CONFLICT);
+    expect(response.body.errorCode).toBe("CAR_STATUS_UPDATE_NOT_ALLOWED");
+
+    const rateResponse = await request(app.getHttpServer())
+      .patch(`/api/fleet-owner/cars/${bookedCar.id}`)
+      .set("Cookie", ownerCookie)
+      .send({ dayRate: 55_000 });
+
+    expect(rateResponse.status).toBe(HttpStatus.OK);
+    expect(rateResponse.body.dayRate).toBe(55_000);
+    expect(rateResponse.body.status).toBe("BOOKED");
+  });
+
   it("PATCH /api/fleet-owner/cars/:carId returns 404 when updating another owner's car", async () => {
     const response = await request(app.getHttpServer())
       .patch(`/api/fleet-owner/cars/${ownerCarId}`)

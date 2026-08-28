@@ -18,6 +18,7 @@ import {
   CarDocumentNotFoundException,
   CarFetchFailedException,
   CarNotFoundException,
+  CarStatusUpdateNotAllowedException,
   CarUpdateFailedException,
   FileNotRejectedException,
   OwnerDriverCarLimitReachedException,
@@ -26,6 +27,12 @@ import {
 } from "./car.error";
 import { CarService } from "./car.service";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
+
+const recordNotFoundError = () =>
+  new Prisma.PrismaClientKnownRequestError("Record not found", {
+    code: "P2025",
+    clientVersion: "test",
+  });
 
 describe("CarService", () => {
   let service: CarService;
@@ -200,6 +207,7 @@ describe("CarService", () => {
     databaseServiceMock.car.findFirst.mockResolvedValueOnce({
       id: "car-1",
       registrationNumber: "ABC-123XY",
+      status: Status.HOLD,
     });
     databaseServiceMock.car.update.mockResolvedValueOnce({
       id: "car-1",
@@ -215,12 +223,69 @@ describe("CarService", () => {
       status: Status.HOLD,
       promotion: null,
     });
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "car-1", status: { not: Status.BOOKED } },
+      }),
+    );
+  });
+
+  it("rejects manual status changes for a booked car", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.BOOKED,
+    });
+
+    await expect(
+      service.updateCar("car-1", "owner-1", { status: Status.AVAILABLE }),
+    ).rejects.toBeInstanceOf(CarStatusUpdateNotAllowedException);
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a status update when the car becomes booked before the write", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.AVAILABLE,
+    });
+    databaseServiceMock.car.update.mockRejectedValueOnce(recordNotFoundError());
+
+    await expect(
+      service.updateCar("car-1", "owner-1", { status: Status.HOLD }),
+    ).rejects.toBeInstanceOf(CarStatusUpdateNotAllowedException);
+  });
+
+  it("allows rate changes for a booked car", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.BOOKED,
+    });
+    databaseServiceMock.car.update.mockResolvedValueOnce({
+      id: "car-1",
+      ownerId: "owner-1",
+      status: Status.BOOKED,
+      dayRate: 55_000,
+    });
+
+    await expect(service.updateCar("car-1", "owner-1", { dayRate: 55_000 })).resolves.toEqual({
+      id: "car-1",
+      ownerId: "owner-1",
+      status: Status.BOOKED,
+      dayRate: 55_000,
+      promotion: null,
+    });
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "car-1" } }),
+    );
   });
 
   it("rejects update when registration number conflicts after normalization", async () => {
     databaseServiceMock.car.findFirst.mockResolvedValueOnce({
       id: "car-1",
       registrationNumber: "ZZZ-999AA",
+      status: Status.AVAILABLE,
     });
     databaseServiceMock.car.findMany.mockResolvedValueOnce([{ registrationNumber: "ABC123XY" }]);
 
