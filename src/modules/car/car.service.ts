@@ -22,6 +22,7 @@ import {
   CarException,
   CarFetchFailedException,
   CarNotFoundException,
+  CarStatusUpdateNotAllowedException,
   CarUpdateFailedException,
   FileNotRejectedException,
   FleetOwnerNotFoundException,
@@ -340,11 +341,15 @@ export class CarService {
     try {
       const existingCar = await this.databaseService.car.findFirst({
         where: { id: carId, ownerId },
-        select: { id: true, registrationNumber: true },
+        select: { id: true, registrationNumber: true, status: true },
       });
 
       if (!existingCar) {
         throw new CarNotFoundException();
+      }
+
+      if (existingCar.status === Status.BOOKED && dto.status !== undefined) {
+        throw new CarStatusUpdateNotAllowedException();
       }
 
       const normalizedRegistrationNumber = dto.registrationNumber
@@ -360,7 +365,10 @@ export class CarService {
       }
 
       const car = await this.databaseService.car.update({
-        where: { id: carId },
+        where: {
+          id: carId,
+          ...(dto.status !== undefined && { status: { not: Status.BOOKED } }),
+        },
         data: {
           ...dto,
           ...(normalizedRegistrationNumber && {
@@ -379,6 +387,9 @@ export class CarService {
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
+      }
+      if (dto.status !== undefined && isRecordNotFoundError(error)) {
+        throw new CarStatusUpdateNotAllowedException();
       }
       this.logger.error(
         {

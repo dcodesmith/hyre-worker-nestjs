@@ -8,6 +8,7 @@ export const CarErrorCode = {
   CAR_FETCH_FAILED: "CAR_FETCH_FAILED",
   CAR_CREATE_FAILED: "CAR_CREATE_FAILED",
   CAR_UPDATE_FAILED: "CAR_UPDATE_FAILED",
+  CAR_STATUS_UPDATE_NOT_ALLOWED: "CAR_STATUS_UPDATE_NOT_ALLOWED",
   OWNER_DRIVER_CAR_LIMIT_REACHED: "OWNER_DRIVER_CAR_LIMIT_REACHED",
   REGISTRATION_NUMBER_ALREADY_EXISTS: "REGISTRATION_NUMBER_ALREADY_EXISTS",
   VEHICLE_IMAGE_NOT_FOUND: "VEHICLE_IMAGE_NOT_FOUND",
@@ -78,6 +79,17 @@ export class CarUpdateFailedException extends CarException {
       "An unexpected error occurred while updating the car",
       HttpStatus.INTERNAL_SERVER_ERROR,
       { title: "Car Update Failed" },
+    );
+  }
+}
+
+export class CarStatusUpdateNotAllowedException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CAR_STATUS_UPDATE_NOT_ALLOWED,
+      "A booked car's status cannot be changed manually",
+      HttpStatus.CONFLICT,
+      { title: "Car Status Update Not Allowed" },
     );
   }
 }
