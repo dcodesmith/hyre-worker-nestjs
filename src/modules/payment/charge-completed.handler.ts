@@ -426,9 +426,23 @@ export class ChargeCompletedHandler {
 
     return this.databaseService.payment.upsert({
       where: { txRef },
-      // Intentionally keep update empty for idempotency:
-      // once a txRef is recorded, retries should not mutate the existing payment row.
-      update: {},
+      // Provider retries may move the same reference from a failed attempt to a
+      // verified success. Allow only that monotonic direction; a later failed
+      // webhook can never regress a successful payment.
+      update:
+        status === PaymentAttemptStatus.SUCCESSFUL
+          ? {
+              amountExpected,
+              amountCharged,
+              currency,
+              status,
+              flutterwaveTransactionId: String(transactionId),
+              flutterwaveReference,
+              paymentMethod,
+              confirmedAt: new Date(),
+              webhookPayload: data as unknown as Prisma.JsonObject,
+            }
+          : {},
       create: {
         txRef,
         amountExpected,

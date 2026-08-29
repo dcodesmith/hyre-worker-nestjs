@@ -23,6 +23,39 @@ export async function lockCarRow(tx: Prisma.TransactionClient, carId: string): P
   return rows.length > 0;
 }
 
+/** Take a row-level lock on a booking after its car has been locked. */
+export async function lockBookingRow(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM "Booking" WHERE id = ${bookingId} FOR UPDATE`,
+  );
+  return rows.length > 0;
+}
+
+/** Serialize extension checkout creation for a booking leg. */
+export async function lockBookingLegRow(
+  tx: Prisma.TransactionClient,
+  bookingLegId: string,
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM "BookingLeg" WHERE id = ${bookingLegId} FOR UPDATE`,
+  );
+  return rows.length > 0;
+}
+
+/** Serialize payment confirmation and expiry for an extension. */
+export async function lockExtensionRow(
+  tx: Prisma.TransactionClient,
+  extensionId: string,
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM "Extension" WHERE id = ${extensionId} FOR UPDATE`,
+  );
+  return rows.length > 0;
+}
+
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly isDevelopment: boolean;

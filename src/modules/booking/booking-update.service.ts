@@ -21,6 +21,7 @@ import {
   BookingUpdateNotAllowedException,
   BookingValidationException,
   CarNotAvailableException,
+  ExtensionPaymentPendingException,
 } from "./booking.error";
 import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
@@ -29,6 +30,7 @@ import { BookingModificationPolicyService } from "./booking-modification-policy.
 import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { UpdateBookingBodyDto } from "./dto/update-booking.dto";
+import { findPendingExtensionLegId } from "./extension-reservation.service";
 
 @Injectable()
 export class BookingUpdateService {
@@ -246,6 +248,12 @@ export class BookingUpdateService {
             "edit",
             "Booking state changed during the update. Please retry",
           );
+        }
+        if (newStartDate || newEndDate) {
+          const pendingExtensionLegId = await findPendingExtensionLegId(tx, bookingId);
+          if (pendingExtensionLegId) {
+            throw new ExtensionPaymentPendingException(pendingExtensionLegId);
+          }
         }
 
         const policyNow = await getDatabaseNow(tx);

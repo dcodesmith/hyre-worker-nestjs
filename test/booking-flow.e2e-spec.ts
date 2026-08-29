@@ -83,9 +83,10 @@ describe("Booking Flow E2E", () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
 
-    // Mock Flutterwave payment intent — each call gets a unique ID
-    vi.spyOn(flutterwaveService, "createPaymentIntent").mockImplementation(async () => {
-      const uniqueId = `flw_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // Mirror FlutterwaveService: the supplied idempotency key is the tx_ref.
+    vi.spyOn(flutterwaveService, "createPaymentIntent").mockImplementation(async (options) => {
+      const uniqueId =
+        options.idempotencyKey ?? `flw_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       return {
         paymentIntentId: uniqueId,
         checkoutUrl: `https://checkout.flutterwave.com/pay/${uniqueId}`,
@@ -273,6 +274,7 @@ describe("Booking Flow E2E", () => {
     const extendResponse = await request(app.getHttpServer())
       .post(`/api/bookings/${bookingId}/extensions`)
       .set("Cookie", cookie)
+      .set("Idempotency-Key", randomUUID())
       .send({
         hours: 2,
         bookingLegId: targetLeg.id,
@@ -294,6 +296,7 @@ describe("Booking Flow E2E", () => {
       throw new Error("Extension not found right after extension endpoint");
     }
     expect(createdExtension.bookingLegId).toBe(targetLeg.id);
+    expect(createdExtension.paymentIntent).toBe(txRef);
     const extensionAmount = createdExtension.totalAmount.toNumber();
     const extensionEndTime = new Date(createdExtension.extensionEndTime);
 
@@ -349,6 +352,7 @@ describe("Booking Flow E2E", () => {
     expect(updatedExtension.status).toBe("ACTIVE");
     expect(updatedExtension.paymentStatus).toBe("PAID");
     expect(updatedExtension.paymentId).toBeTruthy();
+    await expect(databaseService.payment.count({ where: { txRef } })).resolves.toBe(1);
 
     const updatedLeg = await databaseService.bookingLeg.findUnique({
       where: { id: createdExtension.bookingLegId },

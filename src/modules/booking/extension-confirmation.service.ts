@@ -1,7 +1,13 @@
 import { Injectable } from "@nestjs/common";
-import { type Payment, PaymentStatus } from "@prisma/client";
+import { BookingStatus, type Payment, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService } from "../database/database.service";
+import {
+  DatabaseService,
+  lockBookingLegRow,
+  lockBookingRow,
+  lockCarRow,
+  lockExtensionRow,
+} from "../database/database.service";
 import { BookingExtensionConfirmedHandler } from "../notification/handlers/booking-extension-confirmed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
@@ -17,7 +23,8 @@ export class ExtensionConfirmationService {
   }
 
   async confirmFromPayment(payment: Payment): Promise<boolean> {
-    if (!payment.extensionId) {
+    const extensionId = payment.extensionId;
+    if (!extensionId) {
       this.logger.warn(
         {
           paymentId: payment.id,
@@ -29,8 +36,47 @@ export class ExtensionConfirmationService {
     }
 
     const updatedExtension = await this.databaseService.$transaction(async (tx) => {
+      const identity = await tx.extension.findUnique({
+        where: { id: extensionId },
+        select: {
+          bookingLegId: true,
+          bookingLeg: {
+            select: {
+              booking: {
+                select: {
+                  id: true,
+                  carId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!identity) return null;
+
+      const bookingId = identity.bookingLeg.booking.id;
+      if (!(await lockCarRow(tx, identity.bookingLeg.booking.carId))) return null;
+      if (!(await lockBookingRow(tx, bookingId))) return null;
+      if (!(await lockBookingLegRow(tx, identity.bookingLegId))) return null;
+      if (!(await lockExtensionRow(tx, extensionId))) return null;
+
+      const parentBooking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        select: { status: true },
+      });
+      if (
+        parentBooking?.status !== BookingStatus.CONFIRMED &&
+        parentBooking?.status !== BookingStatus.ACTIVE
+      ) {
+        return null;
+      }
+
       const updateResult = await tx.extension.updateMany({
-        where: { id: payment.extensionId, status: "PENDING" },
+        where: {
+          id: extensionId,
+          status: "PENDING",
+          paymentStatus: PaymentStatus.UNPAID,
+        },
         data: {
           paymentId: payment.id,
           paymentStatus: PaymentStatus.PAID,
@@ -39,7 +85,7 @@ export class ExtensionConfirmationService {
       });
 
       const extension = await tx.extension.findUnique({
-        where: { id: payment.extensionId },
+        where: { id: extensionId },
         include: {
           bookingLeg: {
             include: {

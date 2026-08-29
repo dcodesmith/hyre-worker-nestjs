@@ -7,7 +7,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS } from "../src/modules/booking/booking.const";
+import {
+  BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+  EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+} from "../src/modules/booking/booking.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MapsService } from "../src/modules/maps/maps.service";
@@ -781,6 +784,16 @@ describe("Bookings E2E Tests", () => {
   describe("Booking extension eligibility", () => {
     const extensionCallbackUrl = "https://example.com/extension-payment-status";
 
+    beforeEach(() => {
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementation(async (options) => {
+        const paymentIntentId = options.idempotencyKey ?? `ext-${randomUUID()}`;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+    });
+
     type LegEligibility = {
       id: string;
       canExtend: boolean;
@@ -861,12 +874,244 @@ describe("Bookings E2E Tests", () => {
     async function postExtension(
       bookingId: string,
       body: { hours: number; bookingLegId?: string },
+      idempotencyKey = randomUUID(),
     ) {
       return request(app.getHttpServer())
         .post(`/api/bookings/${bookingId}/extensions`)
         .set("Cookie", testUserCookie)
+        .set("Idempotency-Key", idempotencyKey)
         .send({ ...body, callbackUrl: extensionCallbackUrl });
     }
+
+    async function seedExtendableBooking() {
+      const car = await factory.createCar(fleetOwnerId);
+      return seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+    }
+
+    it("requires Idempotency-Key when creating an extension", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/bookings/${booking.id}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({
+          hours: 1,
+          bookingLegId: leg.id,
+          callbackUrl: extensionCallbackUrl,
+        });
+
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: "Idempotency-Key" })]),
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("replays an identical extension request with one row and one Flutterwave call", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+
+      const first = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      const replay = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(replay.status).toBe(HttpStatus.CREATED);
+      expect(replay.body).toEqual(first.body);
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+      await expect(
+        databaseService.extension.findUniqueOrThrow({
+          where: { id: first.body.extensionId },
+          select: { paymentIntent: true, paymentSessionExpiresAt: true, extensionEndTime: true },
+        }),
+      ).resolves.toEqual({
+        paymentIntent: first.body.paymentIntentId,
+        paymentSessionExpiresAt: expect.any(Date),
+        extensionEndTime: utcDaysFromToday(FUTURE_DAY_OFFSET, 21),
+      });
+      await expect(
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: booking.id },
+          select: { endDate: true },
+        }),
+      ).resolves.toEqual({
+        endDate: utcDaysFromToday(FUTURE_DAY_OFFSET, 21),
+      });
+    });
+
+    it("rejects changed extension values when the Idempotency-Key is reused", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+
+      const first = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      const changed = await postExtension(
+        booking.id,
+        { hours: 2, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(changed.status).toBe(HttpStatus.CONFLICT);
+      expect(changed.body.errorCode).toBe("EXTENSION_IDEMPOTENCY_KEY_REUSED");
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+    });
+
+    it("returns in progress for concurrent requests with the same key", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+      let signalStarted: (() => void) | undefined;
+      let releasePayment: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const paymentGate = new Promise<void>((resolve) => {
+        releasePayment = resolve;
+      });
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementationOnce(async (options) => {
+        signalStarted?.();
+        await paymentGate;
+        const paymentIntentId = options.idempotencyKey as string;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+
+      const firstPromise = postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      await started;
+      const concurrent = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      releasePayment?.();
+      const first = await firstPromise;
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(concurrent.status).toBe(HttpStatus.CONFLICT);
+      expect(concurrent.body.errorCode).toBe("EXTENSION_REQUEST_IN_PROGRESS");
+      expect(concurrent.headers["retry-after"]).toBe(
+        String(EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS),
+      );
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+    });
+
+    it("rejects a concurrent different key instead of replacing its payment reference", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      let signalStarted: (() => void) | undefined;
+      let releasePayment: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const paymentGate = new Promise<void>((resolve) => {
+        releasePayment = resolve;
+      });
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementationOnce(async (options) => {
+        signalStarted?.();
+        await paymentGate;
+        const paymentIntentId = options.idempotencyKey as string;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+
+      const firstPromise = postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        randomUUID(),
+      );
+      await started;
+      const concurrent = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        randomUUID(),
+      );
+      releasePayment?.();
+      const first = await firstPromise;
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(concurrent.status).toBe(HttpStatus.CONFLICT);
+      expect(concurrent.body.errorCode).toBe("EXTENSION_PAYMENT_PENDING");
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: first.body.extensionId },
+      });
+      expect(extension.paymentIntent).toBe(first.body.paymentIntentId);
+    });
+
+    it("marks a leg ineligible while its extension payment is pending", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+
+      const created = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
+      expect(created.status).toBe(HttpStatus.CREATED);
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expectLegEligibility(response.body, leg.id, {
+        canExtend: false,
+        maxExtendableHours: 0,
+      });
+    });
+
+    it("reserves the proposed extension window before payment confirmation", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const legEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd,
+      });
+
+      const created = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
+      expect(created.status).toBe(HttpStatus.CREATED);
+
+      const otherUser = await factory.createUser();
+      const otherwiseAvailableStart = new Date(legEnd.getTime() + 2.5 * 60 * 60 * 1000);
+      await expect(
+        factory.createBooking(otherUser.id, car.id, {
+          status: "CONFIRMED",
+          paymentStatus: "PAID",
+          type: "NIGHT",
+          startDate: otherwiseAvailableStart,
+          endDate: new Date(otherwiseAvailableStart.getTime() + 60 * 60 * 1000),
+        }),
+      ).rejects.toThrow();
+    });
 
     it("GET /api/bookings/:id exposes canExtend/maxExtendableHours on each leg, not the booking", async () => {
       const car = await factory.createCar(fleetOwnerId);

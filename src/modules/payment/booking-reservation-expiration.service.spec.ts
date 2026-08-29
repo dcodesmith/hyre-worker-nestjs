@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { BookingReservationService } from "../booking/booking-reservation.service";
+import { ExtensionReservationService } from "../booking/extension-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
@@ -23,11 +24,15 @@ describe("BookingReservationExpirationService", () => {
   let service: BookingReservationExpirationService;
   const databaseService = {
     booking: { findFirst: vi.fn(), findMany: vi.fn() },
+    extension: { findFirst: vi.fn(), findMany: vi.fn() },
   };
   const flutterwaveService = {
     findTransactionByReference: vi.fn(),
   };
   const bookingReservationService = {
+    cancelExpiredReservation: vi.fn(),
+  };
+  const extensionReservationService = {
     cancelExpiredReservation: vi.fn(),
   };
   const chargeCompletedHandler = {
@@ -39,6 +44,7 @@ describe("BookingReservationExpirationService", () => {
     databaseService.booking.findMany.mockResolvedValue([
       { id: "booking-1", paymentIntent: "booking-1" },
     ]);
+    databaseService.extension.findMany.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -46,6 +52,7 @@ describe("BookingReservationExpirationService", () => {
         { provide: DatabaseService, useValue: databaseService },
         { provide: FlutterwaveService, useValue: flutterwaveService },
         { provide: BookingReservationService, useValue: bookingReservationService },
+        { provide: ExtensionReservationService, useValue: extensionReservationService },
         { provide: ChargeCompletedHandler, useValue: chargeCompletedHandler },
       ],
     })
@@ -173,6 +180,55 @@ describe("BookingReservationExpirationService", () => {
       expect.objectContaining({ tx_ref: "booking_booking-1" }),
     );
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+  });
+
+  it("confirms a successful expired extension payment", async () => {
+    databaseService.booking.findMany.mockResolvedValueOnce([]);
+    databaseService.extension.findMany.mockResolvedValueOnce([
+      { id: "extension-1", paymentIntent: "ext-idem-1" },
+    ]);
+    flutterwaveService.findTransactionByReference.mockResolvedValue({
+      ...transaction,
+      tx_ref: "ext-idem-1",
+    });
+
+    await expect(service.reconcileExpiredReservations()).resolves.toBe(1);
+
+    expect(chargeCompletedHandler.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ tx_ref: "ext-idem-1", status: "successful" }),
+    );
+    expect(extensionReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+  });
+
+  it("releases an expired extension after Flutterwave confirms there is no payment", async () => {
+    databaseService.booking.findMany.mockResolvedValueOnce([]);
+    databaseService.extension.findMany.mockResolvedValueOnce([
+      { id: "extension-1", paymentIntent: "ext-idem-1" },
+    ]);
+    flutterwaveService.findTransactionByReference.mockResolvedValue(null);
+    extensionReservationService.cancelExpiredReservation.mockResolvedValue(true);
+
+    await expect(service.reconcileExpiredReservations()).resolves.toBe(1);
+
+    expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
+      "extension-1",
+    );
+    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+  });
+
+  it("reconciles one expired extension on demand", async () => {
+    databaseService.extension.findFirst.mockResolvedValue({
+      id: "extension-1",
+      paymentIntent: "ext-idem-1",
+    });
+    flutterwaveService.findTransactionByReference.mockResolvedValue(null);
+    extensionReservationService.cancelExpiredReservation.mockResolvedValue(true);
+
+    await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe(true);
+
+    expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
+      "extension-1",
+    );
   });
 
   it("limits provider reconciliation to five concurrent reservations", async () => {

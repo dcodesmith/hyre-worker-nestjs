@@ -6,6 +6,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createBooking, createExtension, createPayment } from "../../shared/helper.fixtures";
 import { BOOKING_PAYMENT_SESSION_DURATION_MINUTES } from "../booking/booking.const";
 import { BookingReadService } from "../booking/booking-read.service";
+import { ExtensionReservationService } from "../booking/extension-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
@@ -43,6 +44,9 @@ describe("PaymentApiService", () => {
   };
   const bookingReservationExpirationService = {
     reconcileExpiredReservation: vi.fn(),
+  };
+  const extensionReservationService = {
+    claimPaymentSession: vi.fn().mockResolvedValue(true),
   };
 
   const mockUserInfo = {
@@ -102,6 +106,7 @@ describe("PaymentApiService", () => {
           provide: BookingReservationExpirationService,
           useValue: bookingReservationExpirationService,
         },
+        { provide: ExtensionReservationService, useValue: extensionReservationService },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -377,12 +382,42 @@ describe("PaymentApiService", () => {
 
       expect(result.paymentIntentId).toBe("pi-456");
       expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
+      expect(extensionReservationService.claimPaymentSession).toHaveBeenCalledWith(
+        "extension-123",
+        mockUserInfo.id,
+        "extension_extension-123",
+      );
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledWith(
         expect.objectContaining({
           transactionType: "booking_extension",
           idempotencyKey: "extension_extension-123",
+          sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
         }),
       );
+    });
+
+    it("does not call Flutterwave when the extension payment session cannot be claimed", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(
+        createExtension({
+          id: "extension-123",
+          bookingLeg: {
+            booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED },
+          },
+        }),
+      );
+      extensionReservationService.claimPaymentSession.mockResolvedValueOnce(false);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it("throws PaymentBookingNotFoundException when booking is missing", async () => {
@@ -629,6 +664,49 @@ describe("PaymentApiService", () => {
       await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
         PaymentEntityNotPayableException,
       );
+    });
+
+    it("rejects an extension whose payment session is already initialized", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+      const extension = createExtension({
+        id: "extension-123",
+        paymentIntent: "ext-idem-1",
+        paymentSessionExpiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("rejects an extension whose payment session has expired", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+      const extension = createExtension({
+        id: "extension-123",
+        paymentSessionExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.CONFIRMED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
     it("throws PaymentEntityNotPayableException when the parent booking is cancelled", async () => {

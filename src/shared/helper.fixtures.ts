@@ -257,6 +257,7 @@ export function createExtension(
     paymentStatus: PaymentStatus.UNPAID,
     paymentId: null,
     paymentIntent: null,
+    paymentSessionExpiresAt: null,
     status: "PENDING",
     bookingLegId: "leg-123",
     eventType: ExtensionEventType.HOURLY_ADDITION,

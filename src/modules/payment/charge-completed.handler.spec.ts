@@ -128,7 +128,14 @@ describe("ChargeCompletedHandler", () => {
 
     await handler.handle(mockChargeData);
 
-    expect(databaseService.payment.upsert).toHaveBeenCalled();
+    expect(databaseService.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          status: PaymentAttemptStatus.SUCCESSFUL,
+          flutterwaveTransactionId: String(mockChargeData.id),
+        }),
+      }),
+    );
     expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
   });
@@ -423,7 +430,9 @@ describe("ChargeCompletedHandler", () => {
 
     await handler.handle({ ...mockChargeData, status: "failed" });
 
-    expect(databaseService.payment.upsert).toHaveBeenCalled();
+    expect(databaseService.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: {} }),
+    );
     expect(bookingEligibilityService.releaseReferralReservation).toHaveBeenCalledWith(
       expect.anything(),
       "booking-456",

@@ -9,6 +9,7 @@ import {
 } from "../booking/booking.const";
 import type { BookingPaymentStatusResponse } from "../booking/booking.interface";
 import { BookingReadService } from "../booking/booking-read.service";
+import { ExtensionReservationService } from "../booking/extension-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import type { PaymentIntentResponse, RefundResponse } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -48,6 +49,7 @@ export class PaymentApiService {
     private readonly bookingReadService: BookingReadService,
     private readonly chargeCompletedHandler: ChargeCompletedHandler,
     private readonly bookingReservationExpirationService: BookingReservationExpirationService,
+    private readonly extensionReservationService: ExtensionReservationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(PaymentApiService.name);
@@ -126,6 +128,19 @@ export class PaymentApiService {
     const paymentReference = `${dto.type}_${dto.entityId}`;
     if (dto.type === "booking") {
       await this.claimBookingPaymentSession(dto.entityId, paymentReference);
+    } else {
+      const claimed = await this.extensionReservationService.claimPaymentSession(
+        dto.entityId,
+        user.id,
+        paymentReference,
+      );
+      if (!claimed) {
+        throw new PaymentEntityNotPayableException(
+          "extension",
+          dto.entityId,
+          "payment session is already initialized or no longer available",
+        );
+      }
     }
 
     // Create payment intent with Flutterwave using server-validated amount.
@@ -145,9 +160,7 @@ export class PaymentApiService {
         entityId: dto.entityId,
         userId: user.id,
       },
-      ...(dto.type === "booking" && {
-        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
-      }),
+      sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
     });
 
     this.logger.info(
@@ -624,6 +637,8 @@ export class PaymentApiService {
         status: true,
         paymentStatus: true,
         totalAmount: true,
+        paymentIntent: true,
+        paymentSessionExpiresAt: true,
         bookingLeg: { select: { booking: { select: { userId: true, status: true } } } },
       },
     });
@@ -662,6 +677,21 @@ export class PaymentApiService {
         "extension",
         entityId,
         `payment status is ${extension.paymentStatus.toLowerCase()}`,
+      );
+    }
+    const paymentSessionExpiresAt: Date | null = extension.paymentSessionExpiresAt;
+    if (paymentSessionExpiresAt && paymentSessionExpiresAt <= new Date()) {
+      throw new PaymentEntityNotPayableException(
+        "extension",
+        entityId,
+        "payment session has expired",
+      );
+    }
+    if (extension.paymentIntent) {
+      throw new PaymentEntityNotPayableException(
+        "extension",
+        entityId,
+        "payment session is already initialized",
       );
     }
 

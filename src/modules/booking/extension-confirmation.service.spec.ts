@@ -13,6 +13,7 @@ describe("ExtensionConfirmationService", () => {
   let bookingExtensionConfirmedHandler: BookingExtensionConfirmedHandler;
   const outboxMock = { create: vi.fn() };
   const txMock = {
+    $queryRaw: vi.fn(),
     extension: {
       updateMany: vi.fn(),
       findUnique: vi.fn(),
@@ -21,6 +22,7 @@ describe("ExtensionConfirmationService", () => {
       updateMany: vi.fn(),
     },
     booking: {
+      findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
   };
@@ -30,6 +32,18 @@ describe("ExtensionConfirmationService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    txMock.$queryRaw.mockResolvedValue([{ id: "locked" }]);
+    txMock.extension.findUnique.mockReset();
+    txMock.extension.findUnique.mockResolvedValueOnce({
+      bookingLegId: "leg-1",
+      bookingLeg: {
+        booking: {
+          id: "booking-1",
+          carId: "car-1",
+        },
+      },
+    });
+    txMock.booking.findUnique.mockResolvedValue({ status: "ACTIVE" });
     txMock.booking.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -100,7 +114,11 @@ describe("ExtensionConfirmationService", () => {
 
     expect(result).toBe(true);
     expect(txMock.extension.updateMany).toHaveBeenCalledWith({
-      where: { id: "extension-1", status: "PENDING" },
+      where: {
+        id: "extension-1",
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+      },
       data: {
         paymentId: "payment-1",
         paymentStatus: PaymentStatus.PAID,

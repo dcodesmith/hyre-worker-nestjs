@@ -35,3 +35,10 @@ lerna-debug.log*
 
 scripts/deploy-secrets.sh
 scripts/set-preview-secrets.sh
+
+# Local database backups and deployment keys
+/backup*.sql
+/backup*.dump
+/*.bak
+/*_private_key
+/public_key

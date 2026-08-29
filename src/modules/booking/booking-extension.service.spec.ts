@@ -6,7 +6,10 @@ import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { RatesService } from "../rates/rates.service";
+import { ExtensionPaymentPendingException, ExtensionStateChangedException } from "./booking.error";
 import { BookingExtensionService } from "./booking-extension.service";
+import { BookingReservationService } from "./booking-reservation.service";
+import { ExtensionCreationIdempotencyService } from "./extension-creation-idempotency.service";
 
 describe("BookingExtensionService", () => {
   let service: BookingExtensionService;
@@ -14,13 +17,19 @@ describe("BookingExtensionService", () => {
   const databaseServiceMock = {
     booking: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     extension: {
       create: vi.fn(),
-      update: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    bookingLeg: {
+      findUnique: vi.fn(),
     },
     $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
   };
 
   const ratesServiceMock = {
@@ -33,9 +42,24 @@ describe("BookingExtensionService", () => {
 
   const flutterwaveServiceMock = {
     createPaymentIntent: vi.fn().mockResolvedValue({
-      paymentIntentId: "tx-ext-001",
+      paymentIntentId: "ext-idem-1",
       checkoutUrl: "https://checkout.flutterwave.com/pay/ext-001",
     }),
+  };
+
+  const idempotencyServiceMock = {
+    getCustomerScope: vi.fn().mockReturnValue("user:user-1"),
+    findResolvedBookingLegId: vi.fn().mockResolvedValue(null),
+    createRequestHash: vi.fn().mockReturnValue("request-hash"),
+    claim: vi.fn().mockResolvedValue({ kind: "claimed", id: "idem-1" }),
+    createPaymentIntentReference: vi.fn().mockReturnValue("ext-idem-1"),
+    attachExtension: vi.fn().mockResolvedValue(undefined),
+    checkpointResponse: vi.fn().mockResolvedValue(undefined),
+    complete: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn().mockResolvedValue(undefined),
+  };
+  const bookingReservationServiceMock = {
+    isOverlapConstraintViolation: vi.fn().mockReturnValue(false),
   };
 
   const authUser = {
@@ -125,6 +149,16 @@ describe("BookingExtensionService", () => {
 
     databaseServiceMock.$queryRaw.mockResolvedValue([{ policyNow }]);
     databaseServiceMock.booking.findMany.mockResolvedValue([]);
+    databaseServiceMock.booking.findUnique.mockResolvedValue(buildBooking());
+    databaseServiceMock.booking.updateMany.mockResolvedValue({ count: 1 });
+    databaseServiceMock.extension.findFirst.mockResolvedValue(null);
+    databaseServiceMock.bookingLeg.findUnique.mockResolvedValue({
+      legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+      extensions: [],
+    });
+    databaseServiceMock.$transaction.mockImplementation(async (callback) =>
+      callback(databaseServiceMock),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -132,6 +166,8 @@ describe("BookingExtensionService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: RatesService, useValue: ratesServiceMock },
         { provide: FlutterwaveService, useValue: flutterwaveServiceMock },
+        { provide: ExtensionCreationIdempotencyService, useValue: idempotencyServiceMock },
+        { provide: BookingReservationService, useValue: bookingReservationServiceMock },
       ],
     }).compile();
 
@@ -330,6 +366,27 @@ describe("BookingExtensionService", () => {
       });
     });
 
+    it("marks a leg with a pending unpaid extension ineligible", async () => {
+      const results = await service.getEligibilities(
+        [
+          buildBooking({
+            extensions: [
+              {
+                extensionEndTime: new Date("2026-01-01T14:00:00.000Z"),
+                status: "PENDING",
+                paymentStatus: PaymentStatus.UNPAID,
+              },
+            ],
+          }),
+        ],
+        true,
+        policyNow,
+      );
+
+      expect(results.get("leg-1")).toEqual(ineligible);
+      expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
+    });
+
     it("marks non-DAY booking legs ineligible without querying next bookings", async () => {
       const results = await service.getEligibilities(
         [buildBooking({ type: BookingType.NIGHT })],
@@ -381,12 +438,74 @@ describe("BookingExtensionService", () => {
   });
 
   describe("createExtension", () => {
+    it("replays the original response without another transaction or Flutterwave call", async () => {
+      const replayResponse = {
+        extensionId: "ext-original",
+        paymentIntentId: "ext-idem-original",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/original",
+      };
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      idempotencyServiceMock.claim.mockResolvedValueOnce({
+        kind: "replay",
+        response: replayResponse,
+      });
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
+      ).resolves.toEqual(replayResponse);
+
+      expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("replays an omitted-leg request using its originally resolved leg after midnight", async () => {
+      const replayResponse = {
+        extensionId: "ext-original",
+        paymentIntentId: "ext-idem-original",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/original",
+      };
+      databaseServiceMock.$queryRaw.mockResolvedValueOnce([
+        { policyNow: new Date("2026-01-02T10:00:00.000Z") },
+      ]);
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
+        buildBooking({
+          legs: [
+            {
+              id: "leg-original",
+              legDate: todayLegDate,
+              legEndTime: new Date("2026-01-01T20:00:00.000Z"),
+            },
+            {
+              id: "leg-new-day",
+              legDate: tomorrowLegDate,
+              legEndTime: new Date("2026-01-02T20:00:00.000Z"),
+            },
+          ],
+        }),
+      );
+      idempotencyServiceMock.findResolvedBookingLegId.mockResolvedValueOnce("leg-original");
+      idempotencyServiceMock.claim.mockResolvedValueOnce({
+        kind: "replay",
+        response: replayResponse,
+      });
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
+      ).resolves.toEqual(replayResponse);
+
+      expect(idempotencyServiceMock.createRequestHash).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingLegId: "leg-original" }),
+      );
+      expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
     it("creates extension payment intent for active hourly booking", async () => {
       const legEndTime = new Date(policyNow.getTime() + 60 * 60 * 1000);
+      const booking = buildBooking({ legDate: policyNow, legEndTime });
 
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({ legDate: policyNow, legEndTime }),
-      );
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(booking);
       databaseServiceMock.extension.create.mockResolvedValueOnce({
         id: "ext-1",
       });
@@ -395,42 +514,83 @@ describe("BookingExtensionService", () => {
         "booking-1",
         { hours: 2, callbackUrl: extensionCallback.callbackUrl },
         authUser,
+        "extension-request-1",
       );
 
       expect(result).toEqual({
         extensionId: "ext-1",
-        paymentIntentId: "tx-ext-001",
+        paymentIntentId: "ext-idem-1",
         checkoutUrl: "https://checkout.flutterwave.com/pay/ext-001",
       });
       expect(flutterwaveServiceMock.createPaymentIntent).toHaveBeenCalledWith(
         expect.objectContaining({
           transactionType: "booking_extension",
           callbackUrl: "https://example.com/callback",
+          idempotencyKey: "ext-idem-1",
+          sessionDurationMinutes: 10,
+          metadata: expect.objectContaining({
+            extensionId: "ext-1",
+            bookingLegId: "leg-1",
+          }),
         }),
       );
       expect(databaseServiceMock.extension.create).toHaveBeenCalled();
+      expect(databaseServiceMock.extension.create.mock.invocationCallOrder[0]).toBeLessThan(
+        flutterwaveServiceMock.createPaymentIntent.mock.invocationCallOrder[0],
+      );
+      expect(idempotencyServiceMock.attachExtension.mock.invocationCallOrder[0]).toBeLessThan(
+        flutterwaveServiceMock.createPaymentIntent.mock.invocationCallOrder[0],
+      );
+      expect(idempotencyServiceMock.checkpointResponse).toHaveBeenCalledWith(
+        "idem-1",
+        "ext-1",
+        result,
+      );
+      expect(idempotencyServiceMock.complete).toHaveBeenCalledWith("idem-1");
+      expect(databaseServiceMock.booking.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "booking-1",
+          endDate: { lt: new Date("2026-01-01T13:00:00.000Z") },
+        },
+        data: { endDate: new Date("2026-01-01T13:00:00.000Z") },
+      });
+      expect(databaseServiceMock.extension.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            paymentSessionExpiresAt: new Date("2026-01-01T10:10:00.000Z"),
+          }),
+        }),
+      );
     });
 
     it("uses today's leg when bookingLegId is omitted for a multi-day booking", async () => {
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({
-          legs: [
-            {
-              id: "leg-tomorrow",
-              legDate: tomorrowLegDate,
-              legEndTime: new Date("2026-01-02T15:00:00.000Z"),
-            },
-            {
-              id: "leg-today",
-              legDate: todayLegDate,
-              legEndTime: new Date("2026-01-01T13:00:00.000Z"),
-            },
-          ],
-        }),
-      );
+      const booking = buildBooking({
+        legs: [
+          {
+            id: "leg-tomorrow",
+            legDate: tomorrowLegDate,
+            legEndTime: new Date("2026-01-02T15:00:00.000Z"),
+          },
+          {
+            id: "leg-today",
+            legDate: todayLegDate,
+            legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+          },
+        ],
+      });
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce({
+        ...booking,
+        legs: booking.legs.filter((leg) => leg.id === "leg-today"),
+      });
       databaseServiceMock.extension.create.mockResolvedValueOnce({ id: "ext-1" });
 
-      await service.createExtension("booking-1", extensionCallback, authUser);
+      await service.createExtension(
+        "booking-1",
+        extensionCallback,
+        authUser,
+        "extension-request-1",
+      );
 
       expect(databaseServiceMock.extension.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -443,22 +603,25 @@ describe("BookingExtensionService", () => {
     });
 
     it("targets an explicit future bookingLegId when provided", async () => {
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({
-          legs: [
-            {
-              id: "leg-today",
-              legDate: todayLegDate,
-              legEndTime: new Date("2026-01-01T13:00:00.000Z"),
-            },
-            {
-              id: "leg-tomorrow",
-              legDate: tomorrowLegDate,
-              legEndTime: new Date("2026-01-02T15:00:00.000Z"),
-            },
-          ],
-        }),
-      );
+      const booking = buildBooking({
+        legs: [
+          {
+            id: "leg-today",
+            legDate: todayLegDate,
+            legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+          },
+          {
+            id: "leg-tomorrow",
+            legDate: tomorrowLegDate,
+            legEndTime: new Date("2026-01-02T15:00:00.000Z"),
+          },
+        ],
+      });
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce({
+        ...booking,
+        legs: booking.legs.filter((leg) => leg.id === "leg-tomorrow"),
+      });
       databaseServiceMock.extension.create.mockResolvedValueOnce({ id: "ext-future" });
 
       await service.createExtension(
@@ -469,6 +632,7 @@ describe("BookingExtensionService", () => {
           bookingLegId: "leg-tomorrow",
         },
         authUser,
+        "extension-request-1",
       );
 
       expect(databaseServiceMock.extension.create).toHaveBeenCalledWith(
@@ -494,6 +658,7 @@ describe("BookingExtensionService", () => {
             bookingLegId: "foreign-leg",
           },
           authUser,
+          "extension-request-1",
         ),
       ).rejects.toThrow("Booking leg not found");
 
@@ -502,17 +667,17 @@ describe("BookingExtensionService", () => {
     });
 
     it("rejects a past or ended bookingLegId before creating a payment intent", async () => {
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({
-          legs: [
-            {
-              id: "leg-ended-today",
-              legDate: todayLegDate,
-              legEndTime: new Date("2026-01-01T09:00:00.000Z"),
-            },
-          ],
-        }),
-      );
+      const booking = buildBooking({
+        legs: [
+          {
+            id: "leg-ended-today",
+            legDate: todayLegDate,
+            legEndTime: new Date("2026-01-01T09:00:00.000Z"),
+          },
+        ],
+      });
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(booking);
 
       await expect(
         service.createExtension(
@@ -523,6 +688,7 @@ describe("BookingExtensionService", () => {
             bookingLegId: "leg-ended-today",
           },
           authUser,
+          "extension-request-1",
         ),
       ).rejects.toThrow("Booking leg cannot be extended");
 
@@ -545,6 +711,7 @@ describe("BookingExtensionService", () => {
           "booking-1",
           { hours: 2, callbackUrl: extensionCallback.callbackUrl },
           authUser,
+          "extension-request-1",
         ),
       ).rejects.toThrow("Maximum extension is 1 hour(s) for this leg");
 
@@ -556,7 +723,12 @@ describe("BookingExtensionService", () => {
       databaseServiceMock.booking.findFirst.mockResolvedValueOnce(null);
 
       await expect(
-        service.createExtension("missing-booking", extensionCallback, authUser),
+        service.createExtension(
+          "missing-booking",
+          extensionCallback,
+          authUser,
+          "extension-request-1",
+        ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -570,71 +742,98 @@ describe("BookingExtensionService", () => {
       );
 
       await expect(
-        service.createExtension("booking-1", extensionCallback, authUser),
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
       ).rejects.toThrow("Only DAY bookings can be extended");
       expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
     });
 
-    it("updates existing pending unpaid extension when start time matches", async () => {
+    it("rejects rather than replacing an existing pending unpaid extension", async () => {
       const legEndTime = new Date(policyNow.getTime() + 2 * 60 * 60 * 1000);
       const pendingExtensionEnd = new Date(legEndTime.getTime() + 1 * 60 * 60 * 1000);
 
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({
-          legDate: policyNow,
-          legEndTime,
-          extensions: [
-            {
-              id: "ext-pending-1",
-              extensionStartTime: legEndTime,
-              extensionEndTime: pendingExtensionEnd,
-              status: "PENDING",
-              paymentStatus: PaymentStatus.UNPAID,
-            },
-          ],
-        }),
-      );
-      databaseServiceMock.extension.update.mockResolvedValueOnce({ id: "ext-pending-1" });
+      const booking = buildBooking({
+        legDate: policyNow,
+        legEndTime,
+        extensions: [
+          {
+            id: "ext-pending-1",
+            extensionStartTime: legEndTime,
+            extensionEndTime: pendingExtensionEnd,
+            status: "PENDING",
+            paymentStatus: PaymentStatus.UNPAID,
+          },
+        ],
+      });
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(booking);
 
-      await service.createExtension(
-        "booking-1",
-        { hours: 2, callbackUrl: extensionCallback.callbackUrl },
-        authUser,
-      );
+      await expect(
+        service.createExtension(
+          "booking-1",
+          { hours: 2, callbackUrl: extensionCallback.callbackUrl },
+          authUser,
+          "extension-request-2",
+        ),
+      ).rejects.toBeInstanceOf(ExtensionPaymentPendingException);
 
       expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
-      expect(databaseServiceMock.extension.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "ext-pending-1" },
-        }),
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(idempotencyServiceMock.release).toHaveBeenCalledWith("idem-1");
+    });
+
+    it("rejects if the effective leg end changes before the locked write", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(
+        buildBooking({ legEndTime: new Date("2026-01-01T14:00:00.000Z") }),
       );
-      const updateCall = databaseServiceMock.extension.update.mock.calls[0][0];
-      const startTime = new Date(updateCall.data.extensionStartTime);
-      expect(startTime.getTime()).toBe(legEndTime.getTime());
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-3"),
+      ).rejects.toBeInstanceOf(ExtensionStateChangedException);
+
+      expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(idempotencyServiceMock.release).toHaveBeenCalledWith("idem-1");
+    });
+
+    it("rejects if the booking becomes cancelled before the locked write", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(
+        buildBooking({ status: BookingStatus.CANCELLED }),
+      );
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-3"),
+      ).rejects.toThrow("Confirmed or active booking not found");
+
+      expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(idempotencyServiceMock.release).toHaveBeenCalledWith("idem-1");
     });
 
     it("throws when requested extension exceeds the leg max hours", async () => {
       const twoHoursToMidnight = new Date("2026-01-01T22:00:00.000Z");
 
-      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
-        buildBooking({
-          legEndTime: twoHoursToMidnight,
-          extensions: [
-            {
-              extensionDate: policyNow,
-              extensionEndTime: twoHoursToMidnight,
-              status: "ACTIVE",
-              paymentStatus: PaymentStatus.PAID,
-            },
-          ],
-        }),
-      );
+      const booking = buildBooking({
+        legEndTime: twoHoursToMidnight,
+        extensions: [
+          {
+            extensionDate: policyNow,
+            extensionEndTime: twoHoursToMidnight,
+            status: "ACTIVE",
+            paymentStatus: PaymentStatus.PAID,
+          },
+        ],
+      });
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+      databaseServiceMock.booking.findUnique.mockResolvedValueOnce(booking);
 
       await expect(
         service.createExtension(
           "booking-1",
           { hours: 3, callbackUrl: extensionCallback.callbackUrl },
           authUser,
+          "extension-request-1",
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();

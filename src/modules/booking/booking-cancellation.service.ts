@@ -9,10 +9,12 @@ import {
   BookingException,
   BookingNotFoundException,
   BookingStatusNotModifiableException,
+  ExtensionPaymentPendingException,
 } from "./booking.error";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
+import { findPendingExtensionLegId } from "./extension-reservation.service";
 
 const CANCELLED_BOOKING_REFERRAL_REASON = "BOOKING_CANCELLED";
 
@@ -65,6 +67,10 @@ export class BookingCancellationService {
             "cancel",
             "Booking state changed during cancellation. Please retry",
           );
+        }
+        const pendingExtensionLegId = await findPendingExtensionLegId(tx, bookingId);
+        if (pendingExtensionLegId) {
+          throw new ExtensionPaymentPendingException(pendingExtensionLegId);
         }
 
         const policyNow = await getDatabaseNow(tx);
