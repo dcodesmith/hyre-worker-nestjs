@@ -779,6 +779,14 @@ describe("Bookings E2E Tests", () => {
   });
 
   describe("Booking extension eligibility", () => {
+    const extensionCallbackUrl = "https://example.com/extension-payment-status";
+
+    type LegEligibility = {
+      id: string;
+      canExtend: boolean;
+      maxExtendableHours: number;
+    };
+
     const utcTodayAt = (hours: number, minutes = 0): Date => {
       const now = new Date();
       return new Date(
@@ -791,6 +799,23 @@ describe("Bookings E2E Tests", () => {
       date.setUTCDate(date.getUTCDate() + dayOffset);
       return date;
     };
+
+    /** Future DAY window used for deterministic positive E2E assertions. */
+    const FUTURE_DAY_OFFSET = 3;
+
+    function expectNoBookingLevelExtensionFields(body: Record<string, unknown>) {
+      expect(body).not.toHaveProperty("canExtend");
+      expect(body).not.toHaveProperty("maxExtendableHours");
+      expect(body).not.toHaveProperty("extensionBookingLegId");
+    }
+
+    function expectLegEligibility(
+      body: { legs: LegEligibility[] },
+      legId: string,
+      expected: { canExtend: boolean; maxExtendableHours: number },
+    ) {
+      expect(body.legs.find((leg) => leg.id === legId)).toMatchObject(expected);
+    }
 
     async function seedBookingWithLeg(params: {
       carId: string;
@@ -817,10 +842,10 @@ describe("Bookings E2E Tests", () => {
       return { booking, leg };
     }
 
-    async function seedBlockingNextBooking(params: {
+    async function seedBlockingNightBooking(params: {
       carId: string;
-      legStart: Date;
-      legEnd: Date;
+      nightStart: Date;
+      nightEnd: Date;
     }) {
       const otherUser = await factory.createUser();
       return seedBookingWithLeg({
@@ -828,19 +853,44 @@ describe("Bookings E2E Tests", () => {
         userId: otherUser.id,
         status: "CONFIRMED",
         type: "NIGHT",
-        legStart: params.legStart,
-        legEnd: params.legEnd,
+        legStart: params.nightStart,
+        legEnd: params.nightEnd,
       });
     }
 
-    it("GET /api/bookings/:bookingId returns extension eligibility for today's 08:00–20:00 DAY leg", async () => {
+    async function postExtension(
+      bookingId: string,
+      body: { hours: number; bookingLegId?: string },
+    ) {
+      return request(app.getHttpServer())
+        .post(`/api/bookings/${bookingId}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({ ...body, callbackUrl: extensionCallbackUrl });
+    }
+
+    it("GET /api/bookings/:id exposes canExtend/maxExtendableHours on each leg, not the booking", async () => {
       const car = await factory.createCar(fleetOwnerId);
-      const legStart = utcTodayAt(8);
-      const legEnd = utcTodayAt(20);
-      const { booking, leg } = await seedBookingWithLeg({
-        carId: car.id,
-        legStart,
-        legEnd,
+      const pastStart = utcDaysFromToday(-1, 8);
+      const pastEnd = utcDaysFromToday(-1, 20);
+      const futureStart = utcDaysFromToday(FUTURE_DAY_OFFSET, 8);
+      const futureEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
+
+      const booking = await factory.createBooking(testUserId, car.id, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        type: "DAY",
+        startDate: pastStart,
+        endDate: futureEnd,
+      });
+      const pastLeg = await factory.createBookingLeg(booking.id, {
+        legDate: pastStart,
+        legStartTime: pastStart,
+        legEndTime: pastEnd,
+      });
+      const futureLeg = await factory.createBookingLeg(booking.id, {
+        legDate: futureStart,
+        legStartTime: futureStart,
+        legEndTime: futureEnd,
       });
 
       const response = await request(app.getHttpServer())
@@ -848,23 +898,51 @@ describe("Bookings E2E Tests", () => {
         .set("Cookie", testUserCookie);
 
       expect(response.status).toBe(HttpStatus.OK);
-      expect(response.body.extensionBookingLegId).toBe(leg.id);
-      expect(response.body.canExtend).toBe(true);
-      expect(response.body.maxExtendableHours).toBeGreaterThanOrEqual(1);
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, pastLeg.id, { canExtend: false, maxExtendableHours: 0 });
+      expectLegEligibility(response.body, futureLeg.id, {
+        canExtend: true,
+        maxExtendableHours: 4,
+      });
     });
 
-    it("preserves a free 2-hour gap before the next booking (DAY 08:00–20:00 → NIGHT 23:00–05:00 → max 1h)", async () => {
+    it("GET /api/bookings list includes leg-level eligibility and omits booking-level fields", async () => {
       const car = await factory.createCar(fleetOwnerId);
       const { booking, leg } = await seedBookingWithLeg({
         carId: car.id,
-        legStart: utcTodayAt(8),
-        legEnd: utcTodayAt(20),
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/api/bookings")
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      const listed = (
+        response.body.CONFIRMED as Array<{ id: string; legs: LegEligibility[] }>
+      ).find((item) => item.id === booking.id);
+      expect(listed).toBeDefined();
+      if (!listed) {
+        throw new Error("Expected booking in CONFIRMED list");
+      }
+      expectNoBookingLevelExtensionFields(listed as unknown as Record<string, unknown>);
+      expectLegEligibility(listed, leg.id, { canExtend: true, maxExtendableHours: 4 });
+    });
+
+    it("preserves a free 2-hour gap (future DAY 08:00–20:00 → NIGHT 23:00–05:00 → max 1h)", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET;
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(dayOffset, 8),
+        legEnd: utcDaysFromToday(dayOffset, 20),
       });
       // Latest extendable end = 23:00 − 2h = 21:00 → 1h.
-      await seedBlockingNextBooking({
+      await seedBlockingNightBooking({
         carId: car.id,
-        legStart: utcTodayAt(23),
-        legEnd: utcDaysFromToday(1, 5),
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
       });
 
       const response = await request(app.getHttpServer())
@@ -872,24 +950,22 @@ describe("Bookings E2E Tests", () => {
         .set("Cookie", testUserCookie);
 
       expect(response.status).toBe(HttpStatus.OK);
-      expect(response.body).toMatchObject({
-        extensionBookingLegId: leg.id,
-        canExtend: true,
-        maxExtendableHours: 1,
-      });
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, leg.id, { canExtend: true, maxExtendableHours: 1 });
     });
 
-    it("disallows extension when only the 2-hour gap remains (DAY 09:00–21:00 → NIGHT 23:00–05:00 → max 0h)", async () => {
+    it("disallows extension when only the 2-hour gap remains (future DAY 09:00–21:00 → NIGHT 23:00 → max 0h)", async () => {
       const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET + 1;
       const { booking, leg } = await seedBookingWithLeg({
         carId: car.id,
-        legStart: utcTodayAt(9),
-        legEnd: utcTodayAt(21),
+        legStart: utcDaysFromToday(dayOffset, 9),
+        legEnd: utcDaysFromToday(dayOffset, 21),
       });
-      await seedBlockingNextBooking({
+      await seedBlockingNightBooking({
         carId: car.id,
-        legStart: utcTodayAt(23),
-        legEnd: utcDaysFromToday(1, 5),
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
       });
 
       const response = await request(app.getHttpServer())
@@ -897,36 +973,27 @@ describe("Bookings E2E Tests", () => {
         .set("Cookie", testUserCookie);
 
       expect(response.status).toBe(HttpStatus.OK);
-      expect(response.body).toMatchObject({
-        extensionBookingLegId: leg.id,
-        canExtend: false,
-        maxExtendableHours: 0,
-      });
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, leg.id, { canExtend: false, maxExtendableHours: 0 });
     });
 
-    it("POST /extensions for DAY 08:00–20:00 before NIGHT 23:00–05:00 rejects 2h and accepts 1h", async () => {
+    it("POST with bookingLegId rejects 2h and accepts 1h for future DAY 20:00 before NIGHT 23:00", async () => {
       const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET + 2;
       const { booking, leg } = await seedBookingWithLeg({
         carId: car.id,
-        legStart: utcTodayAt(8),
-        legEnd: utcTodayAt(20),
+        legStart: utcDaysFromToday(dayOffset, 8),
+        legEnd: utcDaysFromToday(dayOffset, 20),
       });
-      await seedBlockingNextBooking({
+      await seedBlockingNightBooking({
         carId: car.id,
-        legStart: utcTodayAt(23),
-        legEnd: utcDaysFromToday(1, 5),
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
       });
 
       vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
 
-      const rejected = await request(app.getHttpServer())
-        .post(`/api/bookings/${booking.id}/extensions`)
-        .set("Cookie", testUserCookie)
-        .send({
-          hours: 2,
-          callbackUrl: "https://example.com/extension-payment-status",
-        });
-
+      const rejected = await postExtension(booking.id, { hours: 2, bookingLegId: leg.id });
       expect(rejected.status).toBe(HttpStatus.BAD_REQUEST);
       expect(rejected.body.detail).toMatch(/maximum extension is 1 hour/i);
       expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
@@ -934,14 +1001,7 @@ describe("Bookings E2E Tests", () => {
         databaseService.extension.count({ where: { bookingLegId: leg.id } }),
       ).resolves.toBe(0);
 
-      const accepted = await request(app.getHttpServer())
-        .post(`/api/bookings/${booking.id}/extensions`)
-        .set("Cookie", testUserCookie)
-        .send({
-          hours: 1,
-          callbackUrl: "https://example.com/extension-payment-status",
-        });
-
+      const accepted = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
       expect(accepted.status).toBe(HttpStatus.CREATED);
       expect(accepted.body).toMatchObject({
         extensionId: expect.any(String),
@@ -957,55 +1017,87 @@ describe("Bookings E2E Tests", () => {
       expect(extension.extendedDurationHours).toBe(1);
     });
 
-    it("selects today's 08:00–20:00 DAY leg, not tomorrow's 08:00–20:00 DAY leg", async () => {
+    it("POST with bookingLegId creates an Extension on the requested future leg", async () => {
       const car = await factory.createCar(fleetOwnerId);
       const todayStart = utcTodayAt(8);
       const todayEnd = utcTodayAt(20);
-      const tomorrowStart = utcDaysFromToday(1, 8);
-      const tomorrowEnd = utcDaysFromToday(1, 20);
+      const futureStart = utcDaysFromToday(FUTURE_DAY_OFFSET, 8);
+      const futureEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
 
       const booking = await factory.createBooking(testUserId, car.id, {
         status: "CONFIRMED",
         paymentStatus: "PAID",
         type: "DAY",
         startDate: todayStart,
-        endDate: tomorrowEnd,
+        endDate: futureEnd,
       });
-      const todayLeg = await factory.createBookingLeg(booking.id, {
+      await factory.createBookingLeg(booking.id, {
         legDate: todayStart,
         legStartTime: todayStart,
         legEndTime: todayEnd,
       });
-      const lastLeg = await factory.createBookingLeg(booking.id, {
-        legDate: tomorrowStart,
-        legStartTime: tomorrowStart,
-        legEndTime: tomorrowEnd,
+      const futureLeg = await factory.createBookingLeg(booking.id, {
+        legDate: futureStart,
+        legStartTime: futureStart,
+        legEndTime: futureEnd,
       });
 
-      const getResponse = await request(app.getHttpServer())
-        .get(`/api/bookings/${booking.id}`)
-        .set("Cookie", testUserCookie);
+      const response = await postExtension(booking.id, { hours: 1, bookingLegId: futureLeg.id });
+      expect(response.status).toBe(HttpStatus.CREATED);
 
-      expect(getResponse.status).toBe(HttpStatus.OK);
-      expect(getResponse.body.extensionBookingLegId).toBe(todayLeg.id);
-      expect(getResponse.body.extensionBookingLegId).not.toBe(lastLeg.id);
-      expect(getResponse.body.canExtend).toBe(true);
-      expect(getResponse.body.maxExtendableHours).toBeGreaterThanOrEqual(1);
-
-      const extendResponse = await request(app.getHttpServer())
-        .post(`/api/bookings/${booking.id}/extensions`)
-        .set("Cookie", testUserCookie)
-        .send({
-          hours: 1,
-          callbackUrl: "https://example.com/extension-payment-status",
-        });
-
-      expect(extendResponse.status).toBe(HttpStatus.CREATED);
       const extension = await databaseService.extension.findUniqueOrThrow({
-        where: { id: extendResponse.body.extensionId },
+        where: { id: response.body.extensionId },
       });
-      expect(extension.bookingLegId).toBe(todayLeg.id);
-      expect(extension.bookingLegId).not.toBe(lastLeg.id);
+      expect(extension.bookingLegId).toBe(futureLeg.id);
+    });
+
+    it("POST without bookingLegId does not silently target a future leg", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      const response = await postExtension(booking.id, { hours: 1 });
+
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.body.detail).toMatch(/booking leg not found/i);
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("POST rejects foreign and past legs before creating payment", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking: ownBooking } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+      const { leg: foreignLeg } = await seedBookingWithLeg({
+        carId: car.id,
+        userId: (await factory.createUser()).id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET + 1, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET + 1, 20),
+      });
+      const { booking: pastBooking, leg: pastLeg } = await seedBookingWithLeg({
+        carId: (await factory.createCar(fleetOwnerId)).id,
+        legStart: utcDaysFromToday(-1, 8),
+        legEnd: utcDaysFromToday(-1, 20),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      for (const [bookingId, bookingLegId] of [
+        [ownBooking.id, foreignLeg.id],
+        [pastBooking.id, pastLeg.id],
+      ] as const) {
+        const rejected = await postExtension(bookingId, { hours: 1, bookingLegId });
+        expect(rejected.status).toBe(HttpStatus.BAD_REQUEST);
+      }
+
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
   });
 });

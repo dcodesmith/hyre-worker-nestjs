@@ -11,7 +11,7 @@ import {
   BookingNotFoundException,
 } from "./booking.error";
 import type {
-  BookingExtensionEligibility,
+  BookingLegExtensionEligibility,
   BookingPaymentLifecycleState,
   BookingPaymentStatusResponse,
 } from "./booking.interface";
@@ -76,13 +76,13 @@ export class BookingReadService {
       });
 
       const policyNow = await getDatabaseNow(this.databaseService);
-      const extensionEligibilities = await this.bookingExtensionService.getEligibilities(
+      const legEligibilities = await this.bookingExtensionService.getEligibilities(
         bookings,
         true,
         policyNow,
       );
       const serializedBookings = bookings.map((booking) =>
-        this.withEligibility(booking, true, policyNow, extensionEligibilities.get(booking.id)),
+        this.withEligibility(booking, true, policyNow, legEligibilities),
       );
 
       return serializedBookings.reduce<Record<string, unknown[]>>((acc, booking) => {
@@ -137,18 +137,16 @@ export class BookingReadService {
       }
 
       const policyNow = await getDatabaseNow(this.databaseService);
-      const extensionEligibility = (
-        await this.bookingExtensionService.getEligibilities(
-          [booking],
-          booking.userId === sessionUser.id,
-          policyNow,
-        )
-      ).get(booking.id);
+      const legEligibilities = await this.bookingExtensionService.getEligibilities(
+        [booking],
+        booking.userId === sessionUser.id,
+        policyNow,
+      );
       return this.withEligibility(
         booking,
         booking.userId === sessionUser.id,
         policyNow,
-        extensionEligibility,
+        legEligibilities,
       );
     } catch (error) {
       if (error instanceof BookingException) {
@@ -334,20 +332,28 @@ export class BookingReadService {
     return value;
   }
 
-  private withEligibility<T extends BookingModificationPolicyInput>(
+  private withEligibility<
+    T extends BookingModificationPolicyInput & { legs: Array<{ id: string }> },
+  >(
     booking: T,
     canAct: boolean,
     now: Date,
-    extensionEligibility?: BookingExtensionEligibility,
+    legEligibilities: Map<string, BookingLegExtensionEligibility>,
   ) {
+    const bookingWithLegEligibility = {
+      ...booking,
+      legs: booking.legs.map((leg) => ({
+        ...leg,
+        ...(legEligibilities.get(leg.id) ?? {
+          canExtend: false,
+          maxExtendableHours: 0,
+        }),
+      })),
+    };
+
     return {
-      ...this.serializeValue(booking),
+      ...this.serializeValue(bookingWithLegEligibility),
       ...this.bookingModificationPolicyService.getEligibility(booking, canAct, now),
-      ...(extensionEligibility ?? {
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: null,
-      }),
     };
   }
 }

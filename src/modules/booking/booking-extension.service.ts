@@ -10,7 +10,7 @@ import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { RatesService } from "../rates/rates.service";
 import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
-import type { BookingExtensionEligibility, CreateExtensionResponse } from "./booking.interface";
+import type { BookingLegExtensionEligibility, CreateExtensionResponse } from "./booking.interface";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { CreateExtensionBodyDto } from "./dto/create-extension.dto";
 
@@ -43,17 +43,13 @@ export class BookingExtensionService {
     bookings: ExtensionEligibilityBooking[],
     canAct: boolean,
     now: Date,
-  ): Promise<Map<string, BookingExtensionEligibility>> {
-    const results = new Map(
-      bookings.map((booking) => [
-        booking.id,
-        {
-          canExtend: false,
-          maxExtendableHours: 0,
-          extensionBookingLegId: null,
-        },
-      ]),
-    );
+  ): Promise<Map<string, BookingLegExtensionEligibility>> {
+    const results = new Map<string, BookingLegExtensionEligibility>();
+    for (const booking of bookings) {
+      for (const leg of booking.legs) {
+        results.set(leg.id, { canExtend: false, maxExtendableHours: 0 });
+      }
+    }
 
     if (!canAct) {
       return results;
@@ -66,6 +62,7 @@ export class BookingExtensionService {
       currentEnd: Date;
       dayEnd: Date;
     }> = [];
+    const today = startOfDay(new UTCDate(now));
 
     for (const booking of bookings) {
       if (
@@ -75,29 +72,19 @@ export class BookingExtensionService {
         continue;
       }
 
-      const bookingLeg = booking.legs.find((leg) =>
-        isSameDay(new UTCDate(leg.legDate), new UTCDate(now)),
-      );
-      if (!bookingLeg) {
-        continue;
-      }
-
-      const currentEnd = this.getCurrentLegEnd(bookingLeg);
-      const dayEnd = startOfDay(addDays(new UTCDate(bookingLeg.legDate), 1));
-      results.set(booking.id, {
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: bookingLeg.id,
-      });
-
-      if (currentEnd < dayEnd) {
-        candidates.push({
-          bookingId: booking.id,
-          bookingLegId: bookingLeg.id,
-          carId: booking.carId,
-          currentEnd,
-          dayEnd,
-        });
+      for (const bookingLeg of booking.legs) {
+        const legDay = startOfDay(new UTCDate(bookingLeg.legDate));
+        const currentEnd = this.getCurrentLegEnd(bookingLeg);
+        const dayEnd = addDays(legDay, 1);
+        if (legDay >= today && currentEnd > now && currentEnd < dayEnd) {
+          candidates.push({
+            bookingId: booking.id,
+            bookingLegId: bookingLeg.id,
+            carId: booking.carId,
+            currentEnd,
+            dayEnd,
+          });
+        }
       }
     }
 
@@ -105,22 +92,18 @@ export class BookingExtensionService {
       return results;
     }
 
-    const earliestCurrentEnd = new Date(
-      Math.min(...candidates.map(({ currentEnd }) => currentEnd.getTime())),
-    );
-    const latestRelevantStart = addHours(
-      new Date(Math.max(...candidates.map(({ dayEnd }) => dayEnd.getTime()))),
-      BOOKING_BUFFER_HOURS,
-    );
     const nextBookings = await this.databaseService.booking.findMany({
       where: {
-        startDate: {
-          gte: earliestCurrentEnd,
-          lte: latestRelevantStart,
-        },
-        carId: { in: [...new Set(candidates.map(({ carId }) => carId))] },
         deletedAt: null,
         status: { in: [...BLOCKING_BOOKING_STATUSES] },
+        OR: candidates.map(({ bookingId, carId, currentEnd, dayEnd }) => ({
+          id: { not: bookingId },
+          carId,
+          startDate: {
+            gte: currentEnd,
+            lte: addHours(dayEnd, BOOKING_BUFFER_HOURS),
+          },
+        })),
       },
       select: {
         id: true,
@@ -144,10 +127,9 @@ export class BookingExtensionService {
         bookingBufferLimit < candidate.dayEnd ? bookingBufferLimit : candidate.dayEnd;
       const maxExtendableHours = Math.max(0, differenceInHours(latestEnd, candidate.currentEnd));
 
-      results.set(candidate.bookingId, {
+      results.set(candidate.bookingLegId, {
         canExtend: maxExtendableHours >= 1,
         maxExtendableHours,
-        extensionBookingLegId: candidate.bookingLegId,
       });
     }
 
@@ -190,20 +172,22 @@ export class BookingExtensionService {
     }
 
     const now = await getDatabaseNow(this.databaseService);
-    const eligibility = (await this.getEligibilities([booking], true, now)).get(booking.id);
-    const bookingLeg = booking.legs.find((leg) => leg.id === eligibility?.extensionBookingLegId);
+    const bookingLeg = body.bookingLegId
+      ? booking.legs.find((leg) => leg.id === body.bookingLegId)
+      : booking.legs.find((leg) => isSameDay(new UTCDate(leg.legDate), new UTCDate(now)));
 
-    if (!bookingLeg || !eligibility) {
-      throw new BadRequestException("No booking leg found for today");
+    if (!bookingLeg) {
+      throw new BadRequestException("Booking leg not found");
     }
 
-    if (!eligibility.canExtend) {
-      throw new BadRequestException("Booking can no longer be extended today");
+    const eligibility = (await this.getEligibilities([booking], true, now)).get(bookingLeg.id);
+    if (!eligibility?.canExtend) {
+      throw new BadRequestException("Booking leg cannot be extended");
     }
 
     if (body.hours > eligibility.maxExtendableHours) {
       throw new BadRequestException(
-        `Maximum extension is ${eligibility.maxExtendableHours} hour(s) for today`,
+        `Maximum extension is ${eligibility.maxExtendableHours} hour(s) for this leg`,
       );
     }
 

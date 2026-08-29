@@ -61,19 +61,26 @@ describe("BookingReadService", () => {
   };
   const bookingExtensionServiceMock = {
     getEligibilities: vi.fn(
-      async (bookings: Array<{ id: string }>, _canAct: boolean, _now: Date) =>
-        new Map(
-          bookings.map((booking) => [
-            booking.id,
-            {
-              canExtend: booking.id === "booking-1" || booking.id === "booking-123",
-              maxExtendableHours:
-                booking.id === "booking-1" || booking.id === "booking-123" ? 3 : 0,
-              extensionBookingLegId:
-                booking.id === "booking-1" || booking.id === "booking-123" ? "leg-1" : null,
-            },
-          ]),
-        ),
+      async (
+        bookings: Array<{ id: string; legs?: Array<{ id: string }> }>,
+        canAct: boolean,
+        _now: Date,
+      ) => {
+        const results = new Map<string, { canExtend: boolean; maxExtendableHours: number }>();
+        for (const booking of bookings) {
+          for (const leg of booking.legs ?? []) {
+            const eligible =
+              canAct &&
+              (booking.id === "booking-1" || booking.id === "booking-123") &&
+              leg.id === "leg-1";
+            results.set(leg.id, {
+              canExtend: eligible,
+              maxExtendableHours: eligible ? 3 : 0,
+            });
+          }
+        }
+        return results;
+      },
     ),
   };
 
@@ -106,16 +113,19 @@ describe("BookingReadService", () => {
         id: "booking-1",
         status: "CONFIRMED",
         totalAmount: { toNumber: () => 15000 },
+        legs: [{ id: "leg-1" }, { id: "leg-future" }],
       },
       {
         id: "booking-2",
         status: "COMPLETED",
         totalAmount: { toNumber: () => 21000 },
+        legs: [{ id: "leg-2" }],
       },
       {
         id: "booking-3",
         status: "CONFIRMED",
         totalAmount: { toNumber: () => 8000 },
+        legs: [{ id: "leg-3" }],
       },
     ];
     databaseServiceMock.booking.findMany.mockResolvedValueOnce(bookings);
@@ -128,25 +138,24 @@ describe("BookingReadService", () => {
           id: "booking-1",
           status: "CONFIRMED",
           totalAmount: 15000,
+          legs: [
+            { id: "leg-1", canExtend: true, maxExtendableHours: 3 },
+            { id: "leg-future", canExtend: false, maxExtendableHours: 0 },
+          ],
           canEdit: true,
           canCancel: true,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
-          canExtend: true,
-          maxExtendableHours: 3,
-          extensionBookingLegId: "leg-1",
         },
         {
           id: "booking-3",
           status: "CONFIRMED",
           totalAmount: 8000,
+          legs: [{ id: "leg-3", canExtend: false, maxExtendableHours: 0 }],
           canEdit: true,
           canCancel: true,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
-          canExtend: false,
-          maxExtendableHours: 0,
-          extensionBookingLegId: null,
         },
       ],
       COMPLETED: [
@@ -154,13 +163,11 @@ describe("BookingReadService", () => {
           id: "booking-2",
           status: "COMPLETED",
           totalAmount: 21000,
+          legs: [{ id: "leg-2", canExtend: false, maxExtendableHours: 0 }],
           canEdit: false,
           canCancel: false,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
-          canExtend: false,
-          maxExtendableHours: 0,
-          extensionBookingLegId: null,
         },
       ],
     });
@@ -176,7 +183,7 @@ describe("BookingReadService", () => {
     );
   });
 
-  it("returns booking details for the requesting user", async () => {
+  it("returns booking details with per-leg extension eligibility for the requesting user", async () => {
     const booking = {
       id: "booking-123",
       userId: "user-1",
@@ -186,6 +193,10 @@ describe("BookingReadService", () => {
         {
           id: "leg-1",
           extensions: [{ id: "ext-1", totalAmount: { toNumber: () => 2000 } }],
+        },
+        {
+          id: "leg-past",
+          extensions: [],
         },
       ],
     };
@@ -198,15 +209,28 @@ describe("BookingReadService", () => {
       userId: "user-1",
       status: "CONFIRMED",
       totalAmount: 12000,
-      legs: [{ id: "leg-1", extensions: [{ id: "ext-1", totalAmount: 2000 }] }],
+      legs: [
+        {
+          id: "leg-1",
+          extensions: [{ id: "ext-1", totalAmount: 2000 }],
+          canExtend: true,
+          maxExtendableHours: 3,
+        },
+        {
+          id: "leg-past",
+          extensions: [],
+          canExtend: false,
+          maxExtendableHours: 0,
+        },
+      ],
       canEdit: true,
       canCancel: true,
       modificationCutoffAt: "2026-08-02T00:00:00.000Z",
       policyHoursBeforeStart: 12,
-      canExtend: true,
-      maxExtendableHours: 3,
-      extensionBookingLegId: "leg-1",
     });
+    expect(result).not.toHaveProperty("canExtend");
+    expect(result).not.toHaveProperty("maxExtendableHours");
+    expect(result).not.toHaveProperty("extensionBookingLegId");
     expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
       expect.objectContaining({ id: "booking-123" }),
       true,
@@ -228,20 +252,9 @@ describe("BookingReadService", () => {
       car: {
         ownerId: "owner-1",
       },
+      legs: [{ id: "leg-1" }],
     };
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
-    bookingExtensionServiceMock.getEligibilities.mockResolvedValueOnce(
-      new Map([
-        [
-          "booking-123",
-          {
-            canExtend: false,
-            maxExtendableHours: 0,
-            extensionBookingLegId: null,
-          },
-        ],
-      ]),
-    );
 
     const result = await service.getBookingById("booking-123", fleetOwnerSessionUser);
 
@@ -253,14 +266,15 @@ describe("BookingReadService", () => {
       car: {
         ownerId: "owner-1",
       },
+      legs: [{ id: "leg-1", canExtend: false, maxExtendableHours: 0 }],
       canEdit: false,
       canCancel: false,
       modificationCutoffAt: "2026-08-02T00:00:00.000Z",
       policyHoursBeforeStart: 12,
-      canExtend: false,
-      maxExtendableHours: 0,
-      extensionBookingLegId: null,
     });
+    expect(result).not.toHaveProperty("canExtend");
+    expect(result).not.toHaveProperty("maxExtendableHours");
+    expect(result).not.toHaveProperty("extensionBookingLegId");
     expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {

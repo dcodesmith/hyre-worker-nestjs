@@ -51,10 +51,13 @@ describe("BookingExtensionService", () => {
 
   const policyNow = new Date("2026-01-01T10:00:00.000Z");
   const todayLegDate = new Date("2026-01-01T00:00:00.000Z");
+  const tomorrowLegDate = new Date("2026-01-02T00:00:00.000Z");
+  const yesterdayLegDate = new Date("2025-12-31T00:00:00.000Z");
   const extensionCallback = {
     hours: 1,
     callbackUrl: "https://example.com/callback",
   } as const;
+  const ineligible = { canExtend: false, maxExtendableHours: 0 } as const;
 
   type TestExtension = {
     id?: string;
@@ -136,7 +139,7 @@ describe("BookingExtensionService", () => {
   });
 
   describe("getEligibilities", () => {
-    it("selects today's leg rather than the last leg of a multi-day booking", async () => {
+    it("returns per-leg eligibility for today and future legs of a multi-day booking", async () => {
       const results = await service.getEligibilities(
         [
           buildBooking({
@@ -149,7 +152,7 @@ describe("BookingExtensionService", () => {
               },
               {
                 id: "leg-tomorrow",
-                legDate: new Date("2026-01-02T00:00:00.000Z"),
+                legDate: tomorrowLegDate,
                 legEndTime: new Date("2026-01-02T15:00:00.000Z"),
               },
             ],
@@ -159,12 +162,85 @@ describe("BookingExtensionService", () => {
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
+      expect(results.get("leg-today")).toEqual({
         canExtend: true,
         maxExtendableHours: 11,
-        extensionBookingLegId: "leg-today",
       });
-      expect(databaseServiceMock.booking.findMany).toHaveBeenCalledOnce();
+      expect(results.get("leg-tomorrow")).toEqual({
+        canExtend: true,
+        maxExtendableHours: 9,
+      });
+      expect(databaseServiceMock.booking.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              {
+                id: { not: "booking-1" },
+                carId: "car-1",
+                startDate: {
+                  gte: new Date("2026-01-01T13:00:00.000Z"),
+                  lte: new Date("2026-01-02T02:00:00.000Z"),
+                },
+              },
+              {
+                id: { not: "booking-1" },
+                carId: "car-1",
+                startDate: {
+                  gte: new Date("2026-01-02T15:00:00.000Z"),
+                  lte: new Date("2026-01-03T02:00:00.000Z"),
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it("marks past legs ineligible while still evaluating today/future legs", async () => {
+      const results = await service.getEligibilities(
+        [
+          buildBooking({
+            status: BookingStatus.CONFIRMED,
+            legs: [
+              {
+                id: "leg-yesterday",
+                legDate: yesterdayLegDate,
+                legEndTime: new Date("2025-12-31T18:00:00.000Z"),
+              },
+              {
+                id: "leg-today",
+                legDate: todayLegDate,
+                legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+              },
+            ],
+          }),
+        ],
+        true,
+        policyNow,
+      );
+
+      expect(results.get("leg-yesterday")).toEqual(ineligible);
+      expect(results.get("leg-today")).toEqual({
+        canExtend: true,
+        maxExtendableHours: 11,
+      });
+    });
+
+    it("marks today's leg ineligible once its effective end has passed", async () => {
+      const results = await service.getEligibilities(
+        [
+          buildBooking({
+            status: BookingStatus.CONFIRMED,
+            legId: "leg-ended-today",
+            legEndTime: new Date("2026-01-01T09:00:00.000Z"),
+          }),
+        ],
+        true,
+        policyNow,
+      );
+
+      expect(results.get("leg-ended-today")).toEqual(ineligible);
+      expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
     });
 
     it("clamps max hours to keep a 2-hour free buffer before the next other booking", async () => {
@@ -178,10 +254,9 @@ describe("BookingExtensionService", () => {
 
       const results = await service.getEligibilities([buildBooking()], true, policyNow);
 
-      expect(results.get("booking-1")).toEqual({
+      expect(results.get("leg-1")).toEqual({
         canExtend: true,
         maxExtendableHours: 1,
-        extensionBookingLegId: "leg-1",
       });
     });
 
@@ -200,14 +275,10 @@ describe("BookingExtensionService", () => {
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: "leg-1",
-      });
+      expect(results.get("leg-1")).toEqual(ineligible);
     });
 
-    it("uses the midnight cap when there is no next booking leg", async () => {
+    it("uses the midnight cap when there is no next booking", async () => {
       const results = await service.getEligibilities(
         [
           buildBooking({
@@ -219,10 +290,9 @@ describe("BookingExtensionService", () => {
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
+      expect(results.get("leg-1")).toEqual({
         canExtend: true,
         maxExtendableHours: 4,
-        extensionBookingLegId: "leg-1",
       });
       expect(databaseServiceMock.booking.findMany).toHaveBeenCalledOnce();
     });
@@ -254,73 +324,58 @@ describe("BookingExtensionService", () => {
       );
 
       // Current end 14:00, next at 18:00 → buffer limit 16:00 → 2 hours
-      expect(results.get("booking-1")).toEqual({
+      expect(results.get("leg-1")).toEqual({
         canExtend: true,
         maxExtendableHours: 2,
-        extensionBookingLegId: "leg-1",
       });
     });
 
-    it("marks non-DAY bookings ineligible without querying next bookings", async () => {
+    it("marks non-DAY booking legs ineligible without querying next bookings", async () => {
       const results = await service.getEligibilities(
         [buildBooking({ type: BookingType.NIGHT })],
         true,
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: null,
-      });
+      expect(results.get("leg-1")).toEqual(ineligible);
       expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
     });
 
-    it("marks non-confirmed/active bookings ineligible without querying next bookings", async () => {
+    it("marks non-confirmed/active booking legs ineligible without querying next bookings", async () => {
       const results = await service.getEligibilities(
         [buildBooking({ status: BookingStatus.COMPLETED })],
         true,
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: null,
-      });
+      expect(results.get("leg-1")).toEqual(ineligible);
       expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
     });
 
-    it("marks bookings with no today leg ineligible without querying next bookings", async () => {
+    it("returns ineligible defaults for every leg when canAct is false without querying next bookings", async () => {
       const results = await service.getEligibilities(
         [
           buildBooking({
-            status: BookingStatus.CONFIRMED,
-            legId: "leg-yesterday",
-            legDate: new Date("2025-12-31T00:00:00.000Z"),
-            legEndTime: new Date("2025-12-31T18:00:00.000Z"),
+            legs: [
+              {
+                id: "leg-today",
+                legDate: todayLegDate,
+                legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+              },
+              {
+                id: "leg-tomorrow",
+                legDate: tomorrowLegDate,
+                legEndTime: new Date("2026-01-02T15:00:00.000Z"),
+              },
+            ],
           }),
         ],
-        true,
+        false,
         policyNow,
       );
 
-      expect(results.get("booking-1")).toEqual({
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: null,
-      });
-      expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
-    });
-
-    it("returns ineligible defaults when canAct is false without querying next bookings", async () => {
-      const results = await service.getEligibilities([buildBooking()], false, policyNow);
-
-      expect(results.get("booking-1")).toEqual({
-        canExtend: false,
-        maxExtendableHours: 0,
-        extensionBookingLegId: null,
-      });
+      expect(results.get("leg-today")).toEqual(ineligible);
+      expect(results.get("leg-tomorrow")).toEqual(ineligible);
       expect(databaseServiceMock.booking.findMany).not.toHaveBeenCalled();
     });
   });
@@ -356,13 +411,13 @@ describe("BookingExtensionService", () => {
       expect(databaseServiceMock.extension.create).toHaveBeenCalled();
     });
 
-    it("uses today's leg when creating an extension for a multi-day booking", async () => {
+    it("uses today's leg when bookingLegId is omitted for a multi-day booking", async () => {
       databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
         buildBooking({
           legs: [
             {
               id: "leg-tomorrow",
-              legDate: new Date("2026-01-02T00:00:00.000Z"),
+              legDate: tomorrowLegDate,
               legEndTime: new Date("2026-01-02T15:00:00.000Z"),
             },
             {
@@ -387,6 +442,94 @@ describe("BookingExtensionService", () => {
       );
     });
 
+    it("targets an explicit future bookingLegId when provided", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
+        buildBooking({
+          legs: [
+            {
+              id: "leg-today",
+              legDate: todayLegDate,
+              legEndTime: new Date("2026-01-01T13:00:00.000Z"),
+            },
+            {
+              id: "leg-tomorrow",
+              legDate: tomorrowLegDate,
+              legEndTime: new Date("2026-01-02T15:00:00.000Z"),
+            },
+          ],
+        }),
+      );
+      databaseServiceMock.extension.create.mockResolvedValueOnce({ id: "ext-future" });
+
+      await service.createExtension(
+        "booking-1",
+        {
+          hours: 2,
+          callbackUrl: extensionCallback.callbackUrl,
+          bookingLegId: "leg-tomorrow",
+        },
+        authUser,
+      );
+
+      expect(databaseServiceMock.extension.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookingLegId: "leg-tomorrow",
+            extendedDurationHours: 2,
+            extensionStartTime: new Date("2026-01-02T15:00:00.000Z"),
+          }),
+        }),
+      );
+    });
+
+    it("rejects a bookingLegId that does not belong to the booking", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+
+      await expect(
+        service.createExtension(
+          "booking-1",
+          {
+            hours: 1,
+            callbackUrl: extensionCallback.callbackUrl,
+            bookingLegId: "foreign-leg",
+          },
+          authUser,
+        ),
+      ).rejects.toThrow("Booking leg not found");
+
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a past or ended bookingLegId before creating a payment intent", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(
+        buildBooking({
+          legs: [
+            {
+              id: "leg-ended-today",
+              legDate: todayLegDate,
+              legEndTime: new Date("2026-01-01T09:00:00.000Z"),
+            },
+          ],
+        }),
+      );
+
+      await expect(
+        service.createExtension(
+          "booking-1",
+          {
+            hours: 1,
+            callbackUrl: extensionCallback.callbackUrl,
+            bookingLegId: "leg-ended-today",
+          },
+          authUser,
+        ),
+      ).rejects.toThrow("Booking leg cannot be extended");
+
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+    });
+
     it("rejects hours above the buffer-clamped maximum before creating a payment intent", async () => {
       databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
       databaseServiceMock.booking.findMany.mockResolvedValueOnce([
@@ -403,7 +546,7 @@ describe("BookingExtensionService", () => {
           { hours: 2, callbackUrl: extensionCallback.callbackUrl },
           authUser,
         ),
-      ).rejects.toThrow("Maximum extension is 1 hour(s) for today");
+      ).rejects.toThrow("Maximum extension is 1 hour(s) for this leg");
 
       expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
       expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
@@ -470,7 +613,7 @@ describe("BookingExtensionService", () => {
       expect(startTime.getTime()).toBe(legEndTime.getTime());
     });
 
-    it("throws when requested extension exceeds today's max hours", async () => {
+    it("throws when requested extension exceeds the leg max hours", async () => {
       const twoHoursToMidnight = new Date("2026-01-01T22:00:00.000Z");
 
       databaseServiceMock.booking.findFirst.mockResolvedValueOnce(

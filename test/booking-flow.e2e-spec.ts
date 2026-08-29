@@ -248,26 +248,26 @@ describe("Booking Flow E2E", () => {
   async function runExtensionFlow(cookie: string, testCarId: string) {
     const { bookingId } = await runBookingFlow(cookie, testCarId);
 
-    // Pin to UTC morning/afternoon so +2h stays before UTC midnight regardless of wall-clock.
-    const now = new Date();
+    // Keep the booking's existing future leg day; pin to 08:00–20:00 for a
+    // deterministic DAY extension window (+2h stays before UTC midnight).
+    const existingLeg = await databaseService.bookingLeg.findFirstOrThrow({
+      where: { bookingId },
+    });
+    const legDay = new Date(existingLeg.legDate);
     const legStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 8, 0, 0, 0),
+      Date.UTC(legDay.getUTCFullYear(), legDay.getUTCMonth(), legDay.getUTCDate(), 8, 0, 0, 0),
     );
     const legEnd = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 14, 0, 0, 0),
+      Date.UTC(legDay.getUTCFullYear(), legDay.getUTCMonth(), legDay.getUTCDate(), 20, 0, 0, 0),
     );
 
     await databaseService.booking.update({
       where: { id: bookingId },
       data: { startDate: legStart, endDate: legEnd },
     });
-    const existingLeg = await databaseService.bookingLeg.findFirstOrThrow({
-      where: { bookingId },
-      select: { id: true },
-    });
-    const todayLeg = await databaseService.bookingLeg.update({
+    const targetLeg = await databaseService.bookingLeg.update({
       where: { id: existingLeg.id },
-      data: { legDate: legStart, legStartTime: legStart, legEndTime: legEnd },
+      data: { legStartTime: legStart, legEndTime: legEnd },
     });
 
     const extendResponse = await request(app.getHttpServer())
@@ -275,6 +275,7 @@ describe("Booking Flow E2E", () => {
       .set("Cookie", cookie)
       .send({
         hours: 2,
+        bookingLegId: targetLeg.id,
         callbackUrl: "https://example.com/extension-payment-status",
       });
 
@@ -292,7 +293,7 @@ describe("Booking Flow E2E", () => {
     if (!createdExtension) {
       throw new Error("Extension not found right after extension endpoint");
     }
-    expect(createdExtension.bookingLegId).toBe(todayLeg.id);
+    expect(createdExtension.bookingLegId).toBe(targetLeg.id);
     const extensionAmount = createdExtension.totalAmount.toNumber();
     const extensionEndTime = new Date(createdExtension.extensionEndTime);
 

@@ -368,6 +368,7 @@ describe("BookingController", () => {
         {
           hours: 2,
           callbackUrl: "https://example.com/extension-payment-status",
+          bookingLegId: "leg-future",
         },
         mockSessionUser,
       );
@@ -378,6 +379,7 @@ describe("BookingController", () => {
         {
           hours: 2,
           callbackUrl: "https://example.com/extension-payment-status",
+          bookingLegId: "leg-future",
         },
         mockSessionUser,
       );
