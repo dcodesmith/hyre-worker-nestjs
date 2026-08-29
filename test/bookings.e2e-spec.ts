@@ -777,4 +777,235 @@ describe("Bookings E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.NOT_FOUND);
     });
   });
+
+  describe("Booking extension eligibility", () => {
+    const utcTodayAt = (hours: number, minutes = 0): Date => {
+      const now = new Date();
+      return new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hours, minutes, 0, 0),
+      );
+    };
+
+    const utcDaysFromToday = (dayOffset: number, hours: number, minutes = 0): Date => {
+      const date = utcTodayAt(hours, minutes);
+      date.setUTCDate(date.getUTCDate() + dayOffset);
+      return date;
+    };
+
+    async function seedBookingWithLeg(params: {
+      carId: string;
+      userId?: string;
+      status?: "CONFIRMED" | "ACTIVE";
+      type?: "DAY" | "NIGHT";
+      legStart: Date;
+      legEnd: Date;
+      bookingStart?: Date;
+      bookingEnd?: Date;
+    }) {
+      const booking = await factory.createBooking(params.userId ?? testUserId, params.carId, {
+        status: params.status ?? "CONFIRMED",
+        paymentStatus: "PAID",
+        type: params.type ?? "DAY",
+        startDate: params.bookingStart ?? params.legStart,
+        endDate: params.bookingEnd ?? params.legEnd,
+      });
+      const leg = await factory.createBookingLeg(booking.id, {
+        legDate: params.legStart,
+        legStartTime: params.legStart,
+        legEndTime: params.legEnd,
+      });
+      return { booking, leg };
+    }
+
+    async function seedBlockingNextBooking(params: {
+      carId: string;
+      legStart: Date;
+      legEnd: Date;
+    }) {
+      const otherUser = await factory.createUser();
+      return seedBookingWithLeg({
+        carId: params.carId,
+        userId: otherUser.id,
+        status: "CONFIRMED",
+        type: "NIGHT",
+        legStart: params.legStart,
+        legEnd: params.legEnd,
+      });
+    }
+
+    it("GET /api/bookings/:bookingId returns extension eligibility for today's 08:00–20:00 DAY leg", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const legStart = utcTodayAt(8);
+      const legEnd = utcTodayAt(20);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart,
+        legEnd,
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body.extensionBookingLegId).toBe(leg.id);
+      expect(response.body.canExtend).toBe(true);
+      expect(response.body.maxExtendableHours).toBeGreaterThanOrEqual(1);
+    });
+
+    it("preserves a free 2-hour gap before the next booking (DAY 08:00–20:00 → NIGHT 23:00–05:00 → max 1h)", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcTodayAt(8),
+        legEnd: utcTodayAt(20),
+      });
+      // Latest extendable end = 23:00 − 2h = 21:00 → 1h.
+      await seedBlockingNextBooking({
+        carId: car.id,
+        legStart: utcTodayAt(23),
+        legEnd: utcDaysFromToday(1, 5),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toMatchObject({
+        extensionBookingLegId: leg.id,
+        canExtend: true,
+        maxExtendableHours: 1,
+      });
+    });
+
+    it("disallows extension when only the 2-hour gap remains (DAY 09:00–21:00 → NIGHT 23:00–05:00 → max 0h)", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcTodayAt(9),
+        legEnd: utcTodayAt(21),
+      });
+      await seedBlockingNextBooking({
+        carId: car.id,
+        legStart: utcTodayAt(23),
+        legEnd: utcDaysFromToday(1, 5),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toMatchObject({
+        extensionBookingLegId: leg.id,
+        canExtend: false,
+        maxExtendableHours: 0,
+      });
+    });
+
+    it("POST /extensions for DAY 08:00–20:00 before NIGHT 23:00–05:00 rejects 2h and accepts 1h", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcTodayAt(8),
+        legEnd: utcTodayAt(20),
+      });
+      await seedBlockingNextBooking({
+        carId: car.id,
+        legStart: utcTodayAt(23),
+        legEnd: utcDaysFromToday(1, 5),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      const rejected = await request(app.getHttpServer())
+        .post(`/api/bookings/${booking.id}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({
+          hours: 2,
+          callbackUrl: "https://example.com/extension-payment-status",
+        });
+
+      expect(rejected.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(rejected.body.detail).toMatch(/maximum extension is 1 hour/i);
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(0);
+
+      const accepted = await request(app.getHttpServer())
+        .post(`/api/bookings/${booking.id}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({
+          hours: 1,
+          callbackUrl: "https://example.com/extension-payment-status",
+        });
+
+      expect(accepted.status).toBe(HttpStatus.CREATED);
+      expect(accepted.body).toMatchObject({
+        extensionId: expect.any(String),
+        paymentIntentId: expect.any(String),
+        checkoutUrl: expect.stringContaining("checkout.flutterwave.com"),
+      });
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
+
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: accepted.body.extensionId },
+      });
+      expect(extension.bookingLegId).toBe(leg.id);
+      expect(extension.extendedDurationHours).toBe(1);
+    });
+
+    it("selects today's 08:00–20:00 DAY leg, not tomorrow's 08:00–20:00 DAY leg", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const todayStart = utcTodayAt(8);
+      const todayEnd = utcTodayAt(20);
+      const tomorrowStart = utcDaysFromToday(1, 8);
+      const tomorrowEnd = utcDaysFromToday(1, 20);
+
+      const booking = await factory.createBooking(testUserId, car.id, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        type: "DAY",
+        startDate: todayStart,
+        endDate: tomorrowEnd,
+      });
+      const todayLeg = await factory.createBookingLeg(booking.id, {
+        legDate: todayStart,
+        legStartTime: todayStart,
+        legEndTime: todayEnd,
+      });
+      const lastLeg = await factory.createBookingLeg(booking.id, {
+        legDate: tomorrowStart,
+        legStartTime: tomorrowStart,
+        legEndTime: tomorrowEnd,
+      });
+
+      const getResponse = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(getResponse.status).toBe(HttpStatus.OK);
+      expect(getResponse.body.extensionBookingLegId).toBe(todayLeg.id);
+      expect(getResponse.body.extensionBookingLegId).not.toBe(lastLeg.id);
+      expect(getResponse.body.canExtend).toBe(true);
+      expect(getResponse.body.maxExtendableHours).toBeGreaterThanOrEqual(1);
+
+      const extendResponse = await request(app.getHttpServer())
+        .post(`/api/bookings/${booking.id}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({
+          hours: 1,
+          callbackUrl: "https://example.com/extension-payment-status",
+        });
+
+      expect(extendResponse.status).toBe(HttpStatus.CREATED);
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: extendResponse.body.extensionId },
+      });
+      expect(extension.bookingLegId).toBe(todayLeg.id);
+      expect(extension.bookingLegId).not.toBe(lastLeg.id);
+    });
+  });
 });

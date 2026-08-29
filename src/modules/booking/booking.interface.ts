@@ -94,6 +94,12 @@ export interface CreateExtensionResponse {
   checkoutUrl: string;
 }
 
+export interface BookingExtensionEligibility {
+  canExtend: boolean;
+  maxExtendableHours: number;
+  extensionBookingLegId: string | null;
+}
+
 /**
  * Booking availability check result
  */

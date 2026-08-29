@@ -11,9 +11,11 @@ import {
   BookingNotFoundException,
 } from "./booking.error";
 import type {
+  BookingExtensionEligibility,
   BookingPaymentLifecycleState,
   BookingPaymentStatusResponse,
 } from "./booking.interface";
+import { BookingExtensionService } from "./booking-extension.service";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
@@ -49,6 +51,7 @@ export class BookingReadService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly bookingModificationPolicyService: BookingModificationPolicyService,
+    private readonly bookingExtensionService: BookingExtensionService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingReadService.name);
@@ -73,8 +76,13 @@ export class BookingReadService {
       });
 
       const policyNow = await getDatabaseNow(this.databaseService);
+      const extensionEligibilities = await this.bookingExtensionService.getEligibilities(
+        bookings,
+        true,
+        policyNow,
+      );
       const serializedBookings = bookings.map((booking) =>
-        this.withModificationEligibility(booking, true, policyNow),
+        this.withEligibility(booking, true, policyNow, extensionEligibilities.get(booking.id)),
       );
 
       return serializedBookings.reduce<Record<string, unknown[]>>((acc, booking) => {
@@ -129,10 +137,18 @@ export class BookingReadService {
       }
 
       const policyNow = await getDatabaseNow(this.databaseService);
-      return this.withModificationEligibility(
+      const extensionEligibility = (
+        await this.bookingExtensionService.getEligibilities(
+          [booking],
+          booking.userId === sessionUser.id,
+          policyNow,
+        )
+      ).get(booking.id);
+      return this.withEligibility(
         booking,
         booking.userId === sessionUser.id,
         policyNow,
+        extensionEligibility,
       );
     } catch (error) {
       if (error instanceof BookingException) {
@@ -318,14 +334,20 @@ export class BookingReadService {
     return value;
   }
 
-  private withModificationEligibility<T extends BookingModificationPolicyInput>(
+  private withEligibility<T extends BookingModificationPolicyInput>(
     booking: T,
     canAct: boolean,
     now: Date,
+    extensionEligibility?: BookingExtensionEligibility,
   ) {
     return {
       ...this.serializeValue(booking),
       ...this.bookingModificationPolicyService.getEligibility(booking, canAct, now),
+      ...(extensionEligibility ?? {
+        canExtend: false,
+        maxExtendableHours: 0,
+        extensionBookingLegId: null,
+      }),
     };
   }
 }

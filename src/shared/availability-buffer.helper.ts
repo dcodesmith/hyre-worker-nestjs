@@ -1,4 +1,4 @@
-const DEFAULT_BOOKING_BUFFER_HOURS = 2;
+export const BOOKING_BUFFER_HOURS = 2;
 
 export interface BookingInterval {
   startDate: Date;
@@ -17,7 +17,7 @@ export interface BufferedBookingInterval {
  */
 export function buildBufferedBookingInterval(
   interval: BookingInterval,
-  bufferHours: number = DEFAULT_BOOKING_BUFFER_HOURS,
+  bufferHours: number = BOOKING_BUFFER_HOURS,
 ): BufferedBookingInterval {
   const bufferMs = bufferHours * 60 * 60 * 1000;
   return {

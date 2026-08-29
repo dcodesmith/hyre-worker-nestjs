@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingFetchFailedException, BookingNotFoundException } from "./booking.error";
+import { BookingExtensionService } from "./booking-extension.service";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { hashBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import { BookingReadService } from "./booking-read.service";
@@ -58,6 +59,23 @@ describe("BookingReadService", () => {
       };
     }),
   };
+  const bookingExtensionServiceMock = {
+    getEligibilities: vi.fn(
+      async (bookings: Array<{ id: string }>, _canAct: boolean, _now: Date) =>
+        new Map(
+          bookings.map((booking) => [
+            booking.id,
+            {
+              canExtend: booking.id === "booking-1" || booking.id === "booking-123",
+              maxExtendableHours:
+                booking.id === "booking-1" || booking.id === "booking-123" ? 3 : 0,
+              extensionBookingLegId:
+                booking.id === "booking-1" || booking.id === "booking-123" ? "leg-1" : null,
+            },
+          ]),
+        ),
+    ),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -70,6 +88,10 @@ describe("BookingReadService", () => {
           provide: BookingModificationPolicyService,
           useValue: bookingModificationPolicyServiceMock,
         },
+        {
+          provide: BookingExtensionService,
+          useValue: bookingExtensionServiceMock,
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -79,7 +101,7 @@ describe("BookingReadService", () => {
   });
 
   it("groups current user bookings by status", async () => {
-    databaseServiceMock.booking.findMany.mockResolvedValueOnce([
+    const bookings = [
       {
         id: "booking-1",
         status: "CONFIRMED",
@@ -95,7 +117,8 @@ describe("BookingReadService", () => {
         status: "CONFIRMED",
         totalAmount: { toNumber: () => 8000 },
       },
-    ]);
+    ];
+    databaseServiceMock.booking.findMany.mockResolvedValueOnce(bookings);
 
     const result = await service.getBookingsByStatus("user-1");
 
@@ -109,6 +132,9 @@ describe("BookingReadService", () => {
           canCancel: true,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
+          canExtend: true,
+          maxExtendableHours: 3,
+          extensionBookingLegId: "leg-1",
         },
         {
           id: "booking-3",
@@ -118,6 +144,9 @@ describe("BookingReadService", () => {
           canCancel: true,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
+          canExtend: false,
+          maxExtendableHours: 0,
+          extensionBookingLegId: null,
         },
       ],
       COMPLETED: [
@@ -129,6 +158,9 @@ describe("BookingReadService", () => {
           canCancel: false,
           modificationCutoffAt: "2026-08-02T00:00:00.000Z",
           policyHoursBeforeStart: 12,
+          canExtend: false,
+          maxExtendableHours: 0,
+          extensionBookingLegId: null,
         },
       ],
     });
@@ -137,10 +169,15 @@ describe("BookingReadService", () => {
       true,
       policyNow,
     );
+    expect(bookingExtensionServiceMock.getEligibilities).toHaveBeenCalledWith(
+      bookings,
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the requesting user", async () => {
-    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+    const booking = {
       id: "booking-123",
       userId: "user-1",
       status: "CONFIRMED",
@@ -151,7 +188,8 @@ describe("BookingReadService", () => {
           extensions: [{ id: "ext-1", totalAmount: { toNumber: () => 2000 } }],
         },
       ],
-    });
+    };
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
 
     const result = await service.getBookingById("booking-123", customerSessionUser);
 
@@ -165,16 +203,24 @@ describe("BookingReadService", () => {
       canCancel: true,
       modificationCutoffAt: "2026-08-02T00:00:00.000Z",
       policyHoursBeforeStart: 12,
+      canExtend: true,
+      maxExtendableHours: 3,
+      extensionBookingLegId: "leg-1",
     });
     expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
       expect.objectContaining({ id: "booking-123" }),
       true,
       policyNow,
     );
+    expect(bookingExtensionServiceMock.getEligibilities).toHaveBeenCalledWith(
+      [booking],
+      true,
+      policyNow,
+    );
   });
 
   it("returns booking details for the fleet owner that owns the booked car", async () => {
-    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+    const booking = {
       id: "booking-123",
       userId: "user-2",
       status: "CONFIRMED",
@@ -182,7 +228,20 @@ describe("BookingReadService", () => {
       car: {
         ownerId: "owner-1",
       },
-    });
+    };
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+    bookingExtensionServiceMock.getEligibilities.mockResolvedValueOnce(
+      new Map([
+        [
+          "booking-123",
+          {
+            canExtend: false,
+            maxExtendableHours: 0,
+            extensionBookingLegId: null,
+          },
+        ],
+      ]),
+    );
 
     const result = await service.getBookingById("booking-123", fleetOwnerSessionUser);
 
@@ -198,6 +257,9 @@ describe("BookingReadService", () => {
       canCancel: false,
       modificationCutoffAt: "2026-08-02T00:00:00.000Z",
       policyHoursBeforeStart: 12,
+      canExtend: false,
+      maxExtendableHours: 0,
+      extensionBookingLegId: null,
     });
     expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -209,6 +271,11 @@ describe("BookingReadService", () => {
     );
     expect(bookingModificationPolicyServiceMock.getEligibility).toHaveBeenCalledWith(
       expect.objectContaining({ id: "booking-123" }),
+      false,
+      policyNow,
+    );
+    expect(bookingExtensionServiceMock.getEligibilities).toHaveBeenCalledWith(
+      [booking],
       false,
       policyNow,
     );

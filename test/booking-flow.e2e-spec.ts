@@ -248,6 +248,28 @@ describe("Booking Flow E2E", () => {
   async function runExtensionFlow(cookie: string, testCarId: string) {
     const { bookingId } = await runBookingFlow(cookie, testCarId);
 
+    // Pin to UTC morning/afternoon so +2h stays before UTC midnight regardless of wall-clock.
+    const now = new Date();
+    const legStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 8, 0, 0, 0),
+    );
+    const legEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 14, 0, 0, 0),
+    );
+
+    await databaseService.booking.update({
+      where: { id: bookingId },
+      data: { startDate: legStart, endDate: legEnd },
+    });
+    const existingLeg = await databaseService.bookingLeg.findFirstOrThrow({
+      where: { bookingId },
+      select: { id: true },
+    });
+    const todayLeg = await databaseService.bookingLeg.update({
+      where: { id: existingLeg.id },
+      data: { legDate: legStart, legStartTime: legStart, legEndTime: legEnd },
+    });
+
     const extendResponse = await request(app.getHttpServer())
       .post(`/api/bookings/${bookingId}/extensions`)
       .set("Cookie", cookie)
@@ -270,6 +292,7 @@ describe("Booking Flow E2E", () => {
     if (!createdExtension) {
       throw new Error("Extension not found right after extension endpoint");
     }
+    expect(createdExtension.bookingLegId).toBe(todayLeg.id);
     const extensionAmount = createdExtension.totalAmount.toNumber();
     const extensionEndTime = new Date(createdExtension.extensionEndTime);
 
