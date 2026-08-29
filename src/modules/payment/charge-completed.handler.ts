@@ -1,17 +1,25 @@
 import { Injectable } from "@nestjs/common";
 import type { Booking, Payment, Prisma } from "@prisma/client";
-import { PaymentAttemptStatus } from "@prisma/client";
+import { PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
-import { DatabaseService } from "../database/database.service";
+import {
+  DatabaseService,
+  lockBookingLegRow,
+  lockBookingRow,
+  lockCarRow,
+  lockExtensionRow,
+} from "../database/database.service";
 import type { FlutterwaveVerificationData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
+import { RefundFinalizationService } from "./refund-finalization.service";
 
 const MONEY_TOLERANCE = 0.01;
+const EXPECTED_PAYMENT_CURRENCY = "NGN";
 
 @Injectable()
 export class ChargeCompletedHandler {
@@ -21,6 +29,7 @@ export class ChargeCompletedHandler {
     private readonly bookingConfirmationService: BookingConfirmationService,
     private readonly extensionConfirmationService: ExtensionConfirmationService,
     private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly refundFinalizationService: RefundFinalizationService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ChargeCompletedHandler.name);
@@ -135,13 +144,17 @@ export class ChargeCompletedHandler {
     );
 
     if (payment.status !== PaymentAttemptStatus.SUCCESSFUL) {
-      if (payment.bookingId) {
+      if (payment.status === PaymentAttemptStatus.FAILED && payment.bookingId) {
         await this.releaseReferralReservation(payment.bookingId, txRef);
       }
       return;
     }
 
     if (!this.matchesExpectedAmountAndCurrency(payment, verificationData)) {
+      await this.refundFinalizationService.requestManualReview({
+        paymentId: payment.id,
+        reason: "Successful charge does not match the expected amount or currency",
+      });
       return;
     }
 
@@ -152,16 +165,35 @@ export class ChargeCompletedHandler {
         { paymentId: payment.id, txRef },
         "Payment must be associated with exactly one payable entity",
       );
+      await this.refundFinalizationService.requestManualReview({
+        paymentId: payment.id,
+        reason: "Successful charge is not associated with exactly one payable entity",
+      });
       return;
     }
 
     if (hasBooking) {
-      await this.bookingConfirmationService.confirmFromPayment(payment);
+      const confirmed = await this.bookingConfirmationService.confirmFromPayment(payment);
+      const alreadyConfirmed =
+        payment.booking?.paymentId === payment.id &&
+        payment.booking.paymentStatus === PaymentStatus.PAID;
+      if (!confirmed && !alreadyConfirmed) {
+        await this.refundFinalizationService.requestManualReview({
+          paymentId: payment.id,
+          reason: "Successful charge could not confirm its booking",
+        });
+      }
       return;
     }
 
     if (hasExtension) {
-      await this.extensionConfirmationService.confirmFromPayment(payment);
+      const confirmed = await this.extensionConfirmationService.confirmFromPayment(payment);
+      if (!confirmed) {
+        await this.refundFinalizationService.requestManualReview({
+          paymentId: payment.id,
+          reason: "Successful charge could not confirm its extension",
+        });
+      }
     }
   }
 
@@ -295,31 +327,13 @@ export class ChargeCompletedHandler {
       return false;
     }
 
-    const persistedCurrency = (payment.currency ?? "").trim();
-    const expectedCurrencySource = persistedCurrency ? "persisted" : "verification";
-    const expectedCurrency = (persistedCurrency || verificationData.currency || "")
-      .trim()
-      .toUpperCase();
     const verifiedCurrency = (verificationData.currency ?? "").trim().toUpperCase();
-    if (!persistedCurrency) {
+    if (verifiedCurrency !== EXPECTED_PAYMENT_CURRENCY) {
       this.logger.warn(
         {
           paymentId: payment.id,
           txRef: payment.txRef,
-          expectedCurrencySource,
-          verifiedCurrency,
-        },
-        "Payment is missing currency; using verified currency for confirmation checks",
-      );
-    }
-
-    if (!expectedCurrency || expectedCurrency !== verifiedCurrency) {
-      this.logger.warn(
-        {
-          paymentId: payment.id,
-          txRef: payment.txRef,
-          expectedCurrency,
-          expectedCurrencySource,
+          expectedCurrency: EXPECTED_PAYMENT_CURRENCY,
           verifiedCurrency,
         },
         "Payment currency mismatch against expected booking/extension currency; blocking confirmation",
@@ -372,11 +386,20 @@ export class ChargeCompletedHandler {
     const [booking, extension] = await Promise.all([
       this.databaseService.booking.findFirst({
         where: { paymentIntent: txRef },
-        select: { id: true, totalAmount: true },
+        select: { id: true, carId: true, totalAmount: true },
       }),
       this.databaseService.extension.findFirst({
         where: { paymentIntent: txRef },
-        select: { id: true, totalAmount: true },
+        select: {
+          id: true,
+          bookingLegId: true,
+          totalAmount: true,
+          bookingLeg: {
+            select: {
+              booking: { select: { id: true, carId: true } },
+            },
+          },
+        },
       }),
     ]);
 
@@ -424,40 +447,61 @@ export class ChargeCompletedHandler {
       "Creating payment record from webhook",
     );
 
-    return this.databaseService.payment.upsert({
-      where: { txRef },
-      // Provider retries may move the same reference from a failed attempt to a
-      // verified success. Allow only that monotonic direction; a later failed
-      // webhook can never regress a successful payment.
-      update:
-        status === PaymentAttemptStatus.SUCCESSFUL
-          ? {
-              amountExpected,
-              amountCharged,
-              currency,
-              status,
-              flutterwaveTransactionId: String(transactionId),
-              flutterwaveReference,
-              paymentMethod,
-              confirmedAt: new Date(),
-              webhookPayload: data as unknown as Prisma.JsonObject,
-            }
-          : {},
-      create: {
-        txRef,
-        amountExpected,
-        amountCharged,
-        currency,
-        status,
-        flutterwaveTransactionId: String(transactionId),
-        flutterwaveReference,
-        paymentMethod,
-        confirmedAt: new Date(),
-        webhookPayload: data as unknown as Prisma.JsonObject,
-        ...(bookingId && { bookingId }),
-        ...(extensionId && { extensionId }),
-      },
-      include: { booking: true },
+    const successfulData = {
+      amountExpected,
+      amountCharged,
+      currency,
+      status: PaymentAttemptStatus.SUCCESSFUL,
+      flutterwaveTransactionId: String(transactionId),
+      flutterwaveReference,
+      paymentMethod,
+      confirmedAt: new Date(),
+      webhookPayload: data as unknown as Prisma.JsonObject,
+    };
+
+    return this.databaseService.$transaction(async (tx) => {
+      if (booking) {
+        if (!(await lockCarRow(tx, booking.carId))) return null;
+        if (!(await lockBookingRow(tx, booking.id))) return null;
+      } else if (extension) {
+        const parent = extension.bookingLeg.booking;
+        if (!(await lockCarRow(tx, parent.carId))) return null;
+        if (!(await lockBookingRow(tx, parent.id))) return null;
+        if (!(await lockBookingLegRow(tx, extension.bookingLegId))) return null;
+        if (!(await lockExtensionRow(tx, extension.id))) return null;
+      }
+
+      if (status === PaymentAttemptStatus.SUCCESSFUL) {
+        const promoted = await tx.payment.updateMany({
+          where: { txRef, status: PaymentAttemptStatus.FAILED },
+          data: successfulData,
+        });
+        if (promoted.count === 1) {
+          return tx.payment.findUnique({ where: { txRef }, include: { booking: true } });
+        }
+      }
+
+      return tx.payment.upsert({
+        where: { txRef },
+        // Existing rows are immutable here. The guarded update above is the
+        // only allowed transition from a failed attempt to a verified success.
+        update: {},
+        create: {
+          txRef,
+          amountExpected,
+          amountCharged,
+          currency,
+          status,
+          flutterwaveTransactionId: String(transactionId),
+          flutterwaveReference,
+          paymentMethod,
+          confirmedAt: new Date(),
+          webhookPayload: data as unknown as Prisma.JsonObject,
+          ...(bookingId && { bookingId }),
+          ...(extensionId && { extensionId }),
+        },
+        include: { booking: true },
+      });
     });
   }
 }

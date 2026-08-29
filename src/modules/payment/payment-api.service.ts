@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { AuthSession } from "../auth/guards/session.guard";
 import {
@@ -16,6 +16,7 @@ import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
 import type { ConfirmBookingPaymentDto } from "./dto/confirm-booking-payment.dto";
+import type { ConfirmExtensionPaymentDto } from "./dto/confirm-extension-payment.dto";
 import type { InitializePaymentDto } from "./dto/initialize-payment.dto";
 import type { ReconcileBookingExpirationDto } from "./dto/reconcile-booking-expiration.dto";
 import type { RefundPaymentDto } from "./dto/refund-payment.dto";
@@ -70,6 +71,25 @@ export class PaymentApiService {
 
     await this.chargeCompletedHandler.confirmByTransactionId(dto.txRef, dto.transactionId);
     return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
+  }
+
+  async confirmExtensionPayment(
+    dto: ConfirmExtensionPaymentDto,
+    userId: string,
+  ): Promise<PaymentStatusResponse> {
+    const current = await this.getPaymentStatus(dto.txRef, userId);
+    if (current.extension?.id !== dto.extensionId) {
+      throw new PaymentExtensionNotFoundException(dto.extensionId);
+    }
+    if (
+      current.status === PaymentAttemptStatus.SUCCESSFUL &&
+      current.extension.status === "ACTIVE"
+    ) {
+      return current;
+    }
+
+    await this.chargeCompletedHandler.confirmByTransactionId(dto.txRef, dto.transactionId);
+    return this.getPaymentStatus(dto.txRef, userId);
   }
 
   async reconcileBookingExpiration(
@@ -221,7 +241,29 @@ export class PaymentApiService {
     });
 
     if (!payment) {
-      throw new PaymentNotFoundException(txRef);
+      const extension = await this.databaseService.extension.findFirst({
+        where: { paymentIntent: txRef },
+        select: {
+          id: true,
+          status: true,
+          totalAmount: true,
+          bookingLeg: { select: { booking: { select: { userId: true } } } },
+        },
+      });
+      if (!extension) {
+        throw new PaymentNotFoundException(txRef);
+      }
+      if (extension.bookingLeg.booking.userId !== userId) {
+        throw new PaymentAccessForbiddenException(extension.id, "view");
+      }
+      return {
+        txRef,
+        status: PaymentAttemptStatus.PENDING,
+        amountExpected: extension.totalAmount.toNumber(),
+        amountCharged: null,
+        confirmedAt: null,
+        extension: { id: extension.id, status: extension.status },
+      };
     }
 
     // Verify user owns this payment

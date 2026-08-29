@@ -25,8 +25,10 @@ import {
   BOOKING_PAYMENT_SESSION_DURATION_MS,
 } from "./booking.const";
 import {
+  ExtensionAlreadyConfirmedException,
   ExtensionCreationFailedException,
   ExtensionPaymentPendingException,
+  ExtensionPaymentSessionExpiredException,
   ExtensionStateChangedException,
 } from "./booking.error";
 import type { BookingLegExtensionEligibility, CreateExtensionResponse } from "./booking.interface";
@@ -188,11 +190,6 @@ export class BookingExtensionService {
         userId: user.id,
       },
       include: {
-        car: {
-          select: {
-            hourlyRate: true,
-          },
-        },
         legs: {
           include: {
             extensions: true,
@@ -235,6 +232,17 @@ export class BookingExtensionService {
     }
 
     try {
+      if (claim.kind === "resume") {
+        return this.resumeExtensionPayment(
+          claim.id,
+          claim.extensionId,
+          booking.id,
+          resolvedBookingLegId,
+          body.callbackUrl,
+          user,
+        );
+      }
+
       const bookingLeg = booking.legs.find((leg) => leg.id === resolvedBookingLegId);
       if (!bookingLeg) {
         throw new BadRequestException("Booking leg not found");
@@ -385,37 +393,14 @@ export class BookingExtensionService {
         return { ...created, totalAmount };
       });
 
-      const paymentIntent = await this.flutterwaveService.createPaymentIntent({
-        amount: extension.totalAmount.toNumber(),
-        customer: {
-          email: user.email,
-          name: user.name || undefined,
-        },
-        callbackUrl: body.callbackUrl,
-        sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
-        transactionType: "booking_extension",
-        metadata: {
-          bookingId: booking.id,
-          bookingLegId: bookingLeg.id,
-          extensionId: extension.id,
-          source: "booking_extension_endpoint",
-        },
-        idempotencyKey: paymentIntentReference,
-      });
-      if (paymentIntent.paymentIntentId !== paymentIntentReference) {
-        throw new ExtensionCreationFailedException(
-          "Payment provider returned an unexpected extension reference.",
-        );
-      }
-
-      const response = {
-        extensionId: extension.id,
-        paymentIntentId: paymentIntentReference,
-        checkoutUrl: paymentIntent.checkoutUrl,
-      };
-      await this.idempotencyService.checkpointResponse(claim.id, extension.id, response);
-      await this.idempotencyService.complete(claim.id);
-      return response;
+      return this.createPaymentAndCheckpoint(
+        claim.id,
+        extension,
+        booking.id,
+        bookingLeg.id,
+        body.callbackUrl,
+        user,
+      );
     } catch (error) {
       await this.idempotencyService.release(claim.id);
       if (this.bookingReservationService.isOverlapConstraintViolation(error)) {
@@ -423,6 +408,112 @@ export class BookingExtensionService {
       }
       throw error;
     }
+  }
+
+  private async resumeExtensionPayment(
+    idempotencyId: string,
+    extensionId: string,
+    bookingId: string,
+    bookingLegId: string,
+    callbackUrl: string,
+    user: AuthSession["user"],
+  ): Promise<CreateExtensionResponse> {
+    const extension = await this.databaseService.extension.findUnique({
+      where: { id: extensionId },
+      select: {
+        id: true,
+        totalAmount: true,
+        paymentIntent: true,
+        paymentSessionExpiresAt: true,
+        paymentStatus: true,
+        status: true,
+        bookingLegId: true,
+        bookingLeg: {
+          select: {
+            booking: { select: { id: true, status: true, userId: true } },
+          },
+        },
+      },
+    });
+    if (
+      !extension ||
+      extension.bookingLeg.booking.id !== bookingId ||
+      extension.bookingLeg.booking.userId !== user.id ||
+      extension.bookingLegId !== bookingLegId
+    ) {
+      throw new ExtensionCreationFailedException("Idempotent extension could not be recovered.");
+    }
+    const expectedPaymentIntent =
+      this.idempotencyService.createPaymentIntentReference(idempotencyId);
+    if (extension.paymentIntent !== expectedPaymentIntent) {
+      throw new ExtensionCreationFailedException(
+        "Idempotent extension has an unexpected payment reference.",
+      );
+    }
+    const isConfirmed =
+      extension.status === "ACTIVE" && extension.paymentStatus === PaymentStatus.PAID;
+    if (isConfirmed) {
+      throw new ExtensionAlreadyConfirmedException();
+    }
+
+    const paymentSessionExpiresAt: Date | null = extension.paymentSessionExpiresAt;
+    const isPayable =
+      extension.status === "PENDING" &&
+      extension.paymentStatus === PaymentStatus.UNPAID &&
+      Boolean(paymentSessionExpiresAt && paymentSessionExpiresAt > new Date());
+    const parentStatus = extension.bookingLeg.booking.status;
+    const parentIsActive =
+      parentStatus === BookingStatus.CONFIRMED || parentStatus === BookingStatus.ACTIVE;
+    if (!parentIsActive || !isPayable) {
+      throw new ExtensionPaymentSessionExpiredException();
+    }
+
+    return this.createPaymentAndCheckpoint(
+      idempotencyId,
+      extension,
+      bookingId,
+      bookingLegId,
+      callbackUrl,
+      user,
+    );
+  }
+
+  private async createPaymentAndCheckpoint(
+    idempotencyId: string,
+    extension: { id: string; totalAmount: Decimal; paymentIntent?: string | null },
+    bookingId: string,
+    bookingLegId: string,
+    callbackUrl: string,
+    user: AuthSession["user"],
+  ): Promise<CreateExtensionResponse> {
+    const paymentIntentReference =
+      extension.paymentIntent ??
+      this.idempotencyService.createPaymentIntentReference(idempotencyId);
+    const paymentIntent = await this.flutterwaveService.createPaymentIntent({
+      amount: extension.totalAmount.toNumber(),
+      customer: {
+        email: user.email,
+        name: user.name || undefined,
+      },
+      callbackUrl,
+      sessionDurationMinutes: BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
+      transactionType: "booking_extension",
+      metadata: {
+        bookingId,
+        bookingLegId,
+        extensionId: extension.id,
+        source: "booking_extension_endpoint",
+      },
+      idempotencyKey: paymentIntentReference,
+    });
+    const response = {
+      extensionId: extension.id,
+      paymentIntentId: paymentIntentReference,
+      checkoutUrl: paymentIntent.checkoutUrl,
+    };
+    await this.idempotencyService.checkpointResponse(idempotencyId, extension.id, response);
+    await this.idempotencyService.complete(idempotencyId);
+    return response;
   }
 
   private hasPendingUnpaidExtension(bookingLeg: ExtensionEndState): boolean {

@@ -190,6 +190,7 @@ describe("BookingConfirmationService", () => {
         data: {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
+          paymentId: "payment-123",
         },
       });
       expect(databaseService.booking.findUnique).toHaveBeenCalledWith({

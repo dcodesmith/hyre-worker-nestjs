@@ -23,8 +23,8 @@ const transaction = {
 describe("BookingReservationExpirationService", () => {
   let service: BookingReservationExpirationService;
   const databaseService = {
-    booking: { findFirst: vi.fn(), findMany: vi.fn() },
-    extension: { findFirst: vi.fn(), findMany: vi.fn() },
+    booking: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+    extension: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
   };
   const flutterwaveService = {
     findTransactionByReference: vi.fn(),
@@ -45,6 +45,8 @@ describe("BookingReservationExpirationService", () => {
       { id: "booking-1", paymentIntent: "booking-1" },
     ]);
     databaseService.extension.findMany.mockResolvedValue([]);
+    databaseService.booking.updateMany.mockResolvedValue({ count: 1 });
+    databaseService.extension.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -75,6 +77,14 @@ describe("BookingReservationExpirationService", () => {
       }),
     );
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: "PENDING",
+        paymentStatus: "UNPAID",
+      },
+      data: { paymentReconciliationCheckedAt: expect.any(Date) },
+    });
     expect(databaseService.booking.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -109,6 +119,14 @@ describe("BookingReservationExpirationService", () => {
 
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
+    expect(databaseService.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [
+          { paymentReconciliationCheckedAt: { sort: "asc", nulls: "first" } },
+          { paymentSessionExpiresAt: "asc" },
+        ],
+      }),
+    );
   });
 
   it("retains the reservation while Flutterwave reports a non-terminal payment", async () => {

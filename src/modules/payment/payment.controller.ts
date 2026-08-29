@@ -22,6 +22,10 @@ import {
   type ConfirmBookingPaymentDto,
   confirmBookingPaymentSchema,
 } from "./dto/confirm-booking-payment.dto";
+import {
+  type ConfirmExtensionPaymentDto,
+  confirmExtensionPaymentSchema,
+} from "./dto/confirm-extension-payment.dto";
 import { type InitializePaymentDto, initializePaymentSchema } from "./dto/initialize-payment.dto";
 import {
   type ReconcileBookingExpirationDto,
@@ -79,6 +83,16 @@ export class PaymentController {
     @Headers("x-payment-status-token") paymentStatusToken?: string,
   ): Promise<BookingPaymentStatusResponse> {
     return this.paymentApiService.confirmBookingPayment(dto, sessionUser, paymentStatusToken);
+  }
+
+  @Post("extension-confirmation")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SessionGuard)
+  async confirmExtensionPayment(
+    @ZodBody(confirmExtensionPaymentSchema) dto: ConfirmExtensionPaymentDto,
+    @CurrentUser() user: AuthSession["user"],
+  ): Promise<PaymentStatusResponse> {
+    return this.paymentApiService.confirmExtensionPayment(dto, user.id);
   }
 
   @Post("booking-expiration")

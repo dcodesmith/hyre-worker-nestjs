@@ -294,6 +294,7 @@ model Booking {
   type                                    BookingType                 @default(DAY)
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?
+  paymentReconciliationCheckedAt          DateTime?
   paymentStatusTokenHash                  String?
   fleetOwnerPayoutAmountNet               Decimal?                    @db.Decimal(10, 2)
   netTotal                                Decimal?                    @db.Decimal(10, 2)
@@ -410,6 +411,7 @@ model Extension {
   paymentId                               String?
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?
+  paymentReconciliationCheckedAt          DateTime?
   status                                  String                        @default("PENDING")
   bookingLegId                            String
   eventType                               ExtensionEventType

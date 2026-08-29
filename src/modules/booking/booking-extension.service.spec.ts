@@ -1,12 +1,18 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
+import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { RatesService } from "../rates/rates.service";
-import { ExtensionPaymentPendingException, ExtensionStateChangedException } from "./booking.error";
+import {
+  ExtensionAlreadyConfirmedException,
+  ExtensionPaymentPendingException,
+  ExtensionPaymentSessionExpiredException,
+  ExtensionStateChangedException,
+} from "./booking.error";
 import { BookingExtensionService } from "./booking-extension.service";
 import { BookingReservationService } from "./booking-reservation.service";
 import { ExtensionCreationIdempotencyService } from "./extension-creation-idempotency.service";
@@ -24,6 +30,7 @@ describe("BookingExtensionService", () => {
     extension: {
       create: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
     },
     bookingLeg: {
       findUnique: vi.fn(),
@@ -497,6 +504,111 @@ describe("BookingExtensionService", () => {
         expect.objectContaining({ bookingLegId: "leg-original" }),
       );
       expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("resumes a leased provider request with the original payment reference", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      idempotencyServiceMock.claim.mockResolvedValueOnce({
+        kind: "resume",
+        id: "idem-1",
+        extensionId: "ext-1",
+      });
+      databaseServiceMock.extension.findUnique.mockResolvedValueOnce({
+        id: "ext-1",
+        totalAmount: new Decimal(10000),
+        paymentIntent: "ext-idem-1",
+        paymentSessionExpiresAt: new Date("2026-01-01T10:10:00.000Z"),
+        paymentStatus: PaymentStatus.UNPAID,
+        status: "PENDING",
+        bookingLegId: "leg-1",
+        bookingLeg: {
+          booking: {
+            id: "booking-1",
+            status: BookingStatus.ACTIVE,
+            userId: "user-1",
+          },
+        },
+      });
+
+      const result = await service.createExtension(
+        "booking-1",
+        extensionCallback,
+        authUser,
+        "extension-request-1",
+      );
+
+      expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
+      expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
+      expect(flutterwaveServiceMock.createPaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "ext-idem-1" }),
+      );
+      expect(idempotencyServiceMock.checkpointResponse).toHaveBeenCalledWith(
+        "idem-1",
+        "ext-1",
+        result,
+      );
+    });
+
+    it("does not recreate checkout for an already confirmed extension", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      idempotencyServiceMock.claim.mockResolvedValueOnce({
+        kind: "resume",
+        id: "idem-1",
+        extensionId: "ext-1",
+      });
+      databaseServiceMock.extension.findUnique.mockResolvedValueOnce({
+        id: "ext-1",
+        totalAmount: new Decimal(10000),
+        paymentIntent: "ext-idem-1",
+        paymentSessionExpiresAt: new Date("2026-01-01T10:10:00.000Z"),
+        paymentStatus: PaymentStatus.PAID,
+        status: "ACTIVE",
+        bookingLegId: "leg-1",
+        bookingLeg: {
+          booking: {
+            id: "booking-1",
+            status: BookingStatus.COMPLETED,
+            userId: "user-1",
+          },
+        },
+      });
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
+      ).rejects.toBeInstanceOf(ExtensionAlreadyConfirmedException);
+
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not resume checkout after the parent booking becomes inactive", async () => {
+      databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
+      idempotencyServiceMock.claim.mockResolvedValueOnce({
+        kind: "resume",
+        id: "idem-1",
+        extensionId: "ext-1",
+      });
+      databaseServiceMock.extension.findUnique.mockResolvedValueOnce({
+        id: "ext-1",
+        totalAmount: new Decimal(10000),
+        paymentIntent: "ext-idem-1",
+        paymentSessionExpiresAt: new Date("2026-01-01T10:10:00.000Z"),
+        paymentStatus: PaymentStatus.UNPAID,
+        status: "PENDING",
+        bookingLegId: "leg-1",
+        bookingLeg: {
+          booking: {
+            id: "booking-1",
+            status: BookingStatus.CANCELLED,
+            userId: "user-1",
+          },
+        },
+      });
+
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
+      ).rejects.toBeInstanceOf(ExtensionPaymentSessionExpiredException);
+
       expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
     });
 

@@ -5,6 +5,7 @@ import { ExtensionCreationIdempotencyState, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import {
+  EXTENSION_IDEMPOTENCY_PROCESSING_LEASE_MS,
   EXTENSION_IDEMPOTENCY_RETENTION_MS,
   EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
 } from "./booking.const";
@@ -24,6 +25,7 @@ export type ExtensionIdempotencyRequest = {
 
 export type ExtensionIdempotencyClaim =
   | { kind: "claimed"; id: string }
+  | { kind: "resume"; id: string; extensionId: string }
   | { kind: "replay"; response: CreateExtensionResponse };
 
 @Injectable()
@@ -125,6 +127,44 @@ export class ExtensionCreationIdempotencyService {
     }
     if (existing.response !== null) {
       return this.finalizeCheckpointedResponse(existing.id, existing.response);
+    }
+
+    const leaseExpired =
+      existing.updatedAt.getTime() <= Date.now() - EXTENSION_IDEMPOTENCY_PROCESSING_LEASE_MS;
+    if (!leaseExpired) {
+      throw new ExtensionRequestInProgressException(EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS);
+    }
+
+    if (existing.extensionId) {
+      const claimed = await this.databaseService.extensionCreationIdempotency.updateMany({
+        where: {
+          id: existing.id,
+          state: ExtensionCreationIdempotencyState.PROCESSING,
+          updatedAt: existing.updatedAt,
+        },
+        data: { updatedAt: new Date() },
+      });
+      if (claimed.count === 1) {
+        return { kind: "resume", id: existing.id, extensionId: existing.extensionId };
+      }
+    } else {
+      const released = await this.databaseService.extensionCreationIdempotency.deleteMany({
+        where: {
+          id: existing.id,
+          extensionId: null,
+          state: ExtensionCreationIdempotencyState.PROCESSING,
+          updatedAt: existing.updatedAt,
+        },
+      });
+      if (released.count === 1) {
+        return this.claimWithAttempt(
+          customerScope,
+          idempotencyKey,
+          requestHash,
+          resolvedBookingLegId,
+          attempt + 1,
+        );
+      }
     }
 
     throw new ExtensionRequestInProgressException(EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS);

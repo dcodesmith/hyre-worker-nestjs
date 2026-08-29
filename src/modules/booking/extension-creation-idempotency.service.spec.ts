@@ -173,6 +173,31 @@ describe("ExtensionCreationIdempotencyService", () => {
     ).rejects.toBeInstanceOf(ExtensionRequestInProgressException);
   });
 
+  it("leases a stale attached claim so the deterministic provider request can resume", async () => {
+    const updatedAt = new Date(Date.now() - 2 * 60 * 1000);
+    databaseService.extensionCreationIdempotency.create.mockRejectedValue(duplicateKeyError());
+    databaseService.extensionCreationIdempotency.findUnique.mockResolvedValue(
+      record({ extensionId: "extension-1", updatedAt }),
+    );
+    databaseService.extensionCreationIdempotency.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      service.claim("user:user-1", "extension-request-1", "hash-1", "leg-1"),
+    ).resolves.toEqual({
+      kind: "resume",
+      id: "idem-1",
+      extensionId: "extension-1",
+    });
+    expect(databaseService.extensionCreationIdempotency.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "idem-1",
+        state: ExtensionCreationIdempotencyState.PROCESSING,
+        updatedAt,
+      },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
+
   it("finalizes and replays a checkpointed response", async () => {
     databaseService.extensionCreationIdempotency.create.mockRejectedValue(duplicateKeyError());
     databaseService.extensionCreationIdempotency.findUnique.mockResolvedValue(

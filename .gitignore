@@ -40,5 +40,5 @@ scripts/set-preview-secrets.sh
 /backup*.sql
 /backup*.dump
 /*.bak
-/*_private_key
-/public_key
+*private_key
+*public_key

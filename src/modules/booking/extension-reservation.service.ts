@@ -168,10 +168,6 @@ export class ExtensionReservationService {
       });
       if (cancelled.count !== 1) return false;
 
-      await tx.extensionCreationIdempotency.deleteMany({
-        where: { extensionId },
-      });
-
       const bookingLegs = await tx.bookingLeg.findMany({
         where: { bookingId },
         select: {
@@ -179,8 +175,16 @@ export class ExtensionReservationService {
           extensions: {
             where: {
               id: { not: extensionId },
-              status: "PENDING",
-              paymentStatus: PaymentStatus.UNPAID,
+              OR: [
+                {
+                  status: "PENDING",
+                  paymentStatus: PaymentStatus.UNPAID,
+                },
+                {
+                  status: "ACTIVE",
+                  paymentStatus: PaymentStatus.PAID,
+                },
+              ],
             },
             select: { extensionEndTime: true },
           },
@@ -195,12 +199,10 @@ export class ExtensionReservationService {
           ),
         new Date(0),
       );
-      if (reservedEnd.getTime() > 0) {
-        await tx.booking.update({
-          where: { id: bookingId },
-          data: { endDate: reservedEnd },
-        });
-      }
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { endDate: reservedEnd },
+      });
 
       this.logger.info({ extensionId, bookingId }, "Cancelled expired extension reservation");
       return true;

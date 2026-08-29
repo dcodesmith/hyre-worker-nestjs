@@ -65,6 +65,7 @@ describe("PaymentApiService", () => {
       updateMany: vi.fn(),
     },
     extension: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -780,6 +781,7 @@ describe("PaymentApiService", () => {
 
     it("throws PaymentNotFoundException when payment is missing", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
 
       await expect(service.getPaymentStatus("invalid-ref", mockUserInfo.id)).rejects.toThrow(
         PaymentNotFoundException,
@@ -920,6 +922,25 @@ describe("PaymentApiService", () => {
       await expect(
         service.initiateRefund("invalid-ref", refundDto, mockUserInfo.id),
       ).rejects.toThrow(PaymentNotFoundException);
+    });
+
+    it("returns a pending extension before its webhook creates a payment row", async () => {
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce({
+        id: "extension-123",
+        status: "PENDING",
+        totalAmount: new Decimal(5000),
+        bookingLeg: { booking: { userId: mockUserInfo.id } },
+      } as never);
+
+      await expect(service.getPaymentStatus("ext-idem-1", mockUserInfo.id)).resolves.toEqual({
+        txRef: "ext-idem-1",
+        status: "PENDING",
+        amountExpected: 5000,
+        amountCharged: null,
+        confirmedAt: null,
+        extension: { id: "extension-123", status: "PENDING" },
+      });
     });
 
     it("throws PaymentAccessForbiddenException when user does not own refund payment", async () => {
@@ -1127,6 +1148,43 @@ describe("PaymentApiService", () => {
 
       expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
       expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("confirmExtensionPayment", () => {
+    it("verifies an owned extension and returns its confirmed status", async () => {
+      vi.spyOn(service, "getPaymentStatus")
+        .mockResolvedValueOnce({
+          txRef: "ext-idem-1",
+          status: "PENDING",
+          amountExpected: 5000,
+          amountCharged: null,
+          confirmedAt: null,
+          extension: { id: "extension-123", status: "PENDING" },
+        })
+        .mockResolvedValueOnce({
+          txRef: "ext-idem-1",
+          status: "SUCCESSFUL",
+          amountExpected: 5000,
+          amountCharged: 5000,
+          confirmedAt: new Date(),
+          extension: { id: "extension-123", status: "ACTIVE" },
+        });
+
+      const result = await service.confirmExtensionPayment(
+        {
+          extensionId: "extension-123",
+          txRef: "ext-idem-1",
+          transactionId: "12345",
+        },
+        mockUserInfo.id,
+      );
+
+      expect(chargeCompletedHandler.confirmByTransactionId).toHaveBeenCalledWith(
+        "ext-idem-1",
+        "12345",
+      );
+      expect(result.extension?.status).toBe("ACTIVE");
     });
   });
 });

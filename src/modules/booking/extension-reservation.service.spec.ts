@@ -154,12 +154,45 @@ describe("ExtensionReservationService", () => {
       },
       data: { status: "CANCELLED" },
     });
-    expect(tx.extensionCreationIdempotency.deleteMany).toHaveBeenCalledWith({
-      where: { extensionId: "extension-1" },
+    expect(tx.extensionCreationIdempotency.deleteMany).not.toHaveBeenCalled();
+    expect(tx.bookingLeg.findMany).toHaveBeenCalledWith({
+      where: { bookingId: "booking-1" },
+      select: {
+        legEndTime: true,
+        extensions: {
+          where: {
+            id: { not: "extension-1" },
+            OR: [
+              { status: "PENDING", paymentStatus: PaymentStatus.UNPAID },
+              { status: "ACTIVE", paymentStatus: PaymentStatus.PAID },
+            ],
+          },
+          select: { extensionEndTime: true },
+        },
+      },
     });
     expect(tx.booking.update).toHaveBeenCalledWith({
       where: { id: "booking-1" },
       data: { endDate: new Date("2026-08-30T18:00:00.000Z") },
+    });
+  });
+
+  it("does not shorten the booking before an active paid extension", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-29T20:11:00.000Z"));
+    const paidExtensionEnd = new Date("2026-08-31T20:00:00.000Z");
+    tx.bookingLeg.findMany.mockResolvedValueOnce([
+      {
+        legEndTime: new Date("2026-08-29T19:00:00.000Z"),
+        extensions: [{ extensionEndTime: paidExtensionEnd }],
+      },
+    ]);
+
+    await expect(service.cancelExpiredReservation("extension-1")).resolves.toBe(true);
+
+    expect(tx.booking.update).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: { endDate: paidExtensionEnd },
     });
   });
 

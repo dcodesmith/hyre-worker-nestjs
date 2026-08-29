@@ -32,6 +32,8 @@ export const BookingErrorCode = {
   EXTENSION_IDEMPOTENCY_KEY_REUSED: "EXTENSION_IDEMPOTENCY_KEY_REUSED",
   EXTENSION_REQUEST_IN_PROGRESS: "EXTENSION_REQUEST_IN_PROGRESS",
   EXTENSION_PAYMENT_PENDING: "EXTENSION_PAYMENT_PENDING",
+  EXTENSION_ALREADY_CONFIRMED: "EXTENSION_ALREADY_CONFIRMED",
+  EXTENSION_PAYMENT_SESSION_EXPIRED: "EXTENSION_PAYMENT_SESSION_EXPIRED",
   EXTENSION_STATE_CHANGED: "EXTENSION_STATE_CHANGED",
   EXTENSION_CREATION_FAILED: "EXTENSION_CREATION_FAILED",
 } as const;
@@ -143,6 +145,28 @@ export class ExtensionPaymentPendingException extends BookingException {
         title: "Extension Payment Pending",
         details: { bookingLegId },
       },
+    );
+  }
+}
+
+export class ExtensionAlreadyConfirmedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.EXTENSION_ALREADY_CONFIRMED,
+      "This booking extension is already confirmed.",
+      HttpStatus.CONFLICT,
+      { title: "Extension Already Confirmed" },
+    );
+  }
+}
+
+export class ExtensionPaymentSessionExpiredException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.EXTENSION_PAYMENT_SESSION_EXPIRED,
+      "This extension payment session expired. Start a new request with a new Idempotency-Key.",
+      HttpStatus.CONFLICT,
+      { title: "Extension Payment Session Expired" },
     );
   }
 }

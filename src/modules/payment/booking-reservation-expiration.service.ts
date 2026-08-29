@@ -124,7 +124,10 @@ export class BookingReservationExpirationService {
         id: true,
         paymentIntent: true,
       },
-      orderBy: { paymentSessionExpiresAt: "asc" },
+      orderBy: [
+        { paymentReconciliationCheckedAt: { sort: "asc", nulls: "first" } },
+        { paymentSessionExpiresAt: "asc" },
+      ],
       take: EXPIRED_RESERVATION_BATCH_SIZE,
     });
 
@@ -152,7 +155,10 @@ export class BookingReservationExpirationService {
         id: true,
         paymentIntent: true,
       },
-      orderBy: { paymentSessionExpiresAt: "asc" },
+      orderBy: [
+        { paymentReconciliationCheckedAt: { sort: "asc", nulls: "first" } },
+        { paymentSessionExpiresAt: "asc" },
+      ],
       take: EXPIRED_RESERVATION_BATCH_SIZE,
     });
 
@@ -181,6 +187,7 @@ export class BookingReservationExpirationService {
         : [];
 
     try {
+      await this.markReconciliationChecked(reservation);
       const transaction = await this.findTransaction(paymentReferences);
       if (transaction?.status.trim().toLowerCase() === "successful") {
         await this.chargeCompletedHandler.handle({
@@ -220,6 +227,29 @@ export class BookingReservationExpirationService {
       );
       return false;
     }
+  }
+
+  private async markReconciliationChecked(reservation: ExpiredReservation): Promise<void> {
+    const data = { paymentReconciliationCheckedAt: new Date() };
+    if (reservation.kind === "booking") {
+      await this.databaseService.booking.updateMany({
+        where: {
+          id: reservation.id,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        },
+        data,
+      });
+      return;
+    }
+    await this.databaseService.extension.updateMany({
+      where: {
+        id: reservation.id,
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+      },
+      data,
+    });
   }
 
   private async findTransaction(
