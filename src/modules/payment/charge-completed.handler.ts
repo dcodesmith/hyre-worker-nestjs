@@ -133,6 +133,29 @@ export class ChargeCompletedHandler {
       return;
     }
 
+    const verifiedTransactionId = String(verificationData.id);
+    if (
+      paymentStatus === PaymentAttemptStatus.SUCCESSFUL &&
+      payment.status === PaymentAttemptStatus.SUCCESSFUL &&
+      payment.flutterwaveTransactionId &&
+      payment.flutterwaveTransactionId !== verifiedTransactionId
+    ) {
+      this.logger.warn(
+        {
+          txRef,
+          paymentId: payment.id,
+          storedTransactionId: payment.flutterwaveTransactionId,
+          verifiedTransactionId,
+        },
+        "Successful payment received a different provider transaction",
+      );
+      await this.refundFinalizationService.requestManualReview({
+        paymentId: payment.id,
+        reason: "A second successful provider transaction used the same payment reference",
+      });
+      return;
+    }
+
     this.logger.info(
       {
         txRef,

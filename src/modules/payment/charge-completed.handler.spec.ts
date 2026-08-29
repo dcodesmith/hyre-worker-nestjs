@@ -163,6 +163,7 @@ describe("ChargeCompletedHandler", () => {
       ...createPaymentRecord({
         id: "payment-123",
         bookingId: booking.id,
+        flutterwaveTransactionId: String(mockChargeData.id),
         status: PaymentAttemptStatus.SUCCESSFUL,
       }),
       booking,
@@ -414,7 +415,7 @@ describe("ChargeCompletedHandler", () => {
     expect(databaseService.payment.upsert).not.toHaveBeenCalled();
   });
 
-  it("does not overwrite an existing successful payment identity", async () => {
+  it("flags a different successful provider transaction without overwriting payment identity", async () => {
     const firstSuccessfulPayment = {
       ...createPaymentRecord({
         txRef: "tx-ref-123",
@@ -434,12 +435,48 @@ describe("ChargeCompletedHandler", () => {
     );
     vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
     vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(firstSuccessfulPayment);
-    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
 
     await handler.handle({ ...mockChargeData, id: 22222 });
 
     expect(databaseService.payment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { txRef: "tx-ref-123" }, update: {} }),
+    );
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: firstSuccessfulPayment.id,
+      reason: "A second successful provider transaction used the same payment reference",
+    });
+    expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not flag a different failed provider transaction as a duplicate success", async () => {
+    const firstSuccessfulPayment = {
+      ...createPaymentRecord({
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+        flutterwaveTransactionId: "11111",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+    const failedTransaction = { ...mockChargeData, id: 22222, status: "failed" };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: failedTransaction,
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(firstSuccessfulPayment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await handler.handle(failedTransaction);
+
+    expect(refundFinalizationService.requestManualReview).not.toHaveBeenCalled();
+    expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(
+      firstSuccessfulPayment,
     );
   });
 

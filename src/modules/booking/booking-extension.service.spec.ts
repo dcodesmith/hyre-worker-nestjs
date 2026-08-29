@@ -11,6 +11,7 @@ import {
   ExtensionAlreadyConfirmedException,
   ExtensionPaymentPendingException,
   ExtensionPaymentSessionExpiredException,
+  ExtensionRequestInProgressException,
   ExtensionStateChangedException,
 } from "./booking.error";
 import { BookingExtensionService } from "./booking-extension.service";
@@ -507,7 +508,7 @@ describe("BookingExtensionService", () => {
       expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
     });
 
-    it("resumes a leased provider request with the original payment reference", async () => {
+    it("does not retry an uncertain provider request after the lease expires", async () => {
       databaseServiceMock.booking.findFirst.mockResolvedValueOnce(buildBooking());
       idempotencyServiceMock.claim.mockResolvedValueOnce({
         kind: "resume",
@@ -531,23 +532,14 @@ describe("BookingExtensionService", () => {
         },
       });
 
-      const result = await service.createExtension(
-        "booking-1",
-        extensionCallback,
-        authUser,
-        "extension-request-1",
-      );
+      await expect(
+        service.createExtension("booking-1", extensionCallback, authUser, "extension-request-1"),
+      ).rejects.toBeInstanceOf(ExtensionRequestInProgressException);
 
       expect(databaseServiceMock.$transaction).not.toHaveBeenCalled();
       expect(databaseServiceMock.extension.create).not.toHaveBeenCalled();
-      expect(flutterwaveServiceMock.createPaymentIntent).toHaveBeenCalledWith(
-        expect.objectContaining({ idempotencyKey: "ext-idem-1" }),
-      );
-      expect(idempotencyServiceMock.checkpointResponse).toHaveBeenCalledWith(
-        "idem-1",
-        "ext-1",
-        result,
-      );
+      expect(flutterwaveServiceMock.createPaymentIntent).not.toHaveBeenCalled();
+      expect(idempotencyServiceMock.checkpointResponse).not.toHaveBeenCalled();
     });
 
     it("does not recreate checkout for an already confirmed extension", async () => {

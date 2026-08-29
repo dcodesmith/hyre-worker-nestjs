@@ -23,12 +23,14 @@ import {
   BLOCKING_BOOKING_STATUSES,
   BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
   BOOKING_PAYMENT_SESSION_DURATION_MS,
+  EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
 } from "./booking.const";
 import {
   ExtensionAlreadyConfirmedException,
   ExtensionCreationFailedException,
   ExtensionPaymentPendingException,
   ExtensionPaymentSessionExpiredException,
+  ExtensionRequestInProgressException,
   ExtensionStateChangedException,
 } from "./booking.error";
 import type { BookingLegExtensionEligibility, CreateExtensionResponse } from "./booking.interface";
@@ -238,7 +240,6 @@ export class BookingExtensionService {
           claim.extensionId,
           booking.id,
           resolvedBookingLegId,
-          body.callbackUrl,
           user,
         );
       }
@@ -415,14 +416,12 @@ export class BookingExtensionService {
     extensionId: string,
     bookingId: string,
     bookingLegId: string,
-    callbackUrl: string,
     user: AuthSession["user"],
-  ): Promise<CreateExtensionResponse> {
+  ): Promise<never> {
     const extension = await this.databaseService.extension.findUnique({
       where: { id: extensionId },
       select: {
         id: true,
-        totalAmount: true,
         paymentIntent: true,
         paymentSessionExpiresAt: true,
         paymentStatus: true,
@@ -468,14 +467,7 @@ export class BookingExtensionService {
       throw new ExtensionPaymentSessionExpiredException();
     }
 
-    return this.createPaymentAndCheckpoint(
-      idempotencyId,
-      extension,
-      bookingId,
-      bookingLegId,
-      callbackUrl,
-      user,
-    );
+    throw new ExtensionRequestInProgressException(EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS);
   }
 
   private async createPaymentAndCheckpoint(
