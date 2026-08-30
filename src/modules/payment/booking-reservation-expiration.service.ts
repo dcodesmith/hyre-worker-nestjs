@@ -5,6 +5,7 @@ import { PinoLogger } from "nestjs-pino";
 import { TIMEZONE } from "../../config/constants";
 import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "../booking/booking.const";
 import { BookingReservationService } from "../booking/booking-reservation.service";
+import { ExtensionReservationService } from "../booking/extension-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
@@ -17,6 +18,7 @@ const FINAL_UNPAID_STATUSES = new Set(["cancelled", "failed"]);
 interface ExpiredReservation {
   id: string;
   paymentIntent: string | null;
+  kind: "booking" | "extension";
 }
 
 @Injectable()
@@ -27,6 +29,7 @@ export class BookingReservationExpirationService {
     private readonly databaseService: DatabaseService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly bookingReservationService: BookingReservationService,
+    private readonly extensionReservationService: ExtensionReservationService,
     private readonly chargeCompletedHandler: ChargeCompletedHandler,
     private readonly logger: PinoLogger,
   ) {
@@ -42,7 +45,9 @@ export class BookingReservationExpirationService {
 
     this.reconciliationInProgress = true;
     try {
-      return await this.reconcileExpiredReservationBatch();
+      const bookingCount = await this.reconcileExpiredBookingBatch();
+      const extensionCount = await this.reconcileExpiredExtensionBatch();
+      return bookingCount + extensionCount;
     } finally {
       this.reconciliationInProgress = false;
     }
@@ -71,10 +76,36 @@ export class BookingReservationExpirationService {
     });
 
     if (!reservation) return false;
-    return this.reconcileReservation(reservation);
+    return this.reconcileReservation({ ...reservation, kind: "booking" });
   }
 
-  private async reconcileExpiredReservationBatch(): Promise<number> {
+  async reconcileExpiredExtension(extensionId: string): Promise<boolean> {
+    const now = new Date();
+    const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
+    const reservation = await this.databaseService.extension.findFirst({
+      where: {
+        id: extensionId,
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+        OR: [
+          { paymentSessionExpiresAt: { lte: now } },
+          {
+            paymentSessionExpiresAt: null,
+            createdAt: { lte: orphanedBefore },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        paymentIntent: true,
+      },
+    });
+
+    if (!reservation) return false;
+    return this.reconcileReservation({ ...reservation, kind: "extension" });
+  }
+
+  private async reconcileExpiredBookingBatch(): Promise<number> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservations = await this.databaseService.booking.findMany({
@@ -93,10 +124,50 @@ export class BookingReservationExpirationService {
         id: true,
         paymentIntent: true,
       },
-      orderBy: { paymentSessionExpiresAt: "asc" },
+      orderBy: [
+        { paymentReconciliationCheckedAt: { sort: "asc", nulls: "first" } },
+        { paymentSessionExpiresAt: "asc" },
+      ],
       take: EXPIRED_RESERVATION_BATCH_SIZE,
     });
 
+    return this.reconcileBatch(
+      reservations.map((reservation) => ({ ...reservation, kind: "booking" })),
+    );
+  }
+
+  private async reconcileExpiredExtensionBatch(): Promise<number> {
+    const now = new Date();
+    const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
+    const reservations = await this.databaseService.extension.findMany({
+      where: {
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+        OR: [
+          { paymentSessionExpiresAt: { lte: now } },
+          {
+            paymentSessionExpiresAt: null,
+            createdAt: { lte: orphanedBefore },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        paymentIntent: true,
+      },
+      orderBy: [
+        { paymentReconciliationCheckedAt: { sort: "asc", nulls: "first" } },
+        { paymentSessionExpiresAt: "asc" },
+      ],
+      take: EXPIRED_RESERVATION_BATCH_SIZE,
+    });
+
+    return this.reconcileBatch(
+      reservations.map((reservation) => ({ ...reservation, kind: "extension" })),
+    );
+  }
+
+  private async reconcileBatch(reservations: ExpiredReservation[]): Promise<number> {
     let reconciledCount = 0;
     for (let index = 0; index < reservations.length; index += RECONCILIATION_CONCURRENCY) {
       const batch = reservations.slice(index, index + RECONCILIATION_CONCURRENCY);
@@ -105,16 +176,18 @@ export class BookingReservationExpirationService {
       );
       reconciledCount += reconciled.filter(Boolean).length;
     }
-
     return reconciledCount;
   }
 
   private async reconcileReservation(reservation: ExpiredReservation): Promise<boolean> {
     const paymentReferences = reservation.paymentIntent
       ? [reservation.paymentIntent]
-      : [reservation.id, `booking_${reservation.id}`];
+      : reservation.kind === "booking"
+        ? [reservation.id, `booking_${reservation.id}`]
+        : [];
 
     try {
+      await this.markReconciliationChecked(reservation);
       const transaction = await this.findTransaction(paymentReferences);
       if (transaction?.status.trim().toLowerCase() === "successful") {
         await this.chargeCompletedHandler.handle({
@@ -135,7 +208,9 @@ export class BookingReservationExpirationService {
         transaction === null ||
         FINAL_UNPAID_STATUSES.has(transaction.status.trim().toLowerCase())
       ) {
-        return this.bookingReservationService.cancelExpiredReservation(reservation.id);
+        return reservation.kind === "booking"
+          ? this.bookingReservationService.cancelExpiredReservation(reservation.id)
+          : this.extensionReservationService.cancelExpiredReservation(reservation.id);
       }
       // Any other provider status is non-terminal. Keep the slot reserved and
       // retry on the next run rather than risk releasing a successfully paid car.
@@ -143,7 +218,8 @@ export class BookingReservationExpirationService {
     } catch (error) {
       this.logger.warn(
         {
-          bookingId: reservation.id,
+          reservationId: reservation.id,
+          reservationKind: reservation.kind,
           paymentReferences,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -151,6 +227,29 @@ export class BookingReservationExpirationService {
       );
       return false;
     }
+  }
+
+  private async markReconciliationChecked(reservation: ExpiredReservation): Promise<void> {
+    const data = { paymentReconciliationCheckedAt: new Date() };
+    if (reservation.kind === "booking") {
+      await this.databaseService.booking.updateMany({
+        where: {
+          id: reservation.id,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        },
+        data,
+      });
+      return;
+    }
+    await this.databaseService.extension.updateMany({
+      where: {
+        id: reservation.id,
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+      },
+      data,
+    });
   }
 
   private async findTransaction(

@@ -83,9 +83,10 @@ describe("Booking Flow E2E", () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
 
-    // Mock Flutterwave payment intent — each call gets a unique ID
-    vi.spyOn(flutterwaveService, "createPaymentIntent").mockImplementation(async () => {
-      const uniqueId = `flw_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // Mirror FlutterwaveService: the supplied idempotency key is the tx_ref.
+    vi.spyOn(flutterwaveService, "createPaymentIntent").mockImplementation(async (options) => {
+      const uniqueId =
+        options.idempotencyKey ?? `flw_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       return {
         paymentIntentId: uniqueId,
         checkoutUrl: `https://checkout.flutterwave.com/pay/${uniqueId}`,
@@ -248,11 +249,35 @@ describe("Booking Flow E2E", () => {
   async function runExtensionFlow(cookie: string, testCarId: string) {
     const { bookingId } = await runBookingFlow(cookie, testCarId);
 
+    // Keep the booking's existing future leg day; pin to 08:00–20:00 for a
+    // deterministic DAY extension window (+2h stays before UTC midnight).
+    const existingLeg = await databaseService.bookingLeg.findFirstOrThrow({
+      where: { bookingId },
+    });
+    const legDay = new Date(existingLeg.legDate);
+    const legStart = new Date(
+      Date.UTC(legDay.getUTCFullYear(), legDay.getUTCMonth(), legDay.getUTCDate(), 8, 0, 0, 0),
+    );
+    const legEnd = new Date(
+      Date.UTC(legDay.getUTCFullYear(), legDay.getUTCMonth(), legDay.getUTCDate(), 20, 0, 0, 0),
+    );
+
+    await databaseService.booking.update({
+      where: { id: bookingId },
+      data: { startDate: legStart, endDate: legEnd },
+    });
+    const targetLeg = await databaseService.bookingLeg.update({
+      where: { id: existingLeg.id },
+      data: { legStartTime: legStart, legEndTime: legEnd },
+    });
+
     const extendResponse = await request(app.getHttpServer())
       .post(`/api/bookings/${bookingId}/extensions`)
       .set("Cookie", cookie)
+      .set("Idempotency-Key", randomUUID())
       .send({
         hours: 2,
+        bookingLegId: targetLeg.id,
         callbackUrl: "https://example.com/extension-payment-status",
       });
 
@@ -270,6 +295,8 @@ describe("Booking Flow E2E", () => {
     if (!createdExtension) {
       throw new Error("Extension not found right after extension endpoint");
     }
+    expect(createdExtension.bookingLegId).toBe(targetLeg.id);
+    expect(createdExtension.paymentIntent).toBe(txRef);
     const extensionAmount = createdExtension.totalAmount.toNumber();
     const extensionEndTime = new Date(createdExtension.extensionEndTime);
 
@@ -325,6 +352,7 @@ describe("Booking Flow E2E", () => {
     expect(updatedExtension.status).toBe("ACTIVE");
     expect(updatedExtension.paymentStatus).toBe("PAID");
     expect(updatedExtension.paymentId).toBeTruthy();
+    await expect(databaseService.payment.count({ where: { txRef } })).resolves.toBe(1);
 
     const updatedLeg = await databaseService.bookingLeg.findUnique({
       where: { id: createdExtension.bookingLegId },

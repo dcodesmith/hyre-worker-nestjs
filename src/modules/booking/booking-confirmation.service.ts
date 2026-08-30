@@ -104,6 +104,7 @@ export class BookingConfirmationService {
         data: {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
+          paymentId: payment.id,
         },
       });
 

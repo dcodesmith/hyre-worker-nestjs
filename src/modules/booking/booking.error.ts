@@ -29,6 +29,13 @@ export const BookingErrorCode = {
   BOOKING_PRICE_CHANGED: "BOOKING_PRICE_CHANGED",
   IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
   BOOKING_REQUEST_IN_PROGRESS: "BOOKING_REQUEST_IN_PROGRESS",
+  EXTENSION_IDEMPOTENCY_KEY_REUSED: "EXTENSION_IDEMPOTENCY_KEY_REUSED",
+  EXTENSION_REQUEST_IN_PROGRESS: "EXTENSION_REQUEST_IN_PROGRESS",
+  EXTENSION_PAYMENT_PENDING: "EXTENSION_PAYMENT_PENDING",
+  EXTENSION_ALREADY_CONFIRMED: "EXTENSION_ALREADY_CONFIRMED",
+  EXTENSION_PAYMENT_SESSION_EXPIRED: "EXTENSION_PAYMENT_SESSION_EXPIRED",
+  EXTENSION_STATE_CHANGED: "EXTENSION_STATE_CHANGED",
+  EXTENSION_CREATION_FAILED: "EXTENSION_CREATION_FAILED",
 } as const;
 
 /**
@@ -100,6 +107,89 @@ export class BookingRequestInProgressException extends BookingException {
         details: { retryAfterSeconds },
       },
     );
+  }
+}
+
+export class ExtensionIdempotencyKeyReusedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.EXTENSION_IDEMPOTENCY_KEY_REUSED,
+      "This Idempotency-Key was already used with a different extension request.",
+      HttpStatus.CONFLICT,
+      { title: "Extension Idempotency Key Reused" },
+    );
+  }
+}
+
+export class ExtensionRequestInProgressException extends BookingException {
+  constructor(readonly retryAfterSeconds: number) {
+    super(
+      BookingErrorCode.EXTENSION_REQUEST_IN_PROGRESS,
+      "An identical extension request is still being processed.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Extension Request In Progress",
+        details: { retryAfterSeconds },
+      },
+    );
+  }
+}
+
+export class ExtensionPaymentPendingException extends BookingException {
+  constructor(bookingLegId: string) {
+    super(
+      BookingErrorCode.EXTENSION_PAYMENT_PENDING,
+      "A payment is already pending for this booking leg extension.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Extension Payment Pending",
+        details: { bookingLegId },
+      },
+    );
+  }
+}
+
+export class ExtensionAlreadyConfirmedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.EXTENSION_ALREADY_CONFIRMED,
+      "This booking extension is already confirmed.",
+      HttpStatus.CONFLICT,
+      { title: "Extension Already Confirmed" },
+    );
+  }
+}
+
+export class ExtensionPaymentSessionExpiredException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.EXTENSION_PAYMENT_SESSION_EXPIRED,
+      "This extension payment session expired. Start a new request with a new Idempotency-Key.",
+      HttpStatus.CONFLICT,
+      { title: "Extension Payment Session Expired" },
+    );
+  }
+}
+
+export class ExtensionStateChangedException extends BookingException {
+  constructor(bookingLegId: string) {
+    super(
+      BookingErrorCode.EXTENSION_STATE_CHANGED,
+      "The booking leg changed while the extension request was processing. Try again.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Extension State Changed",
+        details: { bookingLegId },
+      },
+    );
+  }
+}
+
+export class ExtensionCreationFailedException extends BookingException {
+  constructor(detail = "Booking extension creation failed.") {
+    super(BookingErrorCode.EXTENSION_CREATION_FAILED, detail, HttpStatus.INTERNAL_SERVER_ERROR, {
+      title: "Extension Creation Failed",
+    });
   }
 }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
@@ -8,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { ExtensionReservationService } from "../src/modules/booking/extension-reservation.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import type { FlutterwaveFetchedRefundData } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
@@ -62,6 +64,7 @@ describe("Payments E2E Tests", () => {
   let databaseService: DatabaseService;
   let flutterwaveService: FlutterwaveService;
   let refundReconciliationService: RefundReconciliationService;
+  let extensionReservationService: ExtensionReservationService;
   let factory: TestDataFactory;
 
   let testUserId: string;
@@ -91,6 +94,7 @@ describe("Payments E2E Tests", () => {
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);
     refundReconciliationService = app.get(RefundReconciliationService);
+    extensionReservationService = app.get(ExtensionReservationService);
     factory = new TestDataFactory(databaseService, app);
 
     await app.init();
@@ -188,6 +192,136 @@ describe("Payments E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.FORBIDDEN);
       expect(response.body.errorCode).toBe("PAYMENT_ACCESS_FORBIDDEN");
       expect(response.body.detail).toContain("permission");
+    });
+  });
+
+  describe("extension payment callback", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    async function createPendingExtension() {
+      const booking = await factory.createBookingWithDependencies(testUserId, {
+        booking: { status: "CONFIRMED", paymentStatus: "PAID" },
+      });
+      const bookingWindow = await databaseService.booking.findUniqueOrThrow({
+        where: { id: booking.id },
+        select: { startDate: true, endDate: true },
+      });
+      const leg = await factory.createBookingLeg(booking.id, {
+        legDate: bookingWindow.startDate,
+        legStartTime: bookingWindow.startDate,
+        legEndTime: bookingWindow.endDate,
+      });
+      const txRef = `ext-${randomUUID()}`;
+      const extension = await factory.createExtension(leg.id, {
+        paymentIntent: txRef,
+        totalAmount: 5000,
+        extensionStartTime: bookingWindow.endDate,
+        extensionEndTime: new Date(bookingWindow.endDate.getTime() + 60 * 60 * 1000),
+      });
+      return { bookingId: booking.id, extensionId: extension.id, txRef };
+    }
+
+    function mockSuccessfulExtensionPayment(txRef: string) {
+      const transactionId = String(Date.now() + Math.floor(Math.random() * 1000));
+      vi.spyOn(flutterwaveService, "verifyTransaction").mockResolvedValueOnce({
+        status: "success",
+        message: "ok",
+        data: {
+          id: Number(transactionId),
+          tx_ref: txRef,
+          flw_ref: `FLW-EXT-${transactionId}`,
+          amount: 5000,
+          charged_amount: 5000,
+          currency: "NGN",
+          status: "successful",
+          payment_type: "card",
+          created_at: new Date().toISOString(),
+        },
+      });
+      return transactionId;
+    }
+
+    it("returns pending extension status before a webhook creates the payment row", async () => {
+      const pending = await createPendingExtension();
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/payments/status/${pending.txRef}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          txRef: pending.txRef,
+          status: "PENDING",
+          amountExpected: 5000,
+          extension: { id: pending.extensionId, status: "PENDING" },
+        }),
+      );
+    });
+
+    it("verifies and activates an extension from the authenticated callback", async () => {
+      const pending = await createPendingExtension();
+      const transactionId = mockSuccessfulExtensionPayment(pending.txRef);
+
+      const response = await request(app.getHttpServer())
+        .post("/api/payments/extension-confirmation")
+        .set("Cookie", testUserCookie)
+        .send({
+          extensionId: pending.extensionId,
+          txRef: pending.txRef,
+          transactionId,
+        });
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          txRef: pending.txRef,
+          status: "SUCCESSFUL",
+          extension: { id: pending.extensionId, status: "ACTIVE" },
+        }),
+      );
+    });
+
+    it("reactivates an expired extension when its late payment is verified and the window is free", async () => {
+      const pending = await createPendingExtension();
+      await databaseService.extension.update({
+        where: { id: pending.extensionId },
+        data: { paymentSessionExpiresAt: new Date(Date.now() - 1) },
+      });
+      await expect(
+        extensionReservationService.cancelExpiredReservation(pending.extensionId),
+      ).resolves.toBe(true);
+      const transactionId = mockSuccessfulExtensionPayment(pending.txRef);
+
+      const response = await request(app.getHttpServer())
+        .post("/api/payments/extension-confirmation")
+        .set("Cookie", testUserCookie)
+        .send({
+          extensionId: pending.extensionId,
+          txRef: pending.txRef,
+          transactionId,
+        });
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expect(response.body.extension).toEqual({
+        id: pending.extensionId,
+        status: "ACTIVE",
+      });
+      const [extension, booking] = await Promise.all([
+        databaseService.extension.findUniqueOrThrow({
+          where: { id: pending.extensionId },
+          select: { extensionEndTime: true },
+        }),
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: pending.bookingId },
+          select: { endDate: true },
+        }),
+      ]);
+      expect(booking.endDate.getTime()).toBeGreaterThanOrEqual(
+        extension.extensionEndTime.getTime(),
+      );
     });
   });
 

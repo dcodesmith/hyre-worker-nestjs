@@ -10,6 +10,7 @@ import {
   BookingNotFoundException,
   BookingOutsideModificationWindowException,
   BookingStatusNotModifiableException,
+  ExtensionPaymentPendingException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
@@ -36,6 +37,9 @@ describe("BookingCancellationService", () => {
     },
     car: {
       update: vi.fn(),
+    },
+    extension: {
+      findFirst: vi.fn(),
     },
     $queryRaw: vi.fn(),
   };
@@ -70,6 +74,7 @@ describe("BookingCancellationService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    txMock.extension.findFirst.mockResolvedValue(null);
     bookingModificationPolicyServiceMock.assertCancellableStatus.mockImplementation(
       (booking: { status: BookingStatus; paymentStatus: PaymentStatus }) => {
         if (
@@ -213,6 +218,27 @@ describe("BookingCancellationService", () => {
       true,
       responseNow,
     );
+  });
+
+  it("rejects cancellation while an extension payment is pending", async () => {
+    txMock.booking.findUnique.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      carId: "car-1",
+    });
+    txMock.$queryRaw
+      .mockResolvedValueOnce([{ id: "car-1" }])
+      .mockResolvedValueOnce([{ id: "booking-1" }]);
+    txMock.extension.findFirst.mockResolvedValueOnce({ bookingLegId: "leg-1" });
+
+    await expect(
+      service.cancelBooking("booking-1", "user-1", "User requested cancellation"),
+    ).rejects.toBeInstanceOf(ExtensionPaymentPendingException);
+
+    expect(txMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it("uses the database clock when the application clock is past the cutoff", async () => {

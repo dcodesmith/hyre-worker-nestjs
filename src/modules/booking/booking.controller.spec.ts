@@ -13,6 +13,7 @@ import {
   BookingNotFoundException,
   BookingRequestInProgressException,
   BookingValidationException,
+  ExtensionRequestInProgressException,
 } from "./booking.error";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
@@ -368,8 +369,11 @@ describe("BookingController", () => {
         {
           hours: 2,
           callbackUrl: "https://example.com/extension-payment-status",
+          bookingLegId: "leg-future",
         },
         mockSessionUser,
+        "extension-request-123",
+        createMockResponse(),
       );
 
       expect(result).toEqual(mockCreateExtensionResponse);
@@ -378,8 +382,10 @@ describe("BookingController", () => {
         {
           hours: 2,
           callbackUrl: "https://example.com/extension-payment-status",
+          bookingLegId: "leg-future",
         },
         mockSessionUser,
+        "extension-request-123",
       );
     });
 
@@ -393,6 +399,8 @@ describe("BookingController", () => {
               callbackUrl: "https://example.com/extension-payment-status",
             },
             sessionUser,
+            "extension-request-123",
+            createMockResponse(),
           ),
         ).rejects.toBeInstanceOf(UnauthorizedException);
       }
@@ -412,6 +420,8 @@ describe("BookingController", () => {
             callbackUrl: "https://example.com/extension-payment-status",
           },
           mockSessionUser,
+          "extension-request-123",
+          createMockResponse(),
         ),
       ).rejects.toThrow("Invalid booking id");
 
@@ -422,7 +432,29 @@ describe("BookingController", () => {
           callbackUrl: "https://example.com/extension-payment-status",
         },
         mockSessionUser,
+        "extension-request-123",
       );
+    });
+
+    it("sets Retry-After when an identical extension request is processing", async () => {
+      const response = createMockResponse();
+      vi.mocked(bookingExtensionService.createExtension).mockRejectedValueOnce(
+        new ExtensionRequestInProgressException(5),
+      );
+
+      await expect(
+        controller.createExtension(
+          "booking-123",
+          {
+            hours: 2,
+            callbackUrl: "https://example.com/extension-payment-status",
+          },
+          mockSessionUser,
+          "extension-request-123",
+          response,
+        ),
+      ).rejects.toBeInstanceOf(ExtensionRequestInProgressException);
+      expect(response.setHeader).toHaveBeenCalledWith("Retry-After", "5");
     });
   });
 

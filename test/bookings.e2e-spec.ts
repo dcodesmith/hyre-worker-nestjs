@@ -7,7 +7,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS } from "../src/modules/booking/booking.const";
+import {
+  BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+  EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
+} from "../src/modules/booking/booking.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MapsService } from "../src/modules/maps/maps.service";
@@ -775,6 +778,571 @@ describe("Bookings E2E Tests", () => {
         .send({ reason: "Hijack attempt" });
 
       expect(response.status).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
+  describe("Booking extension eligibility", () => {
+    const extensionCallbackUrl = "https://example.com/extension-payment-status";
+
+    beforeEach(() => {
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementation(async (options) => {
+        const paymentIntentId = options.idempotencyKey ?? `ext-${randomUUID()}`;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+    });
+
+    type LegEligibility = {
+      id: string;
+      canExtend: boolean;
+      maxExtendableHours: number;
+    };
+
+    const utcTodayAt = (hours: number, minutes = 0): Date => {
+      const now = new Date();
+      return new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hours, minutes, 0, 0),
+      );
+    };
+
+    const utcDaysFromToday = (dayOffset: number, hours: number, minutes = 0): Date => {
+      const date = utcTodayAt(hours, minutes);
+      date.setUTCDate(date.getUTCDate() + dayOffset);
+      return date;
+    };
+
+    /** Future DAY window used for deterministic positive E2E assertions. */
+    const FUTURE_DAY_OFFSET = 3;
+
+    function expectNoBookingLevelExtensionFields(body: Record<string, unknown>) {
+      expect(body).not.toHaveProperty("canExtend");
+      expect(body).not.toHaveProperty("maxExtendableHours");
+      expect(body).not.toHaveProperty("extensionBookingLegId");
+    }
+
+    function expectLegEligibility(
+      body: { legs: LegEligibility[] },
+      legId: string,
+      expected: { canExtend: boolean; maxExtendableHours: number },
+    ) {
+      expect(body.legs.find((leg) => leg.id === legId)).toMatchObject(expected);
+    }
+
+    async function seedBookingWithLeg(params: {
+      carId: string;
+      userId?: string;
+      status?: "CONFIRMED" | "ACTIVE";
+      type?: "DAY" | "NIGHT";
+      legStart: Date;
+      legEnd: Date;
+      bookingStart?: Date;
+      bookingEnd?: Date;
+    }) {
+      const booking = await factory.createBooking(params.userId ?? testUserId, params.carId, {
+        status: params.status ?? "CONFIRMED",
+        paymentStatus: "PAID",
+        type: params.type ?? "DAY",
+        startDate: params.bookingStart ?? params.legStart,
+        endDate: params.bookingEnd ?? params.legEnd,
+      });
+      const leg = await factory.createBookingLeg(booking.id, {
+        legDate: params.legStart,
+        legStartTime: params.legStart,
+        legEndTime: params.legEnd,
+      });
+      return { booking, leg };
+    }
+
+    async function seedBlockingNightBooking(params: {
+      carId: string;
+      nightStart: Date;
+      nightEnd: Date;
+    }) {
+      const otherUser = await factory.createUser();
+      return seedBookingWithLeg({
+        carId: params.carId,
+        userId: otherUser.id,
+        status: "CONFIRMED",
+        type: "NIGHT",
+        legStart: params.nightStart,
+        legEnd: params.nightEnd,
+      });
+    }
+
+    async function postExtension(
+      bookingId: string,
+      body: { hours: number; bookingLegId?: string },
+      idempotencyKey = randomUUID(),
+    ) {
+      return request(app.getHttpServer())
+        .post(`/api/bookings/${bookingId}/extensions`)
+        .set("Cookie", testUserCookie)
+        .set("Idempotency-Key", idempotencyKey)
+        .send({ ...body, callbackUrl: extensionCallbackUrl });
+    }
+
+    async function seedExtendableBooking() {
+      const car = await factory.createCar(fleetOwnerId);
+      return seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+    }
+
+    it("requires Idempotency-Key when creating an extension", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/bookings/${booking.id}/extensions`)
+        .set("Cookie", testUserCookie)
+        .send({
+          hours: 1,
+          bookingLegId: leg.id,
+          callbackUrl: extensionCallbackUrl,
+        });
+
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: "Idempotency-Key" })]),
+      );
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("replays an identical extension request with one row and one Flutterwave call", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+
+      const first = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      const replay = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(replay.status).toBe(HttpStatus.CREATED);
+      expect(replay.body).toEqual(first.body);
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+      await expect(
+        databaseService.extension.findUniqueOrThrow({
+          where: { id: first.body.extensionId },
+          select: { paymentIntent: true, paymentSessionExpiresAt: true, extensionEndTime: true },
+        }),
+      ).resolves.toEqual({
+        paymentIntent: first.body.paymentIntentId,
+        paymentSessionExpiresAt: expect.any(Date),
+        extensionEndTime: utcDaysFromToday(FUTURE_DAY_OFFSET, 21),
+      });
+      await expect(
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: booking.id },
+          select: { endDate: true },
+        }),
+      ).resolves.toEqual({
+        endDate: utcDaysFromToday(FUTURE_DAY_OFFSET, 21),
+      });
+    });
+
+    it("rejects changed extension values when the Idempotency-Key is reused", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+
+      const first = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      const changed = await postExtension(
+        booking.id,
+        { hours: 2, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(changed.status).toBe(HttpStatus.CONFLICT);
+      expect(changed.body.errorCode).toBe("EXTENSION_IDEMPOTENCY_KEY_REUSED");
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+    });
+
+    it("returns in progress for concurrent requests with the same key", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      const idempotencyKey = randomUUID();
+      let signalStarted: (() => void) | undefined;
+      let releasePayment: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const paymentGate = new Promise<void>((resolve) => {
+        releasePayment = resolve;
+      });
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementationOnce(async (options) => {
+        signalStarted?.();
+        await paymentGate;
+        const paymentIntentId = options.idempotencyKey as string;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+
+      const firstPromise = postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      await started;
+      const concurrent = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        idempotencyKey,
+      );
+      releasePayment?.();
+      const first = await firstPromise;
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(concurrent.status).toBe(HttpStatus.CONFLICT);
+      expect(concurrent.body.errorCode).toBe("EXTENSION_REQUEST_IN_PROGRESS");
+      expect(concurrent.headers["retry-after"]).toBe(
+        String(EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS),
+      );
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+    });
+
+    it("rejects a concurrent different key instead of replacing its payment reference", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+      let signalStarted: (() => void) | undefined;
+      let releasePayment: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const paymentGate = new Promise<void>((resolve) => {
+        releasePayment = resolve;
+      });
+      vi.mocked(flutterwaveService.createPaymentIntent).mockImplementationOnce(async (options) => {
+        signalStarted?.();
+        await paymentGate;
+        const paymentIntentId = options.idempotencyKey as string;
+        return {
+          paymentIntentId,
+          checkoutUrl: `https://checkout.flutterwave.com/pay/${paymentIntentId}`,
+        };
+      });
+
+      const firstPromise = postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        randomUUID(),
+      );
+      await started;
+      const concurrent = await postExtension(
+        booking.id,
+        { hours: 1, bookingLegId: leg.id },
+        randomUUID(),
+      );
+      releasePayment?.();
+      const first = await firstPromise;
+
+      expect(first.status).toBe(HttpStatus.CREATED);
+      expect(concurrent.status).toBe(HttpStatus.CONFLICT);
+      expect(concurrent.body.errorCode).toBe("EXTENSION_PAYMENT_PENDING");
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledOnce();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(1);
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: first.body.extensionId },
+      });
+      expect(extension.paymentIntent).toBe(first.body.paymentIntentId);
+    });
+
+    it("marks a leg ineligible while its extension payment is pending", async () => {
+      const { booking, leg } = await seedExtendableBooking();
+
+      const created = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
+      expect(created.status).toBe(HttpStatus.CREATED);
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expectLegEligibility(response.body, leg.id, {
+        canExtend: false,
+        maxExtendableHours: 0,
+      });
+    });
+
+    it("reserves the proposed extension window before payment confirmation", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const legEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd,
+      });
+
+      const created = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
+      expect(created.status).toBe(HttpStatus.CREATED);
+
+      const otherUser = await factory.createUser();
+      const otherwiseAvailableStart = new Date(legEnd.getTime() + 2.5 * 60 * 60 * 1000);
+      await expect(
+        factory.createBooking(otherUser.id, car.id, {
+          status: "CONFIRMED",
+          paymentStatus: "PAID",
+          type: "NIGHT",
+          startDate: otherwiseAvailableStart,
+          endDate: new Date(otherwiseAvailableStart.getTime() + 60 * 60 * 1000),
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("GET /api/bookings/:id exposes canExtend/maxExtendableHours on each leg, not the booking", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const pastStart = utcDaysFromToday(-1, 8);
+      const pastEnd = utcDaysFromToday(-1, 20);
+      const futureStart = utcDaysFromToday(FUTURE_DAY_OFFSET, 8);
+      const futureEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
+
+      const booking = await factory.createBooking(testUserId, car.id, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        type: "DAY",
+        startDate: pastStart,
+        endDate: futureEnd,
+      });
+      const pastLeg = await factory.createBookingLeg(booking.id, {
+        legDate: pastStart,
+        legStartTime: pastStart,
+        legEndTime: pastEnd,
+      });
+      const futureLeg = await factory.createBookingLeg(booking.id, {
+        legDate: futureStart,
+        legStartTime: futureStart,
+        legEndTime: futureEnd,
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, pastLeg.id, { canExtend: false, maxExtendableHours: 0 });
+      expectLegEligibility(response.body, futureLeg.id, {
+        canExtend: true,
+        maxExtendableHours: 4,
+      });
+    });
+
+    it("GET /api/bookings list includes leg-level eligibility and omits booking-level fields", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/api/bookings")
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      const listed = (
+        response.body.CONFIRMED as Array<{ id: string; legs: LegEligibility[] }>
+      ).find((item) => item.id === booking.id);
+      expect(listed).toBeDefined();
+      if (!listed) {
+        throw new Error("Expected booking in CONFIRMED list");
+      }
+      expectNoBookingLevelExtensionFields(listed as unknown as Record<string, unknown>);
+      expectLegEligibility(listed, leg.id, { canExtend: true, maxExtendableHours: 4 });
+    });
+
+    it("preserves a free 2-hour gap (future DAY 08:00–20:00 → NIGHT 23:00–05:00 → max 1h)", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET;
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(dayOffset, 8),
+        legEnd: utcDaysFromToday(dayOffset, 20),
+      });
+      // Latest extendable end = 23:00 − 2h = 21:00 → 1h.
+      await seedBlockingNightBooking({
+        carId: car.id,
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, leg.id, { canExtend: true, maxExtendableHours: 1 });
+    });
+
+    it("disallows extension when only the 2-hour gap remains (future DAY 09:00–21:00 → NIGHT 23:00 → max 0h)", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET + 1;
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(dayOffset, 9),
+        legEnd: utcDaysFromToday(dayOffset, 21),
+      });
+      await seedBlockingNightBooking({
+        carId: car.id,
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/bookings/${booking.id}`)
+        .set("Cookie", testUserCookie);
+
+      expect(response.status).toBe(HttpStatus.OK);
+      expectNoBookingLevelExtensionFields(response.body);
+      expectLegEligibility(response.body, leg.id, { canExtend: false, maxExtendableHours: 0 });
+    });
+
+    it("POST with bookingLegId rejects 2h and accepts 1h for future DAY 20:00 before NIGHT 23:00", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const dayOffset = FUTURE_DAY_OFFSET + 2;
+      const { booking, leg } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(dayOffset, 8),
+        legEnd: utcDaysFromToday(dayOffset, 20),
+      });
+      await seedBlockingNightBooking({
+        carId: car.id,
+        nightStart: utcDaysFromToday(dayOffset, 23),
+        nightEnd: utcDaysFromToday(dayOffset + 1, 5),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      const rejected = await postExtension(booking.id, { hours: 2, bookingLegId: leg.id });
+      expect(rejected.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(rejected.body.detail).toMatch(/maximum extension is 1 hour/i);
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+      await expect(
+        databaseService.extension.count({ where: { bookingLegId: leg.id } }),
+      ).resolves.toBe(0);
+
+      const accepted = await postExtension(booking.id, { hours: 1, bookingLegId: leg.id });
+      expect(accepted.status).toBe(HttpStatus.CREATED);
+      expect(accepted.body).toMatchObject({
+        extensionId: expect.any(String),
+        paymentIntentId: expect.any(String),
+        checkoutUrl: expect.stringContaining("checkout.flutterwave.com"),
+      });
+      expect(flutterwaveService.createPaymentIntent).toHaveBeenCalledTimes(1);
+
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: accepted.body.extensionId },
+      });
+      expect(extension.bookingLegId).toBe(leg.id);
+      expect(extension.extendedDurationHours).toBe(1);
+    });
+
+    it("POST with bookingLegId creates an Extension on the requested future leg", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const todayStart = utcTodayAt(8);
+      const todayEnd = utcTodayAt(20);
+      const futureStart = utcDaysFromToday(FUTURE_DAY_OFFSET, 8);
+      const futureEnd = utcDaysFromToday(FUTURE_DAY_OFFSET, 20);
+
+      const booking = await factory.createBooking(testUserId, car.id, {
+        status: "CONFIRMED",
+        paymentStatus: "PAID",
+        type: "DAY",
+        startDate: todayStart,
+        endDate: futureEnd,
+      });
+      await factory.createBookingLeg(booking.id, {
+        legDate: todayStart,
+        legStartTime: todayStart,
+        legEndTime: todayEnd,
+      });
+      const futureLeg = await factory.createBookingLeg(booking.id, {
+        legDate: futureStart,
+        legStartTime: futureStart,
+        legEndTime: futureEnd,
+      });
+
+      const response = await postExtension(booking.id, { hours: 1, bookingLegId: futureLeg.id });
+      expect(response.status).toBe(HttpStatus.CREATED);
+
+      const extension = await databaseService.extension.findUniqueOrThrow({
+        where: { id: response.body.extensionId },
+      });
+      expect(extension.bookingLegId).toBe(futureLeg.id);
+    });
+
+    it("POST without bookingLegId does not silently target a future leg", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      const response = await postExtension(booking.id, { hours: 1 });
+
+      expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(response.body.detail).toMatch(/booking leg not found/i);
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("POST rejects foreign and past legs before creating payment", async () => {
+      const car = await factory.createCar(fleetOwnerId);
+      const { booking: ownBooking } = await seedBookingWithLeg({
+        carId: car.id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET, 20),
+      });
+      const { leg: foreignLeg } = await seedBookingWithLeg({
+        carId: car.id,
+        userId: (await factory.createUser()).id,
+        legStart: utcDaysFromToday(FUTURE_DAY_OFFSET + 1, 8),
+        legEnd: utcDaysFromToday(FUTURE_DAY_OFFSET + 1, 20),
+      });
+      const { booking: pastBooking, leg: pastLeg } = await seedBookingWithLeg({
+        carId: (await factory.createCar(fleetOwnerId)).id,
+        legStart: utcDaysFromToday(-1, 8),
+        legEnd: utcDaysFromToday(-1, 20),
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockClear();
+
+      for (const [bookingId, bookingLegId] of [
+        [ownBooking.id, foreignLeg.id],
+        [pastBooking.id, pastLeg.id],
+      ] as const) {
+        const rejected = await postExtension(bookingId, { hours: 1, bookingLegId });
+        expect(rejected.status).toBe(HttpStatus.BAD_REQUEST);
+      }
+
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
   });
 });

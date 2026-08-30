@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentAttemptStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -11,6 +11,7 @@ import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../flutterwave/flutterwave-webhook.schema";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
+import { RefundFinalizationService } from "./refund-finalization.service";
 
 describe("ChargeCompletedHandler", () => {
   let handler: ChargeCompletedHandler;
@@ -19,6 +20,7 @@ describe("ChargeCompletedHandler", () => {
   let bookingConfirmationService: BookingConfirmationService;
   let extensionConfirmationService: ExtensionConfirmationService;
   let bookingEligibilityService: BookingEligibilityService;
+  let refundFinalizationService: RefundFinalizationService;
 
   const mockBookingConfirmationService = {
     confirmFromPayment: vi.fn(),
@@ -65,6 +67,8 @@ describe("ChargeCompletedHandler", () => {
           useValue: {
             payment: {
               upsert: vi.fn(),
+              updateMany: vi.fn(),
+              findUnique: vi.fn(),
             },
             booking: {
               findFirst: vi.fn(),
@@ -72,7 +76,8 @@ describe("ChargeCompletedHandler", () => {
             extension: {
               findFirst: vi.fn(),
             },
-            $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({} as never)),
+            $queryRaw: vi.fn(),
+            $transaction: vi.fn(),
           },
         },
         {
@@ -84,6 +89,10 @@ describe("ChargeCompletedHandler", () => {
         { provide: BookingConfirmationService, useValue: mockBookingConfirmationService },
         { provide: ExtensionConfirmationService, useValue: mockExtensionConfirmationService },
         { provide: BookingEligibilityService, useValue: mockBookingEligibilityService },
+        {
+          provide: RefundFinalizationService,
+          useValue: { requestManualReview: vi.fn().mockResolvedValue(true) },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -97,7 +106,13 @@ describe("ChargeCompletedHandler", () => {
       ExtensionConfirmationService,
     );
     bookingEligibilityService = module.get<BookingEligibilityService>(BookingEligibilityService);
+    refundFinalizationService = module.get<RefundFinalizationService>(RefundFinalizationService);
     vi.clearAllMocks();
+    vi.mocked(databaseService.$queryRaw).mockResolvedValue([{ id: "locked" }]);
+    vi.mocked(databaseService.payment.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(databaseService.$transaction).mockImplementation(async (callback) =>
+      callback(databaseService),
+    );
   });
 
   it("creates payment and confirms booking when booking txRef matches", async () => {
@@ -128,9 +143,44 @@ describe("ChargeCompletedHandler", () => {
 
     await handler.handle(mockChargeData);
 
-    expect(databaseService.payment.upsert).toHaveBeenCalled();
+    expect(databaseService.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: {},
+      }),
+    );
     expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not flag a duplicate successful booking webhook for manual review", async () => {
+    const booking = createBooking({
+      id: "booking-456",
+      paymentId: "payment-123",
+      paymentStatus: PaymentStatus.PAID,
+      totalAmount: new Decimal(10000),
+    });
+    const payment = {
+      ...createPaymentRecord({
+        id: "payment-123",
+        bookingId: booking.id,
+        flutterwaveTransactionId: String(mockChargeData.id),
+        status: PaymentAttemptStatus.SUCCESSFUL,
+      }),
+      booking,
+    };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(booking);
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(payment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(false);
+
+    await handler.handle(mockChargeData);
+
+    expect(refundFinalizationService.requestManualReview).not.toHaveBeenCalled();
   });
 
   it("confirms a callback transaction through the same verified finalization path", async () => {
@@ -195,6 +245,10 @@ describe("ChargeCompletedHandler", () => {
     expect(databaseService.payment.upsert).toHaveBeenCalled();
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: createdPayment.id,
+      reason: "Successful charge does not match the expected amount or currency",
+    });
   });
 
   it("allows confirmation when amount difference is exactly tolerance", async () => {
@@ -245,7 +299,7 @@ describe("ChargeCompletedHandler", () => {
     vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
       status: "success",
       message: "ok",
-      data: { ...mockChargeData, currency: "NGN" },
+      data: { ...mockChargeData, currency: "USD" },
     });
     vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
       createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
@@ -253,11 +307,15 @@ describe("ChargeCompletedHandler", () => {
     vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
     vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(createdPayment);
 
-    await handler.handle(mockChargeData);
+    await handler.handle({ ...mockChargeData, currency: "USD" });
 
     expect(databaseService.payment.upsert).toHaveBeenCalled();
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: createdPayment.id,
+      reason: "Successful charge does not match the expected amount or currency",
+    });
   });
 
   it("creates payment and confirms extension when extension txRef matches", async () => {
@@ -290,6 +348,136 @@ describe("ChargeCompletedHandler", () => {
 
     expect(extensionConfirmationService.confirmFromPayment).toHaveBeenCalledWith(createdPayment);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("flags a successful extension charge when activation fails", async () => {
+    const payment = {
+      ...createPaymentRecord({
+        id: "payment-123",
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        extensionId: "extension-789",
+        amountExpected: new Decimal(5000),
+        amountCharged: new Decimal(5000),
+        currency: "NGN",
+      }),
+      booking: null,
+    };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData, charged_amount: 5000 },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(
+      createExtension({ id: "extension-789", totalAmount: new Decimal(5000) }),
+    );
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(payment);
+    vi.mocked(extensionConfirmationService.confirmFromPayment).mockResolvedValueOnce(false);
+
+    await handler.handle({ ...mockChargeData, charged_amount: 5000 });
+
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: payment.id,
+      reason: "Successful charge could not confirm its extension",
+    });
+  });
+
+  it("promotes only a failed payment to a verified success", async () => {
+    const promotedPayment = {
+      ...createPaymentRecord({
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+    vi.mocked(databaseService.payment.findUnique).mockResolvedValueOnce(promotedPayment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await handler.handle(mockChargeData);
+
+    expect(databaseService.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { txRef: "tx-ref-123", status: PaymentAttemptStatus.FAILED },
+      }),
+    );
+    expect(databaseService.payment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("flags a different successful provider transaction without overwriting payment identity", async () => {
+    const firstSuccessfulPayment = {
+      ...createPaymentRecord({
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+        flutterwaveTransactionId: "11111",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: { ...mockChargeData, id: 22222 },
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(firstSuccessfulPayment);
+
+    await handler.handle({ ...mockChargeData, id: 22222 });
+
+    expect(databaseService.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { txRef: "tx-ref-123" }, update: {} }),
+    );
+    expect(refundFinalizationService.requestManualReview).toHaveBeenCalledWith({
+      paymentId: firstSuccessfulPayment.id,
+      reason: "A second successful provider transaction used the same payment reference",
+    });
+    expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not flag a different failed provider transaction as a duplicate success", async () => {
+    const firstSuccessfulPayment = {
+      ...createPaymentRecord({
+        txRef: "tx-ref-123",
+        status: PaymentAttemptStatus.SUCCESSFUL,
+        bookingId: "booking-456",
+        flutterwaveTransactionId: "11111",
+      }),
+      booking: { id: "booking-456", status: BookingStatus.PENDING },
+    };
+    const failedTransaction = { ...mockChargeData, id: 22222, status: "failed" };
+    vi.mocked(flutterwaveService.verifyTransaction).mockResolvedValueOnce({
+      status: "success",
+      message: "ok",
+      data: failedTransaction,
+    });
+    vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce(
+      createBooking({ id: "booking-456", totalAmount: new Decimal(10000) }),
+    );
+    vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(databaseService.payment.upsert).mockResolvedValueOnce(firstSuccessfulPayment);
+    vi.mocked(bookingConfirmationService.confirmFromPayment).mockResolvedValueOnce(true);
+
+    await handler.handle(failedTransaction);
+
+    expect(refundFinalizationService.requestManualReview).not.toHaveBeenCalled();
+    expect(bookingConfirmationService.confirmFromPayment).toHaveBeenCalledWith(
+      firstSuccessfulPayment,
+    );
   });
 
   it.each([
@@ -423,7 +611,9 @@ describe("ChargeCompletedHandler", () => {
 
     await handler.handle({ ...mockChargeData, status: "failed" });
 
-    expect(databaseService.payment.upsert).toHaveBeenCalled();
+    expect(databaseService.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: {} }),
+    );
     expect(bookingEligibilityService.releaseReferralReservation).toHaveBeenCalledWith(
       expect.anything(),
       "booking-456",

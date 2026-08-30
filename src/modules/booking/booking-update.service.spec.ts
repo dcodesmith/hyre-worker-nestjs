@@ -15,6 +15,7 @@ import {
   BookingUpdateNotAllowedException,
   BookingValidationException,
   CarNotAvailableException,
+  ExtensionPaymentPendingException,
 } from "./booking.error";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
 import { BookingReservationService } from "./booking-reservation.service";
@@ -43,11 +44,15 @@ describe("BookingUpdateService", () => {
     user: {
       findFirst: vi.fn(),
     },
+    extension: {
+      findFirst: vi.fn(),
+    },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   const transactionMock = {
     booking: databaseServiceMock.booking,
+    extension: databaseServiceMock.extension,
     $queryRaw: databaseServiceMock.$queryRaw,
   };
 
@@ -89,6 +94,7 @@ describe("BookingUpdateService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    databaseServiceMock.extension.findFirst.mockResolvedValue(null);
     bookingModificationPolicyServiceMock.assertEditableStatus.mockImplementation(
       (booking: { status: BookingStatus }) => {
         if (booking.status !== BookingStatus.CONFIRMED) {
@@ -129,6 +135,7 @@ describe("BookingUpdateService", () => {
       (
         callback: (tx: {
           booking: typeof databaseServiceMock.booking;
+          extension: typeof databaseServiceMock.extension;
           $queryRaw: typeof databaseServiceMock.$queryRaw;
         }) => Promise<unknown>,
       ) => callback(transactionMock),
@@ -215,10 +222,7 @@ describe("BookingUpdateService", () => {
         booking: { id: "booking-1" },
         actor: { type: "user", userId: "user-1" },
       },
-      {
-        booking: databaseServiceMock.booking,
-        $queryRaw: databaseServiceMock.$queryRaw,
-      },
+      transactionMock,
     );
   });
 
@@ -251,6 +255,29 @@ describe("BookingUpdateService", () => {
     );
     expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
     expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();
+  });
+
+  it("rejects date changes while an extension payment is pending", async () => {
+    const startDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate,
+      endDate: new Date(startDate.getTime() + 12 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.extension.findFirst.mockResolvedValueOnce({ bookingLegId: "leg-1" });
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupTime: "10:30 AM" }),
+    ).rejects.toBeInstanceOf(ExtensionPaymentPendingException);
+
+    expect(bookingValidationServiceMock.checkCarAvailability).not.toHaveBeenCalled();
+    expect(databaseServiceMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it("throws when booking does not exist for user", async () => {

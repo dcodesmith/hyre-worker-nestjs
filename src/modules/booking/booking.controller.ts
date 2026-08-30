@@ -16,7 +16,10 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
-import { BookingRequestInProgressException } from "./booking.error";
+import {
+  BookingRequestInProgressException,
+  ExtensionRequestInProgressException,
+} from "./booking.error";
 import type { CreateBookingResponse, CreateExtensionResponse } from "./booking.interface";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
@@ -100,11 +103,25 @@ export class BookingController {
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
     @ZodBody(createExtensionBodySchema) body: CreateExtensionBodyDto,
     @CurrentUser() sessionUser: AuthSession["user"] | null | undefined,
+    @IdempotencyKey() idempotencyKey: string,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<CreateExtensionResponse> {
     if (!sessionUser) {
       throw new UnauthorizedException("Invalid or expired session");
     }
-    return this.bookingExtensionService.createExtension(bookingId, body, sessionUser);
+    try {
+      return await this.bookingExtensionService.createExtension(
+        bookingId,
+        body,
+        sessionUser,
+        idempotencyKey,
+      );
+    } catch (error) {
+      if (error instanceof ExtensionRequestInProgressException) {
+        response.setHeader("Retry-After", String(error.retryAfterSeconds));
+      }
+      throw error;
+    }
   }
 
   @Post("pricing-preview")

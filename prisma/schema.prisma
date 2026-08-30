@@ -294,6 +294,7 @@ model Booking {
   type                                    BookingType                 @default(DAY)
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?
+  paymentReconciliationCheckedAt          DateTime?
   paymentStatusTokenHash                  String?
   fleetOwnerPayoutAmountNet               Decimal?                    @db.Decimal(10, 2)
   netTotal                                Decimal?                    @db.Decimal(10, 2)
@@ -402,38 +403,59 @@ model BookingLeg {
 }
 
 model Extension {
-  id                                      String                   @id @default(cuid())
-  createdAt                               DateTime                 @default(now())
-  updatedAt                               DateTime                 @updatedAt
-  totalAmount                             Decimal                  @db.Decimal(10, 2)
-  paymentStatus                           PaymentStatus            @default(UNPAID)
+  id                                      String                        @id @default(cuid())
+  createdAt                               DateTime                      @default(now())
+  updatedAt                               DateTime                      @updatedAt
+  totalAmount                             Decimal                       @db.Decimal(10, 2)
+  paymentStatus                           PaymentStatus                 @default(UNPAID)
   paymentId                               String?
   paymentIntent                           String?
-  status                                  String                   @default("PENDING")
+  paymentSessionExpiresAt                 DateTime?
+  paymentReconciliationCheckedAt          DateTime?
+  status                                  String                        @default("PENDING")
   bookingLegId                            String
   eventType                               ExtensionEventType
   extendedDurationHours                   Int
   extensionEndTime                        DateTime
   extensionStartTime                      DateTime
-  fleetOwnerPayoutAmountNet               Decimal?                 @db.Decimal(10, 2)
-  netTotal                                Decimal?                 @db.Decimal(10, 2)
+  fleetOwnerPayoutAmountNet               Decimal?                      @db.Decimal(10, 2)
+  netTotal                                Decimal?                      @db.Decimal(10, 2)
   overallPayoutStatus                     PayoutTransactionStatus?
-  platformCustomerServiceFeeAmount        Decimal?                 @db.Decimal(10, 2)
-  platformCustomerServiceFeeRatePercent   Decimal?                 @db.Decimal(5, 2)
-  platformFleetOwnerCommissionAmount      Decimal?                 @db.Decimal(10, 2)
-  platformFleetOwnerCommissionRatePercent Decimal?                 @db.Decimal(5, 2)
-  subtotalBeforeVat                       Decimal?                 @db.Decimal(10, 2)
-  vatAmount                               Decimal?                 @db.Decimal(10, 2)
-  vatRatePercent                          Decimal?                 @db.Decimal(5, 2)
-  bookingLeg                              BookingLeg               @relation(fields: [bookingLegId], references: [id], onDelete: Cascade)
-  customerPayments                        Payment[]                @relation("ExtensionCustomerPayments")
-  payoutTransactions                      PayoutTransaction[]      @relation("ExtensionPayouts")
+  platformCustomerServiceFeeAmount        Decimal?                      @db.Decimal(10, 2)
+  platformCustomerServiceFeeRatePercent   Decimal?                      @db.Decimal(5, 2)
+  platformFleetOwnerCommissionAmount      Decimal?                      @db.Decimal(10, 2)
+  platformFleetOwnerCommissionRatePercent Decimal?                      @db.Decimal(5, 2)
+  subtotalBeforeVat                       Decimal?                      @db.Decimal(10, 2)
+  vatAmount                               Decimal?                      @db.Decimal(10, 2)
+  vatRatePercent                          Decimal?                      @db.Decimal(5, 2)
+  bookingLeg                              BookingLeg                    @relation(fields: [bookingLegId], references: [id], onDelete: Cascade)
+  customerPayments                        Payment[]                     @relation("ExtensionCustomerPayments")
+  payoutTransactions                      PayoutTransaction[]           @relation("ExtensionPayouts")
+  creationIdempotency                     ExtensionCreationIdempotency?
 
   @@index([bookingLegId])
   @@index([paymentStatus])
+  @@index([status, paymentStatus, paymentSessionExpiresAt])
   @@index([eventType])
   @@index([status])
   @@index([overallPayoutStatus])
+}
+
+model ExtensionCreationIdempotency {
+  id                   String                            @id @default(cuid())
+  idempotencyKey       String
+  customerScope        String
+  requestHash          String
+  resolvedBookingLegId String
+  state                ExtensionCreationIdempotencyState @default(PROCESSING)
+  extensionId          String?                           @unique
+  response             Json?
+  createdAt            DateTime                          @default(now())
+  updatedAt            DateTime                          @updatedAt
+  extension            Extension?                        @relation(fields: [extensionId], references: [id], onDelete: SetNull)
+
+  @@unique([customerScope, idempotencyKey])
+  @@index([state, updatedAt])
 }
 
 model Payment {
@@ -913,6 +935,11 @@ enum BookingCompletionSource {
 }
 
 enum BookingCreationIdempotencyState {
+  PROCESSING
+  COMPLETED
+}
+
+enum ExtensionCreationIdempotencyState {
   PROCESSING
   COMPLETED
 }
