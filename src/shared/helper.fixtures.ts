@@ -205,6 +205,8 @@ export function createBooking(overrides: Partial<BookingWithRelations> = {}): Bo
     paymentSessionExpiresAt: null,
     paymentReconciliationCheckedAt: null,
     paymentStatusTokenHash: null,
+    guestAccessTokenHash: null,
+    guestAccessTokenExpiresAt: null,
     netTotal: new Decimal(9000),
     platformCustomerServiceFeeRatePercent: new Decimal(5),
     platformCustomerServiceFeeAmount: new Decimal(450),

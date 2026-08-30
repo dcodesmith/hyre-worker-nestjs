@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+// biome-ignore lint/correctness/noUnusedImports: Vitest's TSX transform requires React at runtime.
+import React, { type ReactNode } from "react";
 import {
   Body,
   Button,
@@ -788,4 +789,49 @@ export function RefundStatusEmail({ data }: { readonly data: RefundStatusTemplat
 
 export async function renderRefundStatusEmail(data: RefundStatusTemplateData) {
   return await render(<RefundStatusEmail data={data} />);
+}
+
+export type GuestBookingAccessEmailProps = {
+  readonly recipientName: string;
+  readonly bookingReference: string;
+  readonly accessUrl: string;
+  readonly expiresInMinutes: number;
+};
+
+export function GuestBookingAccessEmail({
+  recipientName,
+  bookingReference,
+  accessUrl,
+  expiresInMinutes,
+}: GuestBookingAccessEmailProps) {
+  return (
+    <EmailTemplate
+      previewText={`View booking ${bookingReference}`}
+      pageTitle="Your booking access link"
+    >
+      <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
+        View your booking
+      </Heading>
+      <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
+        Hi {firstNameFrom(recipientName)}, use this secure link to view booking{" "}
+        <strong>{bookingReference}</strong>.
+      </Text>
+      <Section className="mt-6 text-center">
+        <Button
+          href={accessUrl}
+          className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+        >
+          View booking
+        </Button>
+      </Section>
+      <Text className="text-sm text-[#52525B] mt-5 mb-0">
+        This link expires in {expiresInMinutes} minutes. If you did not request it, you can ignore
+        this email.
+      </Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderGuestBookingAccessEmail(data: GuestBookingAccessEmailProps) {
+  return await render(<GuestBookingAccessEmail {...data} />);
 }

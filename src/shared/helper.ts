@@ -97,30 +97,24 @@ export function getCustomerDetails(
     include: { user: true; guestUser: true };
   }>,
 ): { email: string; name: string; phone_number: string } {
-  let email = "";
-  let name = "";
-  let phone_number = "";
+  const guestDetails =
+    booking.guestUser && typeof booking.guestUser === "object" && !Array.isArray(booking.guestUser)
+      ? (booking.guestUser as GuestUserDetails)
+      : null;
+  const preferredNotificationChannel =
+    guestDetails?.preferredNotificationChannel ?? "EMAIL_AND_WHATSAPP";
 
-  if (booking.user) {
-    email = booking.user.email;
-    name = booking.user.name ?? "";
-    phone_number = booking.user.phoneNumber ?? "";
-  } else if (
-    booking.guestUser &&
-    typeof booking.guestUser === "object" &&
-    booking.guestUser !== null
-  ) {
-    const guestDetails = booking.guestUser as GuestUserDetails;
-    const preferredNotificationChannel =
-      guestDetails.preferredNotificationChannel ?? "EMAIL_AND_WHATSAPP";
-
-    email = preferredNotificationChannel === "WHATSAPP_ONLY" ? "" : (guestDetails.email ?? "");
-    phone_number =
-      preferredNotificationChannel === "EMAIL_ONLY" ? "" : (guestDetails.phoneNumber ?? "");
-    name = guestDetails.name ?? "";
-  }
-
-  return { email, name, phone_number };
+  return {
+    email:
+      preferredNotificationChannel === "WHATSAPP_ONLY"
+        ? ""
+        : booking.user?.email || guestDetails?.email || "",
+    phone_number:
+      preferredNotificationChannel === "EMAIL_ONLY"
+        ? ""
+        : booking.user?.phoneNumber || guestDetails?.phoneNumber || "",
+    name: booking.user?.name || guestDetails?.name || "",
+  };
 }
 
 export function normaliseBookingDetails(booking: BookingWithRelations): NormalisedBookingDetails {

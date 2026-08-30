@@ -1,5 +1,6 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
+import { ThrottlerGuard } from "@nestjs/throttler";
 import { BookingStatus } from "@prisma/client";
 import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,7 @@ import {
   createBookingSchema,
   createGuestBookingSchema,
 } from "./dto/create-booking.dto";
+import { GuestBookingAccessService } from "./guest-booking-access.service";
 
 /**
  * Helper function to validate booking input (simulates the decorator behavior)
@@ -48,6 +50,7 @@ describe("BookingController", () => {
   let bookingReadService: BookingReadService;
   let bookingUpdateService: BookingUpdateService;
   let bookingCancellationService: BookingCancellationService;
+  let guestBookingAccessService: GuestBookingAccessService;
 
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
@@ -151,6 +154,12 @@ describe("BookingController", () => {
     const mockBookingCancellationService = {
       cancelBooking: vi.fn().mockResolvedValue({ ...mockBookingDetail, status: "CANCELLED" }),
     };
+    const mockGuestBookingAccessService = {
+      requestAccess: vi.fn().mockResolvedValue({
+        message: "If those booking details match, we sent an access link to the booking email.",
+      }),
+      getBooking: vi.fn().mockResolvedValue(mockBookingDetail),
+    };
 
     const mockAuthService = {
       isInitialized: true,
@@ -171,10 +180,13 @@ describe("BookingController", () => {
         { provide: BookingReadService, useValue: mockBookingReadService },
         { provide: BookingUpdateService, useValue: mockBookingUpdateService },
         { provide: BookingCancellationService, useValue: mockBookingCancellationService },
+        { provide: GuestBookingAccessService, useValue: mockGuestBookingAccessService },
         { provide: AuthService, useValue: mockAuthService },
         OptionalSessionGuard,
       ],
     })
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: vi.fn().mockReturnValue(true) })
       .useMocker(mockPinoLoggerToken)
       .compile();
 
@@ -187,6 +199,7 @@ describe("BookingController", () => {
     bookingReadService = module.get<BookingReadService>(BookingReadService);
     bookingUpdateService = module.get<BookingUpdateService>(BookingUpdateService);
     bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
+    guestBookingAccessService = module.get<GuestBookingAccessService>(GuestBookingAccessService);
   });
   describe("createBooking", () => {
     describe("authenticated user", () => {
@@ -494,6 +507,24 @@ describe("BookingController", () => {
       await expect(controller.getBookingsByStatus(mockSessionUser)).rejects.toBeInstanceOf(
         BookingFetchFailedException,
       );
+    });
+  });
+
+  describe("guest booking access", () => {
+    it("requests an access link without requiring a session", async () => {
+      const body = { bookingReference: "BK-123", email: "guest@example.com" };
+
+      await controller.requestGuestBookingAccess(body);
+
+      expect(guestBookingAccessService.requestAccess).toHaveBeenCalledWith(body);
+    });
+
+    it("returns one booking for an opaque guest token", async () => {
+      const query = { token: "a".repeat(43) };
+
+      await controller.getGuestBooking(query);
+
+      expect(guestBookingAccessService.getBooking).toHaveBeenCalledWith(query);
     });
   });
 

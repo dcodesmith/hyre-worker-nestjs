@@ -291,6 +291,8 @@ model Booking {
   cancelledAt                             DateTime?
   cancellationReason                      String?
   guestUser                               Json?
+  guestAccessTokenHash                    String?                     @unique
+  guestAccessTokenExpiresAt               DateTime?
   type                                    BookingType                 @default(DAY)
   paymentIntent                           String?
   paymentSessionExpiresAt                 DateTime?

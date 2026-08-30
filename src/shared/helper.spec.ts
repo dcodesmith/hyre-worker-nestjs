@@ -206,6 +206,24 @@ describe("Helper Functions", () => {
         phone_number: "",
       });
     });
+
+    it("preserves guest contact details after the booking is claimed", () => {
+      const booking = createBooking({
+        user: createUser({ email: "guest@example.com", name: null, phoneNumber: null }),
+        guestUser: {
+          name: "Guest User",
+          email: "guest@example.com",
+          phoneNumber: "9999999999",
+          preferredNotificationChannel: "EMAIL_AND_WHATSAPP",
+        },
+      });
+
+      expect(getCustomerDetails(booking)).toEqual({
+        email: "guest@example.com",
+        name: "Guest User",
+        phone_number: "9999999999",
+      });
+    });
   });
 
   describe("createBooking", () => {

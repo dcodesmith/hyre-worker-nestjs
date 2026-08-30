@@ -12,8 +12,10 @@ import {
   EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
 } from "../src/modules/booking/booking.const";
 import { DatabaseService } from "../src/modules/database/database.service";
+import { EmailService } from "../src/modules/email/email.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MapsService } from "../src/modules/maps/maps.service";
+import { renderGuestBookingAccessEmail } from "../src/templates/emails";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("Bookings E2E Tests", () => {
@@ -22,6 +24,7 @@ describe("Bookings E2E Tests", () => {
   let flutterwaveService: FlutterwaveService;
   let mapsService: MapsService;
   let factory: TestDataFactory;
+  const emailService = { sendEmail: vi.fn().mockResolvedValue({ id: "email-1" }) };
 
   let testUserCookie: string;
   let testUserId: string;
@@ -36,6 +39,8 @@ describe("Bookings E2E Tests", () => {
     })
       .overrideProvider(AuthEmailService)
       .useValue({ sendOTPEmail: mockSendOTPEmail })
+      .overrideProvider(EmailService)
+      .useValue(emailService)
       .compile();
 
     app = moduleFixture.createNestApplication({
@@ -68,6 +73,10 @@ describe("Bookings E2E Tests", () => {
   beforeEach(async () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
+    emailService.sendEmail.mockClear();
+    vi.mocked(renderGuestBookingAccessEmail).mockImplementation(({ accessUrl }) =>
+      Promise.resolve(`<a href="${accessUrl}">View booking</a>`),
+    );
     testCarId = (await factory.createCar(fleetOwnerId)).id;
 
     // Mock payment intent creation for all booking tests
@@ -123,9 +132,9 @@ describe("Bookings E2E Tests", () => {
       };
     };
 
-    const createGuestBookingPayload = async (carId: string) => ({
+    const createGuestBookingPayload = async (carId: string, guestEmail = "guest@example.com") => ({
       ...(await createValidBookingPayload(carId)),
-      guestEmail: "guest@example.com",
+      guestEmail,
       guestName: "Guest User",
       guestPhone: "08012345678",
     });
@@ -432,6 +441,141 @@ describe("Bookings E2E Tests", () => {
 
         expect(response.status).toBeGreaterThanOrEqual(HttpStatus.BAD_REQUEST);
       });
+    });
+  });
+
+  describe("guest booking access", () => {
+    it("emails an opaque link and returns a redacted booking", async () => {
+      const guestEmail = uniqueEmail("guest-booking-access");
+      const booking = await databaseService.booking.create({
+        data: {
+          carId: testCarId,
+          userId: null,
+          guestUser: {
+            email: guestEmail,
+            name: "Guest User",
+            phoneNumber: "08012345678",
+          },
+          bookingReference: `GUEST-${randomUUID()}`.toUpperCase(),
+          startDate: new Date(Date.now() + 20 * 86400000),
+          endDate: new Date(Date.now() + 20 * 86400000 + 43200000),
+          totalAmount: 50_000,
+          pickupLocation: "Lagos",
+          returnLocation: "Lekki",
+        },
+        select: { id: true, bookingReference: true },
+      });
+
+      const accessRequest = await request(app.getHttpServer())
+        .post("/api/bookings/guest-access")
+        .send({ bookingReference: booking.bookingReference, email: guestEmail });
+
+      expect(accessRequest.status).toBe(HttpStatus.ACCEPTED);
+      expect(accessRequest.body).toEqual({
+        message: "If those booking details match, we sent an access link to the booking email.",
+      });
+      await vi.waitFor(
+        async () => {
+          const stored = await databaseService.booking.findUniqueOrThrow({
+            where: { id: booking.id },
+            select: { guestAccessTokenHash: true },
+          });
+          expect(stored.guestAccessTokenHash).toEqual(expect.any(String));
+        },
+        { timeout: 5_000 },
+      );
+      const subject = `View booking ${booking.bookingReference}`;
+      await vi.waitFor(
+        () =>
+          expect(
+            emailService.sendEmail.mock.calls.some(([email]) => email.subject === subject),
+          ).toBe(true),
+        { timeout: 5_000 },
+      );
+      const accessEmail = emailService.sendEmail.mock.calls.find(
+        ([email]) => email.subject === subject,
+      )?.[0];
+      const token = String(accessEmail?.html).match(/token=([A-Za-z0-9_-]{43})/)?.[1];
+      expect(token).toBeDefined();
+
+      const details = await request(app.getHttpServer())
+        .get("/api/bookings/guest-access")
+        .query({ token });
+
+      expect(details.status).toBe(HttpStatus.OK);
+      expect(details.body).toMatchObject({
+        bookingId: booking.id,
+        bookingReference: booking.bookingReference,
+        bookingType: "DAY",
+        currency: "NGN",
+        car: { images: expect.any(Array) },
+        legs: expect.any(Array),
+      });
+      expect(details.body).not.toHaveProperty("guestUser");
+      expect(details.body).not.toHaveProperty("paymentIntent");
+    });
+
+    it("claims previous guest bookings after verified customer sign-in", async () => {
+      const guestEmail = uniqueEmail("guest-booking-claim");
+      const booking = await databaseService.booking.create({
+        data: {
+          carId: testCarId,
+          userId: null,
+          guestUser: {
+            email: guestEmail,
+            name: "Guest User",
+            phoneNumber: "08012345678",
+          },
+          bookingReference: `GUEST-${randomUUID()}`,
+          startDate: new Date(Date.now() + 30 * 86400000),
+          endDate: new Date(Date.now() + 30 * 86400000 + 43200000),
+          totalAmount: 50_000,
+          pickupLocation: "Lagos",
+          returnLocation: "Lekki",
+          status: "CONFIRMED",
+          paymentStatus: "PAID",
+        },
+        select: { id: true },
+      });
+      const deletedBooking = await databaseService.booking.create({
+        data: {
+          carId: testCarId,
+          userId: null,
+          guestUser: { email: guestEmail, name: "Guest User" },
+          bookingReference: `DELETED-GUEST-${randomUUID()}`,
+          startDate: new Date(Date.now() + 35 * 86400000),
+          endDate: new Date(Date.now() + 35 * 86400000 + 43200000),
+          totalAmount: 50_000,
+          pickupLocation: "Lagos",
+          returnLocation: "Lekki",
+          status: "CONFIRMED",
+          paymentStatus: "PAID",
+          deletedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      const authenticated = await factory.authenticateAndGetUser(guestEmail, "user");
+
+      await expect(
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: booking.id },
+          select: { userId: true },
+        }),
+      ).resolves.toEqual({ userId: authenticated.user.id });
+      await expect(
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: deletedBooking.id },
+          select: { userId: true },
+        }),
+      ).resolves.toEqual({ userId: null });
+      const bookings = await request(app.getHttpServer())
+        .get("/api/bookings")
+        .set("Cookie", authenticated.cookie);
+      expect(bookings.status).toBe(HttpStatus.OK);
+      expect(bookings.body.CONFIRMED.some((item: { id: string }) => item.id === booking.id)).toBe(
+        true,
+      );
     });
   });
 
