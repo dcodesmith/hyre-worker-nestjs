@@ -220,7 +220,7 @@ describe("Payments E2E Tests", () => {
         extensionStartTime: bookingWindow.endDate,
         extensionEndTime: new Date(bookingWindow.endDate.getTime() + 60 * 60 * 1000),
       });
-      return { extensionId: extension.id, txRef };
+      return { bookingId: booking.id, extensionId: extension.id, txRef };
     }
 
     function mockSuccessfulExtensionPayment(txRef: string) {
@@ -309,6 +309,19 @@ describe("Payments E2E Tests", () => {
         id: pending.extensionId,
         status: "ACTIVE",
       });
+      const [extension, booking] = await Promise.all([
+        databaseService.extension.findUniqueOrThrow({
+          where: { id: pending.extensionId },
+          select: { extensionEndTime: true },
+        }),
+        databaseService.booking.findUniqueOrThrow({
+          where: { id: pending.bookingId },
+          select: { endDate: true },
+        }),
+      ]);
+      expect(booking.endDate.getTime()).toBeGreaterThanOrEqual(
+        extension.extensionEndTime.getTime(),
+      );
     });
   });
 
