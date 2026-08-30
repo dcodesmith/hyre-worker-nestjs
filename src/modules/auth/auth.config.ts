@@ -33,6 +33,8 @@ export interface RoleValidationCallbacks {
   ) => Promise<void>;
   /** Gets all roles for a user (used by after hook to enrich sign-in response) */
   getUserRoles: (userId: string) => Promise<RoleName[]>;
+  /** Claims guest bookings after the account email has been verified by sign-in */
+  claimGuestBookingsForUser: (userId: string) => Promise<void>;
 }
 
 /**
@@ -297,6 +299,8 @@ export function createAuth(options: AuthConfigOptions) {
                 if (!returned.user?.id) {
                   return;
                 }
+
+                await roleValidation.claimGuestBookingsForUser(returned.user.id);
 
                 // Fetch roles for the user
                 const roles = await roleValidation.getUserRoles(returned.user.id);

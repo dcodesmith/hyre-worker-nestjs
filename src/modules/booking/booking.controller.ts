@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   HttpStatus,
@@ -10,6 +11,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import type { Response } from "express";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -20,7 +22,12 @@ import {
   BookingRequestInProgressException,
   ExtensionRequestInProgressException,
 } from "./booking.error";
-import type { CreateBookingResponse, CreateExtensionResponse } from "./booking.interface";
+import type {
+  CreateBookingResponse,
+  CreateExtensionResponse,
+  GuestBookingAccessRequestResponse,
+  GuestBookingDetailsResponse,
+} from "./booking.interface";
 import { BookingCancellationService } from "./booking-cancellation.service";
 import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
@@ -40,8 +47,15 @@ import {
   type BookingPaymentStatusQueryDto,
   bookingPaymentStatusQuerySchema,
 } from "./dto/get-booking-payment-status.dto";
+import {
+  type GuestBookingAccessQueryDto,
+  type GuestBookingAccessRequestDto,
+  guestBookingAccessQuerySchema,
+  guestBookingAccessRequestSchema,
+} from "./dto/guest-booking-access.dto";
 import { type PricingPreviewBodyDto, pricingPreviewBodySchema } from "./dto/pricing-preview.dto";
 import { type UpdateBookingBodyDto, updateBookingBodySchema } from "./dto/update-booking.dto";
+import { GuestBookingAccessService } from "./guest-booking-access.service";
 
 /**
  * Controller for booking-related API endpoints.
@@ -59,6 +73,7 @@ export class BookingController {
     private readonly bookingReadService: BookingReadService,
     private readonly bookingUpdateService: BookingUpdateService,
     private readonly bookingCancellationService: BookingCancellationService,
+    private readonly guestBookingAccessService: GuestBookingAccessService,
   ) {}
 
   /**
@@ -148,6 +163,26 @@ export class BookingController {
     @Headers("x-payment-status-token") paymentStatusToken?: string,
   ) {
     return this.bookingReadService.getBookingPaymentStatus(query, sessionUser, paymentStatusToken);
+  }
+
+  @Post("guest-access")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 10 * 60_000 } })
+  requestGuestBookingAccess(
+    @ZodBody(guestBookingAccessRequestSchema) body: GuestBookingAccessRequestDto,
+  ): Promise<GuestBookingAccessRequestResponse> {
+    return this.guestBookingAccessService.requestAccess(body);
+  }
+
+  @Get("guest-access")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  getGuestBooking(
+    @ZodQuery(guestBookingAccessQuerySchema) query: GuestBookingAccessQueryDto,
+  ): Promise<GuestBookingDetailsResponse> {
+    return this.guestBookingAccessService.getBooking(query);
   }
 
   @Get(":bookingId")

@@ -76,6 +76,7 @@ export class AuthService implements OnModuleInit {
         validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
         assignReferralToNewUser: this.assignReferralToNewUser.bind(this),
         getUserRoles: this.getUserRoles.bind(this),
+        claimGuestBookingsForUser: this.claimGuestBookingsForUser.bind(this),
       },
     });
 
@@ -285,6 +286,41 @@ export class AuthService implements OnModuleInit {
     });
 
     return Boolean(user);
+  }
+
+  async claimGuestBookingsForUser(userId: string): Promise<void> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { email: true, emailVerified: true },
+    });
+    if (!user?.emailVerified) {
+      return;
+    }
+
+    try {
+      const claimedCount = await this.databaseService.$executeRaw`
+        UPDATE "Booking"
+        SET
+          "userId" = ${userId},
+          "guestAccessTokenHash" = NULL,
+          "guestAccessTokenExpiresAt" = NULL,
+          "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "userId" IS NULL
+          AND "deletedAt" IS NULL
+          AND LOWER("guestUser"->>'email') = LOWER(${user.email})
+      `;
+      if (claimedCount > 0) {
+        this.logger.info({ userId, claimedCount }, "Claimed guest bookings for verified user");
+      }
+    } catch (error) {
+      this.logger.error(
+        {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to claim guest bookings after sign-in",
+      );
+    }
   }
 
   /**

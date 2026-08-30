@@ -34,6 +34,7 @@ describe("AuthService", () => {
 
   const mockDatabaseService: {
     $transaction?: ReturnType<typeof vi.fn>;
+    $executeRaw?: ReturnType<typeof vi.fn>;
     user?: {
       findUnique: ReturnType<typeof vi.fn>;
       update?: ReturnType<typeof vi.fn>;
@@ -709,6 +710,36 @@ describe("AuthService", () => {
         const result = await service.validateExistingUserRole("staff@example.com", STAFF);
         expect(result).toBe(true);
       });
+    });
+  });
+
+  describe("claimGuestBookingsForUser", () => {
+    it("claims matching guest bookings only after email verification", async () => {
+      mockDatabaseService.user = {
+        findUnique: vi.fn().mockResolvedValue({
+          email: "Guest@Example.com",
+          emailVerified: true,
+        }),
+      };
+      mockDatabaseService.$executeRaw = vi.fn().mockResolvedValue(2);
+
+      await service.claimGuestBookingsForUser("user-1");
+
+      expect(mockDatabaseService.$executeRaw).toHaveBeenCalledOnce();
+    });
+
+    it("does not claim bookings for an unverified account", async () => {
+      mockDatabaseService.user = {
+        findUnique: vi.fn().mockResolvedValue({
+          email: "guest@example.com",
+          emailVerified: false,
+        }),
+      };
+      mockDatabaseService.$executeRaw = vi.fn();
+
+      await service.claimGuestBookingsForUser("user-1");
+
+      expect(mockDatabaseService.$executeRaw).not.toHaveBeenCalled();
     });
   });
 

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
+import { EmailModule } from "../email/email.module";
 import { FlightAwareModule } from "../flightaware/flightaware.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
 import { MapsModule } from "../maps/maps.module";
@@ -27,10 +28,12 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
 import { ExtensionCreationIdempotencyService } from "./extension-creation-idempotency.service";
 import { ExtensionReservationService } from "./extension-reservation.service";
 import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
+import { GuestBookingAccessService } from "./guest-booking-access.service";
 
 @Module({
   imports: [
     AuthModule,
+    EmailModule,
     NotificationModule,
     RatesModule,
     FlutterwaveModule,
@@ -59,6 +62,7 @@ import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
     BookingCancellationService,
     ExtensionConfirmationService,
     ExtensionReservationService,
+    GuestBookingAccessService,
   ],
   exports: [
     BookingConfirmationService,

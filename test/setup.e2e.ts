@@ -197,6 +197,11 @@ vi.mock("../src/templates/emails", () => ({
   renderBookingStatusUpdateEmail: vi.fn().mockResolvedValue("<html>Mocked status update</html>"),
   renderBookingReminderEmail: vi.fn().mockResolvedValue("<html>Mocked reminder</html>"),
   renderAuthOTPEmail: vi.fn().mockResolvedValue("<html>Mocked OTP email</html>"),
+  renderGuestBookingAccessEmail: vi
+    .fn()
+    .mockImplementation(({ accessUrl }) =>
+      Promise.resolve(`<a href="${accessUrl}">View booking</a>`),
+    ),
   renderFleetOwnerNewBookingEmail: vi
     .fn()
     .mockResolvedValue("<html>Mocked fleet owner notification</html>"),

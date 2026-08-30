@@ -88,6 +88,52 @@ export interface BookingPaymentStatusResponse {
   lifecycleState: BookingPaymentLifecycleState;
 }
 
+export interface GuestBookingAccessRequestResponse {
+  message: string;
+}
+
+export interface GuestBookingDetailsResponse {
+  bookingId: string;
+  bookingReference: string;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  bookingType: BookingType;
+  startDate: string;
+  endDate: string;
+  pickupLocation: string;
+  returnLocation: string;
+  specialRequests: string | null;
+  cancellationReason: string | null;
+  flightNumber: string | null;
+  totalAmount: number;
+  currency: "NGN";
+  accessExpiresAt: string;
+  car: {
+    make: string;
+    model: string;
+    year: number;
+    images: string[];
+  };
+  chauffeur: {
+    name: string | null;
+    phoneNumber: string | null;
+  } | null;
+  legs: Array<{
+    id: string;
+    legDate: string;
+    legStartTime: string;
+    legEndTime: string;
+    extensions: Array<{
+      id: string;
+      extensionStartTime: string;
+      extensionEndTime: string;
+      extendedDurationHours: number;
+      status: string;
+      paymentStatus: PaymentStatus;
+    }>;
+  }>;
+}
+
 export interface CreateExtensionResponse {
   extensionId: string;
   paymentIntentId: string;
