@@ -64,8 +64,8 @@ async function bootstrap() {
           callback(null, isOriginAllowed(origin, allowedOriginPatterns));
         },
         credentials: true,
-        allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
-        exposedHeaders: ["Set-Cookie"],
+        allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Guest-Booking-Token"],
+        exposedHeaders: ["Set-Cookie", "Content-Disposition"],
       });
     }
 

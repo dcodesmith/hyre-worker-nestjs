@@ -17,6 +17,7 @@ import type {
   GuestBookingAccessQueryDto,
   GuestBookingAccessRequestDto,
 } from "./dto/guest-booking-access.dto";
+import { guestBookingAccessTokenSchema } from "./dto/guest-booking-access.dto";
 
 const GUEST_ACCESS_TTL_MINUTES = 15;
 const GUEST_ACCESS_TTL_MS = GUEST_ACCESS_TTL_MINUTES * 60 * 1000;
@@ -165,6 +166,24 @@ export class GuestBookingAccessService {
         })),
       })),
     };
+  }
+
+  async assertBookingAccess(bookingId: string, token: string): Promise<void> {
+    if (!guestBookingAccessTokenSchema.safeParse(token).success) {
+      throw new BookingNotFoundException();
+    }
+
+    const booking = await this.databaseService.booking.findFirst({
+      where: {
+        id: bookingId,
+        guestAccessTokenHash: this.hashToken(token),
+        guestAccessTokenExpiresAt: { gt: new Date() },
+        userId: null,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!booking) throw new BookingNotFoundException();
   }
 
   private async issueAccessLink(

@@ -36,6 +36,8 @@ export const BookingErrorCode = {
   EXTENSION_PAYMENT_SESSION_EXPIRED: "EXTENSION_PAYMENT_SESSION_EXPIRED",
   EXTENSION_STATE_CHANGED: "EXTENSION_STATE_CHANGED",
   EXTENSION_CREATION_FAILED: "EXTENSION_CREATION_FAILED",
+  BOOKING_RECEIPT_NOT_AVAILABLE: "BOOKING_RECEIPT_NOT_AVAILABLE",
+  BOOKING_RECEIPT_GENERATION_FAILED: "BOOKING_RECEIPT_GENERATION_FAILED",
 } as const;
 
 /**
@@ -293,6 +295,28 @@ export class BookingFetchFailedException extends BookingException {
       "An unexpected error occurred while fetching bookings",
       HttpStatus.INTERNAL_SERVER_ERROR,
       { title: "Booking Fetch Failed" },
+    );
+  }
+}
+
+export class BookingReceiptNotAvailableException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_RECEIPT_NOT_AVAILABLE,
+      "A payment receipt is not available for this booking.",
+      HttpStatus.CONFLICT,
+      { title: "Booking Receipt Not Available" },
+    );
+  }
+}
+
+export class BookingReceiptGenerationFailedException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_RECEIPT_GENERATION_FAILED,
+      "The booking receipt could not be generated.",
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { title: "Booking Receipt Generation Failed" },
     );
   }
 }
