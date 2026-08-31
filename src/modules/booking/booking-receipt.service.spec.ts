@@ -328,6 +328,17 @@ describe("BookingReceiptService", () => {
     expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
   });
 
+  it("treats a blank guest token as absent and uses the signed-in customer", async () => {
+    await service.generateReceipt("booking-1", customer, "   ");
+
+    expect(guestAccessService.assertBookingAccess).not.toHaveBeenCalled();
+    expect(databaseService.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "booking-1", deletedAt: null, userId: customer.id },
+      }),
+    );
+  });
+
   it("rejects incomplete financial data instead of inventing a receipt amount", async () => {
     databaseService.booking.findFirst.mockResolvedValue(
       booking({ netTotal: null, customerPayments: [payment()] }),
@@ -336,6 +347,19 @@ describe("BookingReceiptService", () => {
     await expect(service.generateReceipt("booking-1", customer)).rejects.toBeInstanceOf(
       BookingReceiptNotAvailableException,
     );
+  });
+
+  it("ignores a stored guest name that is not a string", async () => {
+    databaseService.booking.findFirst.mockResolvedValue(
+      booking({
+        user: { name: null },
+        guestUser: { name: 42, email: "guest@example.com" },
+      }),
+    );
+
+    await service.generateReceipt("booking-1", customer);
+
+    expect(pdfService.render).toHaveBeenCalledWith(expect.objectContaining({ customerName: null }));
   });
 
   it("handles missing optional customer, chauffeur and car colour fields", async () => {

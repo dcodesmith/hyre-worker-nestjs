@@ -20,6 +20,20 @@ describe("BookingReceiptAccessGuard", () => {
     expect(optionalSessionGuard.canActivate).not.toHaveBeenCalled();
   });
 
+  it.each(["", "   "])(
+    "delegates to optional session validation when the guest header is %j",
+    async (token) => {
+      const optionalSessionGuard = { canActivate: vi.fn().mockResolvedValue(true) };
+      const guard = new BookingReceiptAccessGuard(
+        optionalSessionGuard as unknown as OptionalSessionGuard,
+      );
+      const executionContext = context({ "x-guest-booking-token": token });
+
+      expect(await guard.canActivate(executionContext)).toBe(true);
+      expect(optionalSessionGuard.canActivate).toHaveBeenCalledWith(executionContext);
+    },
+  );
+
   it("delegates to optional session validation when the guest header is absent", async () => {
     const optionalSessionGuard = { canActivate: vi.fn().mockResolvedValue(true) };
     const guard = new BookingReceiptAccessGuard(

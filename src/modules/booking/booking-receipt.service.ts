@@ -2,7 +2,6 @@ import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
-import type { GuestUserDetails } from "../../types";
 import { USER } from "../auth/auth.const";
 import { AuthErrorCode, AuthUnauthorizedException } from "../auth/auth.error";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -134,7 +133,7 @@ export class BookingReceiptService {
     sessionUser: AuthSession["user"] | null,
     guestToken?: string,
   ): Promise<Prisma.BookingWhereInput> {
-    if (guestToken !== undefined) {
+    if (guestToken?.trim()) {
       await this.guestBookingAccessService.assertBookingAccess(bookingId, guestToken);
       return { userId: null };
     }
@@ -277,11 +276,10 @@ export class BookingReceiptService {
     );
     this.assertEqual(displayedTotal, totalPaid);
 
-    const guest = this.getGuest(booking.guestUser);
     return {
       bookingReference: booking.bookingReference,
       generatedAt: new Date(),
-      customerName: booking.user?.name?.trim() || guest?.name?.trim() || null,
+      customerName: booking.user?.name?.trim() || this.guestName(booking.guestUser) || null,
       vehicle: this.formatVehicle(booking.car),
       chauffeurName: booking.chauffeur?.name?.trim() || null,
       bookingStart: booking.startDate,
@@ -421,10 +419,10 @@ export class BookingReceiptService {
     return `${car.make} ${car.model}${details ? ` (${details})` : ""}`;
   }
 
-  private getGuest(value: Prisma.JsonValue): GuestUserDetails | null {
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as GuestUserDetails)
-      : null;
+  private guestName(value: Prisma.JsonValue): string | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const name = "name" in value ? value.name : undefined;
+    return typeof name === "string" ? name.trim() || null : null;
   }
 
   private sanitizeBookingReference(bookingReference: string): string {
