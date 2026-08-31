@@ -21,6 +21,9 @@ import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
+import { BookingReceiptService } from "./booking-receipt.service";
+import { BookingReceiptAccessGuard } from "./booking-receipt-access.guard";
+import { BookingReceiptThrottlerGuard } from "./booking-receipt-throttler.guard";
 import { BookingUpdateService } from "./booking-update.service";
 import {
   type CreateBookingDto,
@@ -48,6 +51,7 @@ describe("BookingController", () => {
   let bookingExtensionService: BookingExtensionService;
   let bookingPricingPreviewService: BookingPricingPreviewService;
   let bookingReadService: BookingReadService;
+  let bookingReceiptService: BookingReceiptService;
   let bookingUpdateService: BookingUpdateService;
   let bookingCancellationService: BookingCancellationService;
   let guestBookingAccessService: GuestBookingAccessService;
@@ -148,6 +152,12 @@ describe("BookingController", () => {
       getBookingsByStatus: vi.fn().mockResolvedValue(mockBookingsByStatus),
       getBookingById: vi.fn().mockResolvedValue(mockBookingDetail),
     };
+    const mockBookingReceiptService = {
+      generateReceipt: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("%PDF-1.7"),
+        fileName: "Tripdly-receipt-TRIP-123.pdf",
+      }),
+    };
     const mockBookingUpdateService = {
       updateBooking: vi.fn().mockResolvedValue(mockBookingDetail),
     };
@@ -178,6 +188,7 @@ describe("BookingController", () => {
         { provide: BookingExtensionService, useValue: mockBookingExtensionService },
         { provide: BookingPricingPreviewService, useValue: mockBookingPricingPreviewService },
         { provide: BookingReadService, useValue: mockBookingReadService },
+        { provide: BookingReceiptService, useValue: mockBookingReceiptService },
         { provide: BookingUpdateService, useValue: mockBookingUpdateService },
         { provide: BookingCancellationService, useValue: mockBookingCancellationService },
         { provide: GuestBookingAccessService, useValue: mockGuestBookingAccessService },
@@ -186,6 +197,10 @@ describe("BookingController", () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: vi.fn().mockReturnValue(true) })
+      .overrideGuard(BookingReceiptAccessGuard)
+      .useValue({ canActivate: vi.fn().mockReturnValue(true) })
+      .overrideGuard(BookingReceiptThrottlerGuard)
       .useValue({ canActivate: vi.fn().mockReturnValue(true) })
       .useMocker(mockPinoLoggerToken)
       .compile();
@@ -197,6 +212,7 @@ describe("BookingController", () => {
       BookingPricingPreviewService,
     );
     bookingReadService = module.get<BookingReadService>(BookingReadService);
+    bookingReceiptService = module.get<BookingReceiptService>(BookingReceiptService);
     bookingUpdateService = module.get<BookingUpdateService>(BookingUpdateService);
     bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
     guestBookingAccessService = module.get<GuestBookingAccessService>(GuestBookingAccessService);
@@ -525,6 +541,31 @@ describe("BookingController", () => {
       await controller.getGuestBooking(query);
 
       expect(guestBookingAccessService.getBooking).toHaveBeenCalledWith(query);
+    });
+  });
+
+  describe("getBookingReceipt", () => {
+    it("writes attachment headers only after receipt generation succeeds", async () => {
+      const response = {
+        setHeader: vi.fn(),
+        send: vi.fn(),
+      } as unknown as Response;
+
+      await controller.getBookingReceipt("booking-123", mockSessionUser, "g".repeat(43), response);
+
+      expect(bookingReceiptService.generateReceipt).toHaveBeenCalledWith(
+        "booking-123",
+        mockSessionUser,
+        "g".repeat(43),
+      );
+      expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/pdf");
+      expect(response.setHeader).toHaveBeenCalledWith(
+        "Content-Disposition",
+        'attachment; filename="Tripdly-receipt-TRIP-123.pdf"',
+      );
+      expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+      expect(response.setHeader).toHaveBeenCalledWith("Content-Length", "8");
+      expect(response.send).toHaveBeenCalledWith(Buffer.from("%PDF-1.7"));
     });
   });
 

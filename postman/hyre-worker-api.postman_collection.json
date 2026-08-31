@@ -13,6 +13,7 @@
     { "key": "fleetOwnerReferer", "value": "http://localhost:5173/fleet-owner/login" },
     { "key": "userReferer", "value": "http://localhost:5173/login" },
     { "key": "bookingId", "value": "cbookingidplaceholder00000000" },
+    { "key": "guestBookingToken", "value": "" },
     { "key": "carId", "value": "ccaridplaceholder00000000000" },
     { "key": "reviewId", "value": "creviewidplaceholder000000000" },
     { "key": "chauffeurId", "value": "cchauffeuridplaceholder000000" },
@@ -242,6 +243,25 @@
               "raw": "{{baseUrl}}/api/bookings/{{bookingId}}",
               "host": ["{{baseUrl}}"],
               "path": ["api", "bookings", "{{bookingId}}"]
+            }
+          }
+        },
+        {
+          "name": "Download customer booking receipt",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Guest-Booking-Token",
+                "value": "{{guestBookingToken}}",
+                "description": "Enable only for guest booking access.",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/receipt",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bookings", "{{bookingId}}", "receipt"]
             }
           }
         },

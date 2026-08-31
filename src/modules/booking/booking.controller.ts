@@ -33,6 +33,9 @@ import { BookingCreationService } from "./booking-creation.service";
 import { BookingExtensionService } from "./booking-extension.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
+import { BookingReceiptService } from "./booking-receipt.service";
+import { BookingReceiptAccessGuard } from "./booking-receipt-access.guard";
+import { BookingReceiptThrottlerGuard } from "./booking-receipt-throttler.guard";
 import { BookingUpdateService } from "./booking-update.service";
 import { IdempotencyKey } from "./decorators/idempotency-key.decorator";
 import { ValidatedBookingBody } from "./decorators/validated-booking-body.decorator";
@@ -71,6 +74,7 @@ export class BookingController {
     private readonly bookingExtensionService: BookingExtensionService,
     private readonly bookingPricingPreviewService: BookingPricingPreviewService,
     private readonly bookingReadService: BookingReadService,
+    private readonly bookingReceiptService: BookingReceiptService,
     private readonly bookingUpdateService: BookingUpdateService,
     private readonly bookingCancellationService: BookingCancellationService,
     private readonly guestBookingAccessService: GuestBookingAccessService,
@@ -183,6 +187,27 @@ export class BookingController {
     @ZodQuery(guestBookingAccessQuerySchema) query: GuestBookingAccessQueryDto,
   ): Promise<GuestBookingDetailsResponse> {
     return this.guestBookingAccessService.getBooking(query);
+  }
+
+  @Get(":bookingId/receipt")
+  @UseGuards(BookingReceiptAccessGuard, BookingReceiptThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async getBookingReceipt(
+    @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
+    @CurrentUser() sessionUser: AuthSession["user"] | null,
+    @Headers("x-guest-booking-token") guestToken: string | undefined,
+    @Res() response: Response,
+  ): Promise<void> {
+    const receipt = await this.bookingReceiptService.generateReceipt(
+      bookingId,
+      sessionUser,
+      guestToken,
+    );
+    response.setHeader("Content-Type", "application/pdf");
+    response.setHeader("Content-Disposition", `attachment; filename="${receipt.fileName}"`);
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Content-Length", receipt.buffer.length.toString());
+    response.send(receipt.buffer);
   }
 
   @Get(":bookingId")

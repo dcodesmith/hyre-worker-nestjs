@@ -14,8 +14,12 @@ export const guestBookingAccessRequestSchema = z.object({
     .transform((value) => value.toLowerCase()),
 });
 
+export const guestBookingAccessTokenSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/, "Invalid guest booking access token");
+
 export const guestBookingAccessQuerySchema = z.object({
-  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "Invalid guest booking access token"),
+  token: guestBookingAccessTokenSchema,
 });
 
 export type GuestBookingAccessRequestDto = z.infer<typeof guestBookingAccessRequestSchema>;

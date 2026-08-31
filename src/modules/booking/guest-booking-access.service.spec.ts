@@ -216,4 +216,34 @@ describe("GuestBookingAccessService", () => {
       BookingNotFoundException,
     );
   });
+
+  it("validates a guest token against the requested booking and current expiry", async () => {
+    databaseService.booking.findFirst.mockResolvedValueOnce({ id: "booking-1" });
+    const token = "a".repeat(43);
+
+    await expect(service.assertBookingAccess("booking-1", token)).resolves.toBeUndefined();
+
+    expect(databaseService.booking.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        guestAccessTokenHash: createHash("sha256").update(token).digest("hex"),
+        guestAccessTokenExpiresAt: { gt: expect.any(Date) },
+        userId: null,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+  });
+
+  it("rejects malformed, expired or differently scoped guest receipt tokens as not found", async () => {
+    await expect(service.assertBookingAccess("booking-1", "invalid")).rejects.toBeInstanceOf(
+      BookingNotFoundException,
+    );
+    expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
+
+    databaseService.booking.findFirst.mockResolvedValueOnce(null);
+    await expect(service.assertBookingAccess("booking-1", "a".repeat(43))).rejects.toBeInstanceOf(
+      BookingNotFoundException,
+    );
+  });
 });

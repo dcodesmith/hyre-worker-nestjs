@@ -21,6 +21,10 @@ import { BookingPaymentService } from "./booking-payment.service";
 import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingPricingPreviewService } from "./booking-pricing-preview.service";
 import { BookingReadService } from "./booking-read.service";
+import { BookingReceiptService } from "./booking-receipt.service";
+import { BookingReceiptAccessGuard } from "./booking-receipt-access.guard";
+import { BookingReceiptPdfService } from "./booking-receipt-pdf.service";
+import { BookingReceiptThrottlerGuard } from "./booking-receipt-throttler.guard";
 import { BookingReservationService } from "./booking-reservation.service";
 import { BookingUpdateService } from "./booking-update.service";
 import { BookingValidationService } from "./booking-validation.service";
@@ -57,6 +61,10 @@ import { GuestBookingAccessService } from "./guest-booking-access.service";
     BookingExtensionService,
     BookingPricingPreviewService,
     BookingReadService,
+    BookingReceiptAccessGuard,
+    BookingReceiptPdfService,
+    BookingReceiptService,
+    BookingReceiptThrottlerGuard,
     BookingReservationService,
     BookingUpdateService,
     BookingCancellationService,
