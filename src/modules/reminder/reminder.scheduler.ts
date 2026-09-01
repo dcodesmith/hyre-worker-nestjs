@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -34,10 +35,7 @@ export class ReminderScheduler {
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
-      this.logger.error(
-        { error: error instanceof Error ? error.message : String(error) },
-        "Failed to enqueue booking start reminders",
-      );
+      this.logger.error({ err: toLogError(error) }, "Failed to enqueue booking start reminders");
     }
   }
 
@@ -52,10 +50,7 @@ export class ReminderScheduler {
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
-      this.logger.error(
-        { error: error instanceof Error ? error.message : String(error) },
-        "Failed to enqueue booking end reminders",
-      );
+      this.logger.error({ err: toLogError(error) }, "Failed to enqueue booking end reminders");
     }
   }
 }

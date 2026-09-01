@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import { Resend } from "resend";
 import { EnvConfig } from "src/config/env.config";
-import { unknownToString } from "src/shared/helper";
+import { getErrorMessage, toLogError } from "../../common/logging/error-logging.helper";
 import { EmailDeliveryFailedException, EmailProviderResponseException } from "./email.error";
 import { getFromAddress } from "./email.helper";
 import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface";
@@ -26,6 +26,7 @@ export class ResendEmailTransport implements EmailTransport {
   }
 
   async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
+    const recipientDomain = to.includes("@") ? to.split("@")[1] : "unknown";
     let result: EmailSendResult;
     try {
       result = await this.resend.emails.send({
@@ -35,9 +36,18 @@ export class ResendEmailTransport implements EmailTransport {
         html,
       });
     } catch (error) {
+      this.logger.error(
+        {
+          provider: this.provider,
+          recipientDomain,
+          err: toLogError(error),
+        },
+        "Failed to send email via Resend",
+      );
       throw new EmailDeliveryFailedException("Resend request failed", {
         provider: this.provider,
-        cause: error instanceof Error ? error.message : String(error),
+        recipientDomain,
+        cause: getErrorMessage(error),
       });
     }
 
@@ -46,16 +56,20 @@ export class ResendEmailTransport implements EmailTransport {
         typeof result.error === "object" && result.error && "code" in result.error
           ? result.error.code
           : result.error;
+      const normalizedErrorCode =
+        typeof errorCode === "string" || typeof errorCode === "number"
+          ? errorCode.toString()
+          : "unknown";
       this.logger.error(
         {
           provider: this.provider,
-          errorCode: unknownToString(errorCode),
+          errorCode: normalizedErrorCode,
         },
         "Email API returned error",
       );
 
       throw new EmailProviderResponseException(this.provider, {
-        providerError: result.error,
+        providerErrorCode: normalizedErrorCode,
       });
     }
 

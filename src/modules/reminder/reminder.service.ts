@@ -16,7 +16,8 @@ import {
 } from "date-fns";
 import { PinoLogger } from "nestjs-pino";
 import pLimit from "p-limit";
-import { normaliseBookingLegDetails, unknownToString } from "../../shared/helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
+import { normaliseBookingLegDetails } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
@@ -122,11 +123,7 @@ export class ReminderService {
       this.logger.info({ queuedCount }, "Booking start reminder queue processing complete");
       return `Processed and queued start reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
-      const errorMessage = unknownToString(error);
-      this.logger.error(
-        { error: errorMessage, errorDetails: error },
-        "Error in sendBookingStartReminders",
-      );
+      this.logger.error({ err: toLogError(error) }, "Error in sendBookingStartReminders");
       throw error;
     }
   }
@@ -235,11 +232,7 @@ export class ReminderService {
 
       return `Processed and queued end reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
-      const errorMessage = unknownToString(error);
-      this.logger.error(
-        { error: errorMessage, errorDetails: error },
-        "Error in sendBookingEndReminders",
-      );
+      this.logger.error({ err: toLogError(error) }, "Error in sendBookingEndReminders");
       throw error;
     }
   }
@@ -302,8 +295,10 @@ export class ReminderService {
       await action();
       return true;
     } catch (error) {
-      const errorMessage = unknownToString(error);
-      this.logger.error({ reminderLabel, legId, error: errorMessage }, "Failed to queue reminder");
+      this.logger.error(
+        { reminderLabel, legId, err: toLogError(error) },
+        "Failed to queue reminder",
+      );
       return false;
     }
   }

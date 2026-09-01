@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { EMAIL_TRANSPORT_TOKEN } from "./email.const";
@@ -7,6 +8,7 @@ import { EmailService } from "./email.service";
 
 describe("EmailService", () => {
   let service: EmailService;
+  let logger: PinoLogger;
   const mockTransport = {
     sendEmail: vi.fn(),
   };
@@ -27,6 +29,7 @@ describe("EmailService", () => {
       .compile();
 
     service = module.get<EmailService>(EmailService);
+    logger = module.get(PinoLogger);
   });
 
   describe("sendEmail", () => {
@@ -54,6 +57,22 @@ describe("EmailService", () => {
       mockTransport.sendEmail.mockRejectedValueOnce(error);
 
       await expect(service.sendEmail(emailData)).rejects.toThrow(EmailDeliveryFailedException);
+      expect(logger.error).toHaveBeenCalledWith(
+        {
+          recipient: "r***@example.com",
+          err: error,
+        },
+        "Failed to send email",
+      );
+    });
+
+    it("does not duplicate transport logging for known email errors", async () => {
+      const error = new EmailDeliveryFailedException("SMTP request failed");
+      mockTransport.sendEmail.mockRejectedValueOnce(error);
+
+      await expect(service.sendEmail(emailData)).rejects.toBe(error);
+
+      expect(logger.error).not.toHaveBeenCalled();
     });
   });
 });

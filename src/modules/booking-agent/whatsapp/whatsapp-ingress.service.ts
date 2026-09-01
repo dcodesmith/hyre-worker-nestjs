@@ -2,6 +2,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../../common/logging/error-logging.helper";
 import { PROCESS_WHATSAPP_INBOUND_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "../booking-agent.const";
 import type {
@@ -38,13 +39,7 @@ export class WhatsAppIngressService {
 
     const phoneE164 = normalizeTwilioWhatsAppPhone(payload.From);
     if (!phoneE164) {
-      this.logger.warn(
-        {
-          from: payload.From,
-          sid: payload.MessageSid,
-        },
-        "Skipping payload with invalid WhatsApp phone",
-      );
+      this.logger.warn({ sid: payload.MessageSid }, "Skipping payload with invalid WhatsApp phone");
       return;
     }
 
@@ -76,7 +71,7 @@ export class WhatsAppIngressService {
       messageId = message.id;
     } catch (error) {
       if (this.persistenceService.isUniqueViolation(error)) {
-        this.logger.debug({ dedupeKey, phoneE164 }, "Duplicate inbound webhook ignored");
+        this.logger.debug({ dedupeKey }, "Duplicate inbound webhook ignored");
         return;
       }
       throw error;
@@ -103,8 +98,7 @@ export class WhatsAppIngressService {
           {
             messageId,
             dedupeKey,
-            cleanupError:
-              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            err: toLogError(cleanupError),
           },
           "Failed to cleanup inbound message after enqueue failure",
         );
@@ -119,7 +113,7 @@ export class WhatsAppIngressService {
         {
           messageId,
           dedupeKey,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to mark inbound message as queued after successful enqueue",
       );

@@ -7,10 +7,13 @@ import {
   Logger,
 } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
-import { unknownToString } from "../../shared/helper";
+import { PinoLogger } from "nestjs-pino";
 import { AppException } from "../errors/app.exception";
 import type { ProblemDetails } from "../errors/problem-details.interface";
 import { stripQueryString } from "../http/request-url.helper";
+import { getErrorMessage, toLogError } from "../logging/error-logging.helper";
+
+type ExceptionLogger = Pick<PinoLogger, "setContext" | "error" | "warn">;
 
 /**
  * Global exception filter that catches all exceptions in the application.
@@ -26,9 +29,14 @@ import { stripQueryString } from "../http/request-url.helper";
  */
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(GlobalExceptionFilter.name);
+  private readonly fallbackLogger = new Logger(GlobalExceptionFilter.name);
 
-  constructor(private readonly httpAdapterHost: HttpAdapterHost) {}
+  constructor(
+    private readonly httpAdapterHost: HttpAdapterHost,
+    private readonly logger?: ExceptionLogger,
+  ) {
+    this.logger?.setContext(GlobalExceptionFilter.name);
+  }
 
   catch(exception: unknown, host: ArgumentsHost): void {
     // Get HTTP adapter for platform-agnostic response handling
@@ -42,10 +50,35 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const instance = stripQueryString(httpAdapter.getRequestUrl(request)) ?? "unknown";
-    const problem = this.toProblemDetails(exception, httpStatus, instance);
+    const problem = this.withoutServerErrorDetails(
+      this.toProblemDetails(exception, httpStatus, instance),
+      httpStatus,
+    );
 
     this.logError(exception, request, httpStatus, problem.errorCode);
     httpAdapter.reply(ctx.getResponse(), problem, httpStatus);
+  }
+
+  private withoutServerErrorDetails(
+    problem: ProblemDetails & {
+      errorCode?: string;
+      errors?: unknown[];
+      details?: Record<string, unknown>;
+    },
+    httpStatus: number,
+  ): ProblemDetails & { errorCode?: string } {
+    if (httpStatus < 500) {
+      return problem;
+    }
+
+    return {
+      type: problem.type,
+      title: problem.title,
+      status: problem.status,
+      detail: problem.detail,
+      ...(problem.instance && { instance: problem.instance }),
+      ...(problem.errorCode && { errorCode: problem.errorCode }),
+    };
   }
 
   private toProblemDetails(
@@ -72,7 +105,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       type: "INTERNAL_SERVER_ERROR",
       title: "Internal Server Error",
       status: HttpStatus.INTERNAL_SERVER_ERROR,
-      detail: exception instanceof Error ? exception.message : "Internal server error",
+      detail: "Internal server error",
       instance,
     };
   }
@@ -141,8 +174,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         this.extractDetail(mapped.message, mapped.error),
       instance,
       ...(mapped.errorCode && { errorCode: mapped.errorCode }),
-      ...(mapped.errors && { errors: mapped.errors }),
-      ...(mapped.details && { details: mapped.details }),
+      ...(httpStatus < 500 && mapped.errors && { errors: mapped.errors }),
+      ...(httpStatus < 500 && mapped.details && { details: mapped.details }),
     };
   }
 
@@ -172,12 +205,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return message;
     }
     if (Array.isArray(message)) {
-      return message
-        .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-        .join(", ");
-    }
-    if (message !== undefined) {
-      return unknownToString(message);
+      const messages = message.filter(
+        (item): item is string => typeof item === "string" && item.trim().length > 0,
+      );
+      return messages.length > 0 ? messages.join(", ") : "Request failed";
     }
     if (typeof error === "string") {
       return error;
@@ -206,22 +237,40 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const errorCodePrefix = errorCode ? `[${errorCode}] ` : "";
 
     if (httpStatus >= 500) {
-      // Server errors - log with full stack trace
-      if (exception instanceof Error) {
+      const error = toLogError(exception);
+      if (this.logger) {
         this.logger.error(
-          `${errorCodePrefix}${method} ${url} - ${exception.message}`,
-          exception.stack,
+          {
+            err: error,
+            method,
+            url,
+            httpStatus,
+            ...(errorCode && { errorCode }),
+          },
+          `${errorCodePrefix}HTTP request failed`,
         );
       } else {
-        this.logger.error(
-          `${errorCodePrefix}${method} ${url} - Unknown error`,
-          unknownToString(exception),
+        this.fallbackLogger.error(
+          `${errorCodePrefix}${method} ${url} - ${error.message}`,
+          error.stack,
         );
       }
     } else if (httpStatus >= 400) {
-      // Client errors - log as warning
-      const message = unknownToString(exception);
-      this.logger.warn(`${errorCodePrefix}${method} ${url} - ${message}`);
+      const error = getErrorMessage(exception);
+      if (this.logger) {
+        this.logger.warn(
+          {
+            method,
+            url,
+            httpStatus,
+            error,
+            ...(errorCode && { errorCode }),
+          },
+          `${errorCodePrefix}HTTP request rejected`,
+        );
+      } else {
+        this.fallbackLogger.warn(`${errorCodePrefix}${method} ${url} - ${error}`);
+      }
     }
   }
 }

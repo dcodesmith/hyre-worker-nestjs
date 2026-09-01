@@ -233,18 +233,3 @@ export function generateBookingReference(): string {
     .join("");
   return `BK-${randomString}`;
 }
-
-export function unknownToString(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "symbol") return value.toString();
-  if (value instanceof Error) return value.message;
-  if (value === null || value === undefined) return "";
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return Object.prototype.toString.call(value);
-  }
-}

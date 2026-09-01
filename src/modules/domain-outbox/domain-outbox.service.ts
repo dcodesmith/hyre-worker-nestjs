@@ -8,8 +8,8 @@ import {
 } from "@prisma/client";
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError, toPersistedErrorMessage } from "../../common/logging/error-logging.helper";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
-import { unknownToString } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
 
@@ -100,7 +100,7 @@ export class DomainOutboxService {
           {
             outboxEventId: event.id,
             aggregateId: event.aggregateId,
-            error: error instanceof Error ? error.message : String(error),
+            err: toLogError(error),
           },
           "Failed to claim or process domain outbox event",
         );
@@ -223,7 +223,7 @@ export class DomainOutboxService {
       terminal || dispatchAttempt >= MAX_ATTEMPTS
         ? DomainOutboxStatus.DEAD_LETTER
         : DomainOutboxStatus.FAILED;
-    const errorMessage = unknownToString(error);
+    const errorMessage = toPersistedErrorMessage(error);
 
     await this.databaseService.domainOutboxEvent.updateMany({
       where: {

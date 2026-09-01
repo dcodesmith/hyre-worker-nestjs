@@ -4,9 +4,10 @@ import type { Booking, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
-import { generateBookingReference, unknownToString } from "../../shared/helper";
+import { generateBookingReference } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
@@ -298,7 +299,7 @@ export class BookingCreationService {
       this.logger.error(
         {
           idempotencyId,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to release pre-side-effect booking idempotency claim",
       );
@@ -552,8 +553,7 @@ export class BookingCreationService {
       this.logger.error(
         {
           bookingReference,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+          err: toLogError(error),
         },
         "Booking creation transaction failed",
       );
@@ -648,6 +648,7 @@ export class BookingCreationService {
       {
         bookingId: booking.id,
         bookingReference: booking.bookingReference,
+        err: toLogError(originalError),
       },
       "Payment intent failed, keeping booking in UNPAID state",
     );
@@ -659,9 +660,7 @@ export class BookingCreationService {
         {
           bookingId: booking.id,
           bookingReference: booking.bookingReference,
-          error:
-            markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
-          originalPaymentError: unknownToString(originalError),
+          err: toLogError(markUnpaidError),
         },
         "Failed to mark booking as UNPAID after payment failure",
       );
@@ -695,7 +694,7 @@ export class BookingCreationService {
         {
           bookingId,
           paymentIntentId,
-          error: updateError instanceof Error ? updateError.message : String(updateError),
+          err: toLogError(updateError),
         },
         "Payment created but booking update failed; manual reconciliation required",
       );

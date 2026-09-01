@@ -4,7 +4,6 @@ import type { Request } from "express";
 import { PinoLogger } from "nestjs-pino";
 import twilio from "twilio";
 import type { EnvConfig } from "../../../config/env.config";
-import { unknownToString } from "../../../shared/helper";
 
 @Injectable()
 export class TwilioWebhookGuard implements CanActivate {
@@ -35,6 +34,10 @@ export class TwilioWebhookGuard implements CanActivate {
     }
 
     const params = this.normalizeBodyParams(request.body);
+    if (!params) {
+      this.logger.warn("Invalid Twilio webhook body");
+      return false;
+    }
     const isValid = twilio.validateRequest(this.authToken, signature, this.webhookUrl, params);
 
     if (!isValid) {
@@ -55,27 +58,27 @@ export class TwilioWebhookGuard implements CanActivate {
     return typeof signature === "string" ? signature : null;
   }
 
-  private normalizeBodyParams(body: unknown): Record<string, string> {
+  private normalizeBodyParams(body: unknown): Record<string, string> | null {
     if (!body || typeof body !== "object") {
-      return {};
+      return null;
     }
 
-    return Object.entries(body as Record<string, unknown>).reduce<Record<string, string>>(
-      (acc, [key, value]) => {
-        if (value === null || value === undefined) {
-          return acc;
-        }
-
-        if (Array.isArray(value)) {
-          acc[key] = value.map(String).join(",");
-          return acc;
-        }
-
-        acc[key] = unknownToString(value);
-        return acc;
-      },
-      {},
-    );
+    const params: Record<string, string> = {};
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (value === null || value === undefined) {
+        continue;
+      }
+      if (typeof value === "string") {
+        params[key] = value;
+        continue;
+      }
+      if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+        params[key] = value.join(",");
+        continue;
+      }
+      return null;
+    }
+    return params;
   }
 
   private getSignaturePreview(signature: string): string {

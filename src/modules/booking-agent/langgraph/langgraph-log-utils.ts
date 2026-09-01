@@ -1,4 +1,4 @@
-import { unknownToString } from "../../../shared/helper";
+import { getErrorMessage } from "../../../common/logging/error-logging.helper";
 
 const STACK_SNIPPET_MAX_CHARS = 600;
 
@@ -13,7 +13,7 @@ export function normalizeNodeError(error: unknown): NormalizedNodeError {
   if (!(error instanceof Error)) {
     return {
       errorName: "UnknownError",
-      errorMessage: unknownToString(error),
+      errorMessage: getErrorMessage(error),
     };
   }
 

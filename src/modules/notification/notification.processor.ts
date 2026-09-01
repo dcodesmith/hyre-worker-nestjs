@@ -2,6 +2,7 @@ import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject } from "@nestjs/common";
 import { Job, UnrecoverableError } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { getErrorMessage, toLogError } from "../../common/logging/error-logging.helper";
 import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import { getEmailPublicEnv } from "../../email-public-env";
 import {
@@ -266,7 +267,7 @@ export class NotificationProcessor extends WorkerHost {
         {
           notificationId,
           channel,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to process notification channel",
       );
@@ -274,7 +275,7 @@ export class NotificationProcessor extends WorkerHost {
       return {
         channel,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -361,15 +362,12 @@ export class NotificationProcessor extends WorkerHost {
         perRecipientResults,
       };
     } catch (error) {
-      this.logger.error(
-        { type, error: error instanceof Error ? error.message : String(error) },
-        "Failed to send email notification",
-      );
+      this.logger.error({ type, err: toLogError(error) }, "Failed to send email notification");
 
       return {
         channel: NotificationChannel.EMAIL,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -402,7 +400,7 @@ export class NotificationProcessor extends WorkerHost {
         channel: NotificationChannel.EMAIL,
         email,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -642,15 +640,12 @@ export class NotificationProcessor extends WorkerHost {
         messageId: "whatsapp-sent",
       };
     } catch (error) {
-      this.logger.error(
-        { type, error: error instanceof Error ? error.message : String(error) },
-        "Failed to send WhatsApp notification",
-      );
+      this.logger.error({ type, err: toLogError(error) }, "Failed to send WhatsApp notification");
 
       return {
         channel: NotificationChannel.WHATSAPP,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -720,7 +715,7 @@ export class NotificationProcessor extends WorkerHost {
             bookingId,
             type,
             invalidTokenCount: result.invalidTokens.length,
-            error: error instanceof Error ? error.message : String(error),
+            err: toLogError(error),
           },
           "Failed to revoke invalid push tokens after push delivery",
         );
@@ -913,8 +908,7 @@ export class NotificationProcessor extends WorkerHost {
         bookingId: job.data.bookingId,
         channels: job.data.channels,
         failedChannels,
-        error: error.message,
-        stack: error.stack,
+        err: toLogError(error),
         attempts: attempt,
         maxAttempts,
       },

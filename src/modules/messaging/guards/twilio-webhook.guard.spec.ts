@@ -69,4 +69,27 @@ describe("TwilioWebhookGuard", () => {
 
     expect(guard.canActivate(context)).toBe(false);
   });
+
+  it.each([{ nested: "value" }, 42, [1, "two"]])(
+    "rejects non-string webhook body values",
+    (invalidValue) => {
+      const context = createContext(
+        { "x-twilio-signature": "signed" },
+        { MessageSid: "SM123", Unexpected: invalidValue },
+      );
+
+      expect(guard.canActivate(context)).toBe(false);
+    },
+  );
+
+  it("normalizes arrays of strings before validating the signature", () => {
+    const params = { MessageSid: "SM123", Tags: "one,two" };
+    const signature = twilio.getExpectedTwilioSignature(authToken, webhookUrl, params);
+    const context = createContext(
+      { "x-twilio-signature": signature },
+      { MessageSid: "SM123", Tags: ["one", "two"] },
+    );
+
+    expect(guard.canActivate(context)).toBe(true);
+  });
 });

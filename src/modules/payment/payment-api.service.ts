@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { unknownToString } from "../../shared/helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import {
   BOOKING_PAYMENT_SESSION_DURATION_MINUTES,
@@ -520,7 +520,7 @@ export class PaymentApiService {
         txRef,
         paymentId,
         idempotencyKey,
-        error: unknownToString(error),
+        err: toLogError(error),
       },
       "Refund outcome is uncertain and requires reconciliation",
     );

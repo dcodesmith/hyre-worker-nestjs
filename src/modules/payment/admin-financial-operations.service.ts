@@ -9,7 +9,7 @@ import {
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { AppException } from "../../common/errors/app.exception";
-import { unknownToString } from "../../shared/helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService } from "../database/database.service";
 import type {
   AdminPayoutListQueryDto,
@@ -423,7 +423,7 @@ export class AdminFinancialOperationsService {
       this.logger.error(
         {
           auditId,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to complete financial reconciliation audit",
       );
@@ -434,7 +434,7 @@ export class AdminFinancialOperationsService {
     this.logger.error(
       {
         auditId,
-        error: unknownToString(error),
+        err: toLogError(error),
       },
       "Financial reconciliation attempt failed",
     );
@@ -450,7 +450,7 @@ export class AdminFinancialOperationsService {
       this.logger.error(
         {
           auditId,
-          error: auditError instanceof Error ? auditError.message : String(auditError),
+          err: toLogError(auditError),
         },
         "Failed to persist financial reconciliation audit failure",
       );

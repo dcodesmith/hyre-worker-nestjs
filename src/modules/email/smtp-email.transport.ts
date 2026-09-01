@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import nodemailer, { Transporter } from "nodemailer";
 import { EnvConfig } from "src/config/env.config";
+import { getErrorMessage, toLogError } from "../../common/logging/error-logging.helper";
 import { EmailDeliveryFailedException } from "./email.error";
 import { getFromAddress } from "./email.helper";
 import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface";
@@ -59,12 +60,11 @@ export class SmtpEmailTransport implements EmailTransport {
         data: { id: info.messageId },
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(
         {
           provider: this.provider,
           recipientDomain,
-          error: errorMessage,
+          err: toLogError(error),
         },
         "Failed to send email via SMTP",
       );
@@ -72,7 +72,7 @@ export class SmtpEmailTransport implements EmailTransport {
       throw new EmailDeliveryFailedException("SMTP request failed", {
         provider: this.provider,
         recipientDomain,
-        cause: error,
+        cause: getErrorMessage(error),
       });
     }
   }

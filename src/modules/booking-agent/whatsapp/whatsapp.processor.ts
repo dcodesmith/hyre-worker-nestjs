@@ -4,6 +4,7 @@ import { Injectable } from "@nestjs/common";
 import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import { Job, type Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError, toPersistedErrorMessage } from "../../../common/logging/error-logging.helper";
 import {
   PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
   PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
@@ -124,16 +125,8 @@ export class WhatsAppProcessor extends WorkerHost {
         "Processed inbound WhatsApp message",
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = toPersistedErrorMessage(error);
       await this.persistenceService.markInboundMessageFailed(messageId, errorMessage);
-      this.logger.warn(
-        {
-          traceId,
-          durationMs: Date.now() - startedAt,
-          error: errorMessage,
-        },
-        "Failed processing inbound WhatsApp message",
-      );
       throw error;
     } finally {
       await this.persistenceService.releaseProcessingLock(conversationId, lockToken);
@@ -185,7 +178,7 @@ export class WhatsAppProcessor extends WorkerHost {
       this.logger.warn(
         {
           traceId,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Audio transcription failed; falling back to media flow",
       );
@@ -375,7 +368,7 @@ export class WhatsAppProcessor extends WorkerHost {
           conversationId,
           jobId: job.id,
           jobName: job.name,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         });
         return;
       }
@@ -411,24 +404,15 @@ export class WhatsAppProcessor extends WorkerHost {
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<WhatsAppAgentJobData> | undefined, error: Error): void {
-    const errorMessage = error.message;
-    const errorStack = error.stack;
     if (!job) {
-      this.logger.error(
-        {
-          errorMessage,
-          stack: errorStack,
-        },
-        "WhatsApp agent job failed without context",
-      );
+      this.logger.error({ err: error }, "WhatsApp agent job failed without context");
       return;
     }
     this.logger.error(
       {
         jobName: job.name,
         jobId: job.id,
-        errorMessage,
-        stack: errorStack,
+        err: error,
       },
       "WhatsApp agent job failed",
     );

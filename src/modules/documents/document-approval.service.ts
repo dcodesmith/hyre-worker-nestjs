@@ -6,7 +6,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { unknownToString } from "../../shared/helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { REJECTION_ACTION_NOTE } from "../car/car.const";
 import { CarApprovalService } from "../car/car-approval.service";
 import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
@@ -127,7 +127,7 @@ export class DocumentApprovalService {
     if (isRecordNotFoundError(error)) {
       return new DocumentNotFoundException();
     }
-    this.logger.error({ ...context, error: unknownToString(error) }, message);
+    this.logger.error({ ...context, err: toLogError(error) }, message);
     return new DocumentApprovalFailedException();
   }
 }

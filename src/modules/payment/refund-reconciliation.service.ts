@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { type Payment, PaymentAttemptStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { unknownToString } from "../../shared/helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveFetchedRefundData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -50,7 +50,7 @@ export class RefundReconciliationService {
         this.logger.error(
           {
             paymentId: payment.id,
-            error: error instanceof Error ? error.message : String(error),
+            err: toLogError(error),
           },
           "Failed to reconcile refund",
         );
@@ -276,7 +276,7 @@ export class RefundReconciliationService {
         paymentId: payment.id,
         refundProviderId: payment.refundProviderId,
         attempts,
-        error: unknownToString(error),
+        err: toLogError(error),
       },
       "Failed to fetch refund status from Flutterwave",
     );
