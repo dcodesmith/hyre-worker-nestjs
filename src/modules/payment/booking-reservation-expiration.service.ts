@@ -180,11 +180,7 @@ export class BookingReservationExpirationService {
   }
 
   private async reconcileReservation(reservation: ExpiredReservation): Promise<boolean> {
-    const paymentReferences = reservation.paymentIntent
-      ? [reservation.paymentIntent]
-      : reservation.kind === "booking"
-        ? [reservation.id, `booking_${reservation.id}`]
-        : [];
+    const paymentReferences = this.paymentReferencesFor(reservation);
 
     try {
       await this.markReconciliationChecked(reservation);
@@ -250,6 +246,16 @@ export class BookingReservationExpirationService {
       },
       data,
     });
+  }
+
+  private paymentReferencesFor(reservation: ExpiredReservation): string[] {
+    if (reservation.paymentIntent) {
+      return [reservation.paymentIntent];
+    }
+    if (reservation.kind === "booking") {
+      return [reservation.id, `booking_${reservation.id}`];
+    }
+    return [];
   }
 
   private async findTransaction(

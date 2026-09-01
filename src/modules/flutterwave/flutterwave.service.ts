@@ -21,6 +21,14 @@ import {
   RefundResponse,
 } from "./flutterwave.interface";
 
+function stripTrailingPunctuation(value: string): string {
+  let message = value;
+  while (message.endsWith(".") || message.endsWith("!")) {
+    message = message.slice(0, -1);
+  }
+  return message;
+}
+
 @Injectable()
 export class FlutterwaveService {
   private readonly config: FlutterwaveConfig;
@@ -189,10 +197,7 @@ export class FlutterwaveService {
     if (error.statusCode === HttpStatus.NOT_FOUND) return true;
     if (error.statusCode !== HttpStatus.BAD_REQUEST) return false;
 
-    const message = error.message
-      .trim()
-      .toLowerCase()
-      .replace(/[.!]+$/, "");
+    const message = stripTrailingPunctuation(error.message.trim().toLowerCase());
     return (
       message === "no transaction was found for this id" || message === "transaction not found"
     );

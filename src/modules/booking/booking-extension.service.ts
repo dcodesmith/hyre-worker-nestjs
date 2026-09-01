@@ -61,6 +61,14 @@ type ExtensionEligibilityBooking = {
   >;
 };
 
+type ExtensionCandidate = {
+  bookingId: string;
+  bookingLegId: string;
+  carId: string;
+  currentEnd: Date;
+  dayEnd: Date;
+};
+
 @Injectable()
 export class BookingExtensionService {
   constructor(
@@ -96,13 +104,41 @@ export class BookingExtensionService {
       return results;
     }
 
-    const candidates: Array<{
-      bookingId: string;
-      bookingLegId: string;
-      carId: string;
-      currentEnd: Date;
-      dayEnd: Date;
-    }> = [];
+    const candidates = this.collectExtensionCandidates(bookings, now);
+    if (candidates.length === 0) {
+      return results;
+    }
+
+    const nextBookings = await reader.booking.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: [...BLOCKING_BOOKING_STATUSES] },
+        OR: candidates.map(({ bookingId, carId, currentEnd, dayEnd }) => ({
+          id: { not: bookingId },
+          carId,
+          startDate: {
+            gte: currentEnd,
+            lte: addHours(dayEnd, BOOKING_BUFFER_HOURS),
+          },
+        })),
+      },
+      select: {
+        id: true,
+        carId: true,
+        startDate: true,
+      },
+      orderBy: { startDate: "asc" },
+    });
+
+    this.applyExtensionLimits(results, candidates, nextBookings);
+    return results;
+  }
+
+  private collectExtensionCandidates(
+    bookings: ExtensionEligibilityBooking[],
+    now: Date,
+  ): ExtensionCandidate[] {
+    const candidates: ExtensionCandidate[] = [];
     const today = startOfDay(new UTCDate(now));
 
     for (const booking of bookings) {
@@ -132,31 +168,14 @@ export class BookingExtensionService {
       }
     }
 
-    if (candidates.length === 0) {
-      return results;
-    }
+    return candidates;
+  }
 
-    const nextBookings = await reader.booking.findMany({
-      where: {
-        deletedAt: null,
-        status: { in: [...BLOCKING_BOOKING_STATUSES] },
-        OR: candidates.map(({ bookingId, carId, currentEnd, dayEnd }) => ({
-          id: { not: bookingId },
-          carId,
-          startDate: {
-            gte: currentEnd,
-            lte: addHours(dayEnd, BOOKING_BUFFER_HOURS),
-          },
-        })),
-      },
-      select: {
-        id: true,
-        carId: true,
-        startDate: true,
-      },
-      orderBy: { startDate: "asc" },
-    });
-
+  private applyExtensionLimits(
+    results: Map<string, BookingLegExtensionEligibility>,
+    candidates: ExtensionCandidate[],
+    nextBookings: Array<{ id: string; carId: string; startDate: Date }>,
+  ): void {
     for (const candidate of candidates) {
       const nextBooking = nextBookings.find(
         (booking) =>
@@ -167,8 +186,9 @@ export class BookingExtensionService {
       const bookingBufferLimit = nextBooking
         ? addHours(nextBooking.startDate, -BOOKING_BUFFER_HOURS)
         : candidate.dayEnd;
-      const latestEnd =
-        bookingBufferLimit < candidate.dayEnd ? bookingBufferLimit : candidate.dayEnd;
+      const latestEnd = new Date(
+        Math.min(bookingBufferLimit.getTime(), candidate.dayEnd.getTime()),
+      );
       const maxExtendableHours = Math.max(0, differenceInHours(latestEnd, candidate.currentEnd));
 
       results.set(candidate.bookingLegId, {
@@ -176,8 +196,6 @@ export class BookingExtensionService {
         maxExtendableHours,
       });
     }
-
-    return results;
   }
 
   async createExtension(
@@ -435,10 +453,9 @@ export class BookingExtensionService {
       },
     });
     if (
-      !extension ||
-      extension.bookingLeg.booking.id !== bookingId ||
-      extension.bookingLeg.booking.userId !== user.id ||
-      extension.bookingLegId !== bookingLegId
+      extension?.bookingLeg.booking.id !== bookingId ||
+      extension?.bookingLeg.booking.userId !== user.id ||
+      extension?.bookingLegId !== bookingLegId
     ) {
       throw new ExtensionCreationFailedException("Idempotent extension could not be recovered.");
     }

@@ -4,6 +4,7 @@ import type { Request } from "express";
 import { PinoLogger } from "nestjs-pino";
 import twilio from "twilio";
 import type { EnvConfig } from "../../../config/env.config";
+import { unknownToString } from "../../../shared/helper";
 
 @Injectable()
 export class TwilioWebhookGuard implements CanActivate {
@@ -70,7 +71,7 @@ export class TwilioWebhookGuard implements CanActivate {
           return acc;
         }
 
-        acc[key] = String(value);
+        acc[key] = unknownToString(value);
         return acc;
       },
       {},

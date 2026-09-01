@@ -56,6 +56,24 @@ export async function lockExtensionRow(
   return rows.length > 0;
 }
 
+function resolvePrismaLog(isTest: boolean, isDevelopment: boolean): Prisma.LogDefinition[] {
+  if (isTest) {
+    return [];
+  }
+  if (isDevelopment) {
+    return [
+      { level: "query", emit: "event" },
+      { level: "info", emit: "stdout" },
+      { level: "warn", emit: "stdout" },
+      { level: "error", emit: "stdout" },
+    ];
+  }
+  return [
+    { level: "warn", emit: "stdout" },
+    { level: "error", emit: "stdout" },
+  ];
+}
+
 @Injectable()
 export class DatabaseService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly isDevelopment: boolean;
@@ -74,19 +92,7 @@ export class DatabaseService extends PrismaClient implements OnModuleInit, OnMod
       adapter,
       // Expected constraint failures are asserted in e2e tests; Prisma's stdout
       // error logger would otherwise spam the suite before those catches run.
-      log: isTest
-        ? []
-        : isDevelopment
-          ? [
-              { level: "query", emit: "event" },
-              { level: "info", emit: "stdout" },
-              { level: "warn", emit: "stdout" },
-              { level: "error", emit: "stdout" },
-            ]
-          : [
-              { level: "warn", emit: "stdout" },
-              { level: "error", emit: "stdout" },
-            ],
+      log: resolvePrismaLog(isTest, isDevelopment),
     });
 
     this.isDevelopment = isDevelopment;

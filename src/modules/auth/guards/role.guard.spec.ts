@@ -141,27 +141,13 @@ describe("RoleGuard", () => {
   });
 
   describe("role combinations", () => {
-    it("should allow fleetOwner to access fleet-owner routes", () => {
-      vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["fleetOwner"]);
-      const context = createMockExecutionContext(createMockSession(["fleetOwner"]));
-
-      const result = guard.canActivate(context);
-
-      expect(result).toBe(true);
-    });
-
-    it("should allow staff to access staff routes", () => {
-      vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["staff"]);
-      const context = createMockExecutionContext(createMockSession(["staff"]));
-
-      const result = guard.canActivate(context);
-
-      expect(result).toBe(true);
-    });
-
-    it("should allow admin to access admin-only routes", () => {
-      vi.spyOn(reflector, "getAllAndOverride").mockReturnValue(["admin"]);
-      const context = createMockExecutionContext(createMockSession(["admin"]));
+    it.each([
+      { sessionRole: "fleetOwner", requiredRoles: ["fleetOwner"], name: "fleet-owner routes" },
+      { sessionRole: "staff", requiredRoles: ["staff"], name: "staff routes" },
+      { sessionRole: "admin", requiredRoles: ["admin"], name: "admin-only routes" },
+    ] as const)("should allow $sessionRole to access $name", ({ sessionRole, requiredRoles }) => {
+      vi.spyOn(reflector, "getAllAndOverride").mockReturnValue([...requiredRoles]);
+      const context = createMockExecutionContext(createMockSession([sessionRole]));
 
       const result = guard.canActivate(context);
 

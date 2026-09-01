@@ -14,6 +14,14 @@ import type {
   ResolvePlaceResponse,
 } from "./maps.interface";
 
+function stripLagosNigeriaSuffix(address: string): string {
+  const withoutCountry = address.replace(/,\s*Lagos,\s*Nigeria\.?$/i, "");
+  if (withoutCountry === address) {
+    return address.trim();
+  }
+  return withoutCountry.replace(/,?\s*\d{5,6}$/, "").trim();
+}
+
 @Injectable()
 export class GooglePlacesService {
   private readonly apiKey: string | undefined;
@@ -341,8 +349,8 @@ export class GooglePlacesService {
     const displayName = details.displayName?.text?.trim() ?? "";
     const displayNamePrefix = details.businessStatus && displayName ? `${displayName}, ` : "";
     const cleanedAddress = details.formattedAddress
-      ?.replace(/(?:,?\s*\d{5,6})?,\s*Lagos,\s*Nigeria\.?$/i, "")
-      .trim();
+      ? stripLagosNigeriaSuffix(details.formattedAddress)
+      : undefined;
     const reconstructedAddress = this.buildAddressFromComponents(details);
     const displayNameAddress = this.buildAddressFromDisplayName(details, cleanedAddress ?? null);
     const resolvedAddress = reconstructedAddress ?? displayNameAddress ?? cleanedAddress ?? "";

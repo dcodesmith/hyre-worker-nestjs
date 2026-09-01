@@ -691,41 +691,17 @@ export class NotificationProcessor extends WorkerHost {
       return null;
     }
 
-    const recipientEntries = Object.entries(recipients);
-    const userIds = recipientEntries.flatMap(([, recipient]) =>
-      recipient?.userId ? [recipient.userId] : [],
-    );
-    const tokensByUserId =
-      userIds.length > 0 ? await this.pushTokenService.getActiveTokensForUsers(userIds) : {};
-    const pushRecipients = recipientEntries.flatMap(([recipientType, recipient]) =>
-      [
-        ...(recipient?.pushTokens ?? []),
-        ...(recipient?.userId ? (tokensByUserId[recipient.userId] ?? []) : []),
-      ].map((token) => ({
-        recipient: recipientType as RecipientType,
-        pushToken: token,
-      })),
-    );
-    const uniquePushRecipients = Array.from(
-      new Map(pushRecipients.map((entry) => [entry.pushToken, entry])).values(),
-    );
+    const uniquePushRecipients = await this.collectUniquePushRecipients(recipients);
     const uniqueTokens = uniquePushRecipients.map((entry) => entry.pushToken);
     if (uniqueTokens.length === 0) {
       this.logger.debug(
-        { bookingId, type, recipientCount: recipientEntries.length },
+        { bookingId, type, recipientCount: Object.keys(recipients).length },
         "Push notification skipped: no active tokens found",
       );
       return null;
     }
 
-    const payload = pushPayload ?? {
-      title: "Booking update",
-      body:
-        type === NotificationType.CHAUFFEUR_ASSIGNED
-          ? "Your chauffeur has been assigned."
-          : "You have a new update for your booking.",
-      data: createBookingNotificationData(type, bookingId),
-    };
+    const payload = pushPayload ?? this.defaultPushPayload(type, bookingId);
 
     const result = await this.pushService.sendPushNotifications({
       tokens: uniqueTokens,
@@ -857,6 +833,41 @@ export class NotificationProcessor extends WorkerHost {
         ? `One or more push notifications failed (${actionableErrorCodes.join(", ") || "unknown"})`
         : undefined,
       perRecipientResults,
+    };
+  }
+
+  private async collectUniquePushRecipients(
+    recipients: NotificationJobData["recipients"],
+  ): Promise<Array<{ recipient: RecipientType; pushToken: string }>> {
+    const recipientEntries = Object.entries(recipients);
+    const userIds = recipientEntries.flatMap(([, recipient]) =>
+      recipient?.userId ? [recipient.userId] : [],
+    );
+    const tokensByUserId =
+      userIds.length > 0 ? await this.pushTokenService.getActiveTokensForUsers(userIds) : {};
+    const pushRecipients = recipientEntries.flatMap(([recipientType, recipient]) =>
+      [
+        ...(recipient?.pushTokens ?? []),
+        ...(recipient?.userId ? (tokensByUserId[recipient.userId] ?? []) : []),
+      ].map((token) => ({
+        recipient: recipientType as RecipientType,
+        pushToken: token,
+      })),
+    );
+    return Array.from(new Map(pushRecipients.map((entry) => [entry.pushToken, entry])).values());
+  }
+
+  private defaultPushPayload(
+    type: NotificationType,
+    bookingId: string,
+  ): NonNullable<NotificationJobData["pushPayload"]> {
+    return {
+      title: "Booking update",
+      body:
+        type === NotificationType.CHAUFFEUR_ASSIGNED
+          ? "Your chauffeur has been assigned."
+          : "You have a new update for your booking.",
+      data: createBookingNotificationData(type, bookingId),
     };
   }
 

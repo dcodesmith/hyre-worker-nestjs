@@ -6,6 +6,7 @@ import {
   getCustomerDetails,
   getUserDisplayName,
   maskEmail,
+  unknownToString,
 } from "./helper";
 import {
   createBooking,
@@ -362,6 +363,28 @@ describe("Helper Functions", () => {
     it("should use only uppercase letters and numbers", () => {
       const ref = generateBookingReference();
       expect(ref.slice(3)).toMatch(/^[0-9A-Z]{8}$/);
+    });
+  });
+
+  describe("unknownToString", () => {
+    it("returns strings and primitives unchanged", () => {
+      expect(unknownToString("hello")).toBe("hello");
+      expect(unknownToString(12)).toBe("12");
+      expect(unknownToString(true)).toBe("true");
+      expect(unknownToString(10n)).toBe("10");
+    });
+
+    it("returns an Error message and empty values for nullish input", () => {
+      expect(unknownToString(new Error("boom"))).toBe("boom");
+      expect(unknownToString(null)).toBe("");
+      expect(unknownToString(undefined)).toBe("");
+    });
+
+    it("stringifies objects and falls back when JSON.stringify fails", () => {
+      expect(unknownToString({ code: "E1" })).toBe('{"code":"E1"}');
+      const cyclic: { self?: unknown } = {};
+      cyclic.self = cyclic;
+      expect(unknownToString(cyclic)).toBe("[object Object]");
     });
   });
 });

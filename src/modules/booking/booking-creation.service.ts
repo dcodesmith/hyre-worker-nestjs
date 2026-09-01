@@ -6,7 +6,7 @@ import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
-import { generateBookingReference } from "../../shared/helper";
+import { generateBookingReference, unknownToString } from "../../shared/helper";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
@@ -661,8 +661,7 @@ export class BookingCreationService {
           bookingReference: booking.bookingReference,
           error:
             markUnpaidError instanceof Error ? markUnpaidError.message : String(markUnpaidError),
-          originalPaymentError:
-            originalError instanceof Error ? originalError.message : String(originalError),
+          originalPaymentError: unknownToString(originalError),
         },
         "Failed to mark booking as UNPAID after payment failure",
       );

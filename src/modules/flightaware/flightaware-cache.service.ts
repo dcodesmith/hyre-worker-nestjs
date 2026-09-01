@@ -50,12 +50,12 @@ export class FlightAwareCacheService implements OnModuleDestroy {
 
   async set(flightNumber: string, pickupDate: string, data: ValidatedFlight | null): Promise<void> {
     const key = this.getCacheKey(flightNumber, pickupDate);
-    const ttlSeconds =
-      data === null
-        ? NOT_FOUND_TTL_SECONDS
-        : data.isLive
-          ? LIVE_FLIGHT_TTL_SECONDS
-          : SCHEDULED_FLIGHT_TTL_SECONDS;
+    let ttlSeconds = SCHEDULED_FLIGHT_TTL_SECONDS;
+    if (data === null) {
+      ttlSeconds = NOT_FOUND_TTL_SECONDS;
+    } else if (data.isLive) {
+      ttlSeconds = LIVE_FLIGHT_TTL_SECONDS;
+    }
 
     try {
       await this.redis.setex(key, ttlSeconds, JSON.stringify({ data } satisfies FlightCacheEntry));

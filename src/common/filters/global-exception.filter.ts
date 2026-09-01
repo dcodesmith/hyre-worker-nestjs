@@ -7,6 +7,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
+import { unknownToString } from "../../shared/helper";
 import { AppException } from "../errors/app.exception";
 import type { ProblemDetails } from "../errors/problem-details.interface";
 import { stripQueryString } from "../http/request-url.helper";
@@ -176,7 +177,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         .join(", ");
     }
     if (message !== undefined) {
-      return String(message);
+      return unknownToString(message);
     }
     if (typeof error === "string") {
       return error;
@@ -212,11 +213,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           exception.stack,
         );
       } else {
-        this.logger.error(`${errorCodePrefix}${method} ${url} - Unknown error`, String(exception));
+        this.logger.error(
+          `${errorCodePrefix}${method} ${url} - Unknown error`,
+          unknownToString(exception),
+        );
       }
     } else if (httpStatus >= 400) {
       // Client errors - log as warning
-      const message = exception instanceof Error ? exception.message : String(exception);
+      const message = unknownToString(exception);
       this.logger.warn(`${errorCodePrefix}${method} ${url} - ${message}`);
     }
   }

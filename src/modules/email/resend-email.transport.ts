@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import { Resend } from "resend";
 import { EnvConfig } from "src/config/env.config";
+import { unknownToString } from "src/shared/helper";
 import { EmailDeliveryFailedException, EmailProviderResponseException } from "./email.error";
 import { getFromAddress } from "./email.helper";
 import { EmailPayload, EmailSendResult, EmailTransport } from "./email.interface";
@@ -48,7 +49,7 @@ export class ResendEmailTransport implements EmailTransport {
       this.logger.error(
         {
           provider: this.provider,
-          errorCode: String(errorCode),
+          errorCode: unknownToString(errorCode),
         },
         "Email API returned error",
       );

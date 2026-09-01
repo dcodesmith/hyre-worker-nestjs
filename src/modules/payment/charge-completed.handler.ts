@@ -181,6 +181,13 @@ export class ChargeCompletedHandler {
       return;
     }
 
+    await this.confirmPayableFromSuccessfulCharge(payment, txRef);
+  }
+
+  private async confirmPayableFromSuccessfulCharge(
+    payment: Payment & { booking: Booking | null },
+    txRef: string,
+  ): Promise<void> {
     const hasBooking = payment.bookingId !== null;
     const hasExtension = payment.extensionId !== null;
     if (hasBooking === hasExtension) {
@@ -209,14 +216,12 @@ export class ChargeCompletedHandler {
       return;
     }
 
-    if (hasExtension) {
-      const confirmed = await this.extensionConfirmationService.confirmFromPayment(payment);
-      if (!confirmed) {
-        await this.refundFinalizationService.requestManualReview({
-          paymentId: payment.id,
-          reason: "Successful charge could not confirm its extension",
-        });
-      }
+    const confirmed = await this.extensionConfirmationService.confirmFromPayment(payment);
+    if (!confirmed) {
+      await this.refundFinalizationService.requestManualReview({
+        paymentId: payment.id,
+        reason: "Successful charge could not confirm its extension",
+      });
     }
   }
 
@@ -483,15 +488,8 @@ export class ChargeCompletedHandler {
     };
 
     return this.databaseService.$transaction(async (tx) => {
-      if (booking) {
-        if (!(await lockCarRow(tx, booking.carId))) return null;
-        if (!(await lockBookingRow(tx, booking.id))) return null;
-      } else if (extension) {
-        const parent = extension.bookingLeg.booking;
-        if (!(await lockCarRow(tx, parent.carId))) return null;
-        if (!(await lockBookingRow(tx, parent.id))) return null;
-        if (!(await lockBookingLegRow(tx, extension.bookingLegId))) return null;
-        if (!(await lockExtensionRow(tx, extension.id))) return null;
+      if (!(await this.lockPayableForWebhook(tx, booking, extension))) {
+        return null;
       }
 
       if (status === PaymentAttemptStatus.SUCCESSFUL) {
@@ -526,5 +524,29 @@ export class ChargeCompletedHandler {
         include: { booking: true },
       });
     });
+  }
+
+  private async lockPayableForWebhook(
+    tx: Prisma.TransactionClient,
+    booking: { id: string; carId: string } | null,
+    extension: {
+      id: string;
+      bookingLegId: string;
+      bookingLeg: { booking: { id: string; carId: string } };
+    } | null,
+  ): Promise<boolean> {
+    if (booking) {
+      if (!(await lockCarRow(tx, booking.carId))) return false;
+      if (!(await lockBookingRow(tx, booking.id))) return false;
+      return true;
+    }
+    if (extension) {
+      const parent = extension.bookingLeg.booking;
+      if (!(await lockCarRow(tx, parent.carId))) return false;
+      if (!(await lockBookingRow(tx, parent.id))) return false;
+      if (!(await lockBookingLegRow(tx, extension.bookingLegId))) return false;
+      if (!(await lockExtensionRow(tx, extension.id))) return false;
+    }
+    return true;
   }
 }

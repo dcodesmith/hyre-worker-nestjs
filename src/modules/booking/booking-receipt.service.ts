@@ -416,7 +416,8 @@ export class BookingReceiptService {
     color: string | null;
   }): string {
     const details = [car.year.toString(), car.color?.trim()].filter(Boolean).join(", ");
-    return `${car.make} ${car.model}${details ? ` (${details})` : ""}`;
+    const suffix = details ? ` (${details})` : "";
+    return `${car.make} ${car.model}${suffix}`;
   }
 
   private guestName(value: Prisma.JsonValue): string | null {

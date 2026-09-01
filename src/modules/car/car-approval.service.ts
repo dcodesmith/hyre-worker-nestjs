@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { unknownToString } from "../../shared/helper";
 import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
 import { REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
 import {
@@ -280,10 +281,7 @@ export class CarApprovalService {
       return error;
     }
 
-    this.logger.error(
-      { ...context, error: error instanceof Error ? error.message : String(error) },
-      message,
-    );
+    this.logger.error({ ...context, error: unknownToString(error) }, message);
     return new CarApprovalFailedException();
   }
 }

@@ -48,29 +48,11 @@ describe("VehicleSearchPreconditionPolicy", () => {
   });
 
   describe("pickupTime validation", () => {
-    it("accepts 12-hour format with AM/PM", () => {
+    it.each(["9:00 AM", "09:00", "14:00"])("accepts pickup time %s", (pickupTime) => {
       const result = policy.resolve({
         from: "2026-03-10",
         bookingType: "DAY",
-        pickupTime: "9:00 AM",
-      });
-      expect(result).toBeNull();
-    });
-
-    it("accepts 24-hour format", () => {
-      const result = policy.resolve({
-        from: "2026-03-10",
-        bookingType: "DAY",
-        pickupTime: "09:00",
-      });
-      expect(result).toBeNull();
-    });
-
-    it("accepts 24-hour format for afternoon times", () => {
-      const result = policy.resolve({
-        from: "2026-03-10",
-        bookingType: "DAY",
-        pickupTime: "14:00",
+        pickupTime,
       });
       expect(result).toBeNull();
     });

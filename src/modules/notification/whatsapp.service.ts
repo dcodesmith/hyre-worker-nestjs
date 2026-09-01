@@ -4,6 +4,7 @@ import { PinoLogger } from "nestjs-pino";
 import twilio, { type Twilio } from "twilio";
 import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import type { EnvConfig } from "../../config/env.config";
+import { unknownToString } from "../../shared/helper";
 import { Template } from "./whatsapp.interface";
 
 export { Template } from "./whatsapp.interface";
@@ -128,7 +129,7 @@ export class WhatsAppService {
       );
       return message;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = unknownToString(error);
 
       this.logger.error(
         {

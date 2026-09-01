@@ -309,266 +309,177 @@ describe("AuthService", () => {
     });
 
     describe("path matching security", () => {
-      it("should reject admin role for paths that contain but don't start with /admin", () => {
-        const result = service.validateRoleForClient({
+      it.each([
+        {
+          name: "reject admin role for paths that contain but don't start with /admin",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/not-admin/dashboard",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject fleetOwner role for paths that contain but don't start with /fleet-owner", () => {
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "reject fleetOwner role for paths that contain but don't start with /fleet-owner",
           role: FLEET_OWNER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/fake-fleet-owner/vehicles",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should handle malformed referer URLs gracefully", () => {
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "handle malformed referer URLs by falling back to the origin user role",
           role: USER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "not-a-valid-url",
-        });
-        // Falls back to origin, which has no path, so defaults to user role
-        expect(result).toBe(true);
-      });
-
-      it("should handle path-only referer strings", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "handle path-only referer strings",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin/dashboard",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should strip query parameters from path-only referer strings", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "strip query parameters from path-only referer strings",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin?query=value",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should strip fragments from path-only referer strings", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "strip fragments from path-only referer strings",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin#section",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should strip both query and fragment from path-only referer strings", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "strip both query and fragment from path-only referer strings",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin/dashboard?tab=users#section",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should correctly parse fleet-owner path with query parameters", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "parse fleet-owner path with query parameters",
           role: FLEET_OWNER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/fleet-owner?vehicle=123",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should correctly parse fleet-owner path with fragment", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "parse fleet-owner path with fragment",
           role: FLEET_OWNER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/fleet-owner#vehicles",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should normalize path traversal sequences in path-only referer (fleet-owner)", () => {
-        // /fleet-owner/../ normalizes to / which should only allow user role
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "normalize path traversal in path-only referer for fleet-owner",
           role: FLEET_OWNER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/fleet-owner/../",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should normalize path traversal sequences in path-only referer (admin)", () => {
-        // /admin/../user normalizes to /user which should only allow user role
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "normalize path traversal in path-only referer for admin",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin/../user",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should allow user role for normalized path traversal that resolves to root", () => {
-        // /fleet-owner/../ normalizes to / which defaults to user role
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "allow user role when path traversal resolves to root",
           role: USER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/fleet-owner/../",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should correctly handle nested path traversal sequences", () => {
-        // /admin/deep/../../../user normalizes to /user which should only allow user role
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "reject nested path traversal that leaves the admin directory",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin/deep/../../../user",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should handle path traversal that stays within admin directory", () => {
-        // /admin/sub/../dashboard normalizes to /admin/dashboard which should allow admin role
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "allow path traversal that stays within the admin directory",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "/admin/sub/../dashboard",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should reject admin role for paths like /administrator (no segment boundary)", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "reject admin role for /administrator without a segment boundary",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/administrator",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject admin role for paths like /admin-panel (no segment boundary)", () => {
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "reject admin role for /admin-panel without a segment boundary",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/admin-panel",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should allow admin role for exact /admin path", () => {
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "allow admin role for exact /admin path",
           role: ADMIN,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/admin",
-        });
-        expect(result).toBe(true);
-      });
-
-      it("should reject fleetOwner role for paths like /fleet-owners (no segment boundary)", () => {
-        const result = service.validateRoleForClient({
+          expected: true,
+        },
+        {
+          name: "reject fleetOwner role for /fleet-owners without a segment boundary",
           role: FLEET_OWNER,
-          origin: "https://example.com",
-          clientType: WEB,
           referer: "https://example.com/fleet-owners",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should allow fleetOwner role for exact /fleet-owner path", () => {
-        const result = service.validateRoleForClient({
+          expected: false,
+        },
+        {
+          name: "allow fleetOwner role for exact /fleet-owner path",
           role: FLEET_OWNER,
+          referer: "https://example.com/fleet-owner",
+          expected: true,
+        },
+      ])("should $name", ({ role, referer, expected }) => {
+        const result = service.validateRoleForClient({
+          role,
           origin: "https://example.com",
           clientType: WEB,
-          referer: "https://example.com/fleet-owner",
+          referer,
         });
-        expect(result).toBe(true);
+        expect(result).toBe(expected);
       });
     });
 
     describe("untrusted origin validation", () => {
-      it("should reject requests from untrusted origins", () => {
-        const result = service.validateRoleForClient({
+      it.each([
+        {
+          name: "untrusted origins",
           role: USER,
           origin: "https://evil.com",
-          clientType: WEB,
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject spoofed origin attempting to get fleetOwner role", () => {
-        // This is the specific attack vector: attacker spoofs origin and referer
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "spoofed origin attempting to get fleetOwner role",
           role: FLEET_OWNER,
           origin: "https://evil.com",
-          clientType: WEB,
           referer: "https://evil.com/fleet-owner/dashboard",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject spoofed origin attempting to get admin role", () => {
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "spoofed origin attempting to get admin role",
           role: ADMIN,
           origin: "https://attacker.com",
-          clientType: WEB,
           referer: "https://attacker.com/admin/dashboard",
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject malformed origin URLs", () => {
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "malformed origin URLs",
           role: USER,
           origin: "not-a-valid-url",
-          clientType: WEB,
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject origin with different port than trusted", () => {
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "origin with a different port than trusted",
           role: USER,
           origin: "https://example.com:8080",
-          clientType: WEB,
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject origin with different protocol than trusted", () => {
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "origin with a different protocol than trusted",
           role: USER,
           origin: "http://example.com",
-          clientType: WEB,
-        });
-        expect(result).toBe(false);
-      });
-
-      it("should reject subdomain when only root domain is trusted", () => {
-        const result = service.validateRoleForClient({
+        },
+        {
+          name: "subdomain when only the root domain is trusted",
           role: USER,
           origin: "https://sub.example.com",
+        },
+      ])("should reject $name", ({ role, origin, referer }) => {
+        const result = service.validateRoleForClient({
+          role,
+          origin,
           clientType: WEB,
+          referer,
         });
         expect(result).toBe(false);
       });

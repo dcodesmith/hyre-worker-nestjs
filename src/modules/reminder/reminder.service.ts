@@ -16,7 +16,7 @@ import {
 } from "date-fns";
 import { PinoLogger } from "nestjs-pino";
 import pLimit from "p-limit";
-import { normaliseBookingLegDetails } from "../../shared/helper";
+import { normaliseBookingLegDetails, unknownToString } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
 import { BookingReminderHandler } from "../notification/handlers/booking-reminder.handler";
 import { NotificationType } from "../notification/notification.interface";
@@ -122,7 +122,7 @@ export class ReminderService {
       this.logger.info({ queuedCount }, "Booking start reminder queue processing complete");
       return `Processed and queued start reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = unknownToString(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
         "Error in sendBookingStartReminders",
@@ -235,7 +235,7 @@ export class ReminderService {
 
       return `Processed and queued end reminders for ${queuedCount} legs.`;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = unknownToString(error);
       this.logger.error(
         { error: errorMessage, errorDetails: error },
         "Error in sendBookingEndReminders",
@@ -302,7 +302,7 @@ export class ReminderService {
       await action();
       return true;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = unknownToString(error);
       this.logger.error({ reminderLabel, legId, error: errorMessage }, "Failed to queue reminder");
       return false;
     }
