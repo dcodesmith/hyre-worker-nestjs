@@ -12,99 +12,95 @@ describe("calculateLegCount", () => {
   });
 
   describe("DAY bookings", () => {
-    it("returns 1 leg for same-day booking", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-01T20:00:00.000Z");
-
-      expect(calculateLegCount("DAY", startDate, endDate)).toBe(1);
-    });
-
-    it("returns 2 legs for 2-day booking (non-midnight end)", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-02T20:00:00.000Z");
-
-      expect(calculateLegCount("DAY", startDate, endDate)).toBe(2);
-    });
-
-    it("returns 2 legs when endDate is midnight UTC (boundary case)", () => {
-      // This is the key case: endDate at midnight should NOT count as an extra day
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-03T00:00:00.000Z"); // Midnight
-
-      // With midnight adjustment: 2026-03-03T00:00:00Z - 1ms = 2026-03-02T23:59:59.999Z
-      // eachDayOfInterval(March 1 to March 2) = 2 days
-      expect(calculateLegCount("DAY", startDate, endDate)).toBe(2);
-    });
-
-    it("returns 3 legs for 3-day booking", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-03T20:00:00.000Z");
-
-      expect(calculateLegCount("DAY", startDate, endDate)).toBe(3);
-    });
-
-    it("returns 1 leg when adjusted endDate would be before startDate", () => {
-      // Same day, endDate at midnight of the same day
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-01T00:00:00.000Z"); // Midnight same day (before startDate)
-
-      // Adjustment would make endDate < startDate, so we use startDate as endDate
-      expect(calculateLegCount("DAY", startDate, endDate)).toBe(1);
+    it.each([
+      {
+        name: "same-day booking",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-01T20:00:00.000Z",
+        expected: 1,
+      },
+      {
+        name: "2-day booking (non-midnight end)",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-02T20:00:00.000Z",
+        expected: 2,
+      },
+      {
+        name: "midnight UTC endDate boundary",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-03T00:00:00.000Z",
+        expected: 2,
+      },
+      {
+        name: "3-day booking",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-03T20:00:00.000Z",
+        expected: 3,
+      },
+      {
+        name: "adjusted endDate before startDate",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-01T00:00:00.000Z",
+        expected: 1,
+      },
+    ])("returns $expected leg(s) for $name", ({ startDate, endDate, expected }) => {
+      expect(calculateLegCount("DAY", new Date(startDate), new Date(endDate))).toBe(expected);
     });
   });
 
   describe("NIGHT bookings", () => {
-    it("returns 1 leg for single night", () => {
-      const startDate = new Date("2026-03-01T23:00:00.000Z");
-      const endDate = new Date("2026-03-02T05:00:00.000Z");
-
-      expect(calculateLegCount("NIGHT", startDate, endDate)).toBe(1);
-    });
-
-    it("returns 2 legs for 2 nights (over 24 hours)", () => {
-      const startDate = new Date("2026-03-01T23:00:00.000Z");
-      const endDate = new Date("2026-03-03T05:00:00.000Z"); // ~30 hours
-
-      expect(calculateLegCount("NIGHT", startDate, endDate)).toBe(2);
-    });
-
-    it("handles midnight boundary for nights", () => {
-      const startDate = new Date("2026-03-01T23:00:00.000Z");
-      const endDate = new Date("2026-03-03T00:00:00.000Z"); // Midnight
-
-      // With adjustment: 25 hours -> ceil(25/24) = 2 legs
-      expect(calculateLegCount("NIGHT", startDate, endDate)).toBe(2);
+    it.each([
+      {
+        name: "single night",
+        startDate: "2026-03-01T23:00:00.000Z",
+        endDate: "2026-03-02T05:00:00.000Z",
+        expected: 1,
+      },
+      {
+        name: "2 nights (over 24 hours)",
+        startDate: "2026-03-01T23:00:00.000Z",
+        endDate: "2026-03-03T05:00:00.000Z",
+        expected: 2,
+      },
+      {
+        name: "midnight boundary",
+        startDate: "2026-03-01T23:00:00.000Z",
+        endDate: "2026-03-03T00:00:00.000Z",
+        expected: 2,
+      },
+    ])("returns $expected leg(s) for $name", ({ startDate, endDate, expected }) => {
+      expect(calculateLegCount("NIGHT", new Date(startDate), new Date(endDate))).toBe(expected);
     });
   });
 
   describe("FULL_DAY bookings", () => {
-    it("returns 1 leg for less than 24 hours", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-02T07:00:00.000Z"); // 23 hours
-
-      expect(calculateLegCount("FULL_DAY", startDate, endDate)).toBe(1);
-    });
-
-    it("returns 2 legs for over 24 hours", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-02T10:00:00.000Z"); // 26 hours
-
-      expect(calculateLegCount("FULL_DAY", startDate, endDate)).toBe(2);
-    });
-
-    it("returns 2 legs for exactly 48 hours", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-03T08:00:00.000Z"); // 48 hours
-
-      expect(calculateLegCount("FULL_DAY", startDate, endDate)).toBe(2);
-    });
-
-    it("handles midnight boundary for full day", () => {
-      const startDate = new Date("2026-03-01T08:00:00.000Z");
-      const endDate = new Date("2026-03-03T00:00:00.000Z"); // Midnight
-
-      // With adjustment: ~40 hours -> ceil(40/24) = 2 legs
-      expect(calculateLegCount("FULL_DAY", startDate, endDate)).toBe(2);
+    it.each([
+      {
+        name: "less than 24 hours",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-02T07:00:00.000Z",
+        expected: 1,
+      },
+      {
+        name: "over 24 hours",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-02T10:00:00.000Z",
+        expected: 2,
+      },
+      {
+        name: "exactly 48 hours",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-03T08:00:00.000Z",
+        expected: 2,
+      },
+      {
+        name: "midnight boundary",
+        startDate: "2026-03-01T08:00:00.000Z",
+        endDate: "2026-03-03T00:00:00.000Z",
+        expected: 2,
+      },
+    ])("returns $expected leg(s) for $name", ({ startDate, endDate, expected }) => {
+      expect(calculateLegCount("FULL_DAY", new Date(startDate), new Date(endDate))).toBe(expected);
     });
   });
 

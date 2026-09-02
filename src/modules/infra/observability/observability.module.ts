@@ -2,9 +2,11 @@ import { MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { LoggerModule } from "nestjs-pino";
 import { stripQueryString } from "../../../common/http/request-url.helper";
+import { serializeErrorForLog } from "../../../common/logging/error-logging.helper";
 import { RequestIdMiddleware } from "../../../common/middlewares/request-id.middleware";
 import { type EnvConfig } from "../../../config/env.config";
 import { parseOtlpHeaders } from "../../../config/tracing.config";
+import { PINO_REDACT_PATHS } from "./pino-redact.const";
 
 @Module({
   imports: [
@@ -64,6 +66,10 @@ import { parseOtlpHeaders } from "../../../config/tracing.config";
           pinoHttp: {
             level: process.env.LOG_LEVEL || (isDev ? "debug" : "info"),
             transport: targets.length > 0 ? { targets } : undefined,
+            redact: {
+              paths: [...PINO_REDACT_PATHS],
+              censor: "[REDACTED]",
+            },
             autoLogging: {
               ignore: (req) => req.url === "/health" || req.url?.startsWith("/queues"),
             },
@@ -71,6 +77,7 @@ import { parseOtlpHeaders } from "../../../config/tracing.config";
               requestId: req.headers["x-request-id"],
             }),
             serializers: {
+              err: serializeErrorForLog,
               req: (req) => ({
                 id: req.id,
                 method: req.method,

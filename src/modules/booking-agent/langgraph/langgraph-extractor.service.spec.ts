@@ -121,45 +121,21 @@ describe("LangGraphExtractorService", () => {
       expect(result.preferenceHint).toBe("show_alternatives");
     });
 
-    it("handles day booking type button", async () => {
+    it.each([
+      { buttonId: "day", bookingType: "DAY" },
+      { buttonId: "night", bookingType: "NIGHT" },
+      { buttonId: "fullday", bookingType: "FULL_DAY" },
+    ] as const)("handles $bookingType booking type button", async ({ buttonId, bookingType }) => {
       const interactive: InteractiveReply = {
         type: "button",
-        buttonId: "day",
+        buttonId,
       };
       const state = buildState({ inboundInteractive: interactive });
 
       const result = await service.extract(state);
 
       expect(result.intent).toBe("provide_info");
-      expect(result.draftPatch.bookingType).toBe("DAY");
-      expect(result.confidence).toBe(1);
-    });
-
-    it("handles night booking type button", async () => {
-      const interactive: InteractiveReply = {
-        type: "button",
-        buttonId: "night",
-      };
-      const state = buildState({ inboundInteractive: interactive });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("provide_info");
-      expect(result.draftPatch.bookingType).toBe("NIGHT");
-      expect(result.confidence).toBe(1);
-    });
-
-    it("handles full day booking type button", async () => {
-      const interactive: InteractiveReply = {
-        type: "button",
-        buttonId: "fullday",
-      };
-      const state = buildState({ inboundInteractive: interactive });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("provide_info");
-      expect(result.draftPatch.bookingType).toBe("FULL_DAY");
+      expect(result.draftPatch.bookingType).toBe(bookingType);
       expect(result.confidence).toBe(1);
     });
 
@@ -320,70 +296,52 @@ describe("LangGraphExtractorService", () => {
   });
 
   describe("extract - text messages", () => {
-    it("uses deterministic confirm intent in confirming stage without LLM call", async () => {
-      const state = buildState({
+    it.each([
+      {
+        name: "confirm intent in confirming stage",
         inboundMessage: "yes",
-        stage: "confirming",
-      });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("confirm");
-      expect(result.confidence).toBe(1);
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
-    });
-
-    it("uses deterministic reject intent in confirming stage without LLM call", async () => {
-      const state = buildState({
+        intent: "confirm",
+        confidence: 1,
+      },
+      {
+        name: "reject intent in confirming stage",
         inboundMessage: "no",
-        stage: "confirming",
-      });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("reject");
-      expect(result.confidence).toBe(1);
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
-    });
-
-    it("uses deterministic confirm intent for conversational affirmative message", async () => {
-      const state = buildState({
+        intent: "reject",
+        confidence: 1,
+      },
+      {
+        name: "confirm intent for conversational affirmative message",
         inboundMessage: "yes please, go ahead",
-        stage: "confirming",
-      });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("confirm");
-      expect(result.confidence).toBe(1);
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
-    });
-
-    it("uses deterministic reject intent for conversational negative message", async () => {
-      const state = buildState({
+        intent: "confirm",
+        confidence: 1,
+      },
+      {
+        name: "reject intent for conversational negative message",
         inboundMessage: "no, show me another option",
-        stage: "confirming",
-      });
-
-      const result = await service.extract(state);
-
-      expect(result.intent).toBe("reject");
-      expect(result.confidence).toBe(1);
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
-    });
-
-    it("uses low-confidence cancel intent for bare cancel in confirming stage", async () => {
-      const state = buildState({
+        intent: "reject",
+        confidence: 1,
+      },
+      {
+        name: "low-confidence cancel intent for bare cancel",
         inboundMessage: "cancel",
-        stage: "confirming",
-      });
+        intent: "cancel",
+        confidence: 0.6,
+      },
+    ] as const)(
+      "uses deterministic $name without LLM call",
+      async ({ inboundMessage, intent, confidence }) => {
+        const state = buildState({
+          inboundMessage,
+          stage: "confirming",
+        });
 
-      const result = await service.extract(state);
+        const result = await service.extract(state);
 
-      expect(result.intent).toBe("cancel");
-      expect(result.confidence).toBe(0.6);
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
-    });
+        expect(result.intent).toBe(intent);
+        expect(result.confidence).toBe(confidence);
+        expect(openaiMock.invoke).not.toHaveBeenCalled();
+      },
+    );
 
     it("extracts greeting intent", async () => {
       openaiMock.invoke.mockResolvedValue({

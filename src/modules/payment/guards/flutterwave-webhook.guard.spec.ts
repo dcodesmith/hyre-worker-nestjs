@@ -52,25 +52,13 @@ describe("FlutterwaveWebhookGuard", () => {
       expect(guard.canActivate(context)).toBe(false);
     });
 
-    it("should return false when verif-hash header is empty", () => {
+    it.each([
+      { name: "empty", hash: "" },
+      { name: "invalid", hash: "invalid-secret" },
+      { name: "different-length", hash: "short" },
+    ])("should return false for a $name verif-hash header", ({ hash }) => {
       const context = createMockExecutionContext({
-        "verif-hash": "",
-      });
-
-      expect(guard.canActivate(context)).toBe(false);
-    });
-
-    it("should return false for invalid signature", () => {
-      const context = createMockExecutionContext({
-        "verif-hash": "invalid-secret",
-      });
-
-      expect(guard.canActivate(context)).toBe(false);
-    });
-
-    it("should return false when signatures have different lengths", () => {
-      const context = createMockExecutionContext({
-        "verif-hash": "short",
+        "verif-hash": hash,
       });
 
       expect(guard.canActivate(context)).toBe(false);

@@ -14,6 +14,42 @@ import type {
   ResolvePlaceResponse,
 } from "./maps.interface";
 
+function stripTrailingPostalCode(address: string): string {
+  let end = address.length;
+  let digitCount = 0;
+
+  while (end > 0) {
+    const char = address[end - 1];
+    if (char < "0" || char > "9") {
+      break;
+    }
+    end -= 1;
+    digitCount += 1;
+  }
+
+  if (digitCount < 5 || digitCount > 6) {
+    return address.trim();
+  }
+
+  while (end > 0 && " \t\n\r".includes(address[end - 1])) {
+    end -= 1;
+  }
+
+  if (end > 0 && address[end - 1] === ",") {
+    end -= 1;
+  }
+
+  return address.slice(0, end).trim();
+}
+
+function stripLagosNigeriaSuffix(address: string): string {
+  const withoutCountry = address.replace(/,\s*Lagos,\s*Nigeria\.?$/i, "");
+  if (withoutCountry === address) {
+    return address.trim();
+  }
+  return stripTrailingPostalCode(withoutCountry);
+}
+
 @Injectable()
 export class GooglePlacesService {
   private readonly apiKey: string | undefined;
@@ -87,7 +123,6 @@ export class GooglePlacesService {
       {
         operation: "autocomplete",
         queryLength: query.length,
-        suggestions,
         suggestionsCount: suggestions.length,
         degraded,
       },
@@ -341,8 +376,8 @@ export class GooglePlacesService {
     const displayName = details.displayName?.text?.trim() ?? "";
     const displayNamePrefix = details.businessStatus && displayName ? `${displayName}, ` : "";
     const cleanedAddress = details.formattedAddress
-      ?.replace(/(?:,?\s*\d{5,6})?,\s*Lagos,\s*Nigeria\.?$/i, "")
-      .trim();
+      ? stripLagosNigeriaSuffix(details.formattedAddress)
+      : undefined;
     const reconstructedAddress = this.buildAddressFromComponents(details);
     const displayNameAddress = this.buildAddressFromDisplayName(details, cleanedAddress ?? null);
     const resolvedAddress = reconstructedAddress ?? displayNameAddress ?? cleanedAddress ?? "";

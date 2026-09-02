@@ -12,6 +12,14 @@ export type StorageSettings = {
   publicObjectUrlPrefix: string;
 };
 
+function stripTrailingSlashes(value: string): string {
+  let result = value;
+  while (result.endsWith("/")) {
+    result = result.slice(0, -1);
+  }
+  return result;
+}
+
 export function resolveStorageSettings(configService: ConfigService<EnvConfig>): StorageSettings {
   const get = <K extends keyof EnvConfig>(key: K) =>
     configService.get(key, { infer: true }) as NonNullable<EnvConfig[K]>;
@@ -29,7 +37,7 @@ export function resolveStorageSettings(configService: ConfigService<EnvConfig>):
       },
       bucketName: get("R2_IMAGES_BUCKET_NAME"),
       docsBucketName: get("R2_DOCS_BUCKET_NAME"),
-      publicObjectUrlPrefix: get("ASSET_PUBLIC_BASE_URL").replace(/\/+$/, ""),
+      publicObjectUrlPrefix: stripTrailingSlashes(get("ASSET_PUBLIC_BASE_URL")),
     };
   }
 

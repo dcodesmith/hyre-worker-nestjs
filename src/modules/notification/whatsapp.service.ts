@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import twilio, { type Twilio } from "twilio";
 import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { Template } from "./whatsapp.interface";
 
@@ -79,10 +80,7 @@ export class WhatsAppService {
       this.twilioClient = twilio(accountSid, authToken);
       this.logger.info("Twilio client initialized successfully");
     } catch (error) {
-      this.logger.error(
-        { error: error instanceof Error ? error.message : String(error) },
-        "Failed to initialize Twilio client",
-      );
+      this.logger.error({ err: toLogError(error) }, "Failed to initialize Twilio client");
       throw error;
     }
   }
@@ -109,38 +107,23 @@ export class WhatsAppService {
       "Attempting to send WhatsApp template",
     );
 
-    try {
-      const message = await this.twilioClient.messages.create({
-        to: `whatsapp:${to}`,
-        from: `whatsapp:${this.whatsAppNumber}`,
-        contentSid,
-        contentVariables: JSON.stringify(variables),
-      });
+    const message = await this.twilioClient.messages.create({
+      to: `whatsapp:${to}`,
+      from: `whatsapp:${this.whatsAppNumber}`,
+      contentSid,
+      contentVariables: JSON.stringify(variables),
+    });
 
-      this.logger.info(
-        {
-          sid: message.sid,
-          status: message.status,
-          recipient: maskedRecipient,
-          templateKey,
-        },
-        "WhatsApp message sent successfully",
-      );
-      return message;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      this.logger.error(
-        {
-          recipient: maskedRecipient,
-          templateKey,
-          error: errorMessage,
-        },
-        "Error sending WhatsApp message",
-      );
-
-      throw error;
-    }
+    this.logger.info(
+      {
+        sid: message.sid,
+        status: message.status,
+        recipient: maskedRecipient,
+        templateKey,
+      },
+      "WhatsApp message sent successfully",
+    );
+    return message;
   }
 
   private maskPhone(value: string): string {

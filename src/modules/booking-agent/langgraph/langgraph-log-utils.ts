@@ -1,3 +1,5 @@
+import { getErrorMessage } from "../../../common/logging/error-logging.helper";
+
 const STACK_SNIPPET_MAX_CHARS = 600;
 
 export interface NormalizedNodeError {
@@ -11,7 +13,7 @@ export function normalizeNodeError(error: unknown): NormalizedNodeError {
   if (!(error instanceof Error)) {
     return {
       errorName: "UnknownError",
-      errorMessage: String(error),
+      errorMessage: getErrorMessage(error),
     };
   }
 

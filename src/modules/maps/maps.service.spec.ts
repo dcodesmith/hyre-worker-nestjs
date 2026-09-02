@@ -1,6 +1,7 @@
 import { HttpStatus } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
@@ -14,6 +15,7 @@ import { MapsService } from "./maps.service";
 
 describe("MapsService", () => {
   let service: MapsService;
+  let logger: PinoLogger;
   let mockHttpClient: ReturnType<typeof createMockAxiosInstance>;
 
   const createService = async (apiKey: string | undefined) => {
@@ -37,7 +39,9 @@ describe("MapsService", () => {
       .useMocker(mockPinoLoggerToken)
       .compile();
 
-    return module.get<MapsService>(MapsService);
+    const created = module.get<MapsService>(MapsService);
+    logger = module.get(PinoLogger);
+    return created;
   };
 
   beforeEach(() => {
@@ -67,6 +71,13 @@ describe("MapsService", () => {
         expect(result.durationMinutes).toBe(60);
         expect(result.distanceMeters).toBe(25000);
         expect(result.isEstimate).toBe(false);
+        expect(logger.debug).toHaveBeenCalledWith(
+          expect.objectContaining({ destinationLength: "Victoria Island, Lagos".length }),
+          "Drive time calculated",
+        );
+        expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(
+          "Victoria Island, Lagos",
+        );
 
         expect(mockHttpClient.post).toHaveBeenCalledWith(
           "https://routes.googleapis.com/directions/v2:computeRoutes",
@@ -124,6 +135,10 @@ describe("MapsService", () => {
 
         expect(result.durationMinutes).toBe(180);
         expect(result.isEstimate).toBe(true);
+        expect(logger.warn).toHaveBeenCalledWith(
+          { destinationLength: "Invalid Address".length },
+          "No routes found",
+        );
       });
 
       it("should return fallback on network error", async () => {

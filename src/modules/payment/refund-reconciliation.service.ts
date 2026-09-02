@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { type Payment, PaymentAttemptStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService } from "../database/database.service";
 import type { FlutterwaveFetchedRefundData } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -49,7 +50,7 @@ export class RefundReconciliationService {
         this.logger.error(
           {
             paymentId: payment.id,
-            error: error instanceof Error ? error.message : String(error),
+            err: toLogError(error),
           },
           "Failed to reconcile refund",
         );
@@ -92,42 +93,56 @@ export class RefundReconciliationService {
       });
     }
 
-    let paymentToReconcile = payment;
-    if (!payment.refundProviderId) {
-      const result = await this.databaseService.payment.updateMany({
-        where: {
-          id: payment.id,
-          refundProviderId: null,
-          status: {
-            in: [PaymentAttemptStatus.REFUND_PROCESSING, PaymentAttemptStatus.REFUND_ERROR],
-          },
-        },
-        data: { refundProviderId },
-      });
-      if (result.count === 0) {
-        const currentPayment = await this.databaseService.payment.findUnique({
-          where: { id: payment.id },
-        });
-        if (
-          !currentPayment ||
-          (currentPayment.status !== PaymentAttemptStatus.REFUND_PROCESSING &&
-            currentPayment.status !== PaymentAttemptStatus.REFUND_ERROR)
-        ) {
-          return false;
-        }
-        if (currentPayment.refundProviderId !== refundProviderId) {
-          return this.refundFinalizationService.requestManualReview({
-            paymentId,
-            reason: `Webhook refund ID ${refundProviderId} does not match persisted refund ID ${currentPayment.refundProviderId ?? "missing"}`,
-          });
-        }
-        paymentToReconcile = currentPayment;
-      } else {
-        paymentToReconcile = { ...payment, refundProviderId };
-      }
+    const paymentToReconcile = await this.bindRefundProviderId(payment, refundProviderId);
+    if (paymentToReconcile === null) {
+      return false;
+    }
+    if (typeof paymentToReconcile === "boolean") {
+      return paymentToReconcile;
     }
 
     return this.reconcilePayment(paymentToReconcile);
+  }
+
+  private async bindRefundProviderId(
+    payment: Payment,
+    refundProviderId: string,
+  ): Promise<Payment | boolean | null> {
+    if (payment.refundProviderId) {
+      return payment;
+    }
+
+    const result = await this.databaseService.payment.updateMany({
+      where: {
+        id: payment.id,
+        refundProviderId: null,
+        status: {
+          in: [PaymentAttemptStatus.REFUND_PROCESSING, PaymentAttemptStatus.REFUND_ERROR],
+        },
+      },
+      data: { refundProviderId },
+    });
+    if (result.count !== 0) {
+      return { ...payment, refundProviderId };
+    }
+
+    const currentPayment = await this.databaseService.payment.findUnique({
+      where: { id: payment.id },
+    });
+    if (
+      !currentPayment ||
+      (currentPayment.status !== PaymentAttemptStatus.REFUND_PROCESSING &&
+        currentPayment.status !== PaymentAttemptStatus.REFUND_ERROR)
+    ) {
+      return null;
+    }
+    if (currentPayment.refundProviderId !== refundProviderId) {
+      return this.refundFinalizationService.requestManualReview({
+        paymentId: payment.id,
+        reason: `Webhook refund ID ${refundProviderId} does not match persisted refund ID ${currentPayment.refundProviderId ?? "missing"}`,
+      });
+    }
+    return currentPayment;
   }
 
   private async reconcilePayment(payment: Payment): Promise<boolean> {
@@ -261,7 +276,7 @@ export class RefundReconciliationService {
         paymentId: payment.id,
         refundProviderId: payment.refundProviderId,
         attempts,
-        error: error instanceof Error ? error.message : String(error),
+        err: toLogError(error),
       },
       "Failed to fetch refund status from Flutterwave",
     );

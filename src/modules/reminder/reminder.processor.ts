@@ -23,31 +23,19 @@ export class ReminderProcessor extends WorkerHost {
   async process(job: Job<ReminderJobData, { success: boolean; result?: string }, string>) {
     this.logger.info({ jobName: job.name, jobData: job.data }, "Processing reminder job");
 
-    try {
-      let result: string | undefined;
+    let result: string | undefined;
 
-      if (job.name === BOOKING_LEG_START_REMINDER) {
-        result = await this.reminderService.sendBookingStartReminders();
-        this.logger.info({ result }, "Booking start reminders processed");
-      } else if (job.name === BOOKING_LEG_END_REMINDER) {
-        result = await this.reminderService.sendBookingEndReminders();
-        this.logger.info({ result }, "Booking end reminders processed");
-      } else {
-        throw new Error(`Unknown reminder job type: ${job.name}`);
-      }
-
-      return { success: true, result };
-    } catch (error) {
-      this.logger.error(
-        {
-          jobName: job.name,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        },
-        "Failed to process reminder job",
-      );
-      throw error;
+    if (job.name === BOOKING_LEG_START_REMINDER) {
+      result = await this.reminderService.sendBookingStartReminders();
+      this.logger.info({ result }, "Booking start reminders processed");
+    } else if (job.name === BOOKING_LEG_END_REMINDER) {
+      result = await this.reminderService.sendBookingEndReminders();
+      this.logger.info({ result }, "Booking end reminders processed");
+    } else {
+      throw new Error(`Unknown reminder job type: ${job.name}`);
     }
+
+    return { success: true, result };
   }
 
   @OnWorkerEvent("completed")
@@ -62,8 +50,7 @@ export class ReminderProcessor extends WorkerHost {
       {
         jobName: job.name,
         jobId: job.id,
-        error: error.message,
-        stack: error.stack,
+        err: error,
         attempts: job.attemptsMade,
         maxAttempts: job.opts.attempts,
       },

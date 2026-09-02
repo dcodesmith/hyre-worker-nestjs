@@ -1,0 +1,15 @@
+export const PINO_REDACT_PATHS = [
+  "authorization",
+  "cookie",
+  "otp",
+  "password",
+  "token",
+  "accessToken",
+  "refreshToken",
+  "destinationAddress",
+  "*.destinationAddress",
+  "headers.authorization",
+  "headers.cookie",
+  "req.headers.authorization",
+  "req.headers.cookie",
+] as const;

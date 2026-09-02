@@ -73,13 +73,12 @@ export class ExtensionReservationService {
           },
         });
         if (
-          !extension ||
-          extension.bookingLeg.booking.userId !== userId ||
-          (extension.bookingLeg.booking.status !== BookingStatus.CONFIRMED &&
-            extension.bookingLeg.booking.status !== BookingStatus.ACTIVE) ||
-          extension.status !== "PENDING" ||
-          extension.paymentStatus !== PaymentStatus.UNPAID ||
-          extension.paymentIntent !== null
+          extension?.bookingLeg.booking.userId !== userId ||
+          (extension?.bookingLeg.booking.status !== BookingStatus.CONFIRMED &&
+            extension?.bookingLeg.booking.status !== BookingStatus.ACTIVE) ||
+          extension?.status !== "PENDING" ||
+          extension?.paymentStatus !== PaymentStatus.UNPAID ||
+          extension?.paymentIntent !== null
         ) {
           return false;
         }
@@ -140,7 +139,7 @@ export class ExtensionReservationService {
       const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
       const expired = reservation?.paymentSessionExpiresAt
         ? reservation.paymentSessionExpiresAt <= now
-        : Boolean(reservation && reservation.createdAt <= orphanedBefore);
+        : Boolean(reservation?.createdAt && reservation.createdAt <= orphanedBefore);
       if (
         !reservation ||
         reservation.status !== "PENDING" ||
@@ -194,8 +193,8 @@ export class ExtensionReservationService {
         (latest, leg) =>
           leg.extensions.reduce(
             (legLatest, extension) =>
-              extension.extensionEndTime > legLatest ? extension.extensionEndTime : legLatest,
-            leg.legEndTime > latest ? leg.legEndTime : latest,
+              new Date(Math.max(extension.extensionEndTime.getTime(), legLatest.getTime())),
+            new Date(Math.max(leg.legEndTime.getTime(), latest.getTime())),
           ),
         new Date(0),
       );

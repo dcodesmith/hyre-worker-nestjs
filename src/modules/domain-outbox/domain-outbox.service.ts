@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError, toPersistedErrorMessage } from "../../common/logging/error-logging.helper";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
@@ -99,7 +100,7 @@ export class DomainOutboxService {
           {
             outboxEventId: event.id,
             aggregateId: event.aggregateId,
-            error: error instanceof Error ? error.message : String(error),
+            err: toLogError(error),
           },
           "Failed to claim or process domain outbox event",
         );
@@ -113,24 +114,7 @@ export class DomainOutboxService {
     staleProcessingCutoff: Date,
     now: Date,
   ): Promise<number> {
-    const claimWhere =
-      event.status === DomainOutboxStatus.PROCESSING
-        ? {
-            id: event.id,
-            status: DomainOutboxStatus.PROCESSING,
-            updatedAt: { lte: staleProcessingCutoff },
-          }
-        : event.status === DomainOutboxStatus.DISPATCHED
-          ? {
-              id: event.id,
-              status: DomainOutboxStatus.DISPATCHED,
-              nextAttemptAt: { lte: now },
-            }
-          : {
-              id: event.id,
-              status: { in: [DomainOutboxStatus.PENDING, DomainOutboxStatus.FAILED] },
-              nextAttemptAt: { lte: now },
-            };
+    const claimWhere = this.claimWhere(event, staleProcessingCutoff, now);
     const claimed = await this.databaseService.domainOutboxEvent.updateMany({
       where: claimWhere,
       data: {
@@ -159,8 +143,7 @@ export class DomainOutboxService {
       });
       return 1;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.markFailed(event.id, currentAttempt, errorMessage);
+      await this.markFailed(event.id, currentAttempt, error);
 
       this.logger.error(
         {
@@ -168,7 +151,7 @@ export class DomainOutboxService {
           aggregateId: event.aggregateId,
           eventType: event.eventType,
           attempt: currentAttempt,
-          error: errorMessage,
+          err: toLogError(error),
         },
         "Failed processing domain outbox event",
       );
@@ -239,7 +222,7 @@ export class DomainOutboxService {
       terminal || dispatchAttempt >= MAX_ATTEMPTS
         ? DomainOutboxStatus.DEAD_LETTER
         : DomainOutboxStatus.FAILED;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = toPersistedErrorMessage(error);
 
     await this.databaseService.domainOutboxEvent.updateMany({
       where: {
@@ -281,6 +264,32 @@ export class DomainOutboxService {
         removeOnFail: { age: DISPATCHED_JOB_RETENTION_SECONDS },
       },
     );
+  }
+
+  private claimWhere(
+    event: ProcessableDomainOutboxEvent,
+    staleProcessingCutoff: Date,
+    now: Date,
+  ): Prisma.DomainOutboxEventWhereInput {
+    if (event.status === DomainOutboxStatus.PROCESSING) {
+      return {
+        id: event.id,
+        status: DomainOutboxStatus.PROCESSING,
+        updatedAt: { lte: staleProcessingCutoff },
+      };
+    }
+    if (event.status === DomainOutboxStatus.DISPATCHED) {
+      return {
+        id: event.id,
+        status: DomainOutboxStatus.DISPATCHED,
+        nextAttemptAt: { lte: now },
+      };
+    }
+    return {
+      id: event.id,
+      status: { in: [DomainOutboxStatus.PENDING, DomainOutboxStatus.FAILED] },
+      nextAttemptAt: { lte: now },
+    };
   }
 
   private computeNextAttemptAt(attempt: number): Date {

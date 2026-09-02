@@ -339,51 +339,7 @@ export class CarService {
 
   async updateCar(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
     try {
-      const existingCar = await this.databaseService.car.findFirst({
-        where: { id: carId, ownerId },
-        select: { id: true, registrationNumber: true, status: true },
-      });
-
-      if (!existingCar) {
-        throw new CarNotFoundException();
-      }
-
-      if (existingCar.status === Status.BOOKED && dto.status !== undefined) {
-        throw new CarStatusUpdateNotAllowedException();
-      }
-
-      const normalizedRegistrationNumber = dto.registrationNumber
-        ? this.normalizeRegistrationNumber(dto.registrationNumber)
-        : undefined;
-
-      if (
-        normalizedRegistrationNumber &&
-        normalizedRegistrationNumber !==
-          this.normalizeRegistrationNumber(existingCar.registrationNumber)
-      ) {
-        await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
-      }
-
-      const car = await this.databaseService.car.update({
-        where: {
-          id: carId,
-          ...(dto.status !== undefined && { status: { not: Status.BOOKED } }),
-        },
-        data: {
-          ...dto,
-          ...(normalizedRegistrationNumber && {
-            registrationNumber: normalizedRegistrationNumber,
-          }),
-          fuelUpgradeRate:
-            dto.pricingIncludesFuel === true ? null : (dto.fuelUpgradeRate ?? undefined),
-        },
-        include: this.carDetailsInclude,
-      });
-      return await this.carPromotionEnrichmentService.enrichCarWithPromotion({
-        car,
-        referenceDate: new Date(),
-        failureMessage: "Failed to enrich owner car with promotion",
-      });
+      return await this.applyCarUpdate(carId, ownerId, dto);
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -401,6 +357,54 @@ export class CarService {
       );
       throw new CarUpdateFailedException();
     }
+  }
+
+  private async applyCarUpdate(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
+    const existingCar = await this.databaseService.car.findFirst({
+      where: { id: carId, ownerId },
+      select: { id: true, registrationNumber: true, status: true },
+    });
+
+    if (!existingCar) {
+      throw new CarNotFoundException();
+    }
+
+    if (existingCar.status === Status.BOOKED && dto.status !== undefined) {
+      throw new CarStatusUpdateNotAllowedException();
+    }
+
+    const normalizedRegistrationNumber = dto.registrationNumber
+      ? this.normalizeRegistrationNumber(dto.registrationNumber)
+      : undefined;
+
+    if (
+      normalizedRegistrationNumber &&
+      normalizedRegistrationNumber !==
+        this.normalizeRegistrationNumber(existingCar.registrationNumber)
+    ) {
+      await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
+    }
+
+    const car = await this.databaseService.car.update({
+      where: {
+        id: carId,
+        ...(dto.status !== undefined && { status: { not: Status.BOOKED } }),
+      },
+      data: {
+        ...dto,
+        ...(normalizedRegistrationNumber && {
+          registrationNumber: normalizedRegistrationNumber,
+        }),
+        fuelUpgradeRate:
+          dto.pricingIncludesFuel === true ? null : (dto.fuelUpgradeRate ?? undefined),
+      },
+      include: this.carDetailsInclude,
+    });
+    return this.carPromotionEnrichmentService.enrichCarWithPromotion({
+      car,
+      referenceDate: new Date(),
+      failureMessage: "Failed to enrich owner car with promotion",
+    });
   }
 
   /**

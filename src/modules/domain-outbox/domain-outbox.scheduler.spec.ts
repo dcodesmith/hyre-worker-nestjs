@@ -68,7 +68,7 @@ describe("DomainOutboxScheduler", () => {
 
     expect(domainOutboxService.processPendingEvents).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
-      { error: "Database unavailable" },
+      { err: expect.objectContaining({ message: "Database unavailable" }) },
       "Failed to process domain outbox events",
     );
   });

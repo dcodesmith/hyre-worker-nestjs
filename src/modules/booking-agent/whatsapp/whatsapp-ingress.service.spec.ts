@@ -1,5 +1,6 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Test, type TestingModule } from "@nestjs/testing";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
@@ -18,6 +19,7 @@ describe("WhatsAppIngressService", () => {
     isUniqueViolation: ReturnType<typeof vi.fn>;
   };
   let whatsappAgentQueue: { add: ReturnType<typeof vi.fn> };
+  let logger: PinoLogger;
 
   beforeEach(async () => {
     persistenceService = {
@@ -55,6 +57,7 @@ describe("WhatsAppIngressService", () => {
       .compile();
 
     service = moduleRef.get(WhatsAppIngressService);
+    logger = moduleRef.get(PinoLogger);
   });
 
   it("skips status callback payloads", async () => {
@@ -98,5 +101,18 @@ describe("WhatsAppIngressService", () => {
     ).rejects.toThrow("queue down");
 
     expect(persistenceService.deleteInboundMessage).toHaveBeenCalledWith("msg-1");
+  });
+
+  it("does not log an invalid raw phone number", async () => {
+    const invalidPhone = "whatsapp:not-a-phone";
+    await service.handleInbound({
+      From: invalidPhone,
+      MessageSid: "SM321",
+      Body: "hello",
+      NumMedia: "0",
+    });
+
+    expect(logger.debug).toHaveBeenCalledWith("Skipping non-customer webhook payload");
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(invalidPhone);
   });
 });

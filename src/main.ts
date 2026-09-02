@@ -13,7 +13,7 @@ import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import type { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
-import { Logger as PinoLogger } from "nestjs-pino";
+import { Logger as NestPinoLogger, PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import type { EnvConfig } from "./config/env.config";
@@ -32,7 +32,7 @@ async function bootstrap() {
 
     // Use Pino logger for all application logging
     // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
-    app.useLogger(app.get(PinoLogger));
+    app.useLogger(app.get(NestPinoLogger));
 
     // Security headers
     app.use(helmet());
@@ -74,7 +74,7 @@ async function bootstrap() {
 
     // Register global exception filter
     // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
+    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost, app.get(PinoLogger)));
 
     app.enableShutdownHooks();
 

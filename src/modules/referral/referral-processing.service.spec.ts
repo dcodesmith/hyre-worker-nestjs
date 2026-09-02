@@ -70,46 +70,28 @@ describe("ReferralProcessingService", () => {
   });
 
   describe("processReferralCompletionForBooking - Configuration-Based Early Returns", () => {
-    it("should skip processing when REFERRAL_ENABLED is false", async () => {
+    it.each([
+      {
+        name: "REFERRAL_ENABLED is false",
+        enabled: false,
+        releaseCondition: "COMPLETED",
+      },
+      {
+        name: "REFERRAL_RELEASE_CONDITION is PAID (not COMPLETED)",
+        enabled: true,
+        releaseCondition: "PAID",
+      },
+      {
+        name: "REFERRAL_ENABLED is false AND REFERRAL_RELEASE_CONDITION is PAID",
+        enabled: false,
+        releaseCondition: "PAID",
+      },
+    ])("should skip processing when $name", async ({ enabled, releaseCondition }) => {
       vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: false, updatedAt: new Date(), updatedBy: "system" },
+        { key: "REFERRAL_ENABLED", value: enabled, updatedAt: new Date(), updatedBy: "system" },
         {
           key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-      ]);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when REFERRAL_RELEASE_CONDITION is PAID (not COMPLETED)", async () => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "PAID",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-      ]);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when REFERRAL_ENABLED is false AND REFERRAL_RELEASE_CONDITION is PAID", async () => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: false, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "PAID",
+          value: releaseCondition,
           updatedAt: new Date(),
           updatedBy: "system",
         },

@@ -227,6 +227,18 @@ describe("DomainOutboxService", () => {
     });
   });
 
+  it("does not persist arbitrary properties from non-Error failures", async () => {
+    await service.markFailed("outbox-1", 1, { token: "secret" });
+
+    expect(domainOutboxEvent.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lastError: "Unknown error",
+        }),
+      }),
+    );
+  });
+
   it("reclaims stale processing events and counts the retry attempt", async () => {
     domainOutboxEvent.findMany.mockResolvedValueOnce([
       {

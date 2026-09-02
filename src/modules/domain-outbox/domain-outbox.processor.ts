@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { DomainOutboxEventType } from "@prisma/client";
 import type { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
 import {
   PayoutBookingNotCompletedException,
@@ -77,7 +78,7 @@ export class DomainOutboxProcessor extends WorkerHost {
           this.logger.error(
             {
               outboxEventId: job.data.outboxEventId,
-              error: markError instanceof Error ? markError.message : String(markError),
+              err: toLogError(markError),
             },
             "Failed to persist terminal domain outbox job failure",
           );

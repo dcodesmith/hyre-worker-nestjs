@@ -92,6 +92,10 @@ export function isInboundCustomerMessage(payload: TwilioInboundWebhookPayload): 
   return true;
 }
 
+function asInteractiveString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 /**
  * Parse interactive reply data from Twilio raw payload.
  * Twilio sends ButtonPayload/ButtonText for quick reply buttons,
@@ -113,8 +117,8 @@ export function parseInteractiveReply(rawPayload: unknown): {
   if (payload.ButtonPayload || payload.ButtonText) {
     return {
       type: "button",
-      buttonId: String(payload.ButtonPayload ?? ""),
-      title: payload.ButtonText ? String(payload.ButtonText) : undefined,
+      buttonId: asInteractiveString(payload.ButtonPayload) ?? "",
+      title: asInteractiveString(payload.ButtonText),
     };
   }
 
@@ -122,8 +126,8 @@ export function parseInteractiveReply(rawPayload: unknown): {
   if (payload.ListId || payload.ListTitle) {
     return {
       type: "list_reply",
-      listRowId: payload.ListId ? String(payload.ListId) : undefined,
-      title: payload.ListTitle ? String(payload.ListTitle) : undefined,
+      listRowId: asInteractiveString(payload.ListId),
+      title: asInteractiveString(payload.ListTitle),
     };
   }
 

@@ -1,6 +1,5 @@
-import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { EnvConfig } from "src/config/env.config";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { EmailService } from "../email/email.service";
@@ -12,21 +11,14 @@ vi.mock("../../templates/emails", () => ({
 
 describe("AuthEmailService", () => {
   let service: AuthEmailService;
+  let logger: PinoLogger;
 
   const mockEmailService = {
     sendEmail: vi.fn(),
   };
 
-  const mockConfigService = {
-    get: vi.fn(),
-  };
-
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
-      if (key === "NODE_ENV") return "production";
-      return undefined;
-    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -35,16 +27,13 @@ describe("AuthEmailService", () => {
           provide: EmailService,
           useValue: mockEmailService,
         },
-        {
-          provide: ConfigService<EnvConfig>,
-          useValue: mockConfigService,
-        },
       ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
 
     service = module.get<AuthEmailService>(AuthEmailService);
+    logger = module.get(PinoLogger);
   });
   describe("sendOTPEmail", () => {
     const testEmail = "user@example.com";
@@ -79,16 +68,16 @@ describe("AuthEmailService", () => {
       expect(renderAuthOTPEmail).toHaveBeenCalledWith({ otp: testOTP });
     });
 
-    it("should send OTP email in development", async () => {
-      mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
-        if (key === "NODE_ENV") return "development";
-        return undefined;
-      });
+    it("should not log the OTP or full email address", async () => {
       mockEmailService.sendEmail.mockResolvedValueOnce({ data: { id: "email-123" } });
 
       await service.sendOTPEmail(testEmail, testOTP);
 
-      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith({ email: "u***@example.com" }, "Sending OTP email");
+      expect(logger.info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ email: testEmail, otp: testOTP }),
+        expect.any(String),
+      );
     });
   });
 });

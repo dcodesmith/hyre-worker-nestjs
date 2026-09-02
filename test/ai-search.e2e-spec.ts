@@ -5,7 +5,10 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
-import { AiSearchTimeoutException } from "../src/modules/ai-search/ai-search.error";
+import {
+  AiSearchErrorCode,
+  AiSearchTimeoutException,
+} from "../src/modules/ai-search/ai-search.error";
 import { OpenAiAiSearchExtractorService } from "../src/modules/ai-search/openai-ai-search-extractor.service";
 
 describe("AI Search E2E Tests", () => {
@@ -69,6 +72,9 @@ describe("AI Search E2E Tests", () => {
       .send({ query: "Need a car" });
 
     expect(response.status).toBe(HttpStatus.GATEWAY_TIMEOUT);
-    expect(response.body.detail).toBe("AI search request timed out. Please try again.");
+    expect(response.body).toMatchObject({
+      errorCode: AiSearchErrorCode.AI_SEARCH_TIMEOUT,
+      detail: "Internal server error",
+    });
   });
 });
