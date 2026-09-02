@@ -58,12 +58,12 @@ export class TwilioWebhookGuard implements CanActivate {
     return typeof signature === "string" ? signature : null;
   }
 
-  private normalizeBodyParams(body: unknown): Record<string, string> | null {
+  private normalizeBodyParams(body: unknown): Record<string, string | string[]> | null {
     if (!body || typeof body !== "object") {
       return null;
     }
 
-    const params: Record<string, string> = {};
+    const params: Record<string, string | string[]> = {};
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       if (value === null || value === undefined) {
         continue;
@@ -73,7 +73,7 @@ export class TwilioWebhookGuard implements CanActivate {
         continue;
       }
       if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-        params[key] = value.join(",");
+        params[key] = value;
         continue;
       }
       return null;

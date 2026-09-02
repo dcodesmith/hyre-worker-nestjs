@@ -6,6 +6,7 @@ import { serializeErrorForLog } from "../../../common/logging/error-logging.help
 import { RequestIdMiddleware } from "../../../common/middlewares/request-id.middleware";
 import { type EnvConfig } from "../../../config/env.config";
 import { parseOtlpHeaders } from "../../../config/tracing.config";
+import { PINO_REDACT_PATHS } from "./pino-redact.const";
 
 @Module({
   imports: [
@@ -66,19 +67,7 @@ import { parseOtlpHeaders } from "../../../config/tracing.config";
             level: process.env.LOG_LEVEL || (isDev ? "debug" : "info"),
             transport: targets.length > 0 ? { targets } : undefined,
             redact: {
-              paths: [
-                "authorization",
-                "cookie",
-                "otp",
-                "password",
-                "token",
-                "accessToken",
-                "refreshToken",
-                "headers.authorization",
-                "headers.cookie",
-                "req.headers.authorization",
-                "req.headers.cookie",
-              ],
+              paths: [...PINO_REDACT_PATHS],
               censor: "[REDACTED]",
             },
             autoLogging: {

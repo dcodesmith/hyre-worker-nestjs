@@ -75,7 +75,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       type: problem.type,
       title: problem.title,
       status: problem.status,
-      detail: problem.detail,
+      detail: "Internal server error",
       ...(problem.instance && { instance: problem.instance }),
       ...(problem.errorCode && { errorCode: problem.errorCode }),
     };

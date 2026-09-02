@@ -82,14 +82,24 @@ describe("TwilioWebhookGuard", () => {
     },
   );
 
-  it("normalizes arrays of strings before validating the signature", () => {
-    const params = { MessageSid: "SM123", Tags: "one,two" };
+  it("preserves string arrays so repeated Twilio parameters validate", () => {
+    const params = { MessageSid: "SM123", Tags: ["one", "two"] };
     const signature = twilio.getExpectedTwilioSignature(authToken, webhookUrl, params);
+    const context = createContext({ "x-twilio-signature": signature }, params);
+
+    expect(guard.canActivate(context)).toBe(true);
+  });
+
+  it("rejects a comma-joined signature for an array body", () => {
+    const signature = twilio.getExpectedTwilioSignature(authToken, webhookUrl, {
+      MessageSid: "SM123",
+      Tags: "one,two",
+    });
     const context = createContext(
       { "x-twilio-signature": signature },
       { MessageSid: "SM123", Tags: ["one", "two"] },
     );
 
-    expect(guard.canActivate(context)).toBe(true);
+    expect(guard.canActivate(context)).toBe(false);
   });
 });

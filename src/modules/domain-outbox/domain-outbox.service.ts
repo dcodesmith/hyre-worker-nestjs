@@ -143,8 +143,7 @@ export class DomainOutboxService {
       });
       return 1;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.markFailed(event.id, currentAttempt, errorMessage);
+      await this.markFailed(event.id, currentAttempt, error);
 
       this.logger.error(
         {
@@ -152,7 +151,7 @@ export class DomainOutboxService {
           aggregateId: event.aggregateId,
           eventType: event.eventType,
           attempt: currentAttempt,
-          error: errorMessage,
+          err: toLogError(error),
         },
         "Failed processing domain outbox event",
       );

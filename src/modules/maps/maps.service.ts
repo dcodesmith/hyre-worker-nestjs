@@ -65,7 +65,7 @@ export class MapsService {
       });
 
       if (!data.routes || data.routes.length === 0) {
-        this.logger.warn({ destinationAddress }, "No routes found");
+        this.logger.warn({ destinationLength: destinationAddress.length }, "No routes found");
         return { durationMinutes: FALLBACK_DURATION_MINUTES, distanceMeters: 0, isEstimate: true };
       }
 
@@ -75,7 +75,7 @@ export class MapsService {
 
       this.logger.debug(
         {
-          destinationAddress,
+          destinationLength: destinationAddress.length,
           durationMinutes,
           distanceMeters: route.distanceMeters,
         },
@@ -94,7 +94,7 @@ export class MapsService {
         {
           status: errorInfo.status,
           error: errorInfo.message,
-          destinationAddress,
+          destinationLength: destinationAddress.length,
         },
         "Google Routes API error",
       );

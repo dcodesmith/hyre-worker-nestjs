@@ -1,4 +1,4 @@
-import { BadRequestException, HttpStatus } from "@nestjs/common";
+import { BadRequestException, HttpStatus, InternalServerErrorException } from "@nestjs/common";
 import type { HttpAdapterHost } from "@nestjs/core";
 import { describe, expect, it, vi } from "vitest";
 import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
@@ -181,11 +181,39 @@ describe("GlobalExceptionFilter", () => {
 
     expect(reply).toHaveBeenCalledWith(
       response,
-      expect.not.objectContaining({
-        details: expect.anything(),
+      expect.objectContaining({
+        status: HttpStatus.BAD_GATEWAY,
+        type: "PROVIDER_FAILED",
+        errorCode: "PROVIDER_FAILED",
+        detail: "Internal server error",
       }),
       HttpStatus.BAD_GATEWAY,
     );
+    expect(reply.mock.calls[0][1]).not.toHaveProperty("details");
+  });
+
+  it("does not expose InternalServerErrorException messages in 500 responses", () => {
+    const { reply, getRequestUrl, response, host } = createHostMocks();
+    const adapterHost = {
+      httpAdapter: {
+        reply,
+        getRequestUrl,
+      },
+    } as unknown as HttpAdapterHost;
+    const filter = new GlobalExceptionFilter(adapterHost, createMockPinoLogger());
+    const exception = new InternalServerErrorException("sensitive value");
+
+    filter.catch(exception, host as unknown as Parameters<GlobalExceptionFilter["catch"]>[1]);
+
+    expect(reply).toHaveBeenCalledWith(
+      response,
+      expect.objectContaining({
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        detail: "Internal server error",
+      }),
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    expect(JSON.stringify(reply.mock.calls[0][1])).not.toContain("sensitive value");
   });
 
   it("uses a safe fallback for non-string HttpException messages", () => {
