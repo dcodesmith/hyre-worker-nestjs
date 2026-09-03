@@ -4,7 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
-  Logger,
+  Inject,
 } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { PinoLogger } from "nestjs-pino";
@@ -29,13 +29,11 @@ type ExceptionLogger = Pick<PinoLogger, "setContext" | "error" | "warn">;
  */
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  private readonly fallbackLogger = new Logger(GlobalExceptionFilter.name);
-
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
-    private readonly logger?: ExceptionLogger,
+    @Inject(PinoLogger) private readonly logger: ExceptionLogger,
   ) {
-    this.logger?.setContext(GlobalExceptionFilter.name);
+    this.logger.setContext(GlobalExceptionFilter.name);
   }
 
   catch(exception: unknown, host: ArgumentsHost): void {
@@ -238,39 +236,28 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (httpStatus >= 500) {
       const error = toLogError(exception);
-      if (this.logger) {
-        this.logger.error(
-          {
-            err: error,
-            method,
-            url,
-            httpStatus,
-            ...(errorCode && { errorCode }),
-          },
-          `${errorCodePrefix}HTTP request failed`,
-        );
-      } else {
-        this.fallbackLogger.error(
-          `${errorCodePrefix}${method} ${url} - ${error.message}`,
-          error.stack,
-        );
-      }
+      this.logger.error(
+        {
+          err: error,
+          method,
+          url,
+          httpStatus,
+          ...(errorCode && { errorCode }),
+        },
+        `${errorCodePrefix}HTTP request failed`,
+      );
     } else if (httpStatus >= 400) {
       const error = getErrorMessage(exception);
-      if (this.logger) {
-        this.logger.warn(
-          {
-            method,
-            url,
-            httpStatus,
-            error,
-            ...(errorCode && { errorCode }),
-          },
-          `${errorCodePrefix}HTTP request rejected`,
-        );
-      } else {
-        this.fallbackLogger.warn(`${errorCodePrefix}${method} ${url} - ${error}`);
-      }
+      this.logger.warn(
+        {
+          method,
+          url,
+          httpStatus,
+          error,
+          ...(errorCode && { errorCode }),
+        },
+        `${errorCodePrefix}HTTP request rejected`,
+      );
     }
   }
 }

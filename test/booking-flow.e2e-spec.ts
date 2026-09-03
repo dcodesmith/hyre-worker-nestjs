@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingReservationService } from "../src/modules/booking/booking-reservation.service";
 import type { CreateBookingDto } from "../src/modules/booking/dto/create-booking.dto";
@@ -58,9 +56,6 @@ describe("Booking Flow E2E", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
-
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);

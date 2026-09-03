@@ -1,10 +1,8 @@
 import { HttpStatus, INestApplication } from "@nestjs/common";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -28,9 +26,6 @@ describe("Auth E2E Tests", () => {
     app = moduleFixture.createNestApplication({
       logger: false,
     });
-
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     databaseService = app.get(DatabaseService);
     factory = new TestDataFactory(databaseService);
