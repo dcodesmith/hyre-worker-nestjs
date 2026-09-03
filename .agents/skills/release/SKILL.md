@@ -1,11 +1,14 @@
 ---
 name: release
-description: Inspect or promote a tested main commit to a versioned production release
+description: Inspect release status or promote a tested main commit to a versioned production release.
+disable-model-invocation: true
 ---
+
+# Release
 
 Follow `docs/release-command.md` exactly.
 
-Treat `$ARGUMENTS` as the optional command argument:
+Interpret invocation arguments as follows:
 
 - `status` performs the read-only status workflow.
 - `vMAJOR.MINOR.PATCH` prepares that explicit version.

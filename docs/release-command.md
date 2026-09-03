@@ -1,14 +1,18 @@
 # Release command
 
-`/release` is a safe frontend for `.github/workflows/fly-production.yml`. The GitHub workflow is
-the only path that deploys production, whether the release starts from Cursor, Claude, the GitHub
-Actions UI, or `gh`.
+The repository skill at `.agents/skills/release/SKILL.md` is a safe frontend for
+`.github/workflows/fly-production.yml`. Invoke it as `/release` in Cursor or `$release` in Codex.
+Claude does not currently document automatic `.agents/skills/` discovery; Claude users must ask it
+to follow the Skill file explicitly. The GitHub workflow is the only path that deploys production,
+whether the release starts from an agent, the GitHub Actions UI, or `gh`.
 
 ## Commands
 
 - `/release status` reports release and deployment state without making changes.
 - `/release` prepares and dispatches the next production release after confirmation.
 - `/release vMAJOR.MINOR.PATCH` uses an explicit version after validating it.
+
+Use the equivalent `$release` forms in Codex.
 
 ## Source of truth
 

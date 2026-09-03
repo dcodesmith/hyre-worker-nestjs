@@ -82,7 +82,10 @@ When a custom API domain is introduced, update `DOMAIN`, `AUTH_BASE_URL`, `TRUST
 The service is currently unreleased development software. `package.json` uses `0.1.0` as
 development metadata, but the first official stable production release will be `v1.0.0`.
 
-`/release` in Cursor or Claude inspects commits since the latest GitHub release and recommends:
+The repository skill at `.agents/skills/release/SKILL.md` powers `/release` in Cursor and
+`$release` in Codex. Claude does not currently document automatic `.agents/skills/` discovery, so
+Claude users must explicitly ask it to follow that file. The workflow inspects commits since the
+latest GitHub release and recommends:
 
 - `fix:` proposes a patch version.
 - `feat:` proposes a minor version.
@@ -91,6 +94,7 @@ development metadata, but the first official stable production release will be `
 The command shows the candidate SHA, proposed version, and changes before asking for confirmation.
 It then dispatches the same manual production workflow and waits for the GitHub environment
 approval. `/release status` is read-only, and `/release v1.2.3` requests an explicit version.
+In Codex, use the corresponding `$release status` and `$release v1.2.3` forms.
 
 The complete agent contract and manual procedure are in
 [`docs/release-command.md`](release-command.md).
