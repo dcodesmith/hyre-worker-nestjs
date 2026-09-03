@@ -1,11 +1,9 @@
 import { HttpStatus, type INestApplication } from "@nestjs/common";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import twilio from "twilio";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 
 describe("Messaging E2E Tests", () => {
@@ -29,8 +27,6 @@ describe("Messaging E2E Tests", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
     await app.init();
   });
 

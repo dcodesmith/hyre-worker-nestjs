@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PaymentAttemptStatus } from "@prisma/client";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { ExtensionReservationService } from "../src/modules/booking/extension-reservation.service";
 import { DatabaseService } from "../src/modules/database/database.service";
@@ -87,9 +85,6 @@ describe("Payments E2E Tests", () => {
     app = moduleFixture.createNestApplication({
       logger: false,
     });
-
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     databaseService = app.get(DatabaseService);
     flutterwaveService = app.get(FlutterwaveService);

@@ -1,10 +1,8 @@
 import type { INestApplication } from "@nestjs/common";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppMessageKind } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/langgraph/langgraph.const";
@@ -94,8 +92,6 @@ describe("Booking Agent", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
     await app.init();
 
     databaseService = app.get(DatabaseService);

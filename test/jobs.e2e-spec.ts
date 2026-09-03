@@ -1,10 +1,8 @@
 import { HttpStatus, type INestApplication } from "@nestjs/common";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 
 describe("Jobs E2E Tests", () => {
   let app: INestApplication;
@@ -19,8 +17,6 @@ describe("Jobs E2E Tests", () => {
     });
 
     // Register global exception filter (same as in main.ts)
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     await app.init();
   });

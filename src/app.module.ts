@@ -1,7 +1,9 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { APP_FILTER } from "@nestjs/core";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ThrottlerModule } from "@nestjs/throttler";
+import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import { validateEnvironment } from "./config/env.config";
 import { AccountModule } from "./modules/account/account.module";
 import { AiSearchModule } from "./modules/ai-search/ai-search.module";
@@ -38,6 +40,12 @@ import { RootController } from "./root.controller";
 
 @Module({
   controllers: [RootController],
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: GlobalExceptionFilter,
+    },
+  ],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,

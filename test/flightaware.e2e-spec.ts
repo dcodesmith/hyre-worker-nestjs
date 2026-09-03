@@ -1,14 +1,12 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingStatus, BookingType, FlightStatus, PaymentStatus } from "@prisma/client";
 import type { Queue } from "bullmq";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { createHmacSignature } from "../src/common/security/webhook-signature.helper";
 import { NOTIFICATIONS_QUEUE } from "../src/config/constants";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
@@ -49,8 +47,6 @@ describe("FlightAware E2E Tests", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
 
     databaseService = app.get(DatabaseService);
     factory = new TestDataFactory(databaseService, app);

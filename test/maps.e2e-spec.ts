@@ -1,10 +1,8 @@
 import { HttpStatus, type INestApplication } from "@nestjs/common";
-import { HttpAdapterHost } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
-import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { MapsService } from "../src/modules/maps/maps.service";
 import { TRIP_DURATION_THROTTLE_CONFIG } from "../src/modules/maps/maps-throttling.config";
@@ -29,8 +27,6 @@ describe("Maps E2E Tests", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
     mapsService = moduleFixture.get(MapsService);
 
     await app.init();

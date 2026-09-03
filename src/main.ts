@@ -9,13 +9,12 @@ process.on("unhandledRejection", (reason, promise) => {
 
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpAdapterHost, NestFactory } from "@nestjs/core";
+import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import type { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
-import { Logger as NestPinoLogger, PinoLogger } from "nestjs-pino";
+import { Logger as NestPinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
-import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import type { EnvConfig } from "./config/env.config";
 import { AuthService } from "./modules/auth/auth.service";
 import { isOriginAllowed } from "./modules/auth/origin-pattern";
@@ -68,13 +67,6 @@ async function bootstrap() {
         exposedHeaders: ["Set-Cookie", "Content-Disposition"],
       });
     }
-
-    // Get HttpAdapterHost for platform-agnostic exception filter
-    const httpAdapterHost = app.get(HttpAdapterHost);
-
-    // Register global exception filter
-    // biome-ignore lint/correctness/useHookAtTopLevel: <nestjs hook, not react>
-    app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost, app.get(PinoLogger)));
 
     app.enableShutdownHooks();
 
