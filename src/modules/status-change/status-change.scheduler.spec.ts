@@ -39,9 +39,16 @@ describe("StatusChangeScheduler", () => {
     it("should add confirmed to active job to queue", async () => {
       await scheduler.scheduleConfirmedToActiveUpdates();
 
-      expect(statusUpdateQueue.add).toHaveBeenCalledWith(CONFIRMED_TO_ACTIVE, {
-        type: CONFIRMED_TO_ACTIVE,
-      });
+      expect(statusUpdateQueue.add).toHaveBeenCalledWith(
+        CONFIRMED_TO_ACTIVE,
+        {
+          type: CONFIRMED_TO_ACTIVE,
+        },
+        {
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        },
+      );
     });
 
     it("should handle errors when queueing fails", async () => {
@@ -57,9 +64,16 @@ describe("StatusChangeScheduler", () => {
     it("should add active to completed job to queue", async () => {
       await scheduler.scheduleActiveToCompletedUpdates();
 
-      expect(statusUpdateQueue.add).toHaveBeenCalledWith(ACTIVE_TO_COMPLETED, {
-        type: ACTIVE_TO_COMPLETED,
-      });
+      expect(statusUpdateQueue.add).toHaveBeenCalledWith(
+        ACTIVE_TO_COMPLETED,
+        {
+          type: ACTIVE_TO_COMPLETED,
+        },
+        {
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        },
+      );
     });
 
     it("should handle errors when queueing fails", async () => {

@@ -49,8 +49,10 @@ jobs:
         # Pin to v1.4 - check for updates with: gh api repos/superfly/flyctl-actions/tags --jq '.[0].name'
         uses: superfly/flyctl-actions/setup-flyctl@v1.4
       
-      - name: Validate Fly.io config
-        run: flyctl config validate
+      - name: Validate Fly.io configs
+        run: |
+          flyctl config validate --config fly.toml
+          flyctl config validate --config fly.production.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 

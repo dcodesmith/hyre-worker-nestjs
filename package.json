@@ -1,6 +1,6 @@
 {
   "name": "hyre-worker",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "packageManager": "pnpm@10.20.0",
   "scripts": {
     "build": "npx prisma generate && nest build",

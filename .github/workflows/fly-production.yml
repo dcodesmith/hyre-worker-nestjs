@@ -1,0 +1,248 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tested commit SHA or tag from main
+        required: true
+        default: main
+      version:
+        description: New production version tag (for example, v1.0.0)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_APP: hyre-worker-nestjs-production
+  PRODUCTION_URL: https://hyre-worker-nestjs-production.fly.dev
+
+jobs:
+  verify:
+    name: Verify release candidate
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_sha: ${{ steps.release.outputs.deploy_sha }}
+      release_version: ${{ steps.release.outputs.release_version }}
+    steps:
+      - name: Checkout selected release
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a commit from main
+        id: release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          git fetch origin main
+          DEPLOY_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$DEPLOY_SHA" origin/main; then
+            echo "Selected ref must resolve to a commit contained in main."
+            exit 1
+          fi
+
+          if ! printf '%s' "$RELEASE_VERSION" |
+            grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "Version must use stable semantic version format vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+          if git rev-parse --quiet --verify "refs/tags/$RELEASE_VERSION" >/dev/null; then
+            echo "Version tag $RELEASE_VERSION already exists."
+            exit 1
+          fi
+
+          LATEST_VERSION="$(
+            git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname |
+              awk 'NR == 1 { print; exit }'
+          )"
+          RELEASE_VERSION="$RELEASE_VERSION" LATEST_VERSION="$LATEST_VERSION" node - <<'NODE'
+          const parse = (value) => value.slice(1).split(".").map(Number);
+          const candidate = parse(process.env.RELEASE_VERSION);
+          const latestRaw = process.env.LATEST_VERSION;
+
+          if (latestRaw) {
+            const latest = parse(latestRaw);
+            let comparison = 0;
+
+            for (let index = 0; index < candidate.length; index += 1) {
+              if (candidate[index] !== latest[index]) {
+                comparison = candidate[index] - latest[index];
+                break;
+              }
+            }
+
+            if (comparison <= 0) {
+              console.error(
+                `Version ${process.env.RELEASE_VERSION} must be greater than ${latestRaw}.`,
+              );
+              process.exit(1);
+            }
+          }
+          NODE
+
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.20.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        run: pnpm test --run
+
+      - name: Run type check
+        run: pnpm type-check
+
+      - name: Build application
+        run: pnpm build
+
+  deploy:
+    name: Deploy approved release
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ env.PRODUCTION_URL }}
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Checkout verified release
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.deploy_sha }}
+          persist-credentials: false
+
+      - name: Compute safety branch expiration
+        run: echo "BACKUP_EXPIRES_AT=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Create production database safety branch
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: backup/production-${{ github.run_id }}-${{ github.run_attempt }}
+          parent_branch: main
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ env.BACKUP_EXPIRES_AT }}
+
+      - name: Resolve Neon main database URLs
+        id: neon_main
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: main
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Verify production app exists
+        run: flyctl status --app "$PRODUCTION_APP" >/dev/null
+
+      - name: Stage production database URLs
+        env:
+          DATABASE_URL: ${{ steps.neon_main.outputs.db_url_pooled }}
+          DIRECT_DATABASE_URL: ${{ steps.neon_main.outputs.db_url }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$DIRECT_DATABASE_URL" ]; then
+            echo "Neon main database URLs could not be resolved."
+            exit 1
+          fi
+          {
+            printf 'DATABASE_URL=%s\n' "$DATABASE_URL"
+            printf 'DIRECT_DATABASE_URL=%s\n' "$DIRECT_DATABASE_URL"
+          } | flyctl secrets import --stage --app "$PRODUCTION_APP"
+
+      - name: Deploy selected release
+        run: |
+          flyctl deploy \
+            --remote-only \
+            --config fly.production.toml \
+            --app "$PRODUCTION_APP" \
+            --strategy rolling
+
+      - name: Verify production health
+        run: |
+          for attempt in {1..30}; do
+            if ROOT_RESPONSE="$(curl --fail --silent --show-error "$PRODUCTION_URL/")" &&
+              printf '%s' "$ROOT_RESPONSE" |
+                jq -e '.status == "ok" and .environment == "production"' >/dev/null &&
+              curl --fail --silent --show-error "$PRODUCTION_URL/health" >/dev/null; then
+              echo "Production deployment is healthy."
+              exit 0
+            fi
+            echo "Waiting for production health (${attempt}/30)..."
+            sleep 10
+          done
+          echo "Production health verification timed out."
+          flyctl status --app "$PRODUCTION_APP" || true
+          flyctl logs --app "$PRODUCTION_APP" --no-tail || true
+          exit 1
+
+      - name: Add deployment summary
+        run: |
+          {
+            echo "## Production deployment"
+            echo ""
+            echo "- Version: \`${{ needs.verify.outputs.release_version }}\`"
+            echo "- Commit: \`${{ needs.verify.outputs.deploy_sha }}\`"
+            echo "- App: \`${PRODUCTION_APP}\`"
+            echo "- URL: ${PRODUCTION_URL}"
+            echo "- Neon branch: \`main\`"
+            echo "- Safety branch: \`backup/production-${{ github.run_id }}-${{ github.run_attempt }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Tag healthy production release
+    needs: [verify, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release and version tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ needs.verify.outputs.deploy_sha }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+        run: |
+          gh release create "$RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$DEPLOY_SHA" \
+            --title "$RELEASE_VERSION" \
+            --generate-notes
+
+      - name: Add release summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+        run: |
+          RELEASE_URL="$(
+            gh release view "$RELEASE_VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json url \
+              --jq .url
+          )"
+          {
+            echo "## GitHub release"
+            echo ""
+            echo "- Version: \`${RELEASE_VERSION}\`"
+            echo "- Release: ${RELEASE_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"

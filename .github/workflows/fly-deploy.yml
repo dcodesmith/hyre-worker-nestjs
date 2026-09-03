@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy app
@@ -31,10 +36,34 @@ jobs:
       TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: ${{ vars.TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID }}
       TWILIO_REFUND_SUCCEEDED_CONTENT_SID: ${{ vars.TWILIO_REFUND_SUCCEEDED_CONTENT_SID }}
     steps:
+      - name: Create or reuse Neon development branch
+        id: neon_development
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: development
+          parent_branch: main
+          api_key: ${{ secrets.NEON_API_KEY }}
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: superfly/flyctl-actions/setup-flyctl@v1.4
+
+      - name: Stage development database URLs
+        env:
+          DATABASE_URL: ${{ steps.neon_development.outputs.db_url_pooled }}
+          DIRECT_DATABASE_URL: ${{ steps.neon_development.outputs.db_url }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$DIRECT_DATABASE_URL" ]; then
+            echo "Neon development database URLs could not be resolved."
+            exit 1
+          fi
+          {
+            printf 'DATABASE_URL=%s\n' "$DATABASE_URL"
+            printf 'DIRECT_DATABASE_URL=%s\n' "$DIRECT_DATABASE_URL"
+          } | flyctl secrets import --stage --app hyre-worker-nestjs
+
       - name: Deploy to Fly.io
         run: |
           flyctl deploy --remote-only \
