@@ -88,6 +88,63 @@ jobs:
       - name: Get branch expiration date (2 weeks from now)
         run: echo "EXPIRES_AT=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
+      - name: Create or reuse Neon development parent
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: development
+          parent_branch: main
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Migrate legacy preview branch parent
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          PREVIEW_BRANCH: ${{ needs.setup.outputs.neon_branch }}
+        run: |
+          BRANCHES_URL="https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches"
+          fetch_branch() {
+            curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 30 \
+              --get \
+              --header "Authorization: Bearer ${NEON_API_KEY}" \
+              --data-urlencode "search=$1" \
+              "$BRANCHES_URL"
+          }
+
+          DEVELOPMENT_BRANCHES="$(fetch_branch development)"
+          DEVELOPMENT_BRANCH_ID="$(
+            printf '%s' "$DEVELOPMENT_BRANCHES" |
+              jq -r '[.branches[] | select(.name == "development")][0].id // empty'
+          )"
+          if [ -z "$DEVELOPMENT_BRANCH_ID" ]; then
+            echo "Neon development branch could not be resolved."
+            exit 1
+          fi
+
+          PREVIEW_BRANCHES="$(fetch_branch "$PREVIEW_BRANCH")"
+          PREVIEW_BRANCH_ID="$(
+            printf '%s' "$PREVIEW_BRANCHES" |
+              jq -r --arg name "$PREVIEW_BRANCH" \
+                '[.branches[] | select(.name == $name)][0].id // empty'
+          )"
+          PREVIEW_PARENT_ID="$(
+            printf '%s' "$PREVIEW_BRANCHES" |
+              jq -r --arg name "$PREVIEW_BRANCH" \
+                '[.branches[] | select(.name == $name)][0].parent_id // empty'
+          )"
+
+          if [ -n "$PREVIEW_BRANCH_ID" ] && [ "$PREVIEW_PARENT_ID" != "$DEVELOPMENT_BRANCH_ID" ]; then
+            echo "Recreating legacy preview branch from development."
+            curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 30 \
+              --request DELETE \
+              --header "Authorization: Bearer ${NEON_API_KEY}" \
+              "${BRANCHES_URL}/${PREVIEW_BRANCH_ID}?hard_delete=true" >/dev/null
+          fi
+
       - name: Create Neon branch
         id: create_neon_branch
         uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b
@@ -259,7 +316,7 @@ jobs:
           echo "REDIS_URL=$REDIS_URL_VALUE" >> "$GITHUB_ENV"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10.20.0
 

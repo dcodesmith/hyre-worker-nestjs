@@ -15,6 +15,8 @@ manually promoted to production after verification and approval.
 - Production uses a dedicated Redis instance and production integration credentials.
 - Never point preview, local, or development `DATABASE_URL` at Neon `main`.
 - Neon `main` must be protected. Preview branches are disposable; `development` is long-lived.
+- The preview workflow creates `development` if it is missing and recreates only legacy preview
+  branches whose parent is not `development`.
 - Production migrations must be backward-compatible with the previous app release. A Neon safety
   branch is a recovery snapshot, not a substitute for expand-and-contract migrations.
 
@@ -22,7 +24,7 @@ manually promoted to production after verification and approval.
 
 `.github/workflows/fly-deploy.yml` runs after a merge to `main` or by manual dispatch. It creates or
 reuses Neon `development`, stages its pooled and direct database URLs on the existing Fly app, runs
-the release migration, and deploys the selected `main` code.
+the release migration, and deploys the selected `main` code. Manual runs are restricted to `main`.
 
 ## First production deployment
 
@@ -57,15 +59,16 @@ For a manual release, open GitHub Actions, choose **Deploy Production** from `ma
 
 The workflow:
 
-1. Validates that the version is new and greater than existing versions.
+1. Validates that the version is new and greater than the latest stable GitHub release.
 2. Confirms that the selected commit is contained in `main`.
-3. Re-runs unit tests, type checking, and the build.
-4. Waits for approval from the GitHub `production` environment.
-5. Creates a 14-day Neon safety branch from `main`.
-6. Stages Neon `main` pooled and direct URLs without printing credentials.
-7. Runs Prisma migrations in the Fly release command and deploys the selected commit.
-8. Verifies the root response reports `production` and the health endpoint succeeds.
-9. Creates the version tag and GitHub release with generated release notes.
+3. Requires successful E2E, type-check, and development-deployment runs for that exact commit.
+4. Re-runs unit tests, type checking, and the build.
+5. Waits for approval from the GitHub `production` environment.
+6. Creates a 14-day Neon safety branch from `main`.
+7. Stages Neon `main` pooled and direct URLs without printing credentials.
+8. Runs Prisma migrations in the Fly release command and deploys the selected commit.
+9. Verifies the root response reports `production` and the health endpoint succeeds.
+10. Creates the version tag and GitHub release with generated release notes.
 
 The tag is created only after production is healthy. A failed test, rejected approval, failed
 migration, failed deployment, or failed health check does not create a release.

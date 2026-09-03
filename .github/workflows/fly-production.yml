@@ -12,6 +12,7 @@ on:
         required: true
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -31,7 +32,7 @@ jobs:
       release_version: ${{ steps.release.outputs.release_version }}
     steps:
       - name: Checkout selected release
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -40,6 +41,7 @@ jobs:
       - name: Require a commit from main
         id: release
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           git fetch origin main
@@ -48,6 +50,29 @@ jobs:
             echo "Selected ref must resolve to a commit contained in main."
             exit 1
           fi
+
+          require_successful_workflow() {
+            WORKFLOW_FILE="$1"
+            WORKFLOW_NAME="$2"
+            RUN_ID="$(
+              gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --workflow "$WORKFLOW_FILE" \
+                --commit "$DEPLOY_SHA" \
+                --status success \
+                --limit 1 \
+                --json databaseId \
+                --jq '.[0].databaseId // empty'
+            )"
+            if [ -z "$RUN_ID" ]; then
+              echo "$WORKFLOW_NAME must succeed for commit $DEPLOY_SHA before production deployment."
+              exit 1
+            fi
+          }
+
+          require_successful_workflow e2e.yml "E2E Tests"
+          require_successful_workflow typecheck.yml "Type Check"
+          require_successful_workflow fly-deploy.yml "Development deployment"
 
           if ! printf '%s' "$RELEASE_VERSION" |
             grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
@@ -61,44 +86,55 @@ jobs:
           fi
 
           LATEST_VERSION="$(
-            git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname |
-              awk 'NR == 1 { print; exit }'
+            gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/releases" \
+              -f per_page=100 \
+              --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // empty'
           )"
-          RELEASE_VERSION="$RELEASE_VERSION" LATEST_VERSION="$LATEST_VERSION" node - <<'NODE'
+          if [ -z "$LATEST_VERSION" ]; then
+            if [ "$RELEASE_VERSION" != "v1.0.0" ]; then
+              echo "The first stable production release must be v1.0.0."
+              exit 1
+            fi
+          elif ! printf '%s' "$LATEST_VERSION" |
+            grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "Latest stable GitHub release $LATEST_VERSION is not a valid vMAJOR.MINOR.PATCH tag."
+            exit 1
+          else
+            RELEASE_VERSION="$RELEASE_VERSION" LATEST_VERSION="$LATEST_VERSION" node - <<'NODE'
           const parse = (value) => value.slice(1).split(".").map(Number);
           const candidate = parse(process.env.RELEASE_VERSION);
           const latestRaw = process.env.LATEST_VERSION;
+          const latest = parse(latestRaw);
+          let comparison = 0;
 
-          if (latestRaw) {
-            const latest = parse(latestRaw);
-            let comparison = 0;
-
-            for (let index = 0; index < candidate.length; index += 1) {
-              if (candidate[index] !== latest[index]) {
-                comparison = candidate[index] - latest[index];
-                break;
-              }
-            }
-
-            if (comparison <= 0) {
-              console.error(
-                `Version ${process.env.RELEASE_VERSION} must be greater than ${latestRaw}.`,
-              );
-              process.exit(1);
+          for (let index = 0; index < candidate.length; index += 1) {
+            if (candidate[index] !== latest[index]) {
+              comparison = candidate[index] - latest[index];
+              break;
             }
           }
+
+          if (comparison <= 0) {
+            console.error(
+              `Version ${process.env.RELEASE_VERSION} must be greater than ${latestRaw}.`,
+            );
+            process.exit(1);
+          }
           NODE
+          fi
 
           echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
           echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10.20.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
@@ -126,7 +162,7 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - name: Checkout verified release
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.verify.outputs.deploy_sha }}
           persist-credentials: false
@@ -152,7 +188,7 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+        uses: superfly/flyctl-actions/setup-flyctl@dfdfedc86b296f5e5384f755a18bf400409a15d0 # v1.4
 
       - name: Verify production app exists
         run: flyctl status --app "$PRODUCTION_APP" >/dev/null
@@ -182,10 +218,10 @@ jobs:
       - name: Verify production health
         run: |
           for attempt in {1..30}; do
-            if ROOT_RESPONSE="$(curl --fail --silent --show-error "$PRODUCTION_URL/")" &&
+            if ROOT_RESPONSE="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "$PRODUCTION_URL/")" &&
               printf '%s' "$ROOT_RESPONSE" |
                 jq -e '.status == "ok" and .environment == "production"' >/dev/null &&
-              curl --fail --silent --show-error "$PRODUCTION_URL/health" >/dev/null; then
+              curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "$PRODUCTION_URL/health" >/dev/null; then
               echo "Production deployment is healthy."
               exit 0
             fi

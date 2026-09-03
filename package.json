@@ -141,7 +141,7 @@
       "fast-uri": "3.1.7",
       "@protobufjs/utf8": "1.1.1",
       "hono": "4.13.5",
-      "mysql2": "3.22.0",
+      "mysql2": "3.24.3",
       "@vitest/mocker": "4.1.11",
       "langsmith": "0.7.1",
       "@hono/node-server": "1.19.17",

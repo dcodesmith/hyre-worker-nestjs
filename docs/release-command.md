@@ -74,12 +74,13 @@ production workflow owns migrations, deployment, health verification, tagging, a
 The workflow:
 
 1. Validates the version and confirms the candidate belongs to `main`.
-2. Re-runs unit tests, type checking, and the build.
-3. Waits for GitHub production-environment approval.
-4. Creates a temporary Neon safety branch.
-5. Migrates Neon `main` and deploys the candidate to the production Fly app.
-6. Verifies the production root and health endpoints.
-7. Only after a healthy deployment, creates the version tag and GitHub release.
+2. Requires successful E2E, type-check, and development-deployment runs for that exact commit.
+3. Re-runs unit tests, type checking, and the build.
+4. Waits for GitHub production-environment approval.
+5. Creates a temporary Neon safety branch.
+6. Migrates Neon `main` and deploys the candidate to the production Fly app.
+7. Verifies the production root and health endpoints with bounded requests.
+8. Only after a healthy deployment, creates the version tag and GitHub release.
 
 ## Manual release
 
