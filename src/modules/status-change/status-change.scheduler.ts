@@ -13,6 +13,11 @@ import {
 import { StatusUpdateSchedulingFailedException } from "./status-change.error";
 import { StatusUpdateJobData } from "./status-change.interface";
 
+const SCHEDULED_STATUS_JOB_RETENTION = {
+  removeOnComplete: 100,
+  removeOnFail: 50,
+} as const;
+
 @Injectable()
 export class StatusChangeScheduler {
   constructor(
@@ -28,9 +33,13 @@ export class StatusChangeScheduler {
     this.logger.info("Scheduling confirmed to active status updates");
 
     try {
-      await this.statusUpdateQueue.add(CONFIRMED_TO_ACTIVE, {
-        type: CONFIRMED_TO_ACTIVE,
-      });
+      await this.statusUpdateQueue.add(
+        CONFIRMED_TO_ACTIVE,
+        {
+          type: CONFIRMED_TO_ACTIVE,
+        },
+        SCHEDULED_STATUS_JOB_RETENTION,
+      );
     } catch (error) {
       const schedulingError = new StatusUpdateSchedulingFailedException(
         CONFIRMED_TO_ACTIVE,
@@ -48,9 +57,13 @@ export class StatusChangeScheduler {
     this.logger.info("Scheduling active to completed status updates");
 
     try {
-      await this.statusUpdateQueue.add(ACTIVE_TO_COMPLETED, {
-        type: ACTIVE_TO_COMPLETED,
-      });
+      await this.statusUpdateQueue.add(
+        ACTIVE_TO_COMPLETED,
+        {
+          type: ACTIVE_TO_COMPLETED,
+        },
+        SCHEDULED_STATUS_JOB_RETENTION,
+      );
     } catch (error) {
       const schedulingError = new StatusUpdateSchedulingFailedException(
         ACTIVE_TO_COMPLETED,

@@ -27,9 +27,9 @@ jobs:
       # Pin to v7 - check for updates with: gh api repos/actions/checkout/tags --jq '.[0].name'
       - uses: actions/checkout@v7
 
-      # Pin to v4 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
+      # Pin to v6.0.10 - check for updates with: gh api repos/pnpm/action-setup/tags --jq '.[0].name'
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       # Pin to v7 - check for updates with: gh api repos/actions/setup-node/tags --jq '.[0].name'
       - name: Setup Node.js
@@ -49,8 +49,10 @@ jobs:
         # Pin to v1.4 - check for updates with: gh api repos/superfly/flyctl-actions/tags --jq '.[0].name'
         uses: superfly/flyctl-actions/setup-flyctl@v1.4
       
-      - name: Validate Fly.io config
-        run: flyctl config validate
+      - name: Validate Fly.io configs
+        run: |
+          flyctl config validate --config fly.toml
+          flyctl config validate --config fly.production.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
