@@ -245,3 +245,37 @@ describe("envSchema APP_ENV", () => {
     expect(result.APP_ENV).toBe("production");
   });
 });
+
+describe("envSchema deployment metadata", () => {
+  it("uses local defaults", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+    });
+
+    expect(result.DEPLOYMENT_VERSION).toBe("local");
+    expect(result.DEPLOYMENT_COMMIT).toBe("local");
+  });
+
+  it("accepts a deployment version and full git SHA", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      DEPLOYMENT_VERSION: "v1.0.0",
+      DEPLOYMENT_COMMIT: "a".repeat(40),
+    });
+
+    expect(result.DEPLOYMENT_VERSION).toBe("v1.0.0");
+    expect(result.DEPLOYMENT_COMMIT).toBe("a".repeat(40));
+  });
+
+  it("rejects an abbreviated deployment commit", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      DEPLOYMENT_COMMIT: "abc1234",
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

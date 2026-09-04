@@ -208,19 +208,33 @@ jobs:
           } | flyctl secrets import --stage --app "$PRODUCTION_APP"
 
       - name: Deploy selected release
+        env:
+          DEPLOYMENT_COMMIT: ${{ needs.verify.outputs.deploy_sha }}
+          DEPLOYMENT_VERSION: ${{ needs.verify.outputs.release_version }}
         run: |
           flyctl deploy \
             --remote-only \
             --config fly.production.toml \
             --app "$PRODUCTION_APP" \
-            --strategy rolling
+            --strategy rolling \
+            --env "DEPLOYMENT_COMMIT=$DEPLOYMENT_COMMIT" \
+            --env "DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION"
 
       - name: Verify production health
+        env:
+          DEPLOYMENT_COMMIT: ${{ needs.verify.outputs.deploy_sha }}
+          DEPLOYMENT_VERSION: ${{ needs.verify.outputs.release_version }}
         run: |
           for attempt in {1..30}; do
             if ROOT_RESPONSE="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "$PRODUCTION_URL/")" &&
               printf '%s' "$ROOT_RESPONSE" |
-                jq -e '.status == "ok" and .environment == "production"' >/dev/null &&
+                jq -e \
+                  --arg version "$DEPLOYMENT_VERSION" \
+                  --arg commit "$DEPLOYMENT_COMMIT" \
+                  '.status == "ok"
+                   and .environment == "production"
+                   and .deployment.version == $version
+                   and .deployment.commit == $commit' >/dev/null &&
               curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "$PRODUCTION_URL/health" >/dev/null; then
               echo "Production deployment is healthy."
               exit 0

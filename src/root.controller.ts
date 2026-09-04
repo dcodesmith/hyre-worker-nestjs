@@ -6,6 +6,10 @@ type RootInfoResponse = {
   service: string;
   status: "ok";
   environment: string;
+  deployment: {
+    version: string;
+    commit: string;
+  };
   timestamp: string;
 };
 
@@ -19,6 +23,10 @@ export class RootController {
       service: "hyre-worker-nestjs",
       status: "ok",
       environment: this.configService.get("APP_ENV", { infer: true }) ?? "unknown",
+      deployment: {
+        version: this.configService.get("DEPLOYMENT_VERSION", { infer: true }) ?? "unknown",
+        commit: this.configService.get("DEPLOYMENT_COMMIT", { infer: true }) ?? "unknown",
+      },
       timestamp: new Date().toISOString(),
     };
   }

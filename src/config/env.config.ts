@@ -131,6 +131,13 @@ export const envSchema = z
 
     APP_NAME: z.string().min(1, "APP_NAME is required"),
     APP_ENV: z.enum(["preview", "development", "production"]).default("development"),
+    DEPLOYMENT_COMMIT: z
+      .union([
+        z.literal("local"),
+        z.string().regex(/^[0-9a-f]{40}$/i, "DEPLOYMENT_COMMIT must be a full git SHA"),
+      ])
+      .default("local"),
+    DEPLOYMENT_VERSION: z.string().min(1).max(128).default("local"),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z
