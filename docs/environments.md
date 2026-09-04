@@ -92,6 +92,7 @@ truth for production versions; the first official stable production release will
 - preview: `pr-<number>-<short-sha>`;
 - development: `dev-<short-sha>`;
 - production: the selected release version, such as `v1.0.0`.
+- local: both `deployment.version` and `deployment.commit` default to `local`.
 
 The response includes the full deployed commit as `deployment.commit`. Preview, development, and
 production workflows verify these values against the revision they deployed.
