@@ -1,8 +1,9 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { STAFF } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
-import { UsersUserNotFoundException } from "./users.error";
+import { UsersStaffRoleConflictException, UsersUserNotFoundException } from "./users.error";
 import { UsersService } from "./users.service";
 
 const profile = {
@@ -21,30 +22,40 @@ const recordNotFoundError = () =>
 
 describe("UsersService", () => {
   let service: UsersService;
-  let databaseService: DatabaseService;
+  let databaseService: {
+    user: {
+      findUnique: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
+    };
+  };
 
   beforeEach(async () => {
+    databaseService = {
+      user: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        update: vi.fn(),
+        create: vi.fn(),
+      },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
         {
           provide: DatabaseService,
-          useValue: {
-            user: {
-              findUnique: vi.fn(),
-              update: vi.fn(),
-            },
-          },
+          useValue: databaseService,
         },
       ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
-    databaseService = module.get<DatabaseService>(DatabaseService);
   });
 
   it("returns the current user's editable profile", async () => {
-    vi.mocked(databaseService.user.findUnique).mockResolvedValue(profile as never);
+    databaseService.user.findUnique.mockResolvedValue(profile);
 
     await expect(service.getCurrentUserProfile("user-1")).resolves.toEqual(profile);
     expect(databaseService.user.findUnique).toHaveBeenCalledWith({
@@ -60,7 +71,7 @@ describe("UsersService", () => {
   });
 
   it("throws not found when the current user is missing", async () => {
-    vi.mocked(databaseService.user.findUnique).mockResolvedValue(null);
+    databaseService.user.findUnique.mockResolvedValue(null);
 
     await expect(service.getCurrentUserProfile("missing-user")).rejects.toThrow(
       UsersUserNotFoundException,
@@ -69,7 +80,7 @@ describe("UsersService", () => {
 
   it("updates only the provided profile fields", async () => {
     const updated = { ...profile, city: "Abuja", marketingConsent: true };
-    vi.mocked(databaseService.user.update).mockResolvedValue(updated as never);
+    databaseService.user.update.mockResolvedValue(updated);
 
     const result = await service.updateCurrentUserProfile("user-1", {
       city: "Abuja",
@@ -98,7 +109,7 @@ describe("UsersService", () => {
   });
 
   it("throws not found when updating a missing user", async () => {
-    vi.mocked(databaseService.user.update).mockRejectedValue(recordNotFoundError());
+    databaseService.user.update.mockRejectedValue(recordNotFoundError());
 
     await expect(
       service.updateCurrentUserProfile("missing-user", { city: "Lagos" }),
@@ -107,10 +118,101 @@ describe("UsersService", () => {
 
   it("rethrows unexpected update errors", async () => {
     const unexpected = new Error("db failure");
-    vi.mocked(databaseService.user.update).mockRejectedValue(unexpected);
+    databaseService.user.update.mockRejectedValue(unexpected);
 
     await expect(service.updateCurrentUserProfile("user-1", { city: "Lagos" })).rejects.toBe(
       unexpected,
+    );
+  });
+
+  describe("createStaff", () => {
+    const staffDto = {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+    };
+    const staffMember = {
+      id: "staff-1",
+      name: staffDto.name,
+      email: staffDto.email,
+      phoneNumber: staffDto.phoneNumber,
+      createdAt: new Date("2026-01-15T00:00:00.000Z"),
+    };
+    const staffSelect = {
+      id: true,
+      name: true,
+      email: true,
+      phoneNumber: true,
+      createdAt: true,
+    };
+
+    const emailLookup = {
+      where: { email: { equals: staffDto.email, mode: "insensitive" } },
+      select: { id: true, roles: { select: { name: true } } },
+    };
+
+    it("creates a staff member when no matching email exists", async () => {
+      databaseService.user.findFirst.mockResolvedValue(null);
+      databaseService.user.create.mockResolvedValue(staffMember);
+
+      await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
+      expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.user.create).toHaveBeenCalledWith({
+        data: {
+          name: staffDto.name,
+          email: staffDto.email,
+          phoneNumber: staffDto.phoneNumber,
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffSelect,
+      });
+      expect(databaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("connects staff on the existing path without updating profile fields", async () => {
+      const existing = {
+        ...staffMember,
+        name: "Original Name",
+        phoneNumber: "+2348011111111",
+      };
+      databaseService.user.findFirst.mockResolvedValue({
+        id: existing.id,
+        roles: [{ name: "user" }],
+      });
+      databaseService.user.update.mockResolvedValue(existing);
+
+      const result = await service.createStaff({
+        name: "Should Not Overwrite",
+        email: staffDto.email,
+        phoneNumber: "+2348099999999",
+      });
+
+      expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: existing.id },
+        data: {
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffSelect,
+      });
+      expect(databaseService.user.create).not.toHaveBeenCalled();
+      expect(result).toEqual(existing);
+    });
+
+    it.each(["admin", "fleetOwner", "chauffeur"])(
+      "rejects an existing user with the %s role",
+      async (role) => {
+        databaseService.user.findFirst.mockResolvedValue({
+          id: "incompatible-1",
+          roles: [{ name: role }],
+        });
+
+        await expect(service.createStaff(staffDto)).rejects.toBeInstanceOf(
+          UsersStaffRoleConflictException,
+        );
+        expect(databaseService.user.update).not.toHaveBeenCalled();
+        expect(databaseService.user.create).not.toHaveBeenCalled();
+      },
     );
   });
 });

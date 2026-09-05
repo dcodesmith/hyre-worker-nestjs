@@ -150,7 +150,7 @@ async function initializeWorkerIsolation(): Promise<void> {
       `);
     });
 
-    const roles = ["user", "fleetOwner", "admin", "staff"];
+    const roles = ["user", "fleetOwner", "admin", "staff", "chauffeur"];
     for (const roleName of roles) {
       await workerPrisma.role.upsert({
         where: { name: roleName },

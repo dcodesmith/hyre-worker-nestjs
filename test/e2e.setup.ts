@@ -105,7 +105,7 @@ export async function setup() {
     ]);
     const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
     try {
-      const roles = ["user", "fleetOwner", "admin", "staff"];
+      const roles = ["user", "fleetOwner", "admin", "staff", "chauffeur"];
       for (const roleName of roles) {
         await prisma.role.upsert({
           where: { name: roleName },
