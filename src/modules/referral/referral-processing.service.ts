@@ -9,6 +9,7 @@ import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { ReferralRewardReleasedHandler } from "../notification/handlers/referral-reward-released.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { loadReferralProgramConfig } from "./referral-program-config";
 
 @Injectable()
 export class ReferralProcessingService {
@@ -30,35 +31,13 @@ export class ReferralProcessingService {
    * - Sets booking.referralStatus = REWARDED
    */
   async processReferralCompletionForBooking(bookingId: string) {
-    // Load config
-    const configs = await this.databaseService.referralProgramConfig.findMany();
-    const configMap = configs.reduce<Record<string, unknown>>((acc, c) => {
-      acc[c.key] = c.value;
-      return acc;
-    }, {});
+    const config = await loadReferralProgramConfig(this.databaseService.referralProgramConfig);
 
-    const REFERRAL_ENABLED = configMap.REFERRAL_ENABLED ?? true;
-    const REFERRAL_RELEASE_CONDITION = (configMap.REFERRAL_RELEASE_CONDITION ?? "COMPLETED") as
-      | "PAID"
-      | "COMPLETED";
-
-    if (REFERRAL_RELEASE_CONDITION !== "PAID" && REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
-      this.logger.warn(
-        {
-          value: REFERRAL_RELEASE_CONDITION,
-        },
-        "Invalid REFERRAL_RELEASE_CONDITION value",
-      );
-      return;
-    }
-
-    const REFERRAL_EXPIRY_DAYS = Number(configMap.REFERRAL_EXPIRY_DAYS ?? 0);
-
-    if (!REFERRAL_ENABLED || REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
+    if (!config.enabled || config.releaseCondition !== "COMPLETED") {
       this.logger.info(
         {
-          REFERRAL_ENABLED,
-          REFERRAL_RELEASE_CONDITION,
+          REFERRAL_ENABLED: config.enabled,
+          REFERRAL_RELEASE_CONDITION: config.releaseCondition,
         },
         "Skipping referral completion due to config",
       );
@@ -118,18 +97,18 @@ export class ReferralProcessingService {
           select: { referralSignupAt: true, referralDiscountUsed: true },
         });
 
-        if (REFERRAL_EXPIRY_DAYS > 0 && referee?.referralSignupAt) {
+        if (config.expiryDays > 0 && referee?.referralSignupAt) {
           const daysSinceSignup = Math.floor(
             (Date.now() - referee.referralSignupAt.getTime()) / (1000 * 60 * 60 * 24),
           );
 
-          if (daysSinceSignup > REFERRAL_EXPIRY_DAYS) {
+          if (daysSinceSignup > config.expiryDays) {
             this.logger.warn(
               {
                 bookingId: booking.id,
                 userId: booking.userId,
                 daysSinceSignup,
-                expiryDays: REFERRAL_EXPIRY_DAYS,
+                expiryDays: config.expiryDays,
               },
               "Referral expired before completion; not releasing reward",
             );
