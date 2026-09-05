@@ -265,6 +265,23 @@ All jobs run **hourly** using `@nestjs/schedule` cron decorators:
 ### Health & Monitoring
 
 ```http
+GET /
+```
+Returns service and deployment identity
+```json
+{
+  "service": "hyre-worker-nestjs",
+  "status": "ok",
+  "environment": "development",
+  "deployment": {
+    "version": "dev-d347228",
+    "commit": "d34722851726fa61d8ae4339fe8b8514f0882d5b"
+  },
+  "timestamp": "2026-09-04T21:00:00.000Z"
+}
+```
+
+```http
 GET /health
 ```
 Returns service health status

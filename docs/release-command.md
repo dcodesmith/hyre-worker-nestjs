@@ -79,7 +79,8 @@ The workflow:
 4. Waits for GitHub production-environment approval.
 5. Creates a temporary Neon safety branch.
 6. Migrates Neon `main` and deploys the candidate to the production Fly app.
-7. Verifies the production root and health endpoints with bounded requests.
+7. Verifies the production root reports the selected version and commit, and checks the health
+   endpoint with bounded requests.
 8. Only after a healthy deployment, creates the version tag and GitHub release.
 
 ## Manual release

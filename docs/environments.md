@@ -67,7 +67,8 @@ The workflow:
 6. Creates a 14-day Neon safety branch from `main`.
 7. Stages Neon `main` pooled and direct URLs without printing credentials.
 8. Runs Prisma migrations in the Fly release command and deploys the selected commit.
-9. Verifies the root response reports `production` and the health endpoint succeeds.
+9. Verifies the root response reports the selected production version and commit, and the health
+   endpoint succeeds.
 10. Creates the version tag and GitHub release with generated release notes.
 
 The tag is created only after production is healthy. A failed test, rejected approval, failed
@@ -82,8 +83,19 @@ When a custom API domain is introduced, update `DOMAIN`, `AUTH_BASE_URL`, `TRUST
 
 ## Release versions
 
-The service is currently unreleased development software. `package.json` uses `0.1.0` as
-development metadata, but the first official stable production release will be `v1.0.0`.
+The service is currently unreleased development software. GitHub release tags are the source of
+truth for production versions; the first official stable production release will be `v1.0.0`.
+`package.json` has no version because this service is not published as an npm package.
+
+`GET /` reports the running deployment independently of package metadata:
+
+- preview: `pr-<number>-<short-sha>`;
+- development: `dev-<short-sha>`;
+- production: the selected release version, such as `v1.0.0`.
+- local: both `deployment.version` and `deployment.commit` default to `local`.
+
+The response includes the full deployed commit as `deployment.commit`. Preview, development, and
+production workflows verify these values against the revision they deployed.
 
 The repository skill at `.agents/skills/release/SKILL.md` powers `/release` in Cursor and
 `$release` in Codex. Claude does not currently document automatic `.agents/skills/` discovery, so

@@ -391,6 +391,15 @@ jobs:
           echo "::add-mask::$REDIS_URL_VALUE"
           echo "redis_url=$REDIS_URL_VALUE" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare deployment metadata
+        id: metadata
+        env:
+          DEPLOYMENT_COMMIT: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "commit=${DEPLOYMENT_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "version=pr-${PR_NUMBER}-${DEPLOYMENT_COMMIT:0:7}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy PR app to Fly.io
         id: deploy
         uses: superfly/fly-pr-review-apps@5d9f067254bebd0aaa77d908d6337b63f4d4f019
@@ -401,6 +410,8 @@ jobs:
           secrets: >-
             NODE_ENV=${{ env.NODE_ENV }}
             APP_ENV=${{ env.APP_ENV }}
+            DEPLOYMENT_COMMIT=${{ steps.metadata.outputs.commit }}
+            DEPLOYMENT_VERSION=${{ steps.metadata.outputs.version }}
             DATABASE_URL=${{ steps.neon_db.outputs.db_url_pooled }}
             REDIS_URL=${{ steps.redis_url.outputs.redis_url }}
             RESEND_API_KEY=${{ env.RESEND_API_KEY }}
@@ -456,6 +467,31 @@ jobs:
       - name: Enforce single-machine preview scale
         run: flyctl scale count app=1 -a "${{ needs.setup.outputs.preview_app }}" --yes
 
+      - name: Verify preview metadata
+        env:
+          DEPLOYMENT_COMMIT: ${{ steps.metadata.outputs.commit }}
+          DEPLOYMENT_VERSION: ${{ steps.metadata.outputs.version }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          for attempt in {1..30}; do
+            if ROOT_RESPONSE="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "${PREVIEW_URL%/}/")" &&
+              printf '%s' "$ROOT_RESPONSE" |
+                jq -e \
+                  --arg version "$DEPLOYMENT_VERSION" \
+                  --arg commit "$DEPLOYMENT_COMMIT" \
+                  '.status == "ok"
+                   and .environment == "preview"
+                   and .deployment.version == $version
+                   and .deployment.commit == $commit' >/dev/null; then
+              echo "Preview deployment metadata verified."
+              exit 0
+            fi
+            echo "Waiting for preview metadata (${attempt}/30)..."
+            sleep 10
+          done
+          echo "Preview deployment metadata verification timed out."
+          exit 1
+
       - name: Add preview details to job summary
         run: |
           {
@@ -463,6 +499,8 @@ jobs:
             echo ""
             echo "- App: \`${{ needs.setup.outputs.preview_app }}\`"
             echo "- URL: ${{ steps.deploy.outputs.url }}"
+            echo "- Version: \`${{ steps.metadata.outputs.version }}\`"
+            echo "- Commit: \`${{ steps.metadata.outputs.commit }}\`"
             echo "- Redis: \`${{ needs.provision_redis.outputs.redis_app }}\`"
             echo "- Neon branch: \`${{ needs.setup.outputs.neon_branch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -36,6 +36,11 @@ describe("deployment environment configuration", () => {
       `DIRECT_DATABASE_URL: ${githubExpression("steps.neon_development.outputs.db_url")}`,
     );
     expect(workflow).toContain('--env "APP_ENV=development"');
+    expect(workflow).toContain('--env "DEPLOYMENT_COMMIT=$DEPLOYMENT_COMMIT"');
+    expect(workflow).toContain('--env "DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION"');
+    expect(workflow).toContain(`DEPLOYMENT_VERSION="dev-\${DEPLOYMENT_COMMIT:0:7}"`);
+    expect(workflow).toContain(".deployment.version == $version");
+    expect(workflow).toContain(".deployment.commit == $commit");
     expect(workflow).toContain(
       "if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'",
     );
@@ -52,6 +57,12 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain("Migrate legacy preview branch parent");
     expect(workflow).toContain('PREVIEW_PARENT_ID" != "$DEVELOPMENT_BRANCH_ID');
     expect(workflow).toContain("?hard_delete=true");
+    expect(workflow).toContain(`DEPLOYMENT_COMMIT: ${githubExpression("github.sha")}`);
+    expect(workflow).toContain(`version=pr-\${PR_NUMBER}-\${DEPLOYMENT_COMMIT:0:7}`);
+    expect(workflow).toContain(
+      `DEPLOYMENT_VERSION=${githubExpression("steps.metadata.outputs.version")}`,
+    );
+    expect(workflow).toContain("Verify preview metadata");
   });
 
   it("only deploys production through an approved manual workflow", () => {
@@ -66,6 +77,10 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain("branch_name: backup/production-");
     expect(workflow).toContain("fly.production.toml");
     expect(workflow).toContain('.environment == "production"');
+    expect(workflow).toContain('--env "DEPLOYMENT_COMMIT=$DEPLOYMENT_COMMIT"');
+    expect(workflow).toContain('--env "DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION"');
+    expect(workflow).toContain(".deployment.version == $version");
+    expect(workflow).toContain(".deployment.commit == $commit");
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain('require_successful_workflow e2e.yml "E2E Tests"');
     expect(workflow).toContain('require_successful_workflow typecheck.yml "Type Check"');
@@ -83,10 +98,10 @@ describe("deployment environment configuration", () => {
   });
 
   it("creates a version only after a healthy production deployment", () => {
-    const packageJson = JSON.parse(readRepositoryFile("package.json")) as { version: string };
+    const packageJson = JSON.parse(readRepositoryFile("package.json")) as Record<string, unknown>;
     const workflow = readRepositoryFile(".github/workflows/fly-production.yml");
 
-    expect(packageJson.version).toBe("0.1.0");
+    expect(packageJson).not.toHaveProperty("version");
     expect(workflow).toContain("version:");
     expect(workflow).toContain(
       "Version must use stable semantic version format vMAJOR.MINOR.PATCH.",
