@@ -22,31 +22,38 @@ const recordNotFoundError = () =>
 
 describe("UsersService", () => {
   let service: UsersService;
-  let databaseService: DatabaseService;
+  let databaseService: {
+    user: {
+      findUnique: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      upsert: ReturnType<typeof vi.fn>;
+    };
+  };
 
   beforeEach(async () => {
+    databaseService = {
+      user: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        upsert: vi.fn(),
+      },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
         {
           provide: DatabaseService,
-          useValue: {
-            user: {
-              findUnique: vi.fn(),
-              update: vi.fn(),
-              upsert: vi.fn(),
-            },
-          },
+          useValue: databaseService,
         },
       ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
-    databaseService = module.get<DatabaseService>(DatabaseService);
   });
 
   it("returns the current user's editable profile", async () => {
-    vi.mocked(databaseService.user.findUnique).mockResolvedValue(profile as never);
+    databaseService.user.findUnique.mockResolvedValue(profile);
 
     await expect(service.getCurrentUserProfile("user-1")).resolves.toEqual(profile);
     expect(databaseService.user.findUnique).toHaveBeenCalledWith({
@@ -62,7 +69,7 @@ describe("UsersService", () => {
   });
 
   it("throws not found when the current user is missing", async () => {
-    vi.mocked(databaseService.user.findUnique).mockResolvedValue(null);
+    databaseService.user.findUnique.mockResolvedValue(null);
 
     await expect(service.getCurrentUserProfile("missing-user")).rejects.toThrow(
       UsersUserNotFoundException,
@@ -71,7 +78,7 @@ describe("UsersService", () => {
 
   it("updates only the provided profile fields", async () => {
     const updated = { ...profile, city: "Abuja", marketingConsent: true };
-    vi.mocked(databaseService.user.update).mockResolvedValue(updated as never);
+    databaseService.user.update.mockResolvedValue(updated);
 
     const result = await service.updateCurrentUserProfile("user-1", {
       city: "Abuja",
@@ -100,7 +107,7 @@ describe("UsersService", () => {
   });
 
   it("throws not found when updating a missing user", async () => {
-    vi.mocked(databaseService.user.update).mockRejectedValue(recordNotFoundError());
+    databaseService.user.update.mockRejectedValue(recordNotFoundError());
 
     await expect(
       service.updateCurrentUserProfile("missing-user", { city: "Lagos" }),
@@ -109,7 +116,7 @@ describe("UsersService", () => {
 
   it("rethrows unexpected update errors", async () => {
     const unexpected = new Error("db failure");
-    vi.mocked(databaseService.user.update).mockRejectedValue(unexpected);
+    databaseService.user.update.mockRejectedValue(unexpected);
 
     await expect(service.updateCurrentUserProfile("user-1", { city: "Lagos" })).rejects.toBe(
       unexpected,
@@ -138,7 +145,7 @@ describe("UsersService", () => {
     };
 
     it("upserts by email, creates profile fields, and returns the selected member", async () => {
-      vi.mocked(databaseService.user.upsert).mockResolvedValue(staffMember as never);
+      databaseService.user.upsert.mockResolvedValue(staffMember);
 
       await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
       expect(databaseService.user.upsert).toHaveBeenCalledWith({
@@ -162,7 +169,7 @@ describe("UsersService", () => {
         name: "Original Name",
         phoneNumber: "+2348011111111",
       };
-      vi.mocked(databaseService.user.upsert).mockResolvedValue(existing as never);
+      databaseService.user.upsert.mockResolvedValue(existing);
 
       const result = await service.createStaff({
         name: "Should Not Overwrite",

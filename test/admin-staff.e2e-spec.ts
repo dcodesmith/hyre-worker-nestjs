@@ -136,6 +136,7 @@ describe("Admin staff E2E Tests", () => {
     const existing = await factory.createUser({
       email,
       name: "Original Name",
+      roles: ["user"],
     });
     await databaseService.user.update({
       where: { id: existing.id },
@@ -189,7 +190,9 @@ describe("Admin staff E2E Tests", () => {
       city: "Lagos",
       address: "12 Marina",
     });
-    expect(persisted?.roles.map((role) => role.name)).toContain(STAFF);
+    expect(persisted?.roles.map((role) => role.name)).toEqual(
+      expect.arrayContaining(["user", STAFF]),
+    );
   });
 
   it("POST /api/admin/staff rejects an invalid body", async () => {

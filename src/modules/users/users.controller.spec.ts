@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
+import type { AuthSession } from "../auth/guards/session.guard";
 import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";
 
@@ -11,6 +12,17 @@ const profile = {
   city: "Lagos",
   address: "12 Marina",
   marketingConsent: false,
+};
+
+const sessionUser: AuthSession["user"] = {
+  id: "user-1",
+  email: "ada@example.com",
+  emailVerified: true,
+  name: "Ada Lovelace",
+  createdAt: new Date("2026-01-15T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-15T00:00:00.000Z"),
+  image: null,
+  roles: ["user"],
 };
 
 describe("UsersController", () => {
@@ -52,7 +64,7 @@ describe("UsersController", () => {
   it("returns the current user's profile", async () => {
     vi.mocked(usersService.getCurrentUserProfile).mockResolvedValue(profile);
 
-    const result = await controller.getCurrentUserProfile({ id: "user-1" } as never);
+    const result = await controller.getCurrentUserProfile(sessionUser);
 
     expect(usersService.getCurrentUserProfile).toHaveBeenCalledWith("user-1");
     expect(result).toEqual(profile);
@@ -62,7 +74,7 @@ describe("UsersController", () => {
     const updated = { ...profile, city: "Abuja" };
     vi.mocked(usersService.updateCurrentUserProfile).mockResolvedValue(updated);
 
-    const result = await controller.updateCurrentUserProfile({ id: "user-1" } as never, {
+    const result = await controller.updateCurrentUserProfile(sessionUser, {
       city: "Abuja",
     });
 
