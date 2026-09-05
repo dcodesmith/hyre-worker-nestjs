@@ -71,6 +71,7 @@ model User {
   termsAcceptedAt           DateTime?
   privacyAcceptedAt         DateTime?
   marketingConsent          Boolean                    @default(false)
+  staffRevokedAt            DateTime?
   bankDetails               BankDetails?               @relation("UserBankDetails")
   attributedBookings        Booking[]                  @relation("BookingAcquisitionPartner")
   bookingsAsChauffeur       Booking[]                  @relation("BookingChauffeur")
@@ -94,6 +95,7 @@ model User {
   referralStats             UserReferralStats?
   approvedVehicleImages     VehicleImage[]             @relation("ApprovedVehicleImages")
   sessions                  Session[]
+  accounts                  Account[]
   roles                     Role[]                     @relation("RoleToUser")
   whatsAppConversations     WhatsAppConversation[]     @relation("WhatsAppConversationLinkedUser")
   promotions                Promotion[]                @relation("OwnerPromotions")
@@ -107,6 +109,7 @@ model User {
   @@index([id, email])
   @@index([referralCode])
   @@index([referredByUserId])
+  @@index([staffRevokedAt])
 }
 
 model UserPushToken {
@@ -764,6 +767,27 @@ model Session {
   @@index([userId])
   @@index([token])
   @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@unique([providerId, accountId])
+  @@map("account")
 }
 
 model Verification {

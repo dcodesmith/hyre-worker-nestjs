@@ -63,3 +63,15 @@ export function isGrantableRole(role: RoleName): boolean {
 export function isProtectedRole(role: RoleName): boolean {
   return (PROTECTED_ROLES as readonly RoleName[]).includes(role);
 }
+
+/** Return whether assigning a role would violate staff role exclusivity. */
+export function hasStaffRoleConflict(
+  existingRoles: readonly string[],
+  roleToAssign: RoleName,
+): boolean {
+  if (roleToAssign === STAFF) {
+    return existingRoles.some((role) => role !== USER && role !== STAFF);
+  }
+
+  return roleToAssign !== USER && existingRoles.includes(STAFF);
+}
