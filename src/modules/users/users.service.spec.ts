@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { STAFF } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
 import { UsersUserNotFoundException } from "./users.error";
 import { UsersService } from "./users.service";
@@ -33,6 +34,7 @@ describe("UsersService", () => {
             user: {
               findUnique: vi.fn(),
               update: vi.fn(),
+              upsert: vi.fn(),
             },
           },
         },
@@ -112,5 +114,76 @@ describe("UsersService", () => {
     await expect(service.updateCurrentUserProfile("user-1", { city: "Lagos" })).rejects.toBe(
       unexpected,
     );
+  });
+
+  describe("createStaff", () => {
+    const staffDto = {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+    };
+    const staffMember = {
+      id: "staff-1",
+      name: staffDto.name,
+      email: staffDto.email,
+      phoneNumber: staffDto.phoneNumber,
+      createdAt: new Date("2026-01-15T00:00:00.000Z"),
+    };
+    const staffSelect = {
+      id: true,
+      name: true,
+      email: true,
+      phoneNumber: true,
+      createdAt: true,
+    };
+
+    it("upserts by email, creates profile fields, and returns the selected member", async () => {
+      vi.mocked(databaseService.user.upsert).mockResolvedValue(staffMember as never);
+
+      await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
+      expect(databaseService.user.upsert).toHaveBeenCalledWith({
+        where: { email: staffDto.email },
+        update: {
+          roles: { connect: { name: STAFF } },
+        },
+        create: {
+          name: staffDto.name,
+          email: staffDto.email,
+          phoneNumber: staffDto.phoneNumber,
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffSelect,
+      });
+    });
+
+    it("connects staff on the existing path without updating profile fields", async () => {
+      const existing = {
+        ...staffMember,
+        name: "Original Name",
+        phoneNumber: "+2348011111111",
+      };
+      vi.mocked(databaseService.user.upsert).mockResolvedValue(existing as never);
+
+      const result = await service.createStaff({
+        name: "Should Not Overwrite",
+        email: staffDto.email,
+        phoneNumber: "+2348099999999",
+      });
+
+      expect(databaseService.user.upsert).toHaveBeenCalledWith({
+        where: { email: staffDto.email },
+        update: {
+          roles: { connect: { name: STAFF } },
+        },
+        create: {
+          name: "Should Not Overwrite",
+          email: staffDto.email,
+          phoneNumber: "+2348099999999",
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffSelect,
+      });
+      expect(result).toEqual(existing);
+    });
   });
 });

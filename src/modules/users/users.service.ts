@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { STAFF } from "../auth/auth.const";
 import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
+import type { CreateStaffBodyDto } from "./dto/create-staff.dto";
 import type { UpdateCurrentUserBodyDto } from "./dto/update-current-user.dto";
 import { UsersUserNotFoundException } from "./users.error";
 import type { CurrentUserProfile } from "./users.interface";
@@ -13,9 +15,33 @@ const currentUserProfileSelect = {
   marketingConsent: true,
 } satisfies Prisma.UserSelect;
 
+const staffMemberSelect = {
+  id: true,
+  name: true,
+  email: true,
+  phoneNumber: true,
+  createdAt: true,
+} satisfies Prisma.UserSelect;
+
 @Injectable()
 export class UsersService {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  async createStaff(dto: CreateStaffBodyDto) {
+    return this.databaseService.user.upsert({
+      where: { email: dto.email },
+      update: {
+        roles: { connect: { name: STAFF } },
+      },
+      create: {
+        name: dto.name,
+        email: dto.email,
+        phoneNumber: dto.phoneNumber,
+        roles: { connect: { name: STAFF } },
+      },
+      select: staffMemberSelect,
+    });
+  }
 
   async getCurrentUserProfile(userId: string): Promise<CurrentUserProfile> {
     const user = await this.databaseService.user.findUnique({
