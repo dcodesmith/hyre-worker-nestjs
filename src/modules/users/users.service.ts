@@ -28,9 +28,9 @@ export class UsersService {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async createStaff(dto: CreateStaffBodyDto) {
-    const existingUser = await this.databaseService.user.findUnique({
-      where: { email: dto.email },
-      select: { roles: { select: { name: true } } },
+    const existingUser = await this.databaseService.user.findFirst({
+      where: { email: { equals: dto.email, mode: "insensitive" } },
+      select: { id: true, roles: { select: { name: true } } },
     });
 
     const hasIncompatibleRole = existingUser?.roles.some(
@@ -40,12 +40,18 @@ export class UsersService {
       throw new UsersStaffRoleConflictException();
     }
 
-    return this.databaseService.user.upsert({
-      where: { email: dto.email },
-      update: {
-        roles: { connect: { name: STAFF } },
-      },
-      create: {
+    if (existingUser) {
+      return this.databaseService.user.update({
+        where: { id: existingUser.id },
+        data: {
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffMemberSelect,
+      });
+    }
+
+    return this.databaseService.user.create({
+      data: {
         name: dto.name,
         email: dto.email,
         phoneNumber: dto.phoneNumber,

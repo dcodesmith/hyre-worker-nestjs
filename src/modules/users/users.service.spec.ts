@@ -25,8 +25,9 @@ describe("UsersService", () => {
   let databaseService: {
     user: {
       findUnique: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
-      upsert: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
     };
   };
 
@@ -34,8 +35,9 @@ describe("UsersService", () => {
     databaseService = {
       user: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         update: vi.fn(),
-        upsert: vi.fn(),
+        create: vi.fn(),
       },
     };
 
@@ -144,20 +146,19 @@ describe("UsersService", () => {
       createdAt: true,
     };
 
-    it("upserts by email, creates profile fields, and returns the selected member", async () => {
-      databaseService.user.upsert.mockResolvedValue(staffMember);
+    const emailLookup = {
+      where: { email: { equals: staffDto.email, mode: "insensitive" } },
+      select: { id: true, roles: { select: { name: true } } },
+    };
+
+    it("creates a staff member when no matching email exists", async () => {
+      databaseService.user.findFirst.mockResolvedValue(null);
+      databaseService.user.create.mockResolvedValue(staffMember);
 
       await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
-      expect(databaseService.user.findUnique).toHaveBeenCalledWith({
-        where: { email: staffDto.email },
-        select: { roles: { select: { name: true } } },
-      });
-      expect(databaseService.user.upsert).toHaveBeenCalledWith({
-        where: { email: staffDto.email },
-        update: {
-          roles: { connect: { name: STAFF } },
-        },
-        create: {
+      expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.user.create).toHaveBeenCalledWith({
+        data: {
           name: staffDto.name,
           email: staffDto.email,
           phoneNumber: staffDto.phoneNumber,
@@ -165,6 +166,7 @@ describe("UsersService", () => {
         },
         select: staffSelect,
       });
+      expect(databaseService.user.update).not.toHaveBeenCalled();
     });
 
     it("connects staff on the existing path without updating profile fields", async () => {
@@ -173,10 +175,11 @@ describe("UsersService", () => {
         name: "Original Name",
         phoneNumber: "+2348011111111",
       };
-      databaseService.user.findUnique.mockResolvedValue({
+      databaseService.user.findFirst.mockResolvedValue({
+        id: existing.id,
         roles: [{ name: "user" }],
       });
-      databaseService.user.upsert.mockResolvedValue(existing);
+      databaseService.user.update.mockResolvedValue(existing);
 
       const result = await service.createStaff({
         name: "Should Not Overwrite",
@@ -184,33 +187,31 @@ describe("UsersService", () => {
         phoneNumber: "+2348099999999",
       });
 
-      expect(databaseService.user.upsert).toHaveBeenCalledWith({
-        where: { email: staffDto.email },
-        update: {
-          roles: { connect: { name: STAFF } },
-        },
-        create: {
-          name: "Should Not Overwrite",
-          email: staffDto.email,
-          phoneNumber: "+2348099999999",
+      expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: existing.id },
+        data: {
           roles: { connect: { name: STAFF } },
         },
         select: staffSelect,
       });
+      expect(databaseService.user.create).not.toHaveBeenCalled();
       expect(result).toEqual(existing);
     });
 
     it.each(["admin", "fleetOwner", "chauffeur"])(
       "rejects an existing user with the %s role",
       async (role) => {
-        databaseService.user.findUnique.mockResolvedValue({
+        databaseService.user.findFirst.mockResolvedValue({
+          id: "incompatible-1",
           roles: [{ name: role }],
         });
 
         await expect(service.createStaff(staffDto)).rejects.toBeInstanceOf(
           UsersStaffRoleConflictException,
         );
-        expect(databaseService.user.upsert).not.toHaveBeenCalled();
+        expect(databaseService.user.update).not.toHaveBeenCalled();
+        expect(databaseService.user.create).not.toHaveBeenCalled();
       },
     );
   });
