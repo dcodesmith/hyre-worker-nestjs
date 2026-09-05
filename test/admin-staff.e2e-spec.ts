@@ -6,6 +6,7 @@ import { AppModule } from "../src/app.module";
 import { STAFF } from "../src/modules/auth/auth.const";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
+import { UsersErrorCode } from "../src/modules/users/users.error";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 describe("Admin staff E2E Tests", () => {
@@ -194,6 +195,30 @@ describe("Admin staff E2E Tests", () => {
       expect.arrayContaining(["user", STAFF]),
     );
   });
+
+  it.each(["admin", "fleetOwner", "chauffeur"])(
+    "POST /api/admin/staff rejects an existing %s",
+    async (role) => {
+      const email = uniqueEmail(`admin-staff-${role}`);
+      const existing = await factory.createUser({ email, roles: [role] });
+
+      const response = await request(app.getHttpServer())
+        .post("/api/admin/staff")
+        .set("Cookie", adminCookie)
+        .send(staffBody(email));
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+      expect(response.body).toMatchObject({
+        type: UsersErrorCode.USERS_STAFF_ROLE_CONFLICT,
+        status: HttpStatus.CONFLICT,
+        errorCode: UsersErrorCode.USERS_STAFF_ROLE_CONFLICT,
+      });
+
+      const persisted = await persistedUser(email);
+      expect(persisted?.id).toBe(existing.id);
+      expect(persisted?.roles.map(({ name }) => name)).toEqual([role]);
+    },
+  );
 
   it("POST /api/admin/staff rejects an invalid body", async () => {
     const response = await request(app.getHttpServer())

@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { STAFF } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
-import { UsersUserNotFoundException } from "./users.error";
+import { UsersStaffRoleConflictException, UsersUserNotFoundException } from "./users.error";
 import { UsersService } from "./users.service";
 
 const profile = {
@@ -148,6 +148,10 @@ describe("UsersService", () => {
       databaseService.user.upsert.mockResolvedValue(staffMember);
 
       await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
+      expect(databaseService.user.findUnique).toHaveBeenCalledWith({
+        where: { email: staffDto.email },
+        select: { roles: { select: { name: true } } },
+      });
       expect(databaseService.user.upsert).toHaveBeenCalledWith({
         where: { email: staffDto.email },
         update: {
@@ -169,6 +173,9 @@ describe("UsersService", () => {
         name: "Original Name",
         phoneNumber: "+2348011111111",
       };
+      databaseService.user.findUnique.mockResolvedValue({
+        roles: [{ name: "user" }],
+      });
       databaseService.user.upsert.mockResolvedValue(existing);
 
       const result = await service.createStaff({
@@ -192,5 +199,19 @@ describe("UsersService", () => {
       });
       expect(result).toEqual(existing);
     });
+
+    it.each(["admin", "fleetOwner", "chauffeur"])(
+      "rejects an existing user with the %s role",
+      async (role) => {
+        databaseService.user.findUnique.mockResolvedValue({
+          roles: [{ name: role }],
+        });
+
+        await expect(service.createStaff(staffDto)).rejects.toBeInstanceOf(
+          UsersStaffRoleConflictException,
+        );
+        expect(databaseService.user.upsert).not.toHaveBeenCalled();
+      },
+    );
   });
 });

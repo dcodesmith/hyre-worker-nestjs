@@ -1,10 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { STAFF } from "../auth/auth.const";
+import { STAFF, USER } from "../auth/auth.const";
 import { DatabaseService, isRecordNotFoundError } from "../database/database.service";
 import type { CreateStaffBodyDto } from "./dto/create-staff.dto";
 import type { UpdateCurrentUserBodyDto } from "./dto/update-current-user.dto";
-import { UsersUserNotFoundException } from "./users.error";
+import { UsersStaffRoleConflictException, UsersUserNotFoundException } from "./users.error";
 import type { CurrentUserProfile } from "./users.interface";
 
 const currentUserProfileSelect = {
@@ -28,6 +28,18 @@ export class UsersService {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async createStaff(dto: CreateStaffBodyDto) {
+    const existingUser = await this.databaseService.user.findUnique({
+      where: { email: dto.email },
+      select: { roles: { select: { name: true } } },
+    });
+
+    const hasIncompatibleRole = existingUser?.roles.some(
+      ({ name }) => name !== USER && name !== STAFF,
+    );
+    if (hasIncompatibleRole) {
+      throw new UsersStaffRoleConflictException();
+    }
+
     return this.databaseService.user.upsert({
       where: { email: dto.email },
       update: {
