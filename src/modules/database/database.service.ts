@@ -9,6 +9,19 @@ export function isRecordNotFoundError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
 }
 
+/** Prisma throws P2002 when a unique constraint is violated. */
+export function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+/** Serialize role assignments for a user inside a transaction. */
+export async function lockUserRow(tx: Prisma.TransactionClient, userId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`,
+  );
+  return rows.length > 0;
+}
+
 /**
  * Take a row-level lock on a car inside a transaction (`SELECT ... FOR UPDATE`)
  * so that concurrent approval-status transitions (approve / reject / re-upload)

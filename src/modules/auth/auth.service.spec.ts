@@ -11,6 +11,7 @@ import {
   type AuthErrorCodeValue,
   AuthInternalServerException,
   AuthNotFoundException,
+  AuthRoleAssignmentConflictException,
   AuthUnauthorizedException,
 } from "./auth.error";
 import { AuthService } from "./auth.service";
@@ -35,6 +36,7 @@ describe("AuthService", () => {
   const mockDatabaseService: {
     $transaction?: ReturnType<typeof vi.fn>;
     $executeRaw?: ReturnType<typeof vi.fn>;
+    $queryRaw?: ReturnType<typeof vi.fn>;
     user?: {
       findUnique: ReturnType<typeof vi.fn>;
       update?: ReturnType<typeof vi.fn>;
@@ -90,6 +92,16 @@ describe("AuthService", () => {
     vi.clearAllMocks();
     await setupTestModule();
   });
+
+  const mockRoleAssignmentTransaction = () => {
+    mockDatabaseService.$queryRaw = vi.fn().mockResolvedValue([{ id: "user-1" }]);
+    mockDatabaseService.$transaction = vi.fn(async (callback) =>
+      callback({
+        user: mockDatabaseService.user,
+        $queryRaw: mockDatabaseService.$queryRaw,
+      }),
+    );
+  };
 
   const expectProblemDetail = async (
     promise: Promise<unknown>,
@@ -658,10 +670,13 @@ describe("AuthService", () => {
     beforeEach(async () => {
       await setupTestModule();
 
+      mockDatabaseService.$queryRaw = vi.fn().mockResolvedValue([{ id: "user-1" }]);
+      mockDatabaseService.$transaction = vi.fn(async (callback) => callback(mockDatabaseService));
       mockDatabaseService.user = {
         findUnique: vi.fn(),
         update: vi.fn(),
       };
+      mockRoleAssignmentTransaction();
     });
 
     it("should grant user role if missing (grantable)", async () => {
@@ -860,14 +875,17 @@ describe("AuthService", () => {
     beforeEach(async () => {
       await setupTestModule();
 
+      mockDatabaseService.$queryRaw = vi.fn().mockResolvedValue([{ id: "user-1" }]);
+      mockDatabaseService.$transaction = vi.fn(async (callback) => callback(mockDatabaseService));
       mockDatabaseService.user = {
         findUnique: vi.fn(),
         update: vi.fn(),
       };
+      mockRoleAssignmentTransaction();
     });
 
     it("should throw error if user not found", async () => {
-      mockDatabaseService.user.findUnique.mockResolvedValue(null);
+      mockDatabaseService.$queryRaw?.mockResolvedValue([]);
 
       await expectProblemDetail(service.ensureUserHasRole("nonexistent", USER), {
         errorClass: AuthNotFoundException,
@@ -876,6 +894,8 @@ describe("AuthService", () => {
         detail: "User not found for role assignment",
       });
 
+      expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
+      expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
 
@@ -888,6 +908,8 @@ describe("AuthService", () => {
 
       await service.ensureUserHasRole("user-1", USER);
 
+      expect(mockDatabaseService.$transaction).toHaveBeenCalledOnce();
+      expect(mockDatabaseService.$queryRaw).toHaveBeenCalledOnce();
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
         data: { roles: { connect: { name: USER } } },
@@ -902,6 +924,36 @@ describe("AuthService", () => {
 
       await service.ensureUserHasRole("user-1", USER);
 
+      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects assigning fleetOwner to a staff user", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "staff-1",
+        roles: [{ name: STAFF }],
+      });
+
+      await expectProblemDetail(service.ensureUserHasRole("staff-1", FLEET_OWNER), {
+        errorClass: AuthRoleAssignmentConflictException,
+        errorCode: AuthErrorCode.AUTH_ROLE_ASSIGNMENT_CONFLICT,
+        title: "Role Assignment Conflict",
+        detail: 'Cannot combine role "fleetOwner" with staff access',
+      });
+      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects assigning staff to a fleet owner", async () => {
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        id: "user-1",
+        roles: [{ name: FLEET_OWNER }],
+      });
+
+      await expectProblemDetail(service.ensureUserHasRole("user-1", STAFF), {
+        errorClass: AuthRoleAssignmentConflictException,
+        errorCode: AuthErrorCode.AUTH_ROLE_ASSIGNMENT_CONFLICT,
+        title: "Role Assignment Conflict",
+        detail: 'Cannot combine role "staff" with staff access',
+      });
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
     });
   });

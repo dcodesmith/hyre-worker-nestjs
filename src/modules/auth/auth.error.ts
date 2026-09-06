@@ -8,6 +8,7 @@ export const AuthErrorCode = {
   AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED: "AUTH_PROTECTED_ROLE_ASSIGNMENT_DENIED",
   AUTH_INVALID_ROLE: "AUTH_INVALID_ROLE",
   AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT: "AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT",
+  AUTH_ROLE_ASSIGNMENT_CONFLICT: "AUTH_ROLE_ASSIGNMENT_CONFLICT",
   AUTH_REFERRAL_CODE_GENERATION_FAILED: "AUTH_REFERRAL_CODE_GENERATION_FAILED",
   AUTH_ROLE_REQUIREMENT_FAILED: "AUTH_ROLE_REQUIREMENT_FAILED",
   AUTH_SESSION_NOT_FOUND: "AUTH_SESSION_NOT_FOUND",
@@ -33,6 +34,17 @@ export class AuthUnauthorizedException extends AuthException {
 export class AuthForbiddenException extends AuthException {
   constructor(errorCode: AuthErrorCodeValue, detail: string, title: string) {
     super(errorCode, detail, HttpStatus.FORBIDDEN, { title });
+  }
+}
+
+export class AuthRoleAssignmentConflictException extends AuthException {
+  constructor(role: string) {
+    super(
+      AuthErrorCode.AUTH_ROLE_ASSIGNMENT_CONFLICT,
+      `Cannot combine role "${role}" with staff access`,
+      HttpStatus.CONFLICT,
+      { title: "Role Assignment Conflict" },
+    );
   }
 }
 

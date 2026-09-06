@@ -3,6 +3,7 @@ import { AppException } from "../../common/errors/app.exception";
 
 export const UsersErrorCode = {
   USERS_STAFF_ROLE_CONFLICT: "USERS_STAFF_ROLE_CONFLICT",
+  USERS_STAFF_NOT_FOUND: "USERS_STAFF_NOT_FOUND",
   USERS_USER_NOT_FOUND: "USERS_USER_NOT_FOUND",
 } as const;
 
@@ -19,6 +20,15 @@ export class UsersStaffRoleConflictException extends UsersException {
         title: "Staff Role Conflict",
       },
     );
+  }
+}
+
+export class UsersStaffNotFoundException extends UsersException {
+  constructor() {
+    super(UsersErrorCode.USERS_STAFF_NOT_FOUND, "Staff member not found", HttpStatus.NOT_FOUND, {
+      type: UsersErrorCode.USERS_STAFF_NOT_FOUND,
+      title: "Staff Member Not Found",
+    });
   }
 }
 

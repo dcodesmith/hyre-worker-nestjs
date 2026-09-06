@@ -3,7 +3,11 @@ import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { STAFF } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
-import { UsersStaffRoleConflictException, UsersUserNotFoundException } from "./users.error";
+import {
+  UsersStaffNotFoundException,
+  UsersStaffRoleConflictException,
+  UsersUserNotFoundException,
+} from "./users.error";
 import { UsersService } from "./users.service";
 
 const profile = {
@@ -20,12 +24,22 @@ const recordNotFoundError = () =>
     clientVersion: "test",
   });
 
+const uniqueConstraintError = () =>
+  new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    code: "P2002",
+    clientVersion: "test",
+  });
+
 describe("UsersService", () => {
   let service: UsersService;
   let databaseService: {
+    $transaction: ReturnType<typeof vi.fn>;
+    $queryRaw: ReturnType<typeof vi.fn>;
     user: {
       findUnique: ReturnType<typeof vi.fn>;
       findFirst: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
     };
@@ -33,9 +47,13 @@ describe("UsersService", () => {
 
   beforeEach(async () => {
     databaseService = {
+      $transaction: vi.fn(async (callback) => callback(databaseService)),
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "staff-1" }]),
       user: {
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        findMany: vi.fn(),
+        count: vi.fn(),
         update: vi.fn(),
         create: vi.fn(),
       },
@@ -148,7 +166,7 @@ describe("UsersService", () => {
 
     const emailLookup = {
       where: { email: { equals: staffDto.email, mode: "insensitive" } },
-      select: { id: true, roles: { select: { name: true } } },
+      select: { id: true },
     };
 
     it("creates a staff member when no matching email exists", async () => {
@@ -156,17 +174,44 @@ describe("UsersService", () => {
       databaseService.user.create.mockResolvedValue(staffMember);
 
       await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
       expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.$queryRaw).not.toHaveBeenCalled();
       expect(databaseService.user.create).toHaveBeenCalledWith({
         data: {
           name: staffDto.name,
           email: staffDto.email,
           phoneNumber: staffDto.phoneNumber,
+          staffRevokedAt: null,
           roles: { connect: { name: STAFF } },
         },
         select: staffSelect,
       });
+      expect(databaseService.$queryRaw).not.toHaveBeenCalled();
       expect(databaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("retries as a promotion when concurrent creation wins the email constraint", async () => {
+      databaseService.user.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: staffMember.id });
+      databaseService.user.create.mockRejectedValueOnce(uniqueConstraintError());
+      databaseService.user.findUnique.mockResolvedValue({ roles: [{ name: "user" }] });
+      databaseService.user.update.mockResolvedValue(staffMember);
+
+      await expect(service.createStaff(staffDto)).resolves.toEqual(staffMember);
+
+      expect(databaseService.$transaction).toHaveBeenCalledTimes(2);
+      expect(databaseService.user.create).toHaveBeenCalledOnce();
+      expect(databaseService.$queryRaw).toHaveBeenCalledOnce();
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: staffMember.id },
+        data: {
+          staffRevokedAt: null,
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffSelect,
+      });
     });
 
     it("connects staff on the existing path without updating profile fields", async () => {
@@ -175,10 +220,9 @@ describe("UsersService", () => {
         name: "Original Name",
         phoneNumber: "+2348011111111",
       };
-      databaseService.user.findFirst.mockResolvedValue({
-        id: existing.id,
-        roles: [{ name: "user" }],
-      });
+      databaseService.user.findFirst.mockResolvedValue({ id: existing.id });
+      databaseService.$queryRaw.mockResolvedValue([{ id: existing.id }]);
+      databaseService.user.findUnique.mockResolvedValue({ roles: [{ name: "user" }] });
       databaseService.user.update.mockResolvedValue(existing);
 
       const result = await service.createStaff({
@@ -187,10 +231,17 @@ describe("UsersService", () => {
         phoneNumber: "+2348099999999",
       });
 
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
       expect(databaseService.user.findFirst).toHaveBeenCalledWith(emailLookup);
+      expect(databaseService.$queryRaw).toHaveBeenCalledOnce();
+      expect(databaseService.user.findUnique).toHaveBeenCalledWith({
+        where: { id: existing.id },
+        select: { roles: { select: { name: true } } },
+      });
       expect(databaseService.user.update).toHaveBeenCalledWith({
         where: { id: existing.id },
         data: {
+          staffRevokedAt: null,
           roles: { connect: { name: STAFF } },
         },
         select: staffSelect,
@@ -202,17 +253,218 @@ describe("UsersService", () => {
     it.each(["admin", "fleetOwner", "chauffeur"])(
       "rejects an existing user with the %s role",
       async (role) => {
-        databaseService.user.findFirst.mockResolvedValue({
-          id: "incompatible-1",
-          roles: [{ name: role }],
-        });
+        databaseService.user.findFirst.mockResolvedValue({ id: "incompatible-1" });
+        databaseService.$queryRaw.mockResolvedValue([{ id: "incompatible-1" }]);
+        databaseService.user.findUnique.mockResolvedValue({ roles: [{ name: role }] });
 
         await expect(service.createStaff(staffDto)).rejects.toBeInstanceOf(
           UsersStaffRoleConflictException,
         );
+        expect(databaseService.$queryRaw).toHaveBeenCalledOnce();
         expect(databaseService.user.update).not.toHaveBeenCalled();
         expect(databaseService.user.create).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe("listStaff", () => {
+    const activeWhere = { roles: { some: { name: STAFF } } };
+    const revokedWhere = {
+      staffRevokedAt: { not: null },
+      roles: { none: { name: STAFF } },
+    };
+    const staffListSelect = {
+      id: true,
+      name: true,
+      email: true,
+      phoneNumber: true,
+      createdAt: true,
+      staffRevokedAt: true,
+      roles: { select: { name: true } },
+    };
+    const staffMember = {
+      id: "staff-1",
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+      createdAt: new Date("2026-01-15T00:00:00.000Z"),
+    };
+
+    it.each([
+      [undefined, { OR: [activeWhere, revokedWhere] }],
+      ["active" as const, activeWhere],
+      ["revoked" as const, revokedWhere],
+    ])("filters staff by status %s", async (status, where) => {
+      databaseService.user.findMany.mockResolvedValue([]);
+      databaseService.user.count.mockResolvedValue(0);
+
+      await service.listStaff({ page: 1, limit: 20, status });
+
+      expect(databaseService.user.findMany).toHaveBeenCalledWith({
+        where,
+        select: staffListSelect,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: 0,
+        take: 20,
+      });
+      expect(databaseService.user.count).toHaveBeenCalledWith({ where });
+    });
+
+    it("maps staff status and returns pagination meta", async () => {
+      const revokedAt = new Date("2026-03-01T00:00:00.000Z");
+      databaseService.user.findMany.mockResolvedValue([
+        { ...staffMember, staffRevokedAt: null, roles: [{ name: STAFF }] },
+        { ...staffMember, id: "staff-2", staffRevokedAt: revokedAt, roles: [] },
+      ]);
+      databaseService.user.count.mockResolvedValue(21);
+
+      await expect(service.listStaff({ page: 2, limit: 10 })).resolves.toEqual({
+        staff: [
+          { ...staffMember, status: "active", revokedAt: null },
+          { ...staffMember, id: "staff-2", status: "revoked", revokedAt },
+        ],
+        meta: { page: 2, limit: 10, total: 21, totalPages: 3 },
+      });
+      expect(databaseService.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 10, take: 10 }),
+      );
+    });
+  });
+
+  describe("revokeStaff and reinstateStaff", () => {
+    const staffMember = {
+      id: "staff-1",
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+      createdAt: new Date("2026-01-15T00:00:00.000Z"),
+    };
+    const staffListSelect = {
+      id: true,
+      name: true,
+      email: true,
+      phoneNumber: true,
+      createdAt: true,
+      staffRevokedAt: true,
+      roles: { select: { name: true } },
+    };
+    const revokedAt = new Date("2026-03-01T00:00:00.000Z");
+
+    function mockLockedUser(
+      record: {
+        id: string;
+        staffRevokedAt: Date | null;
+        roles: Array<{ name: string }>;
+      } | null,
+    ) {
+      databaseService.$queryRaw.mockResolvedValue(record ? [{ id: record.id }] : []);
+      databaseService.user.findUnique.mockResolvedValue(record);
+    }
+
+    it("revokes active staff and keeps a later revoke idempotent", async () => {
+      mockLockedUser({ ...staffMember, staffRevokedAt: null, roles: [{ name: STAFF }] });
+      databaseService.user.update.mockResolvedValue({
+        ...staffMember,
+        staffRevokedAt: revokedAt,
+        roles: [],
+      });
+
+      await expect(service.revokeStaff(staffMember.id)).resolves.toEqual({
+        ...staffMember,
+        status: "revoked",
+        revokedAt,
+      });
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
+      expect(databaseService.$queryRaw).toHaveBeenCalledOnce();
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: staffMember.id },
+        data: {
+          staffRevokedAt: expect.any(Date),
+          roles: { disconnect: { name: STAFF } },
+        },
+        select: staffListSelect,
+      });
+
+      mockLockedUser({ ...staffMember, staffRevokedAt: revokedAt, roles: [] });
+      databaseService.user.update.mockResolvedValue({
+        ...staffMember,
+        staffRevokedAt: revokedAt,
+        roles: [],
+      });
+
+      await service.revokeStaff(staffMember.id);
+      expect(databaseService.user.update).toHaveBeenLastCalledWith({
+        where: { id: staffMember.id },
+        data: {
+          staffRevokedAt: revokedAt,
+          roles: { disconnect: { name: STAFF } },
+        },
+        select: staffListSelect,
+      });
+    });
+
+    it("reinstates revoked staff and keeps a later reinstate idempotent", async () => {
+      mockLockedUser({ ...staffMember, staffRevokedAt: revokedAt, roles: [] });
+      databaseService.user.update.mockResolvedValue({
+        ...staffMember,
+        staffRevokedAt: null,
+        roles: [{ name: STAFF }],
+      });
+
+      await expect(service.reinstateStaff(staffMember.id)).resolves.toEqual({
+        ...staffMember,
+        status: "active",
+        revokedAt: null,
+      });
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: staffMember.id },
+        data: {
+          staffRevokedAt: null,
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffListSelect,
+      });
+
+      mockLockedUser({
+        ...staffMember,
+        staffRevokedAt: null,
+        roles: [{ name: STAFF }],
+      });
+      await service.reinstateStaff(staffMember.id);
+      expect(databaseService.user.update).toHaveBeenLastCalledWith({
+        where: { id: staffMember.id },
+        data: {
+          staffRevokedAt: null,
+          roles: { connect: { name: STAFF } },
+        },
+        select: staffListSelect,
+      });
+    });
+
+    it("returns not found for a missing or never-staff user", async () => {
+      mockLockedUser(null);
+      await expect(service.revokeStaff("missing-user")).rejects.toBeInstanceOf(
+        UsersStaffNotFoundException,
+      );
+
+      mockLockedUser({ ...staffMember, staffRevokedAt: null, roles: [{ name: "user" }] });
+      await expect(service.reinstateStaff(staffMember.id)).rejects.toBeInstanceOf(
+        UsersStaffNotFoundException,
+      );
+      expect(databaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects reinstating a user with an incompatible role", async () => {
+      mockLockedUser({
+        ...staffMember,
+        staffRevokedAt: revokedAt,
+        roles: [{ name: "fleetOwner" }],
+      });
+
+      await expect(service.reinstateStaff(staffMember.id)).rejects.toBeInstanceOf(
+        UsersStaffRoleConflictException,
+      );
+      expect(databaseService.user.update).not.toHaveBeenCalled();
+    });
   });
 });

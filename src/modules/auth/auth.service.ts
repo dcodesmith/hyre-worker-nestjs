@@ -1,15 +1,20 @@
 import { randomInt } from "node:crypto";
 import { Injectable, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Prisma, ReferralAttributionSource } from "@prisma/client";
+import { ReferralAttributionSource } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../config/env.config";
-import { DatabaseService } from "../database/database.service";
+import {
+  DatabaseService,
+  isUniqueConstraintError,
+  lockUserRow,
+} from "../database/database.service";
 import { type Auth, createAuth } from "./auth.config";
 import {
   ADMIN,
   FLEET_OWNER,
   GRANTABLE_ROLES,
+  hasStaffRoleConflict,
   MOBILE,
   PROTECTED_ROLES,
   STAFF,
@@ -19,6 +24,7 @@ import {
   AuthErrorCode,
   AuthInternalServerException,
   AuthNotFoundException,
+  AuthRoleAssignmentConflictException,
   AuthServiceUnavailableException,
   AuthUnauthorizedException,
 } from "./auth.error";
@@ -381,7 +387,7 @@ export class AuthService implements OnModuleInit {
         });
         return referralCode;
       } catch (error) {
-        if (!this.isUniqueConstraintError(error)) {
+        if (!isUniqueConstraintError(error)) {
           throw error;
         }
       }
@@ -398,10 +404,6 @@ export class AuthService implements OnModuleInit {
     return Array.from({ length: REFERRAL_CODE_LENGTH }, () =>
       REFERRAL_CODE_ALPHABET.charAt(randomInt(REFERRAL_CODE_ALPHABET.length)),
     ).join("");
-  }
-
-  private isUniqueConstraintError(error: unknown): boolean {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
   }
 
   async validateReferralCodeForSignup(
@@ -465,27 +467,40 @@ export class AuthService implements OnModuleInit {
    * @param role - Role to ensure
    */
   async ensureUserHasRole(userId: string, role: RoleName): Promise<void> {
-    const user = await this.databaseService.user.findUnique({
-      where: { id: userId },
-      include: { roles: { select: { name: true } } },
-    });
+    const assigned = await this.databaseService.$transaction(async (tx) => {
+      const userExists = await lockUserRow(tx, userId);
+      const user = userExists
+        ? await tx.user.findUnique({
+            where: { id: userId },
+            include: { roles: { select: { name: true } } },
+          })
+        : null;
 
-    if (!user) {
-      this.logger.warn({ userId }, "Cannot assign role: user not found");
-      throw new AuthNotFoundException(
-        AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
-        "User not found for role assignment",
-        "User Not Found For Role Assignment",
-      );
-    }
+      if (!user) {
+        this.logger.warn({ userId }, "Cannot assign role: user not found");
+        throw new AuthNotFoundException(
+          AuthErrorCode.AUTH_USER_NOT_FOUND_FOR_ROLE_ASSIGNMENT,
+          "User not found for role assignment",
+          "User Not Found For Role Assignment",
+        );
+      }
 
-    const hasRole = user.roles.some((r) => r.name === role);
+      const existingRoles = user.roles.map(({ name }) => name);
+      if (hasStaffRoleConflict(existingRoles, role)) {
+        throw new AuthRoleAssignmentConflictException(role);
+      }
+      if (existingRoles.includes(role)) {
+        return false;
+      }
 
-    if (!hasRole) {
-      await this.databaseService.user.update({
+      await tx.user.update({
         where: { id: userId },
         data: { roles: { connect: { name: role } } },
       });
+      return true;
+    });
+
+    if (assigned) {
       this.logger.info({ userId, role }, "Assigned role to user");
     }
   }
