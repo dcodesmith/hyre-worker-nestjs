@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerException, ThrottlerStorage } from "@nestjs/throttler";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -43,6 +44,7 @@ describe("PhoneVerificationService", () => {
     user: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   };
   let throttlerStorage: { increment: ReturnType<typeof vi.fn> };
+  let logger: { warn: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     twilioMocks.createVerification.mockReset();
@@ -80,6 +82,7 @@ describe("PhoneVerificationService", () => {
       .compile();
 
     service = module.get(PhoneVerificationService);
+    logger = module.get(PinoLogger);
   });
 
   describe("send", () => {
@@ -186,10 +189,18 @@ describe("PhoneVerificationService", () => {
     });
 
     it("maps a Twilio send failure to provider unavailable", async () => {
-      twilioMocks.createVerification.mockRejectedValueOnce(new Error("twilio down"));
+      twilioMocks.createVerification.mockRejectedValueOnce({
+        status: 401,
+        code: 20003,
+        message: "Authenticate",
+      });
 
       await expect(service.send(USER_ID, { phoneNumber: PHONE })).rejects.toBeInstanceOf(
         PhoneVerificationProviderUnavailableException,
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        { userId: USER_ID, phone: MASKED_PHONE, status: 401, code: 20003 },
+        "Twilio could not send a phone verification code",
       );
     });
   });
@@ -252,6 +263,10 @@ describe("PhoneVerificationService", () => {
       await expect(
         service.check(USER_ID, { phoneNumber: PHONE, code: "123456" }),
       ).rejects.toBeInstanceOf(PhoneVerificationProviderUnavailableException);
+      expect(logger.warn).toHaveBeenCalledWith(
+        { userId: USER_ID, phone: MASKED_PHONE, status: 500, code: 20500 },
+        "Twilio could not check a phone verification code",
+      );
     });
   });
 });

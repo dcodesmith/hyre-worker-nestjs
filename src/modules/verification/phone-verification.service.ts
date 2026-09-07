@@ -58,7 +58,7 @@ export class PhoneVerificationService {
     } catch (error) {
       if (error instanceof PhoneVerificationProviderUnavailableException) throw error;
       this.logger.warn(
-        { userId, phone: this.maskPhone(input.phoneNumber) },
+        { userId, phone: this.maskPhone(input.phoneNumber), ...this.twilioErrorContext(error) },
         "Twilio could not send a phone verification code",
       );
       throw new PhoneVerificationProviderUnavailableException();
@@ -83,7 +83,7 @@ export class PhoneVerificationService {
         throw new PhoneVerificationCodeInvalidException();
       }
       this.logger.warn(
-        { userId, phone: this.maskPhone(input.phoneNumber) },
+        { userId, phone: this.maskPhone(input.phoneNumber), ...this.twilioErrorContext(error) },
         "Twilio could not check a phone verification code",
       );
       throw new PhoneVerificationProviderUnavailableException();
@@ -123,10 +123,16 @@ export class PhoneVerificationService {
   }
 
   private isInvalidCodeError(error: unknown): boolean {
-    if (!error || typeof error !== "object") return false;
-    const status = "status" in error ? error.status : undefined;
-    const code = "code" in error ? error.code : undefined;
+    const { status, code } = this.twilioErrorContext(error);
     return status === 404 || code === 20404;
+  }
+
+  private twilioErrorContext(error: unknown): { status?: unknown; code?: unknown } {
+    if (!error || typeof error !== "object") return {};
+    return {
+      ...("status" in error ? { status: error.status } : {}),
+      ...("code" in error ? { code: error.code } : {}),
+    };
   }
 
   private response(status: "PENDING" | "VERIFIED", phoneNumber: string) {

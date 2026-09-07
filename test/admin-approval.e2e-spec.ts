@@ -64,6 +64,17 @@ describe("Admin Approval E2E Tests", () => {
       "web",
     );
     otherOwnerCookie = otherOwnerAuth.cookie;
+
+    await databaseService.user.updateMany({
+      where: { id: { in: [ownerId, otherOwnerAuth.user.id] } },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
+    });
   });
 
   afterAll(async () => {

@@ -134,6 +134,7 @@ describe("DocumentApprovalService", () => {
 
     await service.approveDocument("doc-1", "admin-1");
 
+    expect(databaseServiceMock.$queryRaw).toHaveBeenCalled();
     expect(databaseServiceMock.user.update).toHaveBeenCalledWith({
       where: { id: "user-1" },
       data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
@@ -227,6 +228,7 @@ describe("DocumentApprovalService", () => {
 
     await service.rejectDocument("doc-1", "admin-1", "Expired");
 
+    expect(databaseServiceMock.$queryRaw).toHaveBeenCalled();
     expect(databaseServiceMock.user.update).toHaveBeenCalledWith({
       where: { id: "user-1" },
       data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },

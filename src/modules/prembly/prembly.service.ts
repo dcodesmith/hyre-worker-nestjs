@@ -161,11 +161,11 @@ export class PremblyService {
       },
       premblyCacResponseSchema,
     );
-    const normalizedNumber = this.normalizeIdentifier(registrationNumber);
+    const normalizedNumber = this.normalizeCacRegistrationNumber(registrationNumber);
     const normalizedType = registrationType.trim().toUpperCase();
     const candidates = response.data.filter(
       (company) =>
-        this.normalizeIdentifier(company.rc_number) === normalizedNumber &&
+        this.normalizeCacRegistrationNumber(company.rc_number) === normalizedNumber &&
         company.entity_type.trim().toUpperCase() === normalizedType,
     );
     const company =
@@ -194,11 +194,8 @@ export class PremblyService {
     };
   }
 
-  private normalizeIdentifier(value: string): string {
-    return value
-      .toUpperCase()
-      .replaceAll(/[^A-Z0-9]/g, "")
-      .replace(/^([A-Z]*)0+/, "$1");
+  private normalizeCacRegistrationNumber(value: string): string {
+    return value.replaceAll(/\D/g, "").replace(/^0+/, "");
   }
 
   private normalizeName(value: string): string {

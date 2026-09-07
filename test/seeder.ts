@@ -43,6 +43,7 @@ export async function resetAndSeedDb() {
           email: "fleetowner@test.com",
           name: "Fleet Owner",
           phoneNumber: "+2348012345673",
+          emailVerified: true,
           phoneVerifiedAt: new Date(),
           hasOnboarded: true,
           fleetOwnerStatus: "APPROVED",

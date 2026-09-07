@@ -10,7 +10,12 @@ import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { REJECTION_ACTION_NOTE } from "../car/car.const";
 import { CarApprovalService } from "../car/car-approval.service";
-import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
+import {
+  DatabaseService,
+  isRecordNotFoundError,
+  lockCarRow,
+  lockUserRow,
+} from "../database/database.service";
 import {
   DocumentApprovalFailedException,
   DocumentNotFoundException,
@@ -86,14 +91,14 @@ export class DocumentApprovalService {
           });
         }
 
-        if (
-          updated.userId &&
-          (await this.isRequiredChauffeurDocument(updated.userId, updated.documentType, tx))
-        ) {
-          await tx.user.update({
-            where: { id: updated.userId },
-            data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
-          });
+        if (updated.userId) {
+          await lockUserRow(tx, updated.userId);
+          if (await this.isRequiredChauffeurDocument(updated.userId, updated.documentType, tx)) {
+            await tx.user.update({
+              where: { id: updated.userId },
+              data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
+            });
+          }
         }
 
         return updated;
@@ -109,6 +114,7 @@ export class DocumentApprovalService {
     userId: string,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
+    await lockUserRow(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       select: { fleetOwnerId: true, isOwnerDriver: true },

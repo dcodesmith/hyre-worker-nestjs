@@ -450,6 +450,32 @@ describe("PremblyService", () => {
       });
     });
 
+    it("matches a prefixed RC against Prembly's digits-only rc_number", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, rc_number: "123456" }]),
+      });
+
+      await expect(
+        service.verifyCac("RC123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        registrationNumber: "123456",
+        registrationType: "RC",
+      });
+    });
+
+    it("matches a digits-only RC against a prefixed Prembly rc_number", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess(),
+      });
+
+      await expect(
+        service.verifyCac("123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        registrationNumber: "RC-123456",
+        registrationType: "RC",
+      });
+    });
+
     it("strips punctuation when matching the RC number", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: cacSuccess([{ ...company, rc_number: "RC.123456" }]),
