@@ -239,6 +239,60 @@ export class AccountVerificationService {
     }
   }
 
+  async replaceRejectedDriversLicense(userId: string, file: UploadedAccountDocument) {
+    const existing = await this.databaseService.documentApproval.findUnique({
+      where: {
+        documentType_userId: {
+          documentType: DocumentType.DRIVERS_LICENSE,
+          userId,
+        },
+      },
+    });
+    if (!existing || existing.status !== DocumentStatus.REJECTED) {
+      throw new AccountDocumentInvalidException("Only a rejected driver's licence can be replaced");
+    }
+
+    const verification = await this.databaseService.fleetOwnerAccountVerification.findFirst({
+      where: {
+        userId,
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+        isOwnerDriver: true,
+      },
+      select: { id: true },
+    });
+    if (!verification) {
+      throw new AccountVerificationReviewNotPendingException();
+    }
+
+    const uploaded = await this.uploadDocument(
+      userId,
+      verification.id,
+      DocumentType.DRIVERS_LICENSE,
+      file,
+    );
+    let updated: Awaited<ReturnType<typeof this.databaseService.documentApproval.update>>;
+    try {
+      updated = await this.databaseService.$transaction((tx) =>
+        tx.documentApproval.update({
+          where: { id: existing.id, status: DocumentStatus.REJECTED },
+          data: {
+            documentUrl: uploaded.url,
+            status: DocumentStatus.PENDING,
+            notes: null,
+            approvedAt: null,
+            approvedById: null,
+          },
+        }),
+      );
+    } catch {
+      await this.deleteUploaded([uploaded]);
+      throw new AccountVerificationOperationFailedException();
+    }
+
+    await this.deleteObjectWithRetry(existing.documentUrl);
+    return updated;
+  }
+
   private async claimVerification(
     userId: string,
     idempotencyKey: string,

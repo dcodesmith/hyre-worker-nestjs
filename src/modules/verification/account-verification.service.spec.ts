@@ -193,6 +193,7 @@ describe("AccountVerificationService", () => {
       findUnique: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
       upsert: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
     };
     bankDetails: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
     $transaction: ReturnType<typeof vi.fn>;
@@ -226,6 +227,7 @@ describe("AccountVerificationService", () => {
         findUnique: vi.fn(),
         findMany: vi.fn().mockResolvedValue([]),
         upsert: vi.fn(),
+        update: vi.fn(),
       },
       bankDetails: { upsert: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       $transaction: vi.fn(),
@@ -1248,6 +1250,163 @@ describe("AccountVerificationService", () => {
       await expect(
         service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
       ).rejects.toBeInstanceOf(AccountManualReviewRejectedException);
+    });
+  });
+
+  describe("replaceRejectedDriversLicense", () => {
+    const rejectedLicense = {
+      id: "doc-1",
+      documentType: DocumentType.DRIVERS_LICENSE,
+      status: DocumentStatus.REJECTED,
+      documentUrl: "old-license-key",
+      notes: "Unreadable photo",
+      approvedAt: new Date("2026-09-01T00:00:00Z"),
+      approvedById: REVIEWER_ID,
+    };
+    const updatedLicense = {
+      ...rejectedLicense,
+      status: DocumentStatus.PENDING,
+      documentUrl: `https://cdn.test/${USER_ID}/${VERIFICATION_ID}/documents/drivers_license-license.pdf`,
+      notes: null,
+      approvedAt: null,
+      approvedById: null,
+    };
+
+    const replaceRejectedDriversLicense = (userId: string, file: UploadedAccountDocument) =>
+      (
+        service as AccountVerificationService & {
+          replaceRejectedDriversLicense: (
+            userId: string,
+            file: UploadedAccountDocument,
+          ) => Promise<typeof updatedLicense>;
+        }
+      ).replaceRejectedDriversLicense(userId, file);
+
+    const mockReplacementTransaction = () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue({
+        id: VERIFICATION_ID,
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+      });
+      databaseService.documentApproval.update.mockResolvedValue(updatedLicense);
+      databaseService.$transaction.mockImplementationOnce(async (callback) =>
+        callback({
+          documentApproval: databaseService.documentApproval,
+          fleetOwnerAccountVerification: databaseService.fleetOwnerAccountVerification,
+        }),
+      );
+    };
+
+    it("replaces an owned rejected licence during REVIEW_REQUIRED without re-running identity or bank checks", async () => {
+      const licence = licenseFile();
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(rejectedLicense);
+      mockReplacementTransaction();
+
+      await expect(replaceRejectedDriversLicense(USER_ID, licence)).resolves.toMatchObject({
+        id: "doc-1",
+        documentType: DocumentType.DRIVERS_LICENSE,
+        status: DocumentStatus.PENDING,
+        documentUrl: updatedLicense.documentUrl,
+      });
+
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(premblyService.verifyCac).not.toHaveBeenCalled();
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).toHaveBeenCalledWith(
+        licence.buffer,
+        expect.stringContaining("drivers_license"),
+        "application/pdf",
+      );
+      expect(databaseService.documentApproval.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            documentType_userId: { documentType: DocumentType.DRIVERS_LICENSE, userId: USER_ID },
+          },
+        }),
+      );
+      expect(databaseService.fleetOwnerAccountVerification.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: USER_ID,
+            status: AccountVerificationStatus.REVIEW_REQUIRED,
+          }),
+        }),
+      );
+      expect(databaseService.$transaction).toHaveBeenCalled();
+      expect(databaseService.documentApproval.update).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: DocumentStatus.REJECTED }),
+        data: expect.objectContaining({
+          documentUrl: expect.any(String),
+          status: DocumentStatus.PENDING,
+          notes: null,
+          approvedAt: null,
+          approvedById: null,
+        }),
+      });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-license-key");
+    });
+
+    it.each([
+      ["missing", null],
+      [
+        "pending",
+        { ...rejectedLicense, status: DocumentStatus.PENDING, notes: null, approvedAt: null },
+      ],
+      ["approved", { ...rejectedLicense, status: DocumentStatus.APPROVED }],
+    ])("rejects replacement when the owned driver's licence is %s", async (_label, existing) => {
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(existing);
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue({
+        id: VERIFICATION_ID,
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+      });
+
+      await expect(replaceRejectedDriversLicense(USER_ID, licenseFile())).rejects.toBeInstanceOf(
+        AccountDocumentInvalidException,
+      );
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(databaseService.documentApproval.update).not.toHaveBeenCalled();
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    });
+
+    it("rejects replacement when there is no owned REVIEW_REQUIRED account verification", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(rejectedLicense);
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValueOnce(null);
+
+      await expect(replaceRejectedDriversLicense(USER_ID, licenseFile())).rejects.toBeInstanceOf(
+        AccountVerificationReviewNotPendingException,
+      );
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(databaseService.documentApproval.update).not.toHaveBeenCalled();
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    });
+
+    it("deletes the newly uploaded object when the document update fails", async () => {
+      const licence = licenseFile();
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(rejectedLicense);
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue({
+        id: VERIFICATION_ID,
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+      });
+      databaseService.documentApproval.update.mockRejectedValueOnce(new Error("db down"));
+      databaseService.$transaction.mockRejectedValueOnce(new Error("db write failed"));
+
+      await expect(replaceRejectedDriversLicense(USER_ID, licence)).rejects.toBeInstanceOf(
+        AccountVerificationOperationFailedException,
+      );
+      expect(storageService.uploadBuffer).toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(
+        expect.stringContaining("drivers_license"),
+      );
+    });
+
+    it("still returns the updated document when old object cleanup fails", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(rejectedLicense);
+      mockReplacementTransaction();
+      storageService.deleteObjectByKey.mockRejectedValueOnce(new Error("s3 down"));
+
+      await expect(replaceRejectedDriversLicense(USER_ID, licenseFile())).resolves.toMatchObject({
+        status: DocumentStatus.PENDING,
+        id: "doc-1",
+      });
     });
   });
 });

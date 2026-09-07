@@ -140,6 +140,44 @@ describe("CarService", () => {
     expect(result).toEqual({ id: "car-1", ownerId: "owner-1", promotion: null });
   });
 
+  it("requests the latest insurance verification fields for owner car list and detail", async () => {
+    const submittedAt = new Date("2026-09-07T00:00:00.000Z");
+    const ownerCar = { id: "car-1", ownerId: "owner-1", submittedAt };
+    const latestInsuranceVerification = {
+      select: {
+        id: true,
+        status: true,
+        policyNumber: true,
+        policyStatus: true,
+        policyExpiresAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    };
+
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([ownerCar]);
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce(ownerCar);
+
+    const [list, detail] = await Promise.all([
+      service.listOwnerCars("owner-1"),
+      service.getOwnerCarById("car-1", "owner-1"),
+    ]);
+
+    expect(list).toEqual([{ ...ownerCar, promotion: null }]);
+    expect(detail).toEqual({ ...ownerCar, promotion: null });
+    expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ insuranceVerifications: latestInsuranceVerification }),
+      }),
+    );
+    expect(databaseServiceMock.car.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ insuranceVerifications: latestInsuranceVerification }),
+      }),
+    );
+  });
+
   it("throws CarNotFoundException for unknown owner car", async () => {
     databaseServiceMock.car.findFirst.mockResolvedValueOnce(null);
 

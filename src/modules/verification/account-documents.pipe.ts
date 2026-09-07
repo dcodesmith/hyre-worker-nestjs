@@ -65,3 +65,16 @@ export class AccountDocumentsPipe
     }
   }
 }
+
+@Injectable()
+export class AccountDriverLicensePipe
+  implements PipeTransform<UploadedAccountDocument | undefined, UploadedAccountDocument>
+{
+  transform(file: UploadedAccountDocument | undefined): UploadedAccountDocument {
+    if (!file) {
+      throw new AccountDocumentInvalidException("A driver's licence file is required");
+    }
+    const documents = new AccountDocumentsPipe().transform({ driversLicense: [file] });
+    return documents.driversLicense as UploadedAccountDocument;
+  }
+}

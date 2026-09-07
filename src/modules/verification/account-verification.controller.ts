@@ -1,14 +1,17 @@
 import {
   Controller,
   Get,
+  Header,
   Headers,
   Post,
+  Put,
   Res,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileFieldsInterceptor } from "@nestjs/platform-express";
+import { FileFieldsInterceptor, FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
@@ -20,9 +23,11 @@ import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { idempotencyKeySchema } from "../booking/dto/idempotency-key.dto";
 import { cuidParamSchema, type RejectBodyDto, rejectBodySchema } from "../car/dto/car-approval.dto";
+import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
   type AccountDocuments,
   AccountDocumentsPipe,
+  AccountDriverLicensePipe,
   MAX_ACCOUNT_DOCUMENT_SIZE_BYTES,
 } from "./account-documents.pipe";
 import {
@@ -32,6 +37,7 @@ import {
   createAccountVerificationSchema,
   type SendPhoneVerificationDto,
   sendPhoneVerificationSchema,
+  type UploadedAccountDocument,
 } from "./account-verification.dto";
 import { AccountVerificationService } from "./account-verification.service";
 import { PhoneVerificationService } from "./phone-verification.service";
@@ -51,11 +57,31 @@ export class AccountVerificationController {
   constructor(
     private readonly accountVerificationService: AccountVerificationService,
     private readonly phoneVerificationService: PhoneVerificationService,
+    private readonly flutterwaveService: FlutterwaveService,
   ) {}
+
+  @Get("banks")
+  @Header("Cache-Control", "private, max-age=3600")
+  getBanks() {
+    return this.flutterwaveService.listNigerianBanks();
+  }
 
   @Get("onboarding")
   getStatus(@CurrentUser() user: AuthSession["user"]) {
     return this.accountVerificationService.getStatus(user.id);
+  }
+
+  @Put("documents/drivers-license")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: { fileSize: MAX_ACCOUNT_DOCUMENT_SIZE_BYTES },
+    }),
+  )
+  replaceRejectedDriversLicense(
+    @CurrentUser() user: AuthSession["user"],
+    @UploadedFile(new AccountDriverLicensePipe()) file: UploadedAccountDocument,
+  ) {
+    return this.accountVerificationService.replaceRejectedDriversLicense(user.id, file);
   }
 
   @Post("phone-verifications")

@@ -32,6 +32,17 @@ const accountResolutionResponseSchema = z.object({
   }),
 });
 
+const bankSchema = z.object({
+  code: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+});
+const bankListResponseSchema = z.object({
+  status: z.literal("success"),
+  data: z.array(bankSchema),
+});
+const BANK_LIST_TTL_MS = 60 * 60 * 1000;
+type NigerianBank = z.infer<typeof bankSchema>;
+
 function stripTrailingPunctuation(value: string): string {
   let message = value;
   while (message.endsWith(".") || message.endsWith("!")) {
@@ -44,6 +55,7 @@ function stripTrailingPunctuation(value: string): string {
 export class FlutterwaveService {
   private readonly config: FlutterwaveConfig;
   private readonly httpClient: AxiosInstance;
+  private bankListCache?: { data: NigerianBank[]; expiresAt: number };
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
@@ -178,6 +190,30 @@ export class FlutterwaveService {
       };
     } catch (error) {
       throw this.handleError(error, "resolveBankAccount");
+    }
+  }
+
+  async listNigerianBanks() {
+    if (this.bankListCache && this.bankListCache.expiresAt > Date.now()) {
+      return this.bankListCache.data;
+    }
+
+    try {
+      const { data } = await this.httpClient.get<unknown>("/v3/banks/NG");
+      const parsed = bankListResponseSchema.safeParse(data);
+      if (!parsed.success) {
+        throw new FlutterwaveError(
+          "Flutterwave returned an invalid bank list response",
+          "INVALID_BANK_LIST_RESPONSE",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      const banks = parsed.data.data.sort((left, right) => left.name.localeCompare(right.name));
+      this.bankListCache = { data: banks, expiresAt: Date.now() + BANK_LIST_TTL_MS };
+      return banks;
+    } catch (error) {
+      throw this.handleError(error, "listNigerianBanks");
     }
   }
 

@@ -74,6 +74,18 @@ export class CarService {
         createdAt: "asc",
       },
     },
+    insuranceVerifications: {
+      select: {
+        id: true,
+        status: true,
+        policyNumber: true,
+        policyStatus: true,
+        policyExpiresAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    },
   });
 
   constructor(

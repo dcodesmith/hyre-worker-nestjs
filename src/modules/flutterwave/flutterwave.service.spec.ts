@@ -908,4 +908,91 @@ describe("FlutterwaveService", () => {
       },
     );
   });
+
+  describe("listNigerianBanks", () => {
+    it("GETs /v3/banks/NG and returns [{ code, name }] sorted by name", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          data: [
+            { id: 20, code: "057", name: "Zenith Bank" },
+            { code: "058", name: "GTBank" },
+            { id: 1, code: "044", name: "Access Bank" },
+          ],
+        },
+      });
+
+      await expect(service.listNigerianBanks()).resolves.toEqual([
+        { code: "044", name: "Access Bank" },
+        { code: "058", name: "GTBank" },
+        { code: "057", name: "Zenith Bank" },
+      ]);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/banks/NG");
+    });
+
+    it("reuses a successful bank list for a second immediate call", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          data: [
+            { id: 20, code: "057", name: "Zenith Bank" },
+            { code: "058", name: "GTBank" },
+            { id: 1, code: "044", name: "Access Bank" },
+          ],
+        },
+      });
+      const expected = [
+        { code: "044", name: "Access Bank" },
+        { code: "058", name: "GTBank" },
+        { code: "057", name: "Zenith Bank" },
+      ];
+
+      await expect(service.listNigerianBanks()).resolves.toEqual(expected);
+      await expect(service.listNigerianBanks()).resolves.toEqual(expected);
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/banks/NG");
+    });
+
+    it.each([
+      {
+        name: "non-success status",
+        payload: { status: "error", data: [{ code: "058", name: "GTBank" }] },
+      },
+      {
+        name: "non-array data",
+        payload: { status: "success", data: { code: "058", name: "GTBank" } },
+      },
+      {
+        name: "empty bank code",
+        payload: { status: "success", data: [{ code: "", name: "GTBank" }] },
+      },
+      {
+        name: "empty bank name",
+        payload: { status: "success", data: [{ code: "058", name: "" }] },
+      },
+      { name: "missing bank code", payload: { status: "success", data: [{ name: "GTBank" }] } },
+    ])("rejects a malformed provider payload: $name", async ({ payload }) => {
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: payload });
+
+      await expect(service.listNigerianBanks()).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        statusCode: HttpStatus.BAD_GATEWAY,
+      });
+    });
+
+    it("maps an unavailable provider response through handleError", async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(
+        createAxiosErrorWithResponse(HttpStatus.SERVICE_UNAVAILABLE, {
+          status: "error",
+          message: "Service unavailable",
+        }),
+      );
+
+      await expect(service.listNigerianBanks()).rejects.toMatchObject({
+        name: "FlutterwaveError",
+        message: "Service unavailable",
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+      });
+    });
+  });
 });

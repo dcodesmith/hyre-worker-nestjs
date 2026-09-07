@@ -71,11 +71,14 @@ describe("Fleet-owner account verification E2E Tests", () => {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyCac: ReturnType<typeof vi.fn>;
   };
-  let flutterwaveService: { resolveBankAccount: ReturnType<typeof vi.fn> };
+  let flutterwaveService: {
+    resolveBankAccount: ReturnType<typeof vi.fn>;
+    listNigerianBanks: ReturnType<typeof vi.fn>;
+  };
   let clientIp = "203.0.113.10";
   let ipSequence = 10;
 
-  function http(method: "get" | "post", path: string) {
+  function http(method: "get" | "post" | "put", path: string) {
     return request(app.getHttpServer())[method](path).set("X-Forwarded-For", clientIp);
   }
 
@@ -150,6 +153,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn(),
+      listNigerianBanks: vi.fn(),
     };
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -204,6 +208,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     premblyService.verifyNin.mockReset();
     premblyService.verifyCac.mockReset();
     flutterwaveService.resolveBankAccount.mockReset();
+    flutterwaveService.listNigerianBanks.mockReset();
 
     twilioMocks.createVerification.mockResolvedValue({ status: "pending" });
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
@@ -251,6 +256,32 @@ describe("Fleet-owner account verification E2E Tests", () => {
       phone: { number: "**********5678", verified: false },
       requiredActions: expect.arrayContaining(["VERIFY_PHONE", "VERIFY_ACCOUNT"]),
     });
+  });
+
+  it("GET /api/fleet-owner/banks requires authentication", async () => {
+    const response = await http("get", "/api/fleet-owner/banks");
+
+    expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it("GET /api/fleet-owner/banks rejects a non-fleet-owner", async () => {
+    const response = await http("get", "/api/fleet-owner/banks").set("Cookie", userCookie);
+
+    expect(response.status).toBe(HttpStatus.FORBIDDEN);
+  });
+
+  it("GET /api/fleet-owner/banks returns the normalized bank list for a fleet owner", async () => {
+    const banks = [
+      { code: "044", name: "Access Bank" },
+      { code: "058", name: "GTBank" },
+    ];
+    flutterwaveService.listNigerianBanks.mockResolvedValueOnce(banks);
+
+    const response = await http("get", "/api/fleet-owner/banks").set("Cookie", ownerCookie);
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.body).toEqual(banks);
+    expect(flutterwaveService.listNigerianBanks).toHaveBeenCalledOnce();
   });
 
   it("POST /api/fleet-owner/phone-verifications requires a fleet-owner session", async () => {
@@ -569,6 +600,69 @@ describe("Fleet-owner account verification E2E Tests", () => {
         { documentType: "LASDRI", status: "PENDING" },
       ]),
     );
+  });
+
+  it("PUT /api/fleet-owner/documents/drivers-license replaces a rejected licence during review", async () => {
+    const owner = await readyOwner("acct-replace-license");
+    await Promise.all([
+      databaseService.fleetOwnerAccountVerification.create({
+        data: {
+          userId: owner.id,
+          idempotencyKey: "replace-license-1",
+          requestHash: "seeded-replace-license",
+          accountType: "INDIVIDUAL",
+          isOwnerDriver: true,
+          status: "REVIEW_REQUIRED",
+          processingExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      }),
+      databaseService.documentApproval.create({
+        data: {
+          userId: owner.id,
+          documentType: "DRIVERS_LICENSE",
+          documentUrl: "old-rejected-license.pdf",
+          status: "REJECTED",
+          notes: "Unreadable photo",
+        },
+      }),
+    ]);
+
+    const response = await withAuth(
+      http("put", "/api/fleet-owner/documents/drivers-license").attach(
+        "file",
+        pdfDocument("replacement"),
+        {
+          filename: "license.pdf",
+          contentType: "application/pdf",
+        },
+      ),
+      owner.cookie,
+    );
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.body).toMatchObject({
+      documentType: "DRIVERS_LICENSE",
+      status: "PENDING",
+    });
+
+    const persisted = await databaseService.documentApproval.findUnique({
+      where: {
+        documentType_userId: { documentType: "DRIVERS_LICENSE", userId: owner.id },
+      },
+      select: { status: true, notes: true, documentUrl: true },
+    });
+    expect(persisted).toMatchObject({ status: "PENDING", notes: null });
+    expect(persisted?.documentUrl).not.toBe("old-rejected-license.pdf");
+  });
+
+  it("PUT /api/fleet-owner/documents/drivers-license rejects a missing file", async () => {
+    const response = await withAuth(
+      http("put", "/api/fleet-owner/documents/drivers-license"),
+      ownerCookie,
+    );
+
+    expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(response.body.errorCode).toBe("ACCOUNT_DOCUMENT_INVALID");
   });
 
   it("replays an identical idempotent account verification", async () => {
