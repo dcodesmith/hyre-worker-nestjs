@@ -21,6 +21,8 @@ const productionEnv = {
   TWILIO_BOOKING_CANCELLATION_FLEET_OWNER_CONTENT_SID: "HX1234567890abcdef1234567890abcdef",
   TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID: "HX1234567890abcdef1234567890abcdef",
   TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID: "HX1234567890abcdef1234567890abcdef",
+  TWILIO_VEHICLE_CARD_CONTENT_SID: "HX1234567890abcdef1234567890abcdef",
+  TWILIO_CHECKOUT_LINK_CONTENT_SID: "HX1234567890abcdef1234567890abcdef",
   FLUTTERWAVE_SECRET_KEY: "secret",
   FLUTTERWAVE_PUBLIC_KEY: "public",
   FLUTTERWAVE_BASE_URL: "https://api.flutterwave.com",
@@ -243,6 +245,72 @@ describe("envSchema APP_ENV", () => {
     });
 
     expect(result.APP_ENV).toBe("production");
+  });
+});
+
+describe("envSchema LangGraph models", () => {
+  it("allows optional model overrides", () => {
+    const result = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      NODE_ENV: "development",
+      LANGGRAPH_EXTRACTION_MODEL: "gpt-4o-mini",
+      LANGGRAPH_RESPONSE_MODEL: "claude-sonnet-4-20250514",
+    });
+
+    expect(result.LANGGRAPH_EXTRACTION_MODEL).toBe("gpt-4o-mini");
+    expect(result.LANGGRAPH_RESPONSE_MODEL).toBe("claude-sonnet-4-20250514");
+  });
+});
+
+describe("envSchema WhatsApp agent templates", () => {
+  it("allows development and preview to omit agent template SIDs", () => {
+    expect(
+      envSchema.safeParse({
+        ...productionEnv,
+        OPERATIONS_EMAIL: "operations@example.com",
+        NODE_ENV: "development",
+        APP_ENV: "development",
+        TWILIO_VEHICLE_CARD_CONTENT_SID: undefined,
+        TWILIO_CHECKOUT_LINK_CONTENT_SID: undefined,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      envSchema.safeParse({
+        ...productionEnv,
+        OPERATIONS_EMAIL: "operations@example.com",
+        APP_ENV: "preview",
+        TWILIO_VEHICLE_CARD_CONTENT_SID: "",
+        TWILIO_CHECKOUT_LINK_CONTENT_SID: "",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires agent template SIDs when APP_ENV is production", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      APP_ENV: "production",
+      TWILIO_VEHICLE_CARD_CONTENT_SID: undefined,
+      TWILIO_CHECKOUT_LINK_CONTENT_SID: undefined,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["TWILIO_VEHICLE_CARD_CONTENT_SID"],
+            message: "TWILIO_VEHICLE_CARD_CONTENT_SID is required when APP_ENV=production",
+          }),
+          expect.objectContaining({
+            path: ["TWILIO_CHECKOUT_LINK_CONTENT_SID"],
+            message: "TWILIO_CHECKOUT_LINK_CONTENT_SID is required when APP_ENV=production",
+          }),
+        ]),
+      );
+    }
   });
 });
 

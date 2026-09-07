@@ -22,6 +22,7 @@ import {
   convertToExtractedParams,
   type VehicleSearchOption,
 } from "./langgraph.interface";
+import { parsePublicBookingInput } from "./langgraph-booking-input.policy";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./langgraph-booking-orchestrator";
 import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
@@ -99,6 +100,13 @@ export class CreateBookingNode {
       const sessionUser = linkedCustomerId
         ? ({ id: linkedCustomerId } as AuthSession["user"])
         : null;
+      const earlyValidation = parsePublicBookingInput(
+        linkedCustomerId ? this.buildAuthenticatedBookingInput(bookingInput) : bookingInput,
+        Boolean(linkedCustomerId),
+      );
+      if (earlyValidation.ok === false) {
+        return this.invalidPublicBookingInputResult(state.conversationId, earlyValidation.issues);
+      }
       const pricing = await this.bookingPricingPreviewService.preview(
         {
           carId: bookingInput.carId,
@@ -133,21 +141,34 @@ export class CreateBookingNode {
         ...bookingInput,
         expectedTotalAmount: new Decimal(pricing.totalAmount).toString(),
       };
+      const bookingInputForApi = linkedCustomerId
+        ? this.buildAuthenticatedBookingInput(authoritativeBookingInput)
+        : authoritativeBookingInput;
+      const validatedBookingInput = parsePublicBookingInput(
+        bookingInputForApi,
+        Boolean(linkedCustomerId),
+      );
+      if (validatedBookingInput.ok === false) {
+        return this.invalidPublicBookingInputResult(
+          state.conversationId,
+          validatedBookingInput.issues,
+        );
+      }
 
       this.logBookingCreationInput(
-        authoritativeBookingInput,
+        validatedBookingInput.data,
         normalizedStartDate,
         normalizedEndDate,
       );
 
       const result = linkedCustomerId
         ? await this.bookingCreationService.createBooking({
-            input: this.buildAuthenticatedBookingInput(authoritativeBookingInput),
+            input: validatedBookingInput.data,
             sessionUser,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
           })
         : await this.bookingCreationService.createBooking({
-            input: authoritativeBookingInput,
+            input: validatedBookingInput.data,
             sessionUser: null,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
@@ -201,6 +222,22 @@ export class CreateBookingNode {
         stage: "confirming",
       };
     }
+  }
+
+  private invalidPublicBookingInputResult(
+    conversationId: string,
+    issues: string[],
+  ): LangGraphNodeResult {
+    this.logger.warn(
+      { conversationId, issues },
+      "WhatsApp booking payload failed public DTO validation",
+    );
+    return {
+      error: null,
+      statusMessage:
+        "Some booking details still need to be corrected before I can complete this. Please check the pickup time, dates, and locations.",
+      stage: "collecting",
+    };
   }
 
   private async getConversationForBooking(conversationId: string) {

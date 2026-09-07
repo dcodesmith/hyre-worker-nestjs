@@ -1,6 +1,8 @@
 import type { VehicleType } from "@prisma/client";
+import { toApiPickupTime } from "../../shared/booking-time-window.helper";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import type { CarSearchQueryDto } from "../car/dto/car-search.dto";
+import { carSearchQuerySchema } from "../car/dto/car-search.dto";
 import { normalizeBookingType, parseSearchDate } from "./vehicle-search-precondition.policy";
 
 export class VehicleSearchQueryBuilder {
@@ -87,7 +89,7 @@ export class VehicleSearchQueryBuilder {
     if (extracted.vehicleType) query.vehicleType = [extracted.vehicleType];
     if (extracted.serviceTier) query.serviceTier = [extracted.serviceTier];
 
-    return query;
+    return this.parsePublicSearchQuery(query);
   }
 
   buildAlternativeQueries(extracted: ExtractedAiSearchParams): CarSearchQueryDto[] {
@@ -124,7 +126,7 @@ export class VehicleSearchQueryBuilder {
     }
 
     queries.push(base);
-    return this.dedupeQueries(queries);
+    return this.dedupeQueries(queries.map((query) => this.parsePublicSearchQuery(query)));
   }
 
   private buildTemporalQuery(extracted: ExtractedAiSearchParams): CarSearchQueryDto {
@@ -140,10 +142,21 @@ export class VehicleSearchQueryBuilder {
 
     const bookingType = normalizeBookingType(extracted.bookingType);
     if (bookingType) query.bookingType = bookingType;
-    if (extracted.pickupTime) query.pickupTime = extracted.pickupTime;
+    if (extracted.pickupTime) query.pickupTime = toApiPickupTime(extracted.pickupTime);
     if (extracted.flightNumber) query.flightNumber = extracted.flightNumber;
 
     return query;
+  }
+
+  private parsePublicSearchQuery(query: CarSearchQueryDto): CarSearchQueryDto {
+    const parsed = carSearchQuerySchema.safeParse(query);
+    if (parsed.success) {
+      return parsed.data;
+    }
+
+    const { pickupTime: _pickupTime, ...withoutPickupTime } = query;
+    const retry = carSearchQuerySchema.safeParse(withoutPickupTime);
+    return retry.success ? retry.data : withoutPickupTime;
   }
 
   private mergeQuery(

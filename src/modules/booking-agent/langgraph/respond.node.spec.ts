@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -18,6 +19,12 @@ describe("RespondNode", () => {
       providers: [
         RespondNode,
         { provide: LangGraphResponderService, useValue: responderServiceMock },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn().mockReturnValue(undefined),
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)

@@ -400,4 +400,24 @@ describe("CreateBookingNode", () => {
     expect(result.lastShownOptions).toBeUndefined();
     expect(result.error).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
   });
+
+  it("does not create a booking when the payload fails public DTO validation", async () => {
+    const result = await createBookingNode.run(
+      buildTestState({
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Murtala Muhammed International Airport",
+          dropoffLocation: "Murtala Muhammed International Airport",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(result.stage).toBe("collecting");
+    expect(result.statusMessage).toContain("corrected");
+    expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+  });
 });

@@ -372,6 +372,14 @@ TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
 TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
 TWILIO_REFUND_SUCCEEDED_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Optional
+# WhatsApp booking agent templates (sandbox SIDs in development/preview; omit to use free-form.
+# Required when APP_ENV=production.)
+TWILIO_VEHICLE_CARD_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_CHECKOUT_LINK_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# LangGraph booking agent (optional overrides; defaults are gpt-4.1-mini / claude-sonnet-4-20250514)
+# LANGGRAPH_EXTRACTION_MODEL=gpt-4.1-mini
+# LANGGRAPH_RESPONSE_MODEL=claude-sonnet-4-20250514
 
 # Payments (Flutterwave)
 FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxx

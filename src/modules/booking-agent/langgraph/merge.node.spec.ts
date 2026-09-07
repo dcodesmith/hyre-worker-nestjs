@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { MergeNode } from "./merge.node";
@@ -99,5 +99,76 @@ describe("MergeNode", () => {
 
     expect(result.preferences?.pricePreference).toBe("budget");
     expect(result.preferences?.notes).toEqual(["budget"]);
+  });
+
+  it("does not apply a low-confidence draft patch", () => {
+    const result = mergeNode.run({
+      conversationId: "conv_1",
+      inboundMessage: "qwrtypsdfghjkl",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "collecting",
+      turnCount: 1,
+      messages: [],
+      draft: { pickupLocation: "Ikoyi" },
+      availableOptions: [],
+      lastShownOptions: [],
+      selectedOption: null,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      extraction: {
+        intent: "provide_info",
+        draftPatch: { pickupLocation: "asdfghjkl" },
+        confidence: 0.4,
+      },
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    expect(result.draft?.pickupLocation).toBe("Ikoyi");
+  });
+
+  it("does not merge preference hints for abuse or off-topic messages", () => {
+    const result = mergeNode.run({
+      conversationId: "conv_1",
+      inboundMessage: "you are useless",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "collecting",
+      turnCount: 1,
+      messages: [],
+      draft: { pickupLocation: "Ikoyi" },
+      availableOptions: [],
+      lastShownOptions: [],
+      selectedOption: null,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: { notes: ["budget"] },
+      response: null,
+      outboxItems: [],
+      extraction: {
+        intent: "abuse",
+        draftPatch: { notes: "insult" },
+        preferenceHint: "cheaper",
+        confidence: 0.99,
+      },
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    expect(result.draft?.pickupLocation).toBe("Ikoyi");
+    expect(result.draft?.notes).toBeUndefined();
+    expect(result.preferences).toEqual({ notes: ["budget"] });
   });
 });

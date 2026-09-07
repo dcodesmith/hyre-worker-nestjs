@@ -1,8 +1,13 @@
 import { addDays, format, parseISO } from "date-fns";
+import { LANGGRAPH_DRAFT_PATCH_MIN_CONFIDENCE } from "./langgraph.const";
 import type { BookingDraft, UserIntent } from "./langgraph.interface";
 import { normalizeControlText } from "./langgraph-control-intent.policy";
 
-export function shouldApplyDraftPatch(intent: UserIntent): boolean {
+export function shouldApplyDraftPatch(intent: UserIntent, confidence = 1): boolean {
+  if (confidence < LANGGRAPH_DRAFT_PATCH_MIN_CONFIDENCE) {
+    return false;
+  }
+
   return (
     intent === "provide_info" ||
     intent === "update_info" ||

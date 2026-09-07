@@ -23,7 +23,16 @@ import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.s
 import { CreateBookingNode } from "./langgraph/create-booking.node";
 import { ExtractNode } from "./langgraph/extract.node";
 import { HandoffNode } from "./langgraph/handoff.node";
-import { LANGGRAPH_EXTRACTION_MODEL, LANGGRAPH_RESPONSE_MODEL } from "./langgraph/langgraph.const";
+import {
+  LANGGRAPH_EXTRACTION_MAX_TOKENS,
+  LANGGRAPH_EXTRACTION_MODEL,
+  LANGGRAPH_EXTRACTION_TEMPERATURE,
+  LANGGRAPH_EXTRACTION_TIMEOUT_MS,
+  LANGGRAPH_RESPONSE_MAX_TOKENS,
+  LANGGRAPH_RESPONSE_MODEL,
+  LANGGRAPH_RESPONSE_TEMPERATURE,
+  LANGGRAPH_RESPONSE_TIMEOUT_MS,
+} from "./langgraph/langgraph.const";
 import {
   LANGGRAPH_ANTHROPIC_CLIENT,
   LANGGRAPH_OPENAI_CLIENT,
@@ -68,9 +77,18 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const apiKey = configService.get("ANTHROPIC_API_KEY", { infer: true });
+        const model =
+          configService.get("LANGGRAPH_RESPONSE_MODEL", { infer: true }) ??
+          LANGGRAPH_RESPONSE_MODEL;
         return new ChatAnthropic({
           apiKey,
-          model: LANGGRAPH_RESPONSE_MODEL,
+          model,
+          temperature: LANGGRAPH_RESPONSE_TEMPERATURE,
+          maxTokens: LANGGRAPH_RESPONSE_MAX_TOKENS,
+          maxRetries: 1,
+          clientOptions: {
+            timeout: LANGGRAPH_RESPONSE_TIMEOUT_MS,
+          },
         });
       },
     },
@@ -79,9 +97,19 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const apiKey = configService.get("OPENAI_API_KEY", { infer: true });
+        const model =
+          configService.get("LANGGRAPH_EXTRACTION_MODEL", { infer: true }) ??
+          LANGGRAPH_EXTRACTION_MODEL;
         return new ChatOpenAI({
           apiKey,
-          model: LANGGRAPH_EXTRACTION_MODEL,
+          model,
+          temperature: LANGGRAPH_EXTRACTION_TEMPERATURE,
+          maxTokens: LANGGRAPH_EXTRACTION_MAX_TOKENS,
+          timeout: LANGGRAPH_EXTRACTION_TIMEOUT_MS,
+          maxRetries: 1,
+          modelKwargs: {
+            response_format: { type: "json_object" },
+          },
         });
       },
     },

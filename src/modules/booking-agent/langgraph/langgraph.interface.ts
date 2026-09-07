@@ -59,6 +59,8 @@ export type UserIntent =
   | "new_booking"
   | "ask_question"
   | "request_agent"
+  | "off_topic"
+  | "abuse"
   | "unknown";
 
 export interface ExtractionResult {

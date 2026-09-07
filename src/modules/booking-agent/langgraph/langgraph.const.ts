@@ -4,15 +4,22 @@ export const LANGGRAPH_DEFAULT_HISTORY_LIMIT = 10;
 export const LANGGRAPH_DEFAULT_HISTORY_TTL_HOURS = 24;
 export const LANGGRAPH_STATE_TTL_SECONDS = 24 * 60 * 60;
 
-export const LANGGRAPH_EXTRACTION_MODEL = "gpt-4o-mini";
+/** Structured extraction: gpt-4.1-mini follows JSON schemas more reliably than gpt-4o-mini. */
+export const LANGGRAPH_EXTRACTION_MODEL = "gpt-4.1-mini";
 export const LANGGRAPH_EXTRACTION_TEMPERATURE = 0;
 export const LANGGRAPH_EXTRACTION_MAX_TOKENS = 500;
 export const LANGGRAPH_EXTRACTION_TIMEOUT_MS = 10_000;
 
+/** Short WhatsApp copy; keep Sonnet-class, not Opus. Override via LANGGRAPH_RESPONSE_MODEL. */
 export const LANGGRAPH_RESPONSE_MODEL = "claude-sonnet-4-20250514";
 export const LANGGRAPH_RESPONSE_TEMPERATURE = 0.3;
 export const LANGGRAPH_RESPONSE_MAX_TOKENS = 800;
 export const LANGGRAPH_RESPONSE_TIMEOUT_MS = 15_000;
+
+export const LANGGRAPH_DRAFT_PATCH_MIN_CONFIDENCE = 0.7;
+
+export const LANGGRAPH_ABUSE_RESPONSE =
+  "I can only help with booking a Tripdly chauffeur. Please keep this chat respectful, or type *AGENT* to speak with a person.";
 
 export const LANGGRAPH_HOLD_TTL_MINUTES = 15;
 
@@ -22,14 +29,6 @@ export const LANGGRAPH_HOLD_TTL_MINUTES = 15;
  */
 export const LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE =
   "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.";
-
-// Twilio Content Template for vehicle selection cards
-// Template variables: {{1}}=title, {{2}}=body, {{3}}=mediaUrl, {{4}}=buttonText, {{5}}=vehicleId
-export const VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";
-
-// Twilio Content Template for checkout link
-// Template variables: {{1}}=body text, {{2}}=checkout token segment from /pay/{token}
-export const CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3";
 
 export const REQUIRED_SEARCH_FIELDS: (keyof BookingDraft)[] = [
   "pickupDate",
