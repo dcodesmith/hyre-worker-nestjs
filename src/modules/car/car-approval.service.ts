@@ -253,6 +253,7 @@ export class CarApprovalService {
         tx.car.findUnique({
           where: { id: carId },
           select: {
+            status: true,
             submittedAt: true,
             vehicleVerification: { select: { id: true } },
             insuranceVerifications: {
@@ -297,7 +298,7 @@ export class CarApprovalService {
         data: {
           approvalStatus: CarApprovalStatus.APPROVED,
           approvalNotes: null,
-          status: Status.AVAILABLE,
+          ...(car?.status === Status.HOLD && { status: Status.AVAILABLE }),
         },
       });
     }

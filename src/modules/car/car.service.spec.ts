@@ -583,7 +583,7 @@ describe("CarService", () => {
     const verification = {
       id: "ver-1",
       ownerId: "owner-1",
-      plateNumber: "KJA123AB",
+      plateNumber: "KJA-123 AB",
       chassisNumber: "1HGCM82633A004352",
       make: "Toyota",
       model: "Camry",
@@ -592,7 +592,7 @@ describe("CarService", () => {
       passengerCapacity: 5,
     };
 
-    it("creates a draft car from a succeeded verification and consumes it once", async () => {
+    it("creates a draft car, persists a normalized plate, and consumes the verification once", async () => {
       databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
       databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce(verification);
       databaseServiceMock.car.create.mockResolvedValueOnce({

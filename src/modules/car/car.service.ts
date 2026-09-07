@@ -209,7 +209,7 @@ export class CarService {
         const car = await tx.car.create({
           data: {
             ownerId,
-            registrationNumber: verification.plateNumber,
+            registrationNumber: this.normalizeRegistrationNumber(verification.plateNumber),
             chassisNumber: verification.chassisNumber,
             make: verification.make,
             model: verification.model,

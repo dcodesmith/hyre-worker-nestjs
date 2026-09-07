@@ -63,6 +63,7 @@ describe("CarApprovalService", () => {
     databaseServiceMock.vehicleImage.count.mockResolvedValue(0);
     databaseServiceMock.documentApproval.findMany.mockResolvedValue([]);
     databaseServiceMock.car.findUnique.mockResolvedValue({
+      status: Status.HOLD,
       submittedAt: new Date("2026-09-07T00:00:00.000Z"),
       vehicleVerification: null,
       insuranceVerifications: [],
@@ -162,6 +163,7 @@ describe("CarApprovalService", () => {
   it("does not approve a verified car before insurance verification succeeds", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      status: Status.HOLD,
       submittedAt: new Date("2026-09-07T00:00:00.000Z"),
       vehicleVerification: { id: "verification-1" },
       insuranceVerifications: [],
@@ -174,6 +176,7 @@ describe("CarApprovalService", () => {
     expect(databaseServiceMock.car.findUnique).toHaveBeenCalledWith({
       where: { id: "car-1" },
       select: {
+        status: true,
         submittedAt: true,
         vehicleVerification: { select: { id: true } },
         insuranceVerifications: {
@@ -190,23 +193,52 @@ describe("CarApprovalService", () => {
   });
 
   it("does not approve a verified car whose insurance has expired", async () => {
-    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
-    databaseServiceMock.car.findUnique.mockResolvedValueOnce({
-      submittedAt: new Date("2026-09-07T00:00:00.000Z"),
-      vehicleVerification: { id: "verification-1" },
-      insuranceVerifications: [],
-    });
-    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
-    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+    const fixedNow = new Date("2026-09-07T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
 
-    await service.approveImage("car-1", "img-1", "admin-1");
+    try {
+      databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({
+        id: "img-1",
+        carId: "car-1",
+      });
+      databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+        status: Status.HOLD,
+        submittedAt: new Date("2026-09-07T00:00:00.000Z"),
+        vehicleVerification: { id: "verification-1" },
+        insuranceVerifications: [],
+      });
+      databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
-    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+      await service.approveImage("car-1", "img-1", "admin-1");
+
+      expect(databaseServiceMock.car.findUnique).toHaveBeenCalledWith({
+        where: { id: "car-1" },
+        select: {
+          status: true,
+          submittedAt: true,
+          vehicleVerification: { select: { id: true } },
+          insuranceVerifications: {
+            where: {
+              status: ProviderVerificationStatus.SUCCEEDED,
+              policyExpiresAt: { gt: fixedNow },
+            },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      });
+      expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not approve an unsubmitted verified car even with insurance", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      status: Status.HOLD,
       submittedAt: null,
       vehicleVerification: { id: "verification-1" },
       insuranceVerifications: [{ id: "insurance-1" }],
@@ -222,6 +254,7 @@ describe("CarApprovalService", () => {
   it("approves a submitted verified car after insurance verification succeeds", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      status: Status.HOLD,
       submittedAt: new Date("2026-09-07T00:00:00.000Z"),
       vehicleVerification: { id: "verification-1" },
       insuranceVerifications: [{ id: "insurance-1" }],
@@ -239,6 +272,56 @@ describe("CarApprovalService", () => {
         }),
       }),
     );
+  });
+
+  it("preserves BOOKED status when a fully reviewed operational car is approved", async () => {
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      status: Status.BOOKED,
+      submittedAt: new Date("2026-09-07T00:00:00.000Z"),
+      vehicleVerification: null,
+      insuranceVerifications: [],
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(2); // approved images
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+      where: { id: "car-1" },
+      data: {
+        approvalStatus: CarApprovalStatus.APPROVED,
+        approvalNotes: null,
+      },
+    });
+  });
+
+  it("preserves IN_SERVICE status when a fully reviewed operational car is approved", async () => {
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.car.findUnique.mockResolvedValueOnce({
+      status: Status.IN_SERVICE,
+      submittedAt: new Date("2026-09-07T00:00:00.000Z"),
+      vehicleVerification: null,
+      insuranceVerifications: [],
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(2); // approved images
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+      where: { id: "car-1" },
+      data: {
+        approvalStatus: CarApprovalStatus.APPROVED,
+        approvalNotes: null,
+      },
+    });
   });
 
   it("rejects approving an image that does not belong to the car", async () => {
@@ -287,6 +370,7 @@ describe("CarApprovalService", () => {
   it("approveCar approves a car whose documents are all approved", async () => {
     databaseServiceMock.car.findUnique
       .mockResolvedValueOnce({
+        status: Status.HOLD,
         submittedAt: new Date("2026-09-07T00:00:00.000Z"),
         vehicleVerification: null,
         insuranceVerifications: [],

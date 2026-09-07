@@ -45,6 +45,9 @@ env:
   FLUTTERWAVE_SECRET_KEY: ${{ secrets.FLUTTERWAVE_SECRET_KEY }}
   FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
   FLUTTERWAVE_WEBHOOK_SECRET: ${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
+  PREMBLY_API_KEY: ${{ secrets.PREMBLY_API_KEY }}
+  PREMBLY_APP_ID: ${{ secrets.PREMBLY_APP_ID }}
+  PREMBLY_BASE_URL: https://api.prembly.com
   HMAC_KEY: ${{ secrets.HMAC_KEY }}
   FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
   FLIGHTAWARE_WEBHOOK_SECRET: ${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
@@ -442,6 +445,9 @@ jobs:
             FLUTTERWAVE_BASE_URL=${{ env.FLUTTERWAVE_BASE_URL }}
             FLUTTERWAVE_WEBHOOK_SECRET=${{ env.FLUTTERWAVE_WEBHOOK_SECRET }}
             FLUTTERWAVE_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
+            PREMBLY_API_KEY=${{ env.PREMBLY_API_KEY }}
+            PREMBLY_APP_ID=${{ env.PREMBLY_APP_ID }}
+            PREMBLY_BASE_URL=${{ env.PREMBLY_BASE_URL }}
             HMAC_KEY=${{ env.HMAC_KEY }}
             FLIGHTAWARE_API_KEY=${{ env.FLIGHTAWARE_API_KEY }}
             FLIGHTAWARE_WEBHOOK_SECRET=${{ env.FLIGHTAWARE_WEBHOOK_SECRET }}
