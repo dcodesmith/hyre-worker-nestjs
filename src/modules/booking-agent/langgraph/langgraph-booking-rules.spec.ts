@@ -115,5 +115,8 @@ describe("langgraph-booking-rules", () => {
     expect(shouldApplyDraftPatch("provide_info")).toBe(true);
     expect(shouldApplyDraftPatch("confirm")).toBe(false);
     expect(shouldApplyDraftPatch("cancel")).toBe(false);
+    expect(shouldApplyDraftPatch("provide_info", 0.4)).toBe(false);
+    expect(shouldApplyDraftPatch("unknown", 0.95)).toBe(false);
+    expect(shouldApplyDraftPatch("abuse", 1)).toBe(false);
   });
 });
