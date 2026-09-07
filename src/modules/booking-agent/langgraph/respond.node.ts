@@ -2,6 +2,10 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import type { EnvConfig } from "../../../config/env.config";
+import {
+  LANGGRAPH_CHECKOUT_LINK_CONTENT_SID,
+  LANGGRAPH_VEHICLE_CARD_CONTENT_SID,
+} from "./langgraph.const";
 import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
 import { buildOutboxItems } from "./langgraph-outbox.builder";
@@ -52,12 +56,12 @@ export class RespondNode {
 
       const response = await this.responderService.generateResponse(state);
       const outboxItems = buildOutboxItems(state, response, {
-        vehicleCardContentSid: this.configService.get("TWILIO_VEHICLE_CARD_CONTENT_SID", {
-          infer: true,
-        }),
-        checkoutLinkContentSid: this.configService.get("TWILIO_CHECKOUT_LINK_CONTENT_SID", {
-          infer: true,
-        }),
+        vehicleCardContentSid:
+          this.configService.get("TWILIO_VEHICLE_CARD_CONTENT_SID", { infer: true }) ??
+          LANGGRAPH_VEHICLE_CARD_CONTENT_SID,
+        checkoutLinkContentSid:
+          this.configService.get("TWILIO_CHECKOUT_LINK_CONTENT_SID", { infer: true }) ??
+          LANGGRAPH_CHECKOUT_LINK_CONTENT_SID,
       });
       return { response, outboxItems };
     } catch (error) {
