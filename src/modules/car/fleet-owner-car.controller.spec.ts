@@ -1,12 +1,10 @@
+import { GoneException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
-import type { CarCreateFiles } from "./car.interface";
 import { CarService } from "./car.service";
-import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import { FleetOwnerCarController } from "./fleet-owner-car.controller";
 
 describe("FleetOwnerCarController", () => {
@@ -31,8 +29,11 @@ describe("FleetOwnerCarController", () => {
           useValue: {
             listOwnerCars: vi.fn(),
             getOwnerCarById: vi.fn(),
-            createCar: vi.fn(),
             updateCar: vi.fn(),
+            uploadDraftCarDocuments: vi.fn(),
+            uploadDraftCarImages: vi.fn(),
+            updateDraftCarPricing: vi.fn(),
+            submitCar: vi.fn(),
           },
         },
         {
@@ -80,53 +81,48 @@ describe("FleetOwnerCarController", () => {
   });
 
   describe("createCar", () => {
-    it("creates a car for authenticated fleet owner (POST /api/fleet-owner/cars)", async () => {
-      const body: CreateCarMultipartBodyDto = {
-        make: "Toyota",
-        model: "Camry",
-        year: 2022,
-        color: "",
-        registrationNumber: "ABC-123XY",
-        dayRate: 50000,
-        hourlyRate: 5000,
-        nightRate: 60000,
-        fullDayRate: 100000,
-        airportPickupRate: 30000,
-        pricingIncludesFuel: false,
-        fuelUpgradeRate: 10000,
-        vehicleType: VehicleType.SEDAN,
-        serviceTier: ServiceTier.STANDARD,
-        passengerCapacity: 4,
-      };
-      const files: CarCreateFiles = {
-        images: [
-          {
-            originalname: "car-1.jpg",
-            mimetype: "image/jpeg",
-            buffer: Buffer.from("image"),
-            size: 5,
-          },
-        ],
-        motCertificate: {
-          originalname: "mot.pdf",
-          mimetype: "application/pdf",
-          buffer: Buffer.from("pdf"),
-          size: 3,
-        },
-        insuranceCertificate: {
-          originalname: "insurance.pdf",
-          mimetype: "application/pdf",
-          buffer: Buffer.from("pdf"),
-          size: 3,
-        },
-      };
+    it("requires the verified onboarding flow", () => {
+      expect(() => controller.createCar()).toThrow(GoneException);
+      expect(() => controller.createCar()).toThrow(/vehicle-verifications/);
+    });
+  });
 
-      vi.mocked(carService.createCar).mockResolvedValueOnce({ id: "car-1" } as never);
+  describe("staged onboarding", () => {
+    it("uploads draft documents", async () => {
+      const files = { motCertificate: {}, insuranceCertificate: {} };
+      vi.mocked(carService.uploadDraftCarDocuments).mockResolvedValueOnce({ id: "car-1" } as never);
 
-      const result = await controller.createCar(body, files, mockUser);
+      await expect(
+        controller.uploadDraftCarDocuments("car-1", files as never, mockUser),
+      ).resolves.toEqual({ id: "car-1" });
+      expect(carService.uploadDraftCarDocuments).toHaveBeenCalledWith("car-1", "owner-1", files);
+    });
 
-      expect(result).toEqual({ id: "car-1" });
-      expect(carService.createCar).toHaveBeenCalledWith("owner-1", body, files);
+    it("uploads draft images", async () => {
+      const images = [{ originalname: "a.jpg" }];
+      vi.mocked(carService.uploadDraftCarImages).mockResolvedValueOnce({ id: "car-1" } as never);
+
+      await expect(
+        controller.uploadDraftCarImages("car-1", images as never, mockUser),
+      ).resolves.toEqual({ id: "car-1" });
+      expect(carService.uploadDraftCarImages).toHaveBeenCalledWith("car-1", "owner-1", images);
+    });
+
+    it("updates draft pricing", async () => {
+      const pricing = { hourlyRate: 5000, pricingIncludesFuel: true };
+      vi.mocked(carService.updateDraftCarPricing).mockResolvedValueOnce({ id: "car-1" } as never);
+
+      await expect(
+        controller.updateDraftCarPricing("car-1", pricing as never, mockUser),
+      ).resolves.toEqual({ id: "car-1" });
+      expect(carService.updateDraftCarPricing).toHaveBeenCalledWith("car-1", "owner-1", pricing);
+    });
+
+    it("submits a draft car", async () => {
+      vi.mocked(carService.submitCar).mockResolvedValueOnce({ success: true } as never);
+
+      await expect(controller.submitCar("car-1", mockUser)).resolves.toEqual({ success: true });
+      expect(carService.submitCar).toHaveBeenCalledWith("car-1", "owner-1");
     });
   });
 

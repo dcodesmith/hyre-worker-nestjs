@@ -1,5 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { CarApprovalStatus, DocumentStatus, Prisma } from "@prisma/client";
+import {
+  CarApprovalStatus,
+  DocumentStatus,
+  Prisma,
+  ProviderVerificationStatus,
+  Status,
+} from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
@@ -36,6 +42,11 @@ export class CarApprovalService {
     documents: {
       orderBy: { createdAt: "asc" as const },
     },
+    vehicleVerification: true,
+    insuranceVerifications: {
+      orderBy: { createdAt: "desc" as const },
+      take: 1,
+    },
   });
 
   constructor(
@@ -47,9 +58,10 @@ export class CarApprovalService {
 
   async listCarsForReview(query: ListCarsForReviewQueryDto) {
     try {
-      const where: Prisma.CarWhereInput = query.approvalStatus
-        ? { approvalStatus: query.approvalStatus }
-        : {};
+      const where: Prisma.CarWhereInput = {
+        submittedAt: { not: null },
+        ...(query.approvalStatus && { approvalStatus: query.approvalStatus }),
+      };
 
       const [cars, total] = await Promise.all([
         this.databaseService.car.findMany({
@@ -236,8 +248,23 @@ export class CarApprovalService {
       status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
     };
 
-    const [unresolvedDocuments, unresolvedImages, approvedImageCount, approvedRequiredDocs] =
+    const [car, unresolvedDocuments, unresolvedImages, approvedImageCount, approvedRequiredDocs] =
       await Promise.all([
+        tx.car.findUnique({
+          where: { id: carId },
+          select: {
+            submittedAt: true,
+            vehicleVerification: { select: { id: true } },
+            insuranceVerifications: {
+              where: {
+                status: ProviderVerificationStatus.SUCCEEDED,
+                policyExpiresAt: { gt: new Date() },
+              },
+              select: { id: true },
+              take: 1,
+            },
+          },
+        }),
         tx.documentApproval.count({ where: unresolvedFilter }),
         tx.vehicleImage.count({ where: unresolvedFilter }),
         tx.vehicleImage.count({ where: { carId, status: DocumentStatus.APPROVED } }),
@@ -260,12 +287,18 @@ export class CarApprovalService {
       unresolvedDocuments === 0 &&
       unresolvedImages === 0 &&
       approvedImageCount > 0 &&
-      hasAllRequiredDocuments;
+      hasAllRequiredDocuments &&
+      Boolean(car?.submittedAt) &&
+      (!car?.vehicleVerification || car.insuranceVerifications.length > 0);
 
     if (fullyReviewed) {
       await tx.car.update({
         where: { id: carId },
-        data: { approvalStatus: CarApprovalStatus.APPROVED, approvalNotes: null },
+        data: {
+          approvalStatus: CarApprovalStatus.APPROVED,
+          approvalNotes: null,
+          status: Status.AVAILABLE,
+        },
       });
     }
 

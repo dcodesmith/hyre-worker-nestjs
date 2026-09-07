@@ -325,6 +325,7 @@ export class TestDataFactory {
           `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         status: options.status ?? "AVAILABLE",
         approvalStatus: options.approvalStatus ?? "APPROVED", // Required for booking
+        submittedAt: new Date(),
         hourlyRate: options.hourlyRate ?? 5000,
         dayRate: options.dayRate ?? 50000,
         nightRate: options.nightRate ?? 60000,

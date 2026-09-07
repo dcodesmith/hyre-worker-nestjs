@@ -11,6 +11,9 @@ export const CarErrorCode = {
   CAR_STATUS_UPDATE_NOT_ALLOWED: "CAR_STATUS_UPDATE_NOT_ALLOWED",
   OWNER_DRIVER_CAR_LIMIT_REACHED: "OWNER_DRIVER_CAR_LIMIT_REACHED",
   REGISTRATION_NUMBER_ALREADY_EXISTS: "REGISTRATION_NUMBER_ALREADY_EXISTS",
+  CHASSIS_NUMBER_ALREADY_EXISTS: "CHASSIS_NUMBER_ALREADY_EXISTS",
+  CAR_ASSETS_ALREADY_UPLOADED: "CAR_ASSETS_ALREADY_UPLOADED",
+  SUBMISSION_REQUIREMENTS_NOT_MET: "CAR_SUBMISSION_REQUIREMENTS_NOT_MET",
   VEHICLE_IMAGE_NOT_FOUND: "VEHICLE_IMAGE_NOT_FOUND",
   CAR_APPROVAL_FAILED: "CAR_APPROVAL_FAILED",
   CAR_APPROVAL_BLOCKED: "CAR_APPROVAL_BLOCKED",
@@ -109,9 +112,42 @@ export class RegistrationNumberAlreadyExistsException extends CarException {
   constructor(registrationNumber: string) {
     super(
       CarErrorCode.REGISTRATION_NUMBER_ALREADY_EXISTS,
-      `A car with registration number ${registrationNumber} already exists in your fleet`,
+      `A car with registration number ${registrationNumber} is already registered`,
       HttpStatus.CONFLICT,
       { title: "Registration Number Already Exists" },
+    );
+  }
+}
+
+export class ChassisNumberAlreadyExistsException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CHASSIS_NUMBER_ALREADY_EXISTS,
+      "A car with this chassis number already exists",
+      HttpStatus.CONFLICT,
+      { title: "Chassis Number Already Exists" },
+    );
+  }
+}
+
+export class CarAssetsAlreadyUploadedException extends CarException {
+  constructor(asset: "documents" | "images") {
+    super(
+      CarErrorCode.CAR_ASSETS_ALREADY_UPLOADED,
+      `Car ${asset} have already been uploaded`,
+      HttpStatus.CONFLICT,
+      { title: "Car Assets Already Uploaded" },
+    );
+  }
+}
+
+export class CarSubmissionRequirementsNotMetException extends CarException {
+  constructor(requirements: Record<string, boolean>) {
+    super(
+      CarErrorCode.SUBMISSION_REQUIREMENTS_NOT_MET,
+      "Complete all car onboarding requirements before submission",
+      HttpStatus.CONFLICT,
+      { title: "Submission Requirements Not Met", details: { requirements } },
     );
   }
 }
@@ -142,7 +178,7 @@ export class CarApprovalBlockedException extends CarException {
   constructor() {
     super(
       CarErrorCode.CAR_APPROVAL_BLOCKED,
-      "All images and documents must be approved before the car can be approved",
+      "The car must be submitted with verified insurance and all images and documents approved",
       HttpStatus.CONFLICT,
       { title: "Car Approval Blocked" },
     );

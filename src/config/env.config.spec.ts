@@ -26,6 +26,7 @@ const productionEnv = {
   FLUTTERWAVE_BASE_URL: "https://api.flutterwave.com",
   FLUTTERWAVE_WEBHOOK_SECRET: "webhook-secret",
   FLUTTERWAVE_WEBHOOK_URL: "https://example.com/webhooks/flutterwave",
+  PREMBLY_API_KEY: "prembly-key",
   HMAC_KEY: "hmac-key",
   FLIGHTAWARE_API_KEY: "flightaware-key",
   FLIGHTAWARE_WEBHOOK_SECRET: "flightaware-secret",

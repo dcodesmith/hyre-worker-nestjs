@@ -183,6 +183,12 @@ export const envSchema = z
     FLUTTERWAVE_WEBHOOK_SECRET: z.string().min(1, "FLUTTERWAVE_WEBHOOK_SECRET is required"),
     FLUTTERWAVE_WEBHOOK_URL: z.url("FLUTTERWAVE_WEBHOOK_URL must be a valid URL"),
 
+    PREMBLY_API_KEY: z.string().min(1, "PREMBLY_API_KEY is required"),
+    PREMBLY_APP_ID: optionalNonEmptyString,
+    PREMBLY_BASE_URL: z
+      .url("PREMBLY_BASE_URL must be a valid URL")
+      .default("https://api.prembly.com"),
+
     HMAC_KEY: z.string().min(1, "HMAC_KEY is required"),
 
     ENABLE_MANUAL_TRIGGERS: z
