@@ -264,53 +264,26 @@ describe("envSchema LangGraph models", () => {
 });
 
 describe("envSchema WhatsApp agent templates", () => {
-  it("allows development and preview to omit agent template SIDs", () => {
+  it("treats agent template SIDs as optional overrides in every environment", () => {
     expect(
       envSchema.safeParse({
         ...productionEnv,
         OPERATIONS_EMAIL: "operations@example.com",
-        NODE_ENV: "development",
-        APP_ENV: "development",
+        APP_ENV: "production",
         TWILIO_VEHICLE_CARD_CONTENT_SID: undefined,
         TWILIO_CHECKOUT_LINK_CONTENT_SID: undefined,
       }).success,
     ).toBe(true);
 
-    expect(
-      envSchema.safeParse({
-        ...productionEnv,
-        OPERATIONS_EMAIL: "operations@example.com",
-        APP_ENV: "preview",
-        TWILIO_VEHICLE_CARD_CONTENT_SID: "",
-        TWILIO_CHECKOUT_LINK_CONTENT_SID: "",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("requires agent template SIDs when APP_ENV is production", () => {
-    const result = envSchema.safeParse({
+    const overridden = envSchema.parse({
       ...productionEnv,
       OPERATIONS_EMAIL: "operations@example.com",
-      APP_ENV: "production",
-      TWILIO_VEHICLE_CARD_CONTENT_SID: undefined,
-      TWILIO_CHECKOUT_LINK_CONTENT_SID: undefined,
+      TWILIO_VEHICLE_CARD_CONTENT_SID: "HXcccccccccccccccccccccccccccccccc",
+      TWILIO_CHECKOUT_LINK_CONTENT_SID: "HXdddddddddddddddddddddddddddddddd",
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: ["TWILIO_VEHICLE_CARD_CONTENT_SID"],
-            message: "TWILIO_VEHICLE_CARD_CONTENT_SID is required when APP_ENV=production",
-          }),
-          expect.objectContaining({
-            path: ["TWILIO_CHECKOUT_LINK_CONTENT_SID"],
-            message: "TWILIO_CHECKOUT_LINK_CONTENT_SID is required when APP_ENV=production",
-          }),
-        ]),
-      );
-    }
+    expect(overridden.TWILIO_VEHICLE_CARD_CONTENT_SID).toBe("HXcccccccccccccccccccccccccccccccc");
+    expect(overridden.TWILIO_CHECKOUT_LINK_CONTENT_SID).toBe("HXdddddddddddddddddddddddddddddddd");
   });
 });
 

@@ -25,10 +25,6 @@ const requiredTwilioContentSidKeys = [
   "TWILIO_FLEET_OWNER_BOOKING_NOTIFICATION_CONTENT_SID",
   "TWILIO_BOOKING_EXTENSION_CONFIRMATION_CONTENT_SID",
 ] as const;
-const requiredProductionAgentTwilioContentSidKeys = [
-  "TWILIO_VEHICLE_CARD_CONTENT_SID",
-  "TWILIO_CHECKOUT_LINK_CONTENT_SID",
-] as const;
 
 type EnvIssueContext = {
   addIssue(issue: { code: "custom"; path: string[]; message: string }): void;
@@ -97,18 +93,6 @@ function validateProductionConfiguration(env: Record<string, unknown>, ctx: EnvI
         path: [key],
         message: `${key} is required in production`,
       });
-    }
-  }
-
-  if (env.APP_ENV === "production") {
-    for (const key of requiredProductionAgentTwilioContentSidKeys) {
-      if (!env[key]) {
-        ctx.addIssue({
-          code: "custom",
-          path: [key],
-          message: `${key} is required when APP_ENV=production`,
-        });
-      }
     }
   }
 }

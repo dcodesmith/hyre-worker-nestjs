@@ -23,6 +23,10 @@ export const LANGGRAPH_ABUSE_RESPONSE =
 
 export const LANGGRAPH_HOLD_TTL_MINUTES = 15;
 
+/** Shared WhatsApp Content Templates. Variables (prices, checkout token, images) come from the running environment. */
+export const LANGGRAPH_VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";
+export const LANGGRAPH_CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3";
+
 /**
  * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.
  * This replaces raw technical errors like "429 quota exceeded" or "500 internal server error".

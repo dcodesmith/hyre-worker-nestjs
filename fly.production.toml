@@ -15,8 +15,6 @@ primary_region = "lhr"
   FLUTTERWAVE_WEBHOOK_URL = "https://hyre-worker-nestjs-production.fly.dev/api/webhook/flutterwave"
   ENABLE_MANUAL_TRIGGERS = "false"
   SENDER_NAME = "Yomide"
-  TWILIO_VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22"
-  TWILIO_CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3"
 
 [deploy]
   release_command = "/bin/sh scripts/run-prisma-migrations.sh"
