@@ -1,6 +1,5 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["partialIndexes"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -784,7 +783,10 @@ model FleetOwnerAccountVerification {
   reviewedBy              User?                     @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@unique([userId, idempotencyKey])
-  @@unique([userId], map: "FleetOwnerAccountVerification_one_active_per_user_idx", where: raw("\"status\" IN ('PROCESSING', 'REVIEW_REQUIRED')"))
+  // One active PROCESSING/REVIEW_REQUIRED row per user is enforced by a
+  // partial unique index in the account-verification migration. Prisma db
+  // push cannot represent that predicate without treating it as a full
+  // userId unique, so it stays in SQL.
   @@index([userId, createdAt])
   @@index([status, createdAt])
   @@index([reviewedById])

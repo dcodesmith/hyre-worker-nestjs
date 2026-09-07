@@ -118,6 +118,11 @@ async function initializeWorkerIsolation(): Promise<void> {
         $constraint$
       `);
       await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "FleetOwnerAccountVerification_one_active_per_user_idx"
+        ON "FleetOwnerAccountVerification"("userId")
+        WHERE "status" IN ('PROCESSING', 'REVIEW_REQUIRED')
+      `);
+      await tx.$executeRawUnsafe(`
         DO $constraint$
         BEGIN
           IF NOT EXISTS (
