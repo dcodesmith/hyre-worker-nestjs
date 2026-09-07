@@ -3,6 +3,7 @@ import {
   CarApprovalStatus,
   DocumentStatus,
   Prisma,
+  ProviderVerificationStatus,
   ServiceTier,
   Status,
   VehicleType,
@@ -14,14 +15,16 @@ import { PromotionService } from "../promotion/promotion.service";
 import { StorageService } from "../storage/storage.service";
 import { REJECTION_ACTION_NOTE } from "./car.const";
 import {
+  CarAssetsAlreadyUploadedException,
   CarCreateFailedException,
   CarDocumentNotFoundException,
   CarFetchFailedException,
   CarNotFoundException,
   CarStatusUpdateNotAllowedException,
+  CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
+  ChassisNumberAlreadyExistsException,
   FileNotRejectedException,
-  OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
   VehicleImageNotFoundException,
 } from "./car.error";
@@ -44,29 +47,6 @@ describe("CarService", () => {
     buffer: Buffer.from(content),
     size: Buffer.byteLength(content),
   });
-  const createCarDto = (registrationNumber = "ABC-123XY") => ({
-    make: "Toyota",
-    model: "Camry",
-    year: 2022,
-    color: "",
-    registrationNumber,
-    dayRate: 50000,
-    hourlyRate: 5000,
-    nightRate: 60000,
-    fullDayRate: 100000,
-    airportPickupRate: 30000,
-    pricingIncludesFuel: false,
-    fuelUpgradeRate: 10000,
-    vehicleType: VehicleType.SEDAN,
-    serviceTier: ServiceTier.STANDARD,
-    passengerCapacity: 4,
-  });
-  const createCarFiles = () => ({
-    images: [createMockFile("car.jpg", "image/jpeg")],
-    motCertificate: createMockFile("mot.pdf", "application/pdf"),
-    insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
-  });
-
   const databaseServiceMock = {
     car: {
       findMany: vi.fn(),
@@ -84,11 +64,20 @@ describe("CarService", () => {
       createMany: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      count: vi.fn(),
     },
     documentApproval: {
       createMany: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      count: vi.fn(),
+    },
+    vehicleVerification: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    insuranceVerification: {
+      count: vi.fn(),
     },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -105,7 +94,10 @@ describe("CarService", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     databaseServiceMock.$transaction.mockImplementation((cb) => cb(databaseServiceMock));
+    databaseServiceMock.documentApproval.count.mockResolvedValue(0);
+    databaseServiceMock.vehicleImage.count.mockResolvedValue(0);
     databaseServiceMock.$queryRaw.mockResolvedValue([{ id: "car-1" }]);
+    storageServiceMock.deleteObjectByKey.mockResolvedValue(undefined);
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
     promotionServiceMock.getActivePromotionForCar.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
@@ -153,53 +145,6 @@ describe("CarService", () => {
 
     await expect(service.getOwnerCarById("missing", "owner-1")).rejects.toBeInstanceOf(
       CarNotFoundException,
-    );
-  });
-
-  it("enforces owner-driver single-car limit during create", async () => {
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: true });
-    databaseServiceMock.car.count.mockResolvedValueOnce(1);
-
-    await expect(
-      service.createCar("owner-1", createCarDto(), createCarFiles()),
-    ).rejects.toBeInstanceOf(OwnerDriverCarLimitReachedException);
-  });
-
-  it("rejects duplicate registration number for same owner (format-insensitive)", async () => {
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ registrationNumber: "ABC123XY" }]);
-
-    await expect(
-      service.createCar("owner-1", createCarDto("ABC-123XY"), createCarFiles()),
-    ).rejects.toBeInstanceOf(RegistrationNumberAlreadyExistsException);
-  });
-
-  it("creates car and related images/documents in transaction", async () => {
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-    databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
-    databaseServiceMock.car.create.mockResolvedValueOnce({ id: "car-1" });
-    storageServiceMock.uploadBuffer
-      .mockResolvedValueOnce("https://cdn.example.com/car-1.jpg")
-      .mockResolvedValueOnce("https://cdn.example.com/mot.pdf")
-      .mockResolvedValueOnce("https://cdn.example.com/insurance.pdf");
-    databaseServiceMock.$transaction.mockImplementationOnce(async (callback) =>
-      callback({
-        car: { findUnique: vi.fn().mockResolvedValue({ id: "car-1", ownerId: "owner-1" }) },
-        vehicleImage: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
-        documentApproval: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
-      }),
-    );
-
-    const result = await service.createCar("owner-1", createCarDto("ABC-123XY"), createCarFiles());
-
-    expect(result).toEqual({ id: "car-1", ownerId: "owner-1" });
-    expect(promotionServiceMock.getActivePromotionForCar).not.toHaveBeenCalled();
-    expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          registrationNumber: "ABC123XY",
-        }),
-      }),
     );
   });
 
@@ -282,39 +227,17 @@ describe("CarService", () => {
   });
 
   it("rejects update when registration number conflicts after normalization", async () => {
-    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
-      id: "car-1",
-      registrationNumber: "ZZZ-999AA",
-      status: Status.AVAILABLE,
-    });
-    databaseServiceMock.car.findMany.mockResolvedValueOnce([{ registrationNumber: "ABC123XY" }]);
+    databaseServiceMock.car.findFirst
+      .mockResolvedValueOnce({
+        id: "car-1",
+        registrationNumber: "ZZZ-999AA",
+        status: Status.AVAILABLE,
+      })
+      .mockResolvedValueOnce({ id: "other-car" });
 
     await expect(
       service.updateCar("car-1", "owner-1", { registrationNumber: "ABC 123XY" }),
     ).rejects.toBeInstanceOf(RegistrationNumberAlreadyExistsException);
-  });
-
-  it("deletes already-uploaded files when create fails mid-upload", async () => {
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-    databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
-    databaseServiceMock.car.create.mockResolvedValueOnce({ id: "car-1" });
-    databaseServiceMock.car.delete.mockResolvedValueOnce({ id: "car-1" });
-    storageServiceMock.uploadBuffer
-      .mockResolvedValueOnce("https://cdn.example.com/car-1.jpg")
-      .mockRejectedValueOnce(new Error("s3 timeout"));
-    storageServiceMock.deleteObjectByKey.mockResolvedValue(undefined);
-
-    await expect(
-      service.createCar("owner-1", createCarDto(), createCarFiles()),
-    ).rejects.toBeInstanceOf(CarCreateFailedException);
-
-    expect(databaseServiceMock.car.delete).toHaveBeenCalledWith({ where: { id: "car-1" } });
-    expect(storageServiceMock.deleteObjectByKey.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(
-      storageServiceMock.deleteObjectByKey.mock.calls.some(([key]) =>
-        typeof key === "string" ? key.includes("owner-1/car-1/") : false,
-      ),
-    ).toBe(true);
   });
 
   it("throws CarFetchFailedException when list query fails unexpectedly", async () => {
@@ -519,12 +442,7 @@ describe("CarService", () => {
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
       storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
       // Prisma throws P2025 when the guarded update matches no record
-      databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError("Record not found", {
-          code: "P2025",
-          clientVersion: "test",
-        }),
-      );
+      databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(recordNotFoundError());
 
       await expect(
         service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
@@ -658,6 +576,285 @@ describe("CarService", () => {
       expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
         "owner-1/car-1/documents/old.pdf",
       );
+    });
+  });
+
+  describe("createDraftCarFromVerification", () => {
+    const verification = {
+      id: "ver-1",
+      ownerId: "owner-1",
+      plateNumber: "KJA-123 AB",
+      chassisNumber: "1HGCM82633A004352",
+      make: "Toyota",
+      model: "Camry",
+      year: 2020,
+      color: "Black",
+      passengerCapacity: 5,
+    };
+
+    it("creates a draft car, persists a normalized plate, and consumes the verification once", async () => {
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce(verification);
+      databaseServiceMock.car.create.mockResolvedValueOnce({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+        dayRate: null,
+        hourlyRate: null,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      const result = await service.createDraftCarFromVerification("owner-1", "ver-1");
+
+      expect(result).toMatchObject({
+        id: "car-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+        dayRate: null,
+        hourlyRate: null,
+      });
+      expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            ownerId: "owner-1",
+            registrationNumber: "KJA123AB",
+            chassisNumber: verification.chassisNumber,
+            make: "Toyota",
+            model: "Camry",
+            year: 2020,
+            status: Status.HOLD,
+            approvalStatus: CarApprovalStatus.PENDING,
+          }),
+        }),
+      );
+      expect(databaseServiceMock.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: "ver-1", carId: null },
+        data: { carId: "car-1" },
+      });
+    });
+
+    it("fails when the verification is consumed concurrently", async () => {
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce(verification);
+      databaseServiceMock.car.create.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.createDraftCarFromVerification("owner-1", "ver-1"),
+      ).rejects.toBeInstanceOf(CarCreateFailedException);
+    });
+
+    it("maps a duplicate chassis unique constraint", async () => {
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce(verification);
+      databaseServiceMock.car.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+          meta: { target: ["chassisNumber"] },
+        }),
+      );
+
+      await expect(
+        service.createDraftCarFromVerification("owner-1", "ver-1"),
+      ).rejects.toBeInstanceOf(ChassisNumberAlreadyExistsException);
+    });
+  });
+
+  describe("submitCar", () => {
+    const draftCar = {
+      id: "car-1",
+      ownerId: "owner-1",
+      hourlyRate: null,
+      dayRate: null,
+      nightRate: null,
+      fullDayRate: null,
+      airportPickupRate: null,
+      pricingIncludesFuel: false,
+      fuelUpgradeRate: null,
+      submittedAt: null,
+      vehicleVerification: { id: "ver-1" },
+      _count: { documents: 0, images: 0 },
+    };
+
+    it("derives missing document, image, pricing, and insurance requirements", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(draftCar);
+      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(0);
+
+      const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
+
+      expect(error).toBeInstanceOf(CarSubmissionRequirementsNotMetException);
+      expect((error as CarSubmissionRequirementsNotMetException).getDetails()).toEqual({
+        requirements: {
+          hasDocuments: false,
+          hasImages: false,
+          hasPricing: false,
+          hasInsuranceVerification: false,
+        },
+      });
+    });
+
+    it("treats fuel-inclusive pricing as complete without a fuel upgrade rate", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        ...draftCar,
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        fuelUpgradeRate: null,
+        _count: { documents: 2, images: 1 },
+      });
+      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(1);
+
+      await expect(service.submitCar("car-1", "owner-1")).resolves.toEqual({
+        success: true,
+        requirements: {
+          hasDocuments: true,
+          hasImages: true,
+          hasPricing: true,
+          hasInsuranceVerification: true,
+        },
+      });
+      expect(databaseServiceMock.insuranceVerification.count).toHaveBeenCalledWith({
+        where: {
+          carId: "car-1",
+          ownerId: "owner-1",
+          status: ProviderVerificationStatus.SUCCEEDED,
+          policyExpiresAt: { gt: expect.any(Date) },
+        },
+      });
+      expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
+        where: { id: "car-1" },
+        data: { submittedAt: expect.any(Date) },
+      });
+    });
+
+    it("blocks a verified car when unexpired insurance verification is missing", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        ...draftCar,
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        _count: { documents: 2, images: 1 },
+      });
+      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(0);
+
+      const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
+
+      expect(error).toBeInstanceOf(CarSubmissionRequirementsNotMetException);
+      expect((error as CarSubmissionRequirementsNotMetException).getDetails()).toEqual({
+        requirements: {
+          hasDocuments: true,
+          hasImages: true,
+          hasPricing: true,
+          hasInsuranceVerification: false,
+        },
+      });
+      expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+    });
+
+    it("does not require insurance verification for a legacy unverified car", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        ...draftCar,
+        vehicleVerification: null,
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        _count: { documents: 2, images: 1 },
+      });
+
+      await expect(service.submitCar("car-1", "owner-1")).resolves.toMatchObject({
+        success: true,
+        requirements: { hasInsuranceVerification: true },
+      });
+      expect(databaseServiceMock.insuranceVerification.count).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("draft asset and pricing updates", () => {
+    it("uploads draft documents once and returns the owner car", async () => {
+      databaseServiceMock.$transaction.mockImplementationOnce((arg) =>
+        Array.isArray(arg) ? Promise.all(arg) : arg(databaseServiceMock),
+      );
+      databaseServiceMock.car.findFirst
+        .mockResolvedValueOnce({ id: "car-1" })
+        .mockResolvedValueOnce({ id: "car-1", documents: [] });
+      storageServiceMock.uploadBuffer
+        .mockResolvedValueOnce("owner-1/car-1/documents/mot.pdf")
+        .mockResolvedValueOnce("owner-1/car-1/documents/insurance.pdf");
+      databaseServiceMock.documentApproval.createMany.mockResolvedValueOnce({ count: 2 });
+      databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1" });
+
+      const result = await service.uploadDraftCarDocuments("car-1", "owner-1", {
+        motCertificate: createMockFile("mot.pdf", "application/pdf"),
+        insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
+      });
+
+      expect(result).toMatchObject({ id: "car-1" });
+      expect(databaseServiceMock.documentApproval.createMany).toHaveBeenCalled();
+    });
+
+    it("rejects a second document upload for the same car", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.count.mockResolvedValueOnce(2);
+
+      await expect(
+        service.uploadDraftCarDocuments("car-1", "owner-1", {
+          motCertificate: createMockFile("mot.pdf", "application/pdf"),
+          insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
+        }),
+      ).rejects.toBeInstanceOf(CarAssetsAlreadyUploadedException);
+    });
+
+    it("uploads draft images once", async () => {
+      databaseServiceMock.car.findFirst
+        .mockResolvedValueOnce({ id: "car-1" })
+        .mockResolvedValueOnce({ id: "car-1", images: [] });
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/images/a.jpg");
+      databaseServiceMock.vehicleImage.createMany.mockResolvedValueOnce({ count: 1 });
+      databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1" });
+
+      const result = await service.uploadDraftCarImages("car-1", "owner-1", [
+        createMockFile("a.jpg", "image/jpeg"),
+      ]);
+
+      expect(result).toMatchObject({ id: "car-1" });
+      expect(databaseServiceMock.vehicleImage.createMany).toHaveBeenCalled();
+    });
+
+    it("updates draft pricing through the shared car update path", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        id: "car-1",
+        registrationNumber: "KJA123AB",
+        status: Status.HOLD,
+      });
+      databaseServiceMock.car.update.mockResolvedValueOnce({
+        id: "car-1",
+        hourlyRate: 5000,
+        dayRate: 50_000,
+      });
+
+      const result = await service.updateDraftCarPricing("car-1", "owner-1", {
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        vehicleType: VehicleType.SEDAN,
+        serviceTier: ServiceTier.STANDARD,
+      });
+
+      expect(result).toMatchObject({ id: "car-1", hourlyRate: 5000, dayRate: 50_000 });
     });
   });
 });

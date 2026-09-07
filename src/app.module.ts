@@ -36,6 +36,7 @@ import { ReminderModule } from "./modules/reminder/reminder.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { StatusChangeModule } from "./modules/status-change/status-change.module";
 import { UsersModule } from "./modules/users/users.module";
+import { VerificationModule } from "./modules/verification/verification.module";
 import { RootController } from "./root.controller";
 
 @Module({
@@ -115,6 +116,7 @@ import { RootController } from "./root.controller";
     DashboardModule,
     RatesModule,
     PromotionModule,
+    VerificationModule,
   ],
 })
 export class AppModule {}

@@ -1,7 +1,7 @@
 import { ServiceTier, Status, VehicleType } from "@prisma/client";
 import { z } from "zod";
 
-const registrationNumberSchema = z
+export const registrationNumberSchema = z
   .string()
   .trim()
   .min(1, "Registration number is required")

@@ -7,33 +7,37 @@ datasource db {
 }
 
 model Car {
-  id                  String             @id @default(cuid())
-  make                String
-  model               String
-  year                Int
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  color               String
-  ownerId             String
-  registrationNumber  String
-  status              Status
-  approvalStatus      CarApprovalStatus  @default(PENDING)
-  approvalNotes       String?
-  hourlyRate          Int
-  dayRate             Int
-  nightRate           Int
-  fuelUpgradeRate     Int?
-  fullDayRate         Int
-  airportPickupRate   Int
-  vehicleType         VehicleType        @default(SEDAN)
-  serviceTier         ServiceTier        @default(STANDARD)
-  passengerCapacity   Int                @default(4)
-  pricingIncludesFuel Boolean            @default(false)
-  bookings            Booking[]
-  owner               User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  documents           DocumentApproval[] @relation("CarDocuments")
-  images              VehicleImage[]
-  promotions          Promotion[]        @relation("CarPromotions")
+  id                     String                  @id @default(cuid())
+  make                   String
+  model                  String
+  year                   Int
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  color                  String
+  ownerId                String
+  registrationNumber     String                  @unique
+  chassisNumber          String?                 @unique
+  status                 Status
+  approvalStatus         CarApprovalStatus       @default(PENDING)
+  approvalNotes          String?
+  submittedAt            DateTime?
+  hourlyRate             Int?
+  dayRate                Int?
+  nightRate              Int?
+  fuelUpgradeRate        Int?
+  fullDayRate            Int?
+  airportPickupRate      Int?
+  vehicleType            VehicleType             @default(SEDAN)
+  serviceTier            ServiceTier             @default(STANDARD)
+  passengerCapacity      Int                     @default(4)
+  pricingIncludesFuel    Boolean                 @default(false)
+  bookings               Booking[]
+  owner                  User                    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  documents              DocumentApproval[]      @relation("CarDocuments")
+  images                 VehicleImage[]
+  promotions             Promotion[]             @relation("CarPromotions")
+  vehicleVerification    VehicleVerification?
+  insuranceVerifications InsuranceVerification[]
 
   @@index([ownerId])
   @@index([ownerId, updatedAt])
@@ -44,6 +48,55 @@ model Car {
   @@index([vehicleType])
   @@index([serviceTier])
   @@index([serviceTier, vehicleType])
+}
+
+model VehicleVerification {
+  id                String                     @id @default(cuid())
+  ownerId           String
+  idempotencyKey    String
+  requestHash       String
+  plateNumber       String
+  chassisNumber     String?
+  make              String?
+  model             String?
+  year              Int?
+  color             String?
+  passengerCapacity Int?
+  plateProviderRef  String?
+  vinProviderRef    String?
+  status            ProviderVerificationStatus @default(PROCESSING)
+  failureReason     String?
+  expiresAt         DateTime
+  carId             String?                    @unique
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  owner             User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  car               Car?                       @relation(fields: [carId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, plateNumber])
+  @@index([status, createdAt])
+}
+
+model InsuranceVerification {
+  id             String                     @id @default(cuid())
+  carId          String
+  ownerId        String
+  idempotencyKey String
+  requestHash    String
+  policyNumber   String
+  policyStatus   String?
+  policyExpiresAt DateTime?
+  providerRef    String?
+  status         ProviderVerificationStatus @default(PROCESSING)
+  failureReason  String?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  car            Car                        @relation(fields: [carId], references: [id], onDelete: Cascade)
+  owner          User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([carId, status, createdAt])
 }
 
 model User {
@@ -79,6 +132,8 @@ model User {
   bookingReferrals          Booking[]                  @relation("BookingReferrals")
   bookings                  Booking[]                  @relation("BookingCustomer")
   cars                      Car[]
+  vehicleVerifications      VehicleVerification[]
+  insuranceVerifications    InsuranceVerification[]
   approvedDocuments         DocumentApproval[]         @relation("ApprovedBy")
   documents                 DocumentApproval[]         @relation("UserDocuments")
   payoutsReceived           PayoutTransaction[]        @relation("FleetOwnerPayouts")
@@ -785,8 +840,8 @@ model Account {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  @@index([userId])
   @@unique([providerId, accountId])
+  @@index([userId])
   @@map("account")
 }
 
@@ -1032,6 +1087,12 @@ enum CarApprovalStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum ProviderVerificationStatus {
+  PROCESSING
+  SUCCEEDED
+  FAILED
 }
 
 enum VehicleType {

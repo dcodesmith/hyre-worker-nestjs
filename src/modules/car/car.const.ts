@@ -5,8 +5,7 @@ export const MAX_IMAGE_COUNT = 5;
 
 /**
  * Car documents that must exist and be APPROVED before a car can be listed.
- * Owner-level docs (NIN, licence) live on the user, not the car. Mirrors what
- * car creation always uploads (see persistUploadedCarAssets).
+ * Owner-level docs (NIN, licence) live on the user, not the car.
  */
 export const REQUIRED_CAR_DOCUMENT_TYPES = [
   DocumentType.MOT_CERTIFICATE,
@@ -17,8 +16,7 @@ export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as con
 export const IMAGE_MIME_TYPES_SET = new Set<string>(IMAGE_MIME_TYPES);
 export const PDF_MIME_TYPE = "application/pdf";
 
-export const CAR_UPLOAD_FIELD_CONFIG = [
-  { name: "images", maxCount: MAX_IMAGE_COUNT },
+export const CAR_DOCUMENT_UPLOAD_FIELD_CONFIG = [
   { name: "motCertificate", maxCount: 1 },
   { name: "insuranceCertificate", maxCount: 1 },
 ] as const;

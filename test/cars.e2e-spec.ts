@@ -73,6 +73,13 @@ describe("Cars E2E Tests", () => {
       status: "AVAILABLE",
     });
     publicCarId = publicCar.id;
+    ownerCarId = (
+      await factory.createCar(ownerId, {
+        registrationNumber: "KJA-123AB",
+        approvalStatus: "PENDING",
+        status: "HOLD",
+      })
+    ).id;
   });
 
   afterAll(async () => {
@@ -91,44 +98,13 @@ describe("Cars E2E Tests", () => {
     expect(response.status).toBe(HttpStatus.FORBIDDEN);
   });
 
-  it("POST /api/fleet-owner/cars creates car for fleet owner", async () => {
+  it("POST /api/fleet-owner/cars requires verified onboarding", async () => {
     const response = await request(app.getHttpServer())
       .post("/api/fleet-owner/cars")
-      .set("Cookie", ownerCookie)
-      .field("make", "Toyota")
-      .field("model", "Camry")
-      .field("year", "2022")
-      .field("color", "Black")
-      .field("registrationNumber", "KJA-123AB")
-      .field("dayRate", "50000")
-      .field("hourlyRate", "5000")
-      .field("nightRate", "60000")
-      .field("fullDayRate", "100000")
-      .field("airportPickupRate", "30000")
-      .field("pricingIncludesFuel", "false")
-      .field("fuelUpgradeRate", "10000")
-      .field("vehicleType", "SEDAN")
-      .field("serviceTier", "STANDARD")
-      .field("passengerCapacity", "4")
-      .attach("images", Buffer.from("fake-image"), {
-        filename: "car.jpg",
-        contentType: "image/jpeg",
-      })
-      .attach("motCertificate", Buffer.from("%PDF-1.4 test"), {
-        filename: "mot.pdf",
-        contentType: "application/pdf",
-      })
-      .attach("insuranceCertificate", Buffer.from("%PDF-1.4 insurance"), {
-        filename: "insurance.pdf",
-        contentType: "application/pdf",
-      });
+      .set("Cookie", ownerCookie);
 
-    expect(response.status).toBe(HttpStatus.CREATED);
-    expect(response.body.ownerId).toBe(ownerId);
-    expect(response.body.registrationNumber).toBe("KJA123AB");
-    expect(response.body.images).toHaveLength(1);
-    expect(response.body.documents).toHaveLength(2);
-    ownerCarId = response.body.id;
+    expect(response.status).toBe(HttpStatus.GONE);
+    expect(response.body.detail).toContain("vehicle-verifications");
   });
 
   it("GET /api/fleet-owner/cars lists only requesting fleet owner's cars", async () => {

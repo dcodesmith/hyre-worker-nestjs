@@ -11,15 +11,7 @@ export interface CarUploadFields {
   insuranceCertificate?: UploadedCarFile[];
 }
 
-export interface CarCreateFiles {
-  images: UploadedCarFile[];
+export interface CarDocumentFiles {
   motCertificate: UploadedCarFile;
   insuranceCertificate: UploadedCarFile;
-}
-
-export interface UploadedFiles {
-  imageUrls: string[];
-  motCertificateUrl: string;
-  insuranceCertificateUrl: string;
-  uploadedKeys: string[];
 }

@@ -5,35 +5,47 @@ import {
   DocumentStatus,
   DocumentType,
   Prisma,
+  ProviderVerificationStatus,
   Status,
   type VehicleImage,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
+import {
+  DatabaseService,
+  isRecordNotFoundError,
+  isUniqueConstraintError,
+  lockCarRow,
+  lockUserRow,
+} from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import {
   CAR_S3_CATEGORY_DOCUMENTS,
   CAR_S3_CATEGORY_IMAGES,
+  MAX_IMAGE_COUNT,
   REJECTION_ACTION_NOTE,
+  REQUIRED_CAR_DOCUMENT_TYPES,
 } from "./car.const";
 import {
+  CarAssetsAlreadyUploadedException,
   CarCreateFailedException,
   CarDocumentNotFoundException,
   CarException,
   CarFetchFailedException,
   CarNotFoundException,
   CarStatusUpdateNotAllowedException,
+  CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
+  ChassisNumberAlreadyExistsException,
   FileNotRejectedException,
   FleetOwnerNotFoundException,
   OwnerDriverCarLimitReachedException,
   RegistrationNumberAlreadyExistsException,
   VehicleImageNotFoundException,
 } from "./car.error";
-import type { CarCreateFiles, UploadedCarFile, UploadedFiles } from "./car.interface";
+import type { CarDocumentFiles, UploadedCarFile } from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
-import type { CreateCarMultipartBodyDto } from "./dto/create-car.dto";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
+import type { UpdateCarPricingDto } from "./dto/update-car-pricing.dto";
 
 @Injectable()
 export class CarService {
@@ -83,167 +95,21 @@ export class CarService {
     return registrationNumber.toUpperCase().replaceAll(/\s+/g, "").replaceAll("-", "");
   }
 
-  private async assertOwnerCanCreateCar(ownerId: string): Promise<void> {
-    const fleetOwnerUser = await this.databaseService.user.findUnique({
-      where: { id: ownerId },
-      select: { isOwnerDriver: true },
-    });
-
-    if (!fleetOwnerUser) {
-      throw new FleetOwnerNotFoundException();
-    }
-
-    if (!fleetOwnerUser.isOwnerDriver) {
-      return;
-    }
-
-    const existingCarsCount = await this.databaseService.car.count({
-      where: { ownerId },
-    });
-
-    if (existingCarsCount >= 1) {
-      throw new OwnerDriverCarLimitReachedException();
-    }
-  }
-
   private async assertRegistrationNumberUnique(
-    ownerId: string,
     registrationNumber: string,
     excludeCarId?: string,
   ): Promise<void> {
     const normalizedRegistrationNumber = this.normalizeRegistrationNumber(registrationNumber);
-    const existingCars = await this.databaseService.car.findMany({
+    const existingCar = await this.databaseService.car.findFirst({
       where: {
-        ownerId,
+        registrationNumber: normalizedRegistrationNumber,
         ...(excludeCarId && { id: { not: excludeCarId } }),
-      },
-      select: { registrationNumber: true },
-    });
-
-    const hasDuplicate = existingCars.some(
-      (car) =>
-        this.normalizeRegistrationNumber(car.registrationNumber) === normalizedRegistrationNumber,
-    );
-    if (hasDuplicate) {
-      throw new RegistrationNumberAlreadyExistsException(registrationNumber);
-    }
-  }
-
-  private async createCarShell(
-    ownerId: string,
-    dto: CreateCarMultipartBodyDto,
-  ): Promise<{ id: string }> {
-    return this.databaseService.car.create({
-      data: {
-        make: dto.make,
-        model: dto.model,
-        year: dto.year,
-        color: dto.color,
-        ownerId,
-        registrationNumber: this.normalizeRegistrationNumber(dto.registrationNumber),
-        status: dto.status ?? Status.AVAILABLE,
-        approvalStatus: CarApprovalStatus.PENDING,
-        hourlyRate: dto.hourlyRate,
-        dayRate: dto.dayRate,
-        nightRate: dto.nightRate,
-        fuelUpgradeRate: dto.fuelUpgradeRate ?? null,
-        fullDayRate: dto.fullDayRate,
-        airportPickupRate: dto.airportPickupRate,
-        pricingIncludesFuel: dto.pricingIncludesFuel,
-        vehicleType: dto.vehicleType,
-        serviceTier: dto.serviceTier,
-        passengerCapacity: dto.passengerCapacity,
       },
       select: { id: true },
     });
-  }
 
-  private async uploadCarFiles(
-    ownerId: string,
-    carId: string,
-    files: CarCreateFiles,
-    uploadedKeys: string[],
-  ): Promise<UploadedFiles> {
-    const trackUpload = async (file: UploadedCarFile, category: string): Promise<string> => {
-      const key = this.getObjectKey(ownerId, carId, file.originalname, category);
-      const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
-      uploadedKeys.push(key);
-      return url;
-    };
-
-    const [imageUrls, motCertificateUrl, insuranceCertificateUrl] = await Promise.all([
-      Promise.all(files.images.map((image) => trackUpload(image, CAR_S3_CATEGORY_IMAGES))),
-      trackUpload(files.motCertificate, CAR_S3_CATEGORY_DOCUMENTS),
-      trackUpload(files.insuranceCertificate, CAR_S3_CATEGORY_DOCUMENTS),
-    ]);
-
-    return { imageUrls, motCertificateUrl, insuranceCertificateUrl, uploadedKeys };
-  }
-
-  private async persistUploadedCarAssets(
-    carId: string,
-    uploaded: {
-      imageUrls: string[];
-      motCertificateUrl: string;
-      insuranceCertificateUrl: string;
-    },
-  ) {
-    const car = await this.databaseService.$transaction(async (tx) => {
-      await tx.vehicleImage.createMany({
-        data: uploaded.imageUrls.map((url) => ({
-          url,
-          carId,
-          status: DocumentStatus.PENDING,
-        })),
-      });
-
-      await tx.documentApproval.createMany({
-        data: [
-          {
-            documentType: DocumentType.MOT_CERTIFICATE,
-            documentUrl: uploaded.motCertificateUrl,
-            carId,
-            status: DocumentStatus.PENDING,
-          },
-          {
-            documentType: DocumentType.INSURANCE_CERTIFICATE,
-            documentUrl: uploaded.insuranceCertificateUrl,
-            carId,
-            status: DocumentStatus.PENDING,
-          },
-        ],
-      });
-
-      return tx.car.findUnique({
-        where: { id: carId },
-        include: this.carDetailsInclude,
-      });
-    });
-
-    if (!car) {
-      throw new CarCreateFailedException();
-    }
-
-    return car;
-  }
-
-  private async cleanupFailedCreate(carId: string, uploadedKeys: string[]): Promise<void> {
-    await this.databaseService.car.delete({
-      where: { id: carId },
-    });
-
-    for (const key of uploadedKeys) {
-      try {
-        await this.storageService.deleteObjectByKey(key);
-      } catch (deleteError) {
-        this.logger.error(
-          {
-            key,
-            error: deleteError instanceof Error ? deleteError.message : String(deleteError),
-          },
-          "Failed to delete uploaded car asset",
-        );
-      }
+    if (existingCar) {
+      throw new RegistrationNumberAlreadyExistsException(registrationNumber);
     }
   }
 
@@ -307,34 +173,224 @@ export class CarService {
     }
   }
 
-  async createCar(ownerId: string, dto: CreateCarMultipartBodyDto, files: CarCreateFiles) {
+  async createDraftCarFromVerification(ownerId: string, verificationId: string) {
     try {
-      await this.assertOwnerCanCreateCar(ownerId);
-      await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber);
+      return await this.databaseService.$transaction(async (tx) => {
+        if (!(await lockUserRow(tx, ownerId))) {
+          throw new FleetOwnerNotFoundException();
+        }
+        const owner = await tx.user.findUnique({
+          where: { id: ownerId },
+          select: { isOwnerDriver: true },
+        });
+        if (owner?.isOwnerDriver && (await tx.car.count({ where: { ownerId } })) > 0) {
+          throw new OwnerDriverCarLimitReachedException();
+        }
 
-      const createdCar = await this.createCarShell(ownerId, dto);
-      const uploadedKeys: string[] = [];
+        const verification = await tx.vehicleVerification.findFirst({
+          where: {
+            id: verificationId,
+            ownerId,
+            status: ProviderVerificationStatus.SUCCEEDED,
+            carId: null,
+            expiresAt: { gt: new Date() },
+          },
+        });
+        if (
+          !verification?.chassisNumber ||
+          !verification.make ||
+          !verification.model ||
+          !verification.year ||
+          !verification.passengerCapacity
+        ) {
+          throw new CarCreateFailedException();
+        }
 
-      try {
-        const uploaded = await this.uploadCarFiles(ownerId, createdCar.id, files, uploadedKeys);
-        return await this.persistUploadedCarAssets(createdCar.id, uploaded);
-      } catch (error) {
-        await this.cleanupFailedCreate(createdCar.id, uploadedKeys);
-        throw error;
-      }
+        const car = await tx.car.create({
+          data: {
+            ownerId,
+            registrationNumber: this.normalizeRegistrationNumber(verification.plateNumber),
+            chassisNumber: verification.chassisNumber,
+            make: verification.make,
+            model: verification.model,
+            year: verification.year,
+            color: verification.color ?? "",
+            passengerCapacity: verification.passengerCapacity,
+            status: Status.HOLD,
+            approvalStatus: CarApprovalStatus.PENDING,
+          },
+          include: this.carDetailsInclude,
+        });
+
+        const consumed = await tx.vehicleVerification.updateMany({
+          where: { id: verification.id, carId: null },
+          data: { carId: car.id },
+        });
+        if (consumed.count !== 1) {
+          throw new CarCreateFailedException();
+        }
+        return car;
+      });
     } catch (error) {
-      if (error instanceof CarException) {
-        throw error;
+      if (error instanceof CarException) throw error;
+      if (isUniqueConstraintError(error)) {
+        const target = String(error.meta?.target ?? "");
+        if (target.includes("chassisNumber")) {
+          throw new ChassisNumberAlreadyExistsException();
+        }
+        throw new RegistrationNumberAlreadyExistsException("this registration number");
       }
       this.logger.error(
         {
           ownerId,
+          verificationId,
           error: error instanceof Error ? error.message : String(error),
         },
-        "Failed to create car",
+        "Failed to create verified draft car",
       );
       throw new CarCreateFailedException();
     }
+  }
+
+  async uploadDraftCarDocuments(carId: string, ownerId: string, files: CarDocumentFiles) {
+    await this.assertCarBelongsToOwner(carId, ownerId);
+    const existing = await this.databaseService.documentApproval.count({
+      where: { carId, documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] } },
+    });
+    if (existing > 0) {
+      throw new CarAssetsAlreadyUploadedException("documents");
+    }
+
+    const uploaded = await this.uploadFilesSequentially(
+      ownerId,
+      carId,
+      [files.motCertificate, files.insuranceCertificate],
+      CAR_S3_CATEGORY_DOCUMENTS,
+    );
+    try {
+      await this.databaseService.$transaction([
+        this.databaseService.documentApproval.createMany({
+          data: [
+            {
+              documentType: DocumentType.MOT_CERTIFICATE,
+              documentUrl: uploaded[0].url,
+              carId,
+            },
+            {
+              documentType: DocumentType.INSURANCE_CERTIFICATE,
+              documentUrl: uploaded[1].url,
+              carId,
+            },
+          ],
+        }),
+        this.databaseService.car.update({
+          where: { id: carId },
+          data: { approvalStatus: CarApprovalStatus.PENDING, submittedAt: null },
+        }),
+      ]);
+    } catch (error) {
+      await this.deleteUploadedKeys(uploaded.map(({ key }) => key));
+      if (isUniqueConstraintError(error)) {
+        throw new CarAssetsAlreadyUploadedException("documents");
+      }
+      throw error;
+    }
+    return this.getOwnerCarById(carId, ownerId);
+  }
+
+  async uploadDraftCarImages(carId: string, ownerId: string, images: UploadedCarFile[]) {
+    await this.assertCarBelongsToOwner(carId, ownerId);
+    const existing = await this.databaseService.vehicleImage.count({ where: { carId } });
+    if (existing > 0 || existing + images.length > MAX_IMAGE_COUNT) {
+      throw new CarAssetsAlreadyUploadedException("images");
+    }
+
+    const uploaded = await this.uploadFilesSequentially(
+      ownerId,
+      carId,
+      images,
+      CAR_S3_CATEGORY_IMAGES,
+    );
+    try {
+      await this.databaseService.$transaction(async (tx) => {
+        await lockCarRow(tx, carId);
+        const currentImageCount = await tx.vehicleImage.count({ where: { carId } });
+        if (currentImageCount > 0 || currentImageCount + uploaded.length > MAX_IMAGE_COUNT) {
+          throw new CarAssetsAlreadyUploadedException("images");
+        }
+        await tx.vehicleImage.createMany({
+          data: uploaded.map(({ url }) => ({ url, carId })),
+        });
+        await tx.car.update({
+          where: { id: carId },
+          data: { approvalStatus: CarApprovalStatus.PENDING, submittedAt: null },
+        });
+      });
+    } catch (error) {
+      await this.deleteUploadedKeys(uploaded.map(({ key }) => key));
+      throw error;
+    }
+    return this.getOwnerCarById(carId, ownerId);
+  }
+
+  async updateDraftCarPricing(carId: string, ownerId: string, dto: UpdateCarPricingDto) {
+    return this.updateCar(carId, ownerId, dto);
+  }
+
+  async submitCar(carId: string, ownerId: string) {
+    const car = await this.databaseService.car.findFirst({
+      where: { id: carId, ownerId },
+      include: {
+        vehicleVerification: { select: { id: true } },
+        _count: {
+          select: {
+            documents: {
+              where: { documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] } },
+            },
+            images: true,
+          },
+        },
+      },
+    });
+    if (!car) {
+      throw new CarNotFoundException();
+    }
+
+    const hasInsuranceVerification =
+      !car.vehicleVerification ||
+      (await this.databaseService.insuranceVerification.count({
+        where: {
+          carId,
+          ownerId,
+          status: ProviderVerificationStatus.SUCCEEDED,
+          policyExpiresAt: { gt: new Date() },
+        },
+      })) > 0;
+    const hasPricing =
+      car.hourlyRate !== null &&
+      car.dayRate !== null &&
+      car.nightRate !== null &&
+      car.fullDayRate !== null &&
+      car.airportPickupRate !== null &&
+      (car.pricingIncludesFuel || car.fuelUpgradeRate !== null);
+    const requirements = {
+      hasDocuments: car._count.documents === REQUIRED_CAR_DOCUMENT_TYPES.length,
+      hasImages: car._count.images > 0,
+      hasPricing,
+      hasInsuranceVerification,
+    };
+
+    if (!Object.values(requirements).every(Boolean)) {
+      throw new CarSubmissionRequirementsNotMetException(requirements);
+    }
+
+    if (!car.submittedAt) {
+      await this.databaseService.car.update({
+        where: { id: carId },
+        data: { submittedAt: new Date() },
+      });
+    }
+    return { success: true, requirements };
   }
 
   async updateCar(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
@@ -343,6 +399,9 @@ export class CarService {
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
+      }
+      if (dto.registrationNumber && isUniqueConstraintError(error)) {
+        throw new RegistrationNumberAlreadyExistsException(dto.registrationNumber);
       }
       if (dto.status !== undefined && isRecordNotFoundError(error)) {
         throw new CarStatusUpdateNotAllowedException();
@@ -382,9 +441,10 @@ export class CarService {
       normalizedRegistrationNumber !==
         this.normalizeRegistrationNumber(existingCar.registrationNumber)
     ) {
-      await this.assertRegistrationNumberUnique(ownerId, dto.registrationNumber, carId);
+      await this.assertRegistrationNumberUnique(dto.registrationNumber, carId);
     }
 
+    const updatesListingDetails = Object.keys(dto).some((field) => field !== "status");
     const car = await this.databaseService.car.update({
       where: {
         id: carId,
@@ -397,6 +457,10 @@ export class CarService {
         }),
         fuelUpgradeRate:
           dto.pricingIncludesFuel === true ? null : (dto.fuelUpgradeRate ?? undefined),
+        ...(updatesListingDetails && {
+          approvalStatus: CarApprovalStatus.PENDING,
+          submittedAt: null,
+        }),
       },
       include: this.carDetailsInclude,
     });
@@ -535,6 +599,32 @@ export class CarService {
     if (!car) {
       throw new CarNotFoundException();
     }
+  }
+
+  private async uploadFilesSequentially(
+    ownerId: string,
+    carId: string,
+    files: UploadedCarFile[],
+    category: string,
+  ): Promise<Array<{ key: string; url: string }>> {
+    const uploaded: Array<{ key: string; url: string }> = [];
+    try {
+      for (const file of files) {
+        const key = this.getObjectKey(ownerId, carId, file.originalname, category);
+        const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
+        uploaded.push({ key, url });
+      }
+      return uploaded;
+    } catch (error) {
+      await this.deleteUploadedKeys(uploaded.map(({ key }) => key));
+      throw error;
+    }
+  }
+
+  private async deleteUploadedKeys(keys: string[]): Promise<void> {
+    await Promise.all(
+      keys.map((key) => this.storageService.deleteObjectByKey(key).catch(() => undefined)),
+    );
   }
 
   /** Best-effort cleanup of the replaced S3 object; failures are only logged. */
