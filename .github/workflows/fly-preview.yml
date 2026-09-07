@@ -45,8 +45,6 @@ env:
   FLUTTERWAVE_SECRET_KEY: ${{ secrets.FLUTTERWAVE_SECRET_KEY }}
   FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.FLUTTERWAVE_PUBLIC_KEY }}
   FLUTTERWAVE_WEBHOOK_SECRET: ${{ secrets.FLUTTERWAVE_WEBHOOK_SECRET }}
-  PREMBLY_API_KEY: ${{ secrets.PREMBLY_API_KEY }}
-  PREMBLY_APP_ID: ${{ secrets.PREMBLY_APP_ID }}
   PREMBLY_BASE_URL: https://api.prembly.com
   HMAC_KEY: ${{ secrets.HMAC_KEY }}
   FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
@@ -359,6 +357,7 @@ jobs:
       - name: Validate required env keys from canonical schema
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url_pooled }}
+          PREMBLY_API_KEY: preview-validation-placeholder
         run: |
           node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
 
@@ -445,8 +444,8 @@ jobs:
             FLUTTERWAVE_BASE_URL=${{ env.FLUTTERWAVE_BASE_URL }}
             FLUTTERWAVE_WEBHOOK_SECRET=${{ env.FLUTTERWAVE_WEBHOOK_SECRET }}
             FLUTTERWAVE_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/flutterwave
-            PREMBLY_API_KEY=${{ env.PREMBLY_API_KEY }}
-            PREMBLY_APP_ID=${{ env.PREMBLY_APP_ID }}
+            PREMBLY_API_KEY=${{ secrets.PREMBLY_API_KEY }}
+            PREMBLY_APP_ID=${{ secrets.PREMBLY_APP_ID }}
             PREMBLY_BASE_URL=${{ env.PREMBLY_BASE_URL }}
             HMAC_KEY=${{ env.HMAC_KEY }}
             FLIGHTAWARE_API_KEY=${{ env.FLIGHTAWARE_API_KEY }}

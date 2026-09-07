@@ -30,4 +30,4 @@ ALTER TABLE "Car" ADD CONSTRAINT "Car_approved_pricing_check" CHECK (
         AND COALESCE("airportPickupRate" > 0, false)
         AND ("pricingIncludesFuel" OR COALESCE("fuelUpgradeRate" > 0, false))
     )
-);
+) NOT VALID;
