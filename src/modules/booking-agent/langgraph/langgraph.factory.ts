@@ -13,8 +13,6 @@ export function buildState(overrides?: Partial<BookingAgentState>): BookingAgent
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
     bookingId: null,
     paymentLink: null,
     preferences: {},

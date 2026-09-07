@@ -38,7 +38,6 @@ export class BookingAgentSearchService {
 
   async searchVehiclesFromExtracted(
     extracted: ExtractedAiSearchParams,
-    interpretation: string,
     excludedOptionId?: string,
   ): Promise<VehicleSearchToolResult> {
     const precondition = this.preconditionPolicy.resolve(extracted);
@@ -50,12 +49,10 @@ export class BookingAgentSearchService {
         "Returning search precondition prompt",
       );
       return {
-        interpretation,
         extracted,
         exactMatches: [],
         alternatives: [],
         precondition,
-        shouldClarifyBookingType: false,
       };
     }
 
@@ -118,12 +115,10 @@ export class BookingAgentSearchService {
     );
 
     return {
-      interpretation,
       extracted,
       exactMatches: enrichedExactMatches,
       alternatives: enrichedAlternatives,
       precondition: null,
-      shouldClarifyBookingType: false,
     };
   }
 

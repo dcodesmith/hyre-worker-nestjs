@@ -293,7 +293,6 @@ export class CreateBookingNode {
       const extractedParams = convertToExtractedParams(draft);
       const searchResult = await this.bookingAgentSearchService.searchVehiclesFromExtracted(
         extractedParams,
-        "",
         excludedOptionId,
       );
 

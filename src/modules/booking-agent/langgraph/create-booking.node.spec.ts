@@ -31,8 +31,6 @@ function buildTestState(overrides: Partial<LangGraphNodeState> = {}): LangGraphN
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
     bookingId: null,
     paymentLink: null,
     preferences: {},
@@ -321,7 +319,6 @@ describe("CreateBookingNode", () => {
     expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
       expect.any(Object),
-      "",
       selected.id,
     );
   });
@@ -363,7 +360,6 @@ describe("CreateBookingNode", () => {
     expect(result.error).not.toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
       expect.any(Object),
-      "",
       selected.id,
     );
   });

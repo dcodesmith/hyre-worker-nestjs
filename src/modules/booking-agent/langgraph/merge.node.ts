@@ -75,12 +75,6 @@ export class MergeNode {
 
     const normalizedHint = preferenceHint.trim().toLowerCase();
 
-    if (normalizedHint === "cheaper" || normalizedHint === "budget") {
-      newPreferences.pricePreference = "budget";
-    } else if (normalizedHint === "premium" || normalizedHint === "luxury") {
-      newPreferences.pricePreference = "premium";
-    }
-
     const existingNotes = newPreferences.notes ?? [];
     newPreferences.notes = existingNotes.some(
       (note) => note.trim().toLowerCase() === normalizedHint,
