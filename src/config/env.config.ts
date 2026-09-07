@@ -252,7 +252,6 @@ export const envSchema = z
     // LangGraph Agent configuration
     ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
     LANGGRAPH_HISTORY_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
-    LANGGRAPH_HISTORY_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   })
   .superRefine((env, ctx) => {
     const hasUsername = typeof env.BULL_BOARD_USERNAME === "string";
