@@ -62,13 +62,15 @@ describe("Fleet Owner Promotions E2E Tests", () => {
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("promo-user"), "user");
     userCookie = userAuth.cookie;
 
-    await databaseService.user.update({
-      where: { id: ownerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
-    });
-    await databaseService.user.update({
-      where: { id: secondOwnerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    await databaseService.user.updateMany({
+      where: { id: { in: [ownerId, secondOwnerId] } },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
 
     const ownerCar = await factory.createCar(ownerId, {

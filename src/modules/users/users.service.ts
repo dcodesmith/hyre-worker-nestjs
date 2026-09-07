@@ -167,11 +167,20 @@ export class UsersService {
     dto: UpdateCurrentUserBodyDto,
   ): Promise<CurrentUserProfile> {
     try {
+      const current = await this.databaseService.user.findUnique({
+        where: { id: userId },
+        select: { phoneNumber: true },
+      });
+      if (!current) {
+        throw new UsersUserNotFoundException();
+      }
       return await this.databaseService.user.update({
         where: { id: userId },
         data: {
           name: dto.name,
           phoneNumber: dto.phoneNumber,
+          ...(dto.phoneNumber !== undefined &&
+            dto.phoneNumber !== current.phoneNumber && { phoneVerifiedAt: null }),
           city: dto.city,
           address: dto.address,
           marketingConsent: dto.marketingConsent,

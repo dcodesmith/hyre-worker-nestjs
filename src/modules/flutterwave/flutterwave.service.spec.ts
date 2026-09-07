@@ -797,4 +797,115 @@ describe("FlutterwaveService", () => {
       expect(publicKey).toBe("test-public-key");
     });
   });
+
+  describe("resolveBankAccount", () => {
+    const success = {
+      status: "success",
+      data: {
+        account_number: "0123456789",
+        account_name: "  JOHN DOE  ",
+        bank_code: "058",
+      },
+    };
+
+    it("returns the trimmed resolved account", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: success });
+
+      await expect(service.resolveBankAccount("058", "0123456789")).resolves.toEqual({
+        accountNumber: "0123456789",
+        accountName: "JOHN DOE",
+        bankCode: "058",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/accounts/resolve", {
+        account_bank: "058",
+        account_number: "0123456789",
+      });
+    });
+
+    it("falls back to the requested bank code when the provider omits it", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          data: { account_number: "0123456789", account_name: "JOHN DOE" },
+        },
+      });
+
+      await expect(service.resolveBankAccount("058", "0123456789")).resolves.toMatchObject({
+        bankCode: "058",
+      });
+    });
+
+    it("rejects an invalid provider payload", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: { status: "success", data: { account_number: "" } },
+      });
+
+      await expect(service.resolveBankAccount("058", "0123456789")).rejects.toMatchObject({
+        code: "INVALID_ACCOUNT_RESOLUTION_RESPONSE",
+        statusCode: HttpStatus.BAD_GATEWAY,
+      });
+    });
+
+    it("rejects a resolved account number that does not match the request", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          data: { account_number: "9999999999", account_name: "JOHN DOE", bank_code: "058" },
+        },
+      });
+
+      await expect(service.resolveBankAccount("058", "0123456789")).rejects.toMatchObject({
+        code: "ACCOUNT_RESOLUTION_MISMATCH",
+        statusCode: HttpStatus.BAD_GATEWAY,
+      });
+    });
+
+    it("rejects a resolved bank code that does not match the request", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: "success",
+          data: { account_number: "0123456789", account_name: "JOHN DOE", bank_code: "011" },
+        },
+      });
+
+      await expect(service.resolveBankAccount("058", "0123456789")).rejects.toMatchObject({
+        code: "ACCOUNT_RESOLUTION_MISMATCH",
+      });
+    });
+
+    it.each([HttpStatus.BAD_REQUEST, HttpStatus.NOT_FOUND, HttpStatus.UNPROCESSABLE_ENTITY])(
+      "preserves Flutterwave %s as an unresolved-style client error",
+      async (statusCode) => {
+        mockAxiosInstance.post.mockRejectedValueOnce(
+          createAxiosErrorWithResponse(statusCode, {
+            message: "Account not found",
+            data: { code: "ACCOUNT_NOT_FOUND" },
+          }),
+        );
+
+        await expect(service.resolveBankAccount("058", "0123456789")).rejects.toMatchObject({
+          message: "Account not found",
+          code: "ACCOUNT_NOT_FOUND",
+          statusCode,
+        });
+      },
+    );
+
+    it.each([HttpStatus.UNAUTHORIZED, HttpStatus.REQUEST_TIMEOUT, HttpStatus.TOO_MANY_REQUESTS])(
+      "preserves Flutterwave %s as a provider-unavailable status",
+      async (statusCode) => {
+        mockAxiosInstance.post.mockRejectedValueOnce(
+          createAxiosErrorWithResponse(statusCode, {
+            message: "Temporarily unavailable",
+            data: { code: "PROVIDER_UNAVAILABLE" },
+          }),
+        );
+
+        await expect(service.resolveBankAccount("058", "0123456789")).rejects.toMatchObject({
+          statusCode,
+          code: "PROVIDER_UNAVAILABLE",
+        });
+      },
+    );
+  });
 });

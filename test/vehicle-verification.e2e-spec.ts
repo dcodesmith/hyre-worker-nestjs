@@ -116,9 +116,15 @@ describe("Vehicle verification E2E Tests", () => {
     const adminAuth = await factory.createAuthenticatedAdmin(uniqueEmail("verify-admin"));
     adminCookie = adminAuth.cookie;
 
-    await databaseService.user.update({
-      where: { id: ownerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    await databaseService.user.updateMany({
+      where: { id: { in: [ownerId, secondOwnerAuth.user.id] } },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
   });
 

@@ -79,84 +79,87 @@ model VehicleVerification {
 }
 
 model InsuranceVerification {
-  id             String                     @id @default(cuid())
-  carId          String
-  ownerId        String
-  idempotencyKey String
-  requestHash    String
-  policyNumber   String
-  policyStatus   String?
+  id              String                     @id @default(cuid())
+  carId           String
+  ownerId         String
+  idempotencyKey  String
+  requestHash     String
+  policyNumber    String
+  policyStatus    String?
   policyExpiresAt DateTime?
-  providerRef    String?
-  status         ProviderVerificationStatus @default(PROCESSING)
-  failureReason  String?
-  createdAt      DateTime                   @default(now())
-  updatedAt      DateTime                   @updatedAt
-  car            Car                        @relation(fields: [carId], references: [id], onDelete: Cascade)
-  owner          User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  providerRef     String?
+  status          ProviderVerificationStatus @default(PROCESSING)
+  failureReason   String?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  car             Car                        @relation(fields: [carId], references: [id], onDelete: Cascade)
+  owner           User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@unique([ownerId, idempotencyKey])
   @@index([carId, status, createdAt])
 }
 
 model User {
-  id                        String                     @id @default(cuid())
-  email                     String                     @unique
-  username                  String?                    @unique
-  createdAt                 DateTime                   @default(now())
-  updatedAt                 DateTime                   @updatedAt
-  address                   String?
-  city                      String?
-  fleetOwnerId              String?
-  name                      String?
-  phoneNumber               String?
-  fleetOwnerStatus          FleetOwnerStatus?          @default(PROCESSING)
-  chauffeurApprovalStatus   ChauffeurApprovalStatus?   @default(PENDING)
-  hasOnboarded              Boolean                    @default(false)
-  referralAttributionSource ReferralAttributionSource?
-  referralCode              String?                    @unique
-  referralDiscountUsed      Boolean                    @default(false)
-  referralSignupAt          DateTime?
-  referredByUserId          String?
-  isOwnerDriver             Boolean                    @default(false)
-  emailVerified             Boolean                    @default(false)
-  image                     String?
-  termsAcceptedAt           DateTime?
-  privacyAcceptedAt         DateTime?
-  marketingConsent          Boolean                    @default(false)
-  staffRevokedAt            DateTime?
-  bankDetails               BankDetails?               @relation("UserBankDetails")
-  attributedBookings        Booking[]                  @relation("BookingAcquisitionPartner")
-  bookingsAsChauffeur       Booking[]                  @relation("BookingChauffeur")
-  bookingsCompleted         Booking[]                  @relation("BookingCompletedBy")
-  bookingReferrals          Booking[]                  @relation("BookingReferrals")
-  bookings                  Booking[]                  @relation("BookingCustomer")
-  cars                      Car[]
-  vehicleVerifications      VehicleVerification[]
-  insuranceVerifications    InsuranceVerification[]
-  approvedDocuments         DocumentApproval[]         @relation("ApprovedBy")
-  documents                 DocumentApproval[]         @relation("UserDocuments")
-  payoutsReceived           PayoutTransaction[]        @relation("FleetOwnerPayouts")
-  referralAttribution       ReferralAttribution?       @relation("RefereeAttribution")
-  referralAttributions      ReferralAttribution[]      @relation("ReferrerAttributions")
-  referralRewardsFrom       ReferralReward[]           @relation("RefereeRewards")
-  referralRewardsEarned     ReferralReward[]           @relation("ReferrerRewards")
-  moderatedReviews          Review[]                   @relation("ReviewModerator")
-  reviewsWritten            Review[]                   @relation("CustomerReviews")
-  fleetOwner                User?                      @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  chauffeurs                User[]                     @relation("FleetOwnerChauffeurs")
-  referredBy                User?                      @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals                 User[]                     @relation("UserReferrals")
-  referralStats             UserReferralStats?
-  approvedVehicleImages     VehicleImage[]             @relation("ApprovedVehicleImages")
-  sessions                  Session[]
-  accounts                  Account[]
-  roles                     Role[]                     @relation("RoleToUser")
-  whatsAppConversations     WhatsAppConversation[]     @relation("WhatsAppConversationLinkedUser")
-  promotions                Promotion[]                @relation("OwnerPromotions")
-  pushTokens                UserPushToken[]
-  notificationInboxItems    NotificationInbox[]
-  notificationOutboxEvents  NotificationOutboxEvent[]
+  id                           String                          @id @default(cuid())
+  email                        String                          @unique
+  username                     String?                         @unique
+  createdAt                    DateTime                        @default(now())
+  updatedAt                    DateTime                        @updatedAt
+  address                      String?
+  city                         String?
+  fleetOwnerId                 String?
+  name                         String?
+  phoneNumber                  String?
+  fleetOwnerStatus             FleetOwnerStatus?               @default(PROCESSING)
+  chauffeurApprovalStatus      ChauffeurApprovalStatus?        @default(PENDING)
+  hasOnboarded                 Boolean                         @default(false)
+  referralAttributionSource    ReferralAttributionSource?
+  referralCode                 String?                         @unique
+  referralDiscountUsed         Boolean                         @default(false)
+  referralSignupAt             DateTime?
+  referredByUserId             String?
+  isOwnerDriver                Boolean                         @default(false)
+  emailVerified                Boolean                         @default(false)
+  phoneVerifiedAt              DateTime?
+  image                        String?
+  termsAcceptedAt              DateTime?
+  privacyAcceptedAt            DateTime?
+  marketingConsent             Boolean                         @default(false)
+  staffRevokedAt               DateTime?
+  bankDetails                  BankDetails?                    @relation("UserBankDetails")
+  attributedBookings           Booking[]                       @relation("BookingAcquisitionPartner")
+  bookingsAsChauffeur          Booking[]                       @relation("BookingChauffeur")
+  bookingsCompleted            Booking[]                       @relation("BookingCompletedBy")
+  bookingReferrals             Booking[]                       @relation("BookingReferrals")
+  bookings                     Booking[]                       @relation("BookingCustomer")
+  cars                         Car[]
+  vehicleVerifications         VehicleVerification[]
+  insuranceVerifications       InsuranceVerification[]
+  accountVerifications         FleetOwnerAccountVerification[] @relation("FleetOwnerAccountVerifications")
+  reviewedAccountVerifications FleetOwnerAccountVerification[] @relation("ReviewedFleetOwnerAccountVerifications")
+  approvedDocuments            DocumentApproval[]              @relation("ApprovedBy")
+  documents                    DocumentApproval[]              @relation("UserDocuments")
+  payoutsReceived              PayoutTransaction[]             @relation("FleetOwnerPayouts")
+  referralAttribution          ReferralAttribution?            @relation("RefereeAttribution")
+  referralAttributions         ReferralAttribution[]           @relation("ReferrerAttributions")
+  referralRewardsFrom          ReferralReward[]                @relation("RefereeRewards")
+  referralRewardsEarned        ReferralReward[]                @relation("ReferrerRewards")
+  moderatedReviews             Review[]                        @relation("ReviewModerator")
+  reviewsWritten               Review[]                        @relation("CustomerReviews")
+  fleetOwner                   User?                           @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  chauffeurs                   User[]                          @relation("FleetOwnerChauffeurs")
+  referredBy                   User?                           @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals                    User[]                          @relation("UserReferrals")
+  referralStats                UserReferralStats?
+  approvedVehicleImages        VehicleImage[]                  @relation("ApprovedVehicleImages")
+  sessions                     Session[]
+  accounts                     Account[]
+  roles                        Role[]                          @relation("RoleToUser")
+  whatsAppConversations        WhatsAppConversation[]          @relation("WhatsAppConversationLinkedUser")
+  promotions                   Promotion[]                     @relation("OwnerPromotions")
+  pushTokens                   UserPushToken[]
+  notificationInboxItems       NotificationInbox[]
+  notificationOutboxEvents     NotificationOutboxEvent[]
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -748,6 +751,43 @@ model BankDetails {
   user                 User      @relation("UserBankDetails", fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model FleetOwnerAccountVerification {
+  id                      String                    @id @default(cuid())
+  userId                  String
+  idempotencyKey          String
+  requestHash             String
+  accountType             FleetOwnerAccountType
+  isOwnerDriver           Boolean
+  status                  AccountVerificationStatus @default(PROCESSING)
+  processingExpiresAt     DateTime
+  legalName               String?
+  businessName            String?
+  businessNameMatch       NameMatchStatus?
+  registrationNumber      String?
+  registrationType        String?
+  identityProviderRef     String?
+  businessProviderRef     String?
+  bankName                String?
+  bankCode                String?
+  accountNumberLast4      String?
+  accountName             String?
+  bankNameMatch           NameMatchStatus?
+  representativeNameMatch NameMatchStatus?
+  failureReason           String?
+  reviewedById            String?
+  reviewedAt              DateTime?
+  reviewNotes             String?
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  user                    User                      @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy              User?                     @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([reviewedById])
+}
+
 model UserReferralStats {
   id                  String    @id @default(cuid())
   createdAt           DateTime  @default(now())
@@ -1093,6 +1133,24 @@ enum ProviderVerificationStatus {
   PROCESSING
   SUCCEEDED
   FAILED
+}
+
+enum FleetOwnerAccountType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum AccountVerificationStatus {
+  PROCESSING
+  SUCCEEDED
+  REVIEW_REQUIRED
+  FAILED
+}
+
+enum NameMatchStatus {
+  MATCHED
+  REVIEW_REQUIRED
+  MISMATCHED
 }
 
 enum VehicleType {

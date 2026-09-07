@@ -40,6 +40,16 @@ describe("Fleet Owner Booking E2E Tests", () => {
     );
     ownerId = ownerAuth.user.id;
     ownerCookie = ownerAuth.cookie;
+    await databaseService.user.update({
+      where: { id: ownerId },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
+    });
 
     const nonOwnerAuth = await factory.authenticateAndGetUser(
       uniqueEmail("fleet-booking-user"),

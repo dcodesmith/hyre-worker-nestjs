@@ -6,6 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { DashboardService } from "./dashboard.service";
 import {
   type DashboardEarningsQueryDto,
@@ -15,7 +16,7 @@ import {
 } from "./dto/dashboard.dto";
 
 @Controller("api/dashboard")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}

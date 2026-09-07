@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { AxiosError, AxiosInstance } from "axios";
 import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "src/config/env.config";
+import { z } from "zod";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
   FlutterwaveConfig,
@@ -19,7 +20,17 @@ import {
   PayoutResponse,
   RefundOptions,
   RefundResponse,
+  ResolvedBankAccount,
 } from "./flutterwave.interface";
+
+const accountResolutionResponseSchema = z.object({
+  status: z.literal("success"),
+  data: z.object({
+    account_number: z.string().min(1),
+    account_name: z.string().min(1),
+    bank_code: z.string().optional(),
+  }),
+});
 
 function stripTrailingPunctuation(value: string): string {
   let message = value;
@@ -132,6 +143,41 @@ export class FlutterwaveService {
         success: false,
         data: { message: handledError.message },
       };
+    }
+  }
+
+  async resolveBankAccount(bankCode: string, accountNumber: string): Promise<ResolvedBankAccount> {
+    try {
+      const { data } = await this.httpClient.post<unknown>("/v3/accounts/resolve", {
+        account_bank: bankCode,
+        account_number: accountNumber,
+      });
+      const parsed = accountResolutionResponseSchema.safeParse(data);
+      if (!parsed.success) {
+        throw new FlutterwaveError(
+          "Flutterwave returned an invalid account resolution response",
+          "INVALID_ACCOUNT_RESOLUTION_RESPONSE",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+      if (
+        parsed.data.data.account_number !== accountNumber ||
+        (parsed.data.data.bank_code !== undefined && parsed.data.data.bank_code !== bankCode)
+      ) {
+        throw new FlutterwaveError(
+          "Resolved bank account does not match the request",
+          "ACCOUNT_RESOLUTION_MISMATCH",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return {
+        accountNumber: parsed.data.data.account_number,
+        accountName: parsed.data.data.account_name.trim(),
+        bankCode: parsed.data.data.bank_code ?? bankCode,
+      };
+    } catch (error) {
+      throw this.handleError(error, "resolveBankAccount");
     }
   }
 

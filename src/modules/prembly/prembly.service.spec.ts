@@ -333,4 +333,203 @@ describe("PremblyService", () => {
       );
     });
   });
+
+  describe("verifyNin", () => {
+    const ninSuccess = (data: Record<string, unknown> = {}) => ({
+      status: true,
+      response_code: "00",
+      data: {
+        firstname: "JOHN",
+        middlename: "MIDDLE",
+        surname: "DOE",
+        nin: "12345678901",
+        nin_suspension_status: false,
+        ...data,
+      },
+      verification,
+    });
+
+    it("parses names and trims optional middle name", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: ninSuccess() });
+
+      await expect(service.verifyNin("12345678901")).resolves.toEqual({
+        firstName: "JOHN",
+        middleName: "MIDDLE",
+        lastName: "DOE",
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/verification/vnin-basic", {
+        number: "12345678901",
+      });
+    });
+
+    it("treats a blank middle name as null", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: ninSuccess({ middlename: "   " }),
+      });
+
+      await expect(service.verifyNin("12345678901")).resolves.toMatchObject({
+        middleName: null,
+      });
+    });
+
+    it("rejects a suspended NIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: ninSuccess({ nin_suspension_status: true }),
+      });
+
+      await expect(service.verifyNin("12345678901")).rejects.toEqual(new PremblyError("REJECTED"));
+    });
+
+    it("rejects a payload missing the surname", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: ninSuccess({ surname: "" }),
+      });
+
+      await expect(service.verifyNin("12345678901")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
+    });
+
+    it("rejects a payload missing the NIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: ninSuccess({ nin: undefined }),
+      });
+
+      await expect(service.verifyNin("12345678901")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
+    });
+
+    it("rejects a NIN that does not exactly match the requested number", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: ninSuccess({ nin: "10987654321" }),
+      });
+
+      await expect(service.verifyNin("12345678901")).rejects.toEqual(new PremblyError("REJECTED"));
+    });
+  });
+
+  describe("verifyCac", () => {
+    const director = {
+      firstname: "JOHN",
+      surname: "DOE",
+      otherName: "MIDDLE",
+    };
+    const company = {
+      rc_number: "RC-123456",
+      company_name: "Hyre Mobility Limited",
+      company_status: "Active",
+      entity_type: "RC",
+      directors: [director],
+    };
+    const cacSuccess = (data: unknown[] = [company]) => ({
+      status: true,
+      response_code: "00",
+      data,
+      verification,
+    });
+
+    it("selects the matching RC and prefers an exact business-name match", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, company_name: "Other Mobility Limited" }, company]),
+      });
+
+      await expect(service.verifyCac("RC123456", "RC", "Hyre Mobility Limited")).resolves.toEqual({
+        businessName: "Hyre Mobility Limited",
+        registrationNumber: "RC-123456",
+        registrationType: "RC",
+        status: "ACTIVE",
+        directors: [{ firstName: "JOHN", middleName: "MIDDLE", lastName: "DOE" }],
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/verification/cac/advance", {
+        rc_number: "RC123456",
+        company_type: "RC",
+        company_name: "Hyre Mobility Limited",
+      });
+    });
+
+    it("strips punctuation when matching the RC number", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, rc_number: "RC.123456" }]),
+      });
+
+      await expect(
+        service.verifyCac("RC-123456", "rc", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        registrationNumber: "RC.123456",
+        registrationType: "RC",
+      });
+    });
+
+    it("strips leading zeros from the entire identifier when matching", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, rc_number: "000123456" }]),
+      });
+
+      await expect(
+        service.verifyCac("00123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        registrationNumber: "000123456",
+        registrationType: "RC",
+      });
+    });
+
+    it("strips zero padding after an optional letter prefix when matching", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, rc_number: "RC-00123456" }]),
+      });
+
+      await expect(
+        service.verifyCac("RC123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        registrationNumber: "RC-00123456",
+        registrationType: "RC",
+      });
+    });
+
+    it("returns a null status when CAC omits company_status", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, company_status: null, directors: [] }]),
+      });
+
+      await expect(
+        service.verifyCac("RC123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        status: null,
+        directors: [],
+      });
+    });
+
+    it("drops directors that have no first or last name", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([
+          {
+            ...company,
+            directors: [
+              { firstname: "", surname: "", otherName: "X" },
+              { firstname: "ADA", surname: "LOVELACE" },
+            ],
+          },
+        ]),
+      });
+
+      await expect(
+        service.verifyCac("RC123456", "RC", "Hyre Mobility Limited"),
+      ).resolves.toMatchObject({
+        directors: [{ firstName: "ADA", middleName: null, lastName: "LOVELACE" }],
+      });
+    });
+
+    it("rejects a payload with no matching RC and company type", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: cacSuccess([{ ...company, entity_type: "BN" }]),
+      });
+
+      await expect(service.verifyCac("RC123456", "RC", "Hyre Mobility Limited")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
+    });
+  });
 });

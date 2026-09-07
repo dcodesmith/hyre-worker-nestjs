@@ -26,6 +26,7 @@ env:
   RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
   TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
   TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+  TWILIO_VERIFY_SERVICE_SID: ${{ secrets.TWILIO_VERIFY_SERVICE_SID }}
   TWILIO_SECRET: ${{ secrets.TWILIO_SECRET }}
   TWILIO_WHATSAPP_NUMBER: ${{ secrets.TWILIO_WHATSAPP_NUMBER }}
   OPERATIONS_EMAIL: ${{ vars.OPERATIONS_EMAIL }}
@@ -422,6 +423,7 @@ jobs:
             DOMAIN=${{ needs.setup.outputs.preview_url }}
             TWILIO_ACCOUNT_SID=${{ env.TWILIO_ACCOUNT_SID }}
             TWILIO_AUTH_TOKEN=${{ env.TWILIO_AUTH_TOKEN }}
+            TWILIO_VERIFY_SERVICE_SID=${{ env.TWILIO_VERIFY_SERVICE_SID }}
             TWILIO_SECRET=${{ env.TWILIO_SECRET }}
             TWILIO_WHATSAPP_NUMBER=${{ env.TWILIO_WHATSAPP_NUMBER }}
             TWILIO_WEBHOOK_URL=${{ needs.setup.outputs.preview_url }}/api/webhook/twilio

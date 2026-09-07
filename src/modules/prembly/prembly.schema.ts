@@ -55,3 +55,37 @@ export const premblyInsuranceResponseSchema = z.looseObject({
   }),
   verification: verificationSchema,
 });
+
+export const premblyNinResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  data: z.looseObject({
+    firstname: z.string().min(1),
+    middlename: z.string().nullish(),
+    surname: z.string().min(1),
+    nin: z.string().regex(/^\d{11}$/),
+    nin_suspension_status: z.boolean(),
+  }),
+  verification: verificationSchema,
+});
+
+const cacDirectorSchema = z.looseObject({
+  firstname: z.string().default(""),
+  surname: z.string().default(""),
+  otherName: z.string().nullish(),
+});
+
+export const premblyCacResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  data: z.array(
+    z.looseObject({
+      rc_number: z.string().min(1),
+      company_name: z.string().min(1),
+      company_status: z.string().nullish(),
+      entity_type: z.string().min(1),
+      directors: z.array(cacDirectorSchema).optional().default([]),
+    }),
+  ),
+  verification: verificationSchema,
+});

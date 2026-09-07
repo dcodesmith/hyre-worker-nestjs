@@ -18,6 +18,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { CAR_DOCUMENT_UPLOAD_FIELD_CONFIG, MAX_IMAGE_COUNT } from "./car.const";
 import type { CarDocumentFiles, UploadedCarFile } from "./car.interface";
 import { CarService } from "./car.service";
@@ -29,7 +30,7 @@ import { carIdParamSchema, type UpdateCarBodyDto, updateCarBodySchema } from "./
 import { type UpdateCarPricingDto, updateCarPricingSchema } from "./dto/update-car-pricing.dto";
 
 @Controller("api/fleet-owner/cars")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class FleetOwnerCarController {
   constructor(private readonly carService: CarService) {}

@@ -35,7 +35,14 @@ describe("Car Search Availability E2E Flow", () => {
     ownerId = owner.id;
     await databaseService.user.update({
       where: { id: ownerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true, isOwnerDriver: true },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        isOwnerDriver: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
 
     const bookingUser = await factory.createUser();

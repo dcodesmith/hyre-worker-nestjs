@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { CarApprovalStatus, ChauffeurApprovalStatus, Prisma } from "@prisma/client";
+import { CarApprovalStatus, ChauffeurApprovalStatus, DocumentType, Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarApprovalService } from "../car/car-approval.service";
@@ -26,6 +26,7 @@ describe("DocumentApprovalService", () => {
       update: vi.fn(),
     },
     user: {
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
     $queryRaw: vi.fn(),
@@ -75,13 +76,61 @@ describe("DocumentApprovalService", () => {
     expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
   });
 
-  it("approves a chauffeur once their last document is approved", async () => {
+  it("does not change chauffeur state for a user who is not a chauffeur or owner-driver", async () => {
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: null,
       userId: "user-1",
+      documentType: DocumentType.NIN,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: null,
+      isOwnerDriver: false,
+    });
+
+    await service.approveDocument("doc-1", "admin-1");
+
+    expect(databaseServiceMock.documentApproval.count).not.toHaveBeenCalled();
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-approve a chauffeur when no required documents are approved", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "doc-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.NIN,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
     });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+
+    await service.approveDocument("doc-1", "admin-1");
+
+    expect(databaseServiceMock.documentApproval.count).toHaveBeenCalledWith({
+      where: {
+        userId: "user-1",
+        documentType: { in: [DocumentType.NIN, DocumentType.DRIVERS_LICENSE] },
+        status: "APPROVED",
+      },
+    });
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("approves a chauffeur once every mandatory document is approved", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "doc-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.DRIVERS_LICENSE,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(2);
 
     await service.approveDocument("doc-1", "admin-1");
 
@@ -91,11 +140,89 @@ describe("DocumentApprovalService", () => {
     });
   });
 
-  it("rejects a chauffeur document and flags the user", async () => {
+  it("approves an owner-driver when only the licence is approved", async () => {
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "doc-1",
       carId: null,
       userId: "user-1",
+      documentType: DocumentType.DRIVERS_LICENSE,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: null,
+      isOwnerDriver: true,
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
+
+    await service.approveDocument("doc-1", "admin-1");
+
+    expect(databaseServiceMock.documentApproval.count).toHaveBeenCalledWith({
+      where: {
+        userId: "user-1",
+        documentType: { in: [DocumentType.DRIVERS_LICENSE] },
+        status: "APPROVED",
+      },
+    });
+    expect(databaseServiceMock.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
+    });
+  });
+
+  it("approves a chauffeur even when optional LASDRI is still pending", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "lasdri-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.LASDRI,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(2);
+
+    await service.approveDocument("lasdri-1", "admin-1");
+
+    expect(databaseServiceMock.documentApproval.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        documentType: { in: [DocumentType.NIN, DocumentType.DRIVERS_LICENSE] },
+        status: "APPROVED",
+      }),
+    });
+    expect(databaseServiceMock.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
+    });
+  });
+
+  it("does not approve a chauffeur while a required document is still unresolved", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "lasdri-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.LASDRI,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
+    });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
+
+    await service.approveDocument("lasdri-1", "admin-1");
+
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a required chauffeur document and flags the user", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "doc-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.DRIVERS_LICENSE,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
     });
 
     await service.rejectDocument("doc-1", "admin-1", "Expired");
@@ -104,6 +231,23 @@ describe("DocumentApprovalService", () => {
       where: { id: "user-1" },
       data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
     });
+  });
+
+  it("does not flag a chauffeur when optional LASDRI is rejected", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "lasdri-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.LASDRI,
+    });
+    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
+      fleetOwnerId: "fo-1",
+      isOwnerDriver: false,
+    });
+
+    await service.rejectDocument("lasdri-1", "admin-1", "Unreadable");
+
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
   });
 
   it("rejects a car document and flags the car with an action-required note", async () => {

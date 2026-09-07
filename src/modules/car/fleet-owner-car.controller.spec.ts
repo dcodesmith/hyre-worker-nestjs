@@ -4,6 +4,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { CarService } from "./car.service";
 import { FleetOwnerCarController } from "./fleet-owner-car.controller";
 
@@ -51,6 +52,8 @@ describe("FleetOwnerCarController", () => {
         Reflector,
       ],
     })
+      .overrideGuard(VerifiedFleetOwnerGuard)
+      .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
       .useMocker(mockPinoLoggerToken)
       .compile();
 

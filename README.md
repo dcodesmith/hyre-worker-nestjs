@@ -356,6 +356,7 @@ APP_NAME=Hyre
 # WhatsApp (Twilio)
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxx
+TWILIO_VERIFY_SERVICE_SID=VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_SECRET=xxxxxxxxxxxxxxxx
 TWILIO_WHATSAPP_NUMBER=whatsapp:+1234567890
 TWILIO_WEBHOOK_URL=https://yourdomain.com/webhooks/twilio  # Optional
