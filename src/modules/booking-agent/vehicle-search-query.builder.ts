@@ -1,82 +1,9 @@
-import type { VehicleType } from "@prisma/client";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import type { CarSearchQueryDto } from "../car/dto/car-search.dto";
 import { normalizeBookingType, parseSearchDate } from "./vehicle-search-precondition.policy";
 
 export class VehicleSearchQueryBuilder {
-  private readonly knownMultiWordMakes = new Set<string>(["land rover", "mercedes benz", "mini"]);
-
   constructor(private readonly maxSearchCandidates: number) {}
-
-  parseVehicleModel(value: string | undefined): { make?: string; model?: string } {
-    if (!value) {
-      return {};
-    }
-    const normalized = value.trim().replaceAll(/\s+/g, " ");
-    if (!normalized) {
-      return {};
-    }
-
-    const parts = normalized.split(" ");
-    if (parts.length === 1) {
-      const canonicalFullInput = this.canonicalizeMake(normalized);
-      if (this.knownMultiWordMakes.has(canonicalFullInput)) {
-        return { make: normalized };
-      }
-      return { model: normalized };
-    }
-
-    const canonicalFullInput = this.canonicalizeMake(normalized);
-    if (this.knownMultiWordMakes.has(canonicalFullInput)) {
-      return { make: normalized };
-    }
-
-    for (let makeTokenCount = parts.length - 1; makeTokenCount >= 1; makeTokenCount -= 1) {
-      const makeCandidate = parts.slice(0, makeTokenCount).join(" ");
-      const canonicalCandidate = this.canonicalizeMake(makeCandidate);
-      if (!this.knownMultiWordMakes.has(canonicalCandidate)) {
-        continue;
-      }
-
-      return {
-        make: makeCandidate,
-        model: parts.slice(makeTokenCount).join(" "),
-      };
-    }
-
-    return {
-      make: parts.slice(0, -1).join(" "),
-      model: parts.at(-1),
-    };
-  }
-
-  mapVehicleCategory(value: VehicleType | undefined): { vehicleType?: VehicleType } {
-    if (!value) {
-      return {};
-    }
-    return { vehicleType: value };
-  }
-
-  buildInterpretationFromExtracted(extracted: ExtractedAiSearchParams): string {
-    const vehicleParts = [
-      extracted.color,
-      extracted.make,
-      extracted.model,
-      extracted.vehicleType?.toLowerCase().replaceAll("_", " "),
-      extracted.serviceTier?.toLowerCase().replaceAll("_", " "),
-    ].filter(Boolean);
-
-    const dateParts = [extracted.from, extracted.to].filter(Boolean);
-    const summary = [
-      vehicleParts.length > 0 ? `Looking for: ${vehicleParts.join(" ")}` : null,
-      dateParts.length > 0 ? `Dates: ${dateParts.join(" to ")}` : null,
-      extracted.bookingType ? `Type: ${extracted.bookingType}` : null,
-      extracted.pickupLocation ? `Pickup: ${extracted.pickupLocation}` : null,
-      extracted.dropoffLocation ? `Drop-off: ${extracted.dropoffLocation}` : null,
-    ].filter(Boolean);
-
-    return summary.join(" • ");
-  }
 
   buildExactQuery(extracted: ExtractedAiSearchParams): CarSearchQueryDto {
     const query = this.buildTemporalQuery(extracted);
@@ -180,9 +107,5 @@ export class VehicleSearchQueryBuilder {
       seen.add(key);
       return true;
     });
-  }
-
-  private canonicalizeMake(value: string): string {
-    return value.toLowerCase().replaceAll("-", " ").replaceAll(/\s+/g, " ").trim();
   }
 }

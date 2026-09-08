@@ -10,8 +10,6 @@ import type {
 const STAGE_INSTRUCTIONS: Partial<Record<BookingStage, string>> = {
   presenting_options:
     "INSTRUCTION: Write a SHORT intro message (1 sentence max) saying you found some options. Do NOT list the vehicles - they will be shown as images. Just say something like 'Here are your options!' or 'I found these for you:'\n",
-  awaiting_selection:
-    "INSTRUCTION: They're choosing. Help them decide or confirm their selection.\n",
   confirming:
     "INSTRUCTION: Summarize the booking details clearly. Show what they selected and ask for final confirmation. Use the confirm/reject buttons below.\n",
   awaiting_payment:
@@ -90,8 +88,7 @@ export function buildResponderUserContext(
   state: BookingAgentState,
   options: BuildResponderUserContextOptions,
 ): string {
-  const { stage, draft, extraction, availableOptions, selectedOption, holdId, statusMessage } =
-    state;
+  const { stage, draft, extraction, availableOptions, selectedOption, statusMessage } = state;
   const missingFields = getMissingRequiredFields(draft);
 
   let context = `CURRENT STATE: ${stage}\n`;
@@ -122,10 +119,6 @@ export function buildResponderUserContext(
   if (selectedOption) {
     const selectedPrice = `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`;
     context += `SELECTED: ${selectedOption.make} ${selectedOption.model} - ${selectedPrice}\n`;
-  }
-
-  if (holdId) {
-    context += "HOLD ACTIVE: Vehicle reserved for 15 minutes\n";
   }
 
   const stageInstruction = STAGE_INSTRUCTIONS[stage];

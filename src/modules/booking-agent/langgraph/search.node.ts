@@ -96,10 +96,8 @@ export class SearchNode {
         },
         "Search node executing",
       );
-      const searchResult = await this.bookingAgentSearchService.searchVehiclesFromExtracted(
-        extractedParams,
-        "",
-      );
+      const searchResult =
+        await this.bookingAgentSearchService.searchVehiclesFromExtracted(extractedParams);
 
       if (searchResult.precondition) {
         this.logger.warn(

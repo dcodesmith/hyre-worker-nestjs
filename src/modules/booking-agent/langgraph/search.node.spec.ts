@@ -60,8 +60,6 @@ describe("SearchNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},
@@ -127,8 +125,6 @@ describe("SearchNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},
@@ -151,7 +147,6 @@ describe("SearchNode", () => {
         vehicleType: "SUV",
         make: "Toyota",
       }),
-      "",
     );
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions).toHaveLength(1);

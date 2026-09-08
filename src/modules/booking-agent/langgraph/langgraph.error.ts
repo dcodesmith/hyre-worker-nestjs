@@ -7,8 +7,6 @@ export const LangGraphErrorCode = {
   LANGGRAPH_GRAPH_EXECUTION_FAILED: "LANGGRAPH_GRAPH_EXECUTION_FAILED",
   LANGGRAPH_STATE_PERSIST_FAILED: "LANGGRAPH_STATE_PERSIST_FAILED",
   LANGGRAPH_STATE_LOAD_FAILED: "LANGGRAPH_STATE_LOAD_FAILED",
-  LANGGRAPH_INVALID_NODE_TRANSITION: "LANGGRAPH_INVALID_NODE_TRANSITION",
-  LANGGRAPH_TIMEOUT: "LANGGRAPH_TIMEOUT",
 } as const;
 
 export class LangGraphException extends AppException {}
@@ -78,34 +76,6 @@ export class LangGraphStateLoadFailedException extends LangGraphException {
       {
         title: "LangGraph State Load Failed",
         details: { conversationId },
-      },
-    );
-  }
-}
-
-export class LangGraphInvalidNodeTransitionException extends LangGraphException {
-  constructor(fromNode: string, toNode: string) {
-    super(
-      LangGraphErrorCode.LANGGRAPH_INVALID_NODE_TRANSITION,
-      `Invalid node transition from "${fromNode}" to "${toNode}"`,
-      HttpStatus.INTERNAL_SERVER_ERROR,
-      {
-        title: "LangGraph Invalid Node Transition",
-        details: { fromNode, toNode },
-      },
-    );
-  }
-}
-
-export class LangGraphTimeoutException extends LangGraphException {
-  constructor(operation: string, timeoutMs: number) {
-    super(
-      LangGraphErrorCode.LANGGRAPH_TIMEOUT,
-      `LangGraph operation "${operation}" timed out after ${timeoutMs}ms`,
-      HttpStatus.GATEWAY_TIMEOUT,
-      {
-        title: "LangGraph Timeout",
-        details: { operation, timeoutMs },
       },
     );
   }

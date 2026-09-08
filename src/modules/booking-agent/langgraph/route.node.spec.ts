@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { LANGGRAPH_NODE_NAMES, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
@@ -31,8 +31,6 @@ describe("RouteNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},
@@ -68,8 +66,6 @@ describe("RouteNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},

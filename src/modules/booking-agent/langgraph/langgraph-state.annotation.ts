@@ -63,8 +63,6 @@ export const BookingAgentAnnotation = Annotation.Root({
     default: () => [],
   }),
   selectedOption: AnnotationWithDefault<VehicleSearchOption | null>(null),
-  holdId: AnnotationWithDefault<string | null>(null),
-  holdExpiresAt: AnnotationWithDefault<string | null>(null),
   bookingId: AnnotationWithDefault<string | null>(null),
   paymentLink: AnnotationWithDefault<string | null>(null),
   preferences: Annotation<UserPreferences & { __clear?: boolean }>({

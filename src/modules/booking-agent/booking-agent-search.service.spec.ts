@@ -94,14 +94,11 @@ describe("BookingAgentSearchService", () => {
   });
 
   it("returns a hard precondition prompt when pickup date is missing", async () => {
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        color: "Black",
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+    });
 
     expect(result.precondition).toEqual({
       missingField: "from",
@@ -116,15 +113,12 @@ describe("BookingAgentSearchService", () => {
     const fromDate = makeIsoDate(10);
     const toDate = makeIsoDate(8);
 
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        from: fromDate,
-        to: toDate,
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      from: fromDate,
+      to: toDate,
+    });
 
     expect(result.precondition).toEqual({
       missingField: "to",
@@ -136,16 +130,13 @@ describe("BookingAgentSearchService", () => {
   it("returns a hard precondition prompt when pickup time format is invalid", async () => {
     const fromDate = makeIsoDate(10);
 
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        from: fromDate,
-        bookingType: "DAY",
-        pickupTime: "25:99",
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      from: fromDate,
+      bookingType: "DAY",
+      pickupTime: "25:99",
+    });
 
     expect(result.precondition).toEqual({
       missingField: "pickupTime",
@@ -164,21 +155,17 @@ describe("BookingAgentSearchService", () => {
       ]),
     );
 
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        color: "Black",
-        from: fromDate,
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+      from: fromDate,
+    });
 
     expect(result.precondition).toBeNull();
     expect(result.exactMatches.map((option) => option.id)).toEqual(["car_exact_prado_black"]);
     expect(result.exactMatches[0]?.estimatedTotalInclVat).toBeGreaterThan(0);
     expect(result.alternatives).toHaveLength(0);
-    expect(result.shouldClarifyBookingType).toBe(false);
   });
 
   it("computes alternatives when excluded option removes the only exact match", async () => {
@@ -204,7 +191,6 @@ describe("BookingAgentSearchService", () => {
         color: "Black",
         from: fromDate,
       },
-      "Looking for: black toyota prado",
       excludedExact.id,
     );
 
@@ -247,23 +233,19 @@ describe("BookingAgentSearchService", () => {
       return buildSearchResponse([]);
     });
 
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        color: "Black",
-        vehicleType: "SUV",
-        from: fromDate,
-        bookingType: "NIGHT",
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+      vehicleType: "SUV",
+      from: fromDate,
+      bookingType: "NIGHT",
+    });
 
     expect(result.exactMatches).toHaveLength(0);
     expect(result.alternatives[0]?.id).toBe("car_prado_white");
     expect(result.alternatives[0]?.reason).toBe("SAME_MODEL_DIFFERENT_COLOR");
     expect(result.alternatives[1]?.id).toBe("car_land_cruiser_black");
-    expect(result.shouldClarifyBookingType).toBe(false);
   });
 
   it("does not label fallback options as similar price range when stronger match signals are absent", async () => {
@@ -324,17 +306,14 @@ describe("BookingAgentSearchService", () => {
       return buildSearchResponse([sedanNearPrice, farPrice]);
     });
 
-    const result = await service.searchVehiclesFromExtracted(
-      {
-        make: "Toyota",
-        model: "Prado",
-        color: "Black",
-        vehicleType: "SUV",
-        from: fromDate,
-        bookingType: "NIGHT",
-      },
-      "Looking for: black toyota prado",
-    );
+    const result = await service.searchVehiclesFromExtracted({
+      make: "Toyota",
+      model: "Prado",
+      color: "Black",
+      vehicleType: "SUV",
+      from: fromDate,
+      bookingType: "NIGHT",
+    });
 
     expect(result.exactMatches).toHaveLength(0);
     expect(result.alternatives.some((option) => option.reason === "SIMILAR_PRICE_RANGE")).toBe(
@@ -355,19 +334,16 @@ describe("BookingAgentSearchService", () => {
           }),
       );
 
-      const searchPromise = service.searchVehiclesFromExtracted(
-        {
-          make: "Toyota",
-          model: "Prado",
-          from: fromDate,
-          to: toDate,
-          bookingType: "DAY",
-          pickupTime: "9:00 AM",
-          pickupLocation: "Wheatbaker hotel, Ikoyi",
-          dropoffLocation: "Wheatbaker hotel, Ikoyi",
-        },
-        "Looking for: Toyota Prado",
-      );
+      const searchPromise = service.searchVehiclesFromExtracted({
+        make: "Toyota",
+        model: "Prado",
+        from: fromDate,
+        to: toDate,
+        bookingType: "DAY",
+        pickupTime: "9:00 AM",
+        pickupLocation: "Wheatbaker hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker hotel, Ikoyi",
+      });
       const rejectionAssertion = expect(searchPromise).rejects.toBeInstanceOf(
         WhatsAppOperationTimeoutException,
       );

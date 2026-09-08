@@ -77,8 +77,6 @@ describe("LangGraphGraphService", () => {
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
-    holdId: null,
-    holdExpiresAt: null,
     bookingId: null,
     paymentLink: null,
     preferences: {},
@@ -1343,7 +1341,7 @@ describe("LangGraphGraphService", () => {
   });
 
   describe("preferences handling", () => {
-    it("updates price preference from extraction hint", async () => {
+    it("stores preference hints as notes", async () => {
       extractorServiceMock.extract.mockResolvedValue({
         intent: "provide_info",
         draftPatch: {},
@@ -1364,7 +1362,6 @@ describe("LangGraphGraphService", () => {
       const existingState = buildInitialState();
       existingState.stage = "collecting";
       existingState.preferences = {
-        pricePreference: "budget",
         notes: ["budget"],
       };
       stateServiceMock.loadState.mockResolvedValue(existingState);
