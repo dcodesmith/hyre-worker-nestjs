@@ -85,6 +85,10 @@ type VerifiedAccountIdentity = {
 
 type StageResponse = Prisma.InputJsonObject;
 
+type IdentityStageClaim =
+  | { kind: "CLAIMED"; verification: FleetOwnerAccountVerification }
+  | { kind: "REPLAYED"; response: StageResponse };
+
 type OnboardingProgress = {
   identityComplete: boolean;
   payoutComplete: boolean;
@@ -140,6 +144,62 @@ function submissionStepStatus(verification: FleetOwnerAccountVerification | null
     return "REVIEW_REQUIRED";
   }
   return "PENDING";
+}
+
+function drivingDocumentStatus(
+  hasUpload: boolean,
+  isOwnerDriver: boolean,
+  existingDocumentApproved: boolean,
+) {
+  if (hasUpload) return "PENDING";
+  return isOwnerDriver && existingDocumentApproved ? "APPROVED" : null;
+}
+
+function accountRequiredActions(
+  emailVerified: boolean,
+  phoneVerified: boolean,
+  fleetOwnerStatus: FleetOwnerStatus,
+  verificationStatus: AccountVerificationStatus | undefined,
+  isOwnerDriver: boolean,
+  driverLicenseStatus: DocumentStatus | undefined,
+): string[] {
+  const requiredActions: string[] = [];
+  if (!emailVerified) requiredActions.push("VERIFY_EMAIL");
+  if (!phoneVerified) requiredActions.push("VERIFY_PHONE");
+  if (
+    (!verificationStatus && fleetOwnerStatus !== FleetOwnerStatus.APPROVED) ||
+    verificationStatus === AccountVerificationStatus.FAILED ||
+    verificationStatus === AccountVerificationStatus.DRAFT
+  ) {
+    requiredActions.push("VERIFY_ACCOUNT");
+  }
+  if (isOwnerDriver && (!driverLicenseStatus || driverLicenseStatus === DocumentStatus.REJECTED)) {
+    requiredActions.push("UPLOAD_DRIVERS_LICENSE");
+  }
+  return requiredActions;
+}
+
+function accountOnboardingStatus(
+  requiredActions: string[],
+  verificationStatus: AccountVerificationStatus | undefined,
+  hasOnboarded: boolean,
+  fleetOwnerStatus: FleetOwnerStatus,
+) {
+  if (requiredActions.length > 0) return "ACTION_REQUIRED";
+  if (verificationStatus === AccountVerificationStatus.REVIEW_REQUIRED) return "UNDER_REVIEW";
+  return hasOnboarded && fleetOwnerStatus === FleetOwnerStatus.APPROVED
+    ? "VERIFIED"
+    : "ACTION_REQUIRED";
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error) ?? "Unknown error";
+  } catch {
+    return "Unserializable error";
+  }
 }
 
 @Injectable()
@@ -563,11 +623,11 @@ export class AccountVerificationService {
         status: "COMPLETED",
         isOwnerDriver: input.isOwnerDriver,
         documents: {
-          driversLicense: documents.driversLicense
-            ? "PENDING"
-            : input.isOwnerDriver && driverLicenseApproved
-              ? "APPROVED"
-              : null,
+          driversLicense: drivingDocumentStatus(
+            Boolean(documents.driversLicense),
+            input.isOwnerDriver,
+            driverLicenseApproved,
+          ),
           lasdri: documents.lasdri ? "PENDING" : null,
         },
       };
@@ -880,7 +940,7 @@ export class AccountVerificationService {
     input: AccountIdentityVerificationDto,
     accountIsApproved: boolean,
     attempt = 1,
-  ) {
+  ): Promise<IdentityStageClaim> {
     await this.expireStaleVerification(userId);
 
     if (accountIsApproved) {
@@ -906,40 +966,60 @@ export class AccountVerificationService {
       return { kind: "CLAIMED" as const, verification };
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error;
-      const existing = await this.findVerificationByKey(userId, idempotencyKey);
-      if (existing) {
-        return {
-          kind: "REPLAYED" as const,
-          response: this.replayIdentityStage(existing, requestHash),
-        };
-      }
-
-      const active = await this.findActiveVerification(userId);
-      if (active?.status === AccountVerificationStatus.DRAFT && attempt === 1) {
-        const superseded = await this.databaseService.fleetOwnerAccountVerification.updateMany({
-          where: { id: active.id, status: AccountVerificationStatus.DRAFT },
-          data: {
-            status: AccountVerificationStatus.FAILED,
-            failureReason: AccountVerificationErrorCode.OPERATION_FAILED,
-          },
-        });
-        if (superseded.count === 1) {
-          return this.claimIdentityStage(
-            userId,
-            idempotencyKey,
-            requestHash,
-            input,
-            accountIsApproved,
-            attempt + 1,
-          );
-        }
-      }
-      if (active?.status === AccountVerificationStatus.REVIEW_REQUIRED) {
-        throw new AccountVerificationReviewPendingException();
-      }
-      if (active) throw new VerificationRequestInProgressException();
-      throw error;
+      return this.resolveIdentityStageConflict(
+        userId,
+        idempotencyKey,
+        requestHash,
+        input,
+        accountIsApproved,
+        attempt,
+        error,
+      );
     }
+  }
+
+  private async resolveIdentityStageConflict(
+    userId: string,
+    idempotencyKey: string,
+    requestHash: string,
+    input: AccountIdentityVerificationDto,
+    accountIsApproved: boolean,
+    attempt: number,
+    originalError: unknown,
+  ): Promise<IdentityStageClaim> {
+    const existing = await this.findVerificationByKey(userId, idempotencyKey);
+    if (existing) {
+      return {
+        kind: "REPLAYED",
+        response: this.replayIdentityStage(existing, requestHash),
+      };
+    }
+
+    const active = await this.findActiveVerification(userId);
+    if (active?.status === AccountVerificationStatus.DRAFT && attempt === 1) {
+      const superseded = await this.databaseService.fleetOwnerAccountVerification.updateMany({
+        where: { id: active.id, status: AccountVerificationStatus.DRAFT },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.OPERATION_FAILED,
+        },
+      });
+      if (superseded.count === 1) {
+        return this.claimIdentityStage(
+          userId,
+          idempotencyKey,
+          requestHash,
+          input,
+          accountIsApproved,
+          attempt + 1,
+        );
+      }
+    }
+    if (active?.status === AccountVerificationStatus.REVIEW_REQUIRED) {
+      throw new AccountVerificationReviewPendingException();
+    }
+    if (active) throw new VerificationRequestInProgressException();
+    throw originalError;
   }
 
   private async findDraft(userId: string) {
@@ -1254,31 +1334,20 @@ export class AccountVerificationService {
     );
     const lasdri = user.documents.find(({ documentType }) => documentType === DocumentType.LASDRI);
     const progress = onboardingProgress(verification);
-    const requiredActions: string[] = [];
-    if (!user.emailVerified) requiredActions.push("VERIFY_EMAIL");
-    if (!user.phoneVerifiedAt) requiredActions.push("VERIFY_PHONE");
-    if (
-      (!verification && user.fleetOwnerStatus !== FleetOwnerStatus.APPROVED) ||
-      verification?.status === AccountVerificationStatus.FAILED ||
-      verification?.status === AccountVerificationStatus.DRAFT
-    ) {
-      requiredActions.push("VERIFY_ACCOUNT");
-    }
-    if (
-      user.isOwnerDriver &&
-      (!driversLicense || driversLicense.status === DocumentStatus.REJECTED)
-    ) {
-      requiredActions.push("UPLOAD_DRIVERS_LICENSE");
-    }
-
-    let status = "ACTION_REQUIRED";
-    if (requiredActions.length === 0) {
-      if (verification?.status === AccountVerificationStatus.REVIEW_REQUIRED) {
-        status = "UNDER_REVIEW";
-      } else if (user.hasOnboarded && user.fleetOwnerStatus === FleetOwnerStatus.APPROVED) {
-        status = "VERIFIED";
-      }
-    }
+    const requiredActions = accountRequiredActions(
+      user.emailVerified,
+      user.phoneVerifiedAt !== null,
+      user.fleetOwnerStatus,
+      verification?.status,
+      user.isOwnerDriver,
+      driversLicense?.status,
+    );
+    const status = accountOnboardingStatus(
+      requiredActions,
+      verification?.status,
+      user.hasOnboarded,
+      user.fleetOwnerStatus,
+    );
 
     const identity =
       verification && progress.identityComplete
@@ -1574,7 +1643,7 @@ export class AccountVerificationService {
       }
     }
     this.logger.warn(
-      { error: lastError instanceof Error ? lastError.message : String(lastError) },
+      { error: errorMessage(lastError) },
       "Failed to delete an unreferenced account document after retries",
     );
   }
@@ -1637,7 +1706,7 @@ export class AccountVerificationService {
         : new BankAccountProviderUnavailableException();
     }
     this.logger.error(
-      { error: error instanceof Error ? error.message : String(error) },
+      { error: errorMessage(error) },
       "Unexpected fleet-owner account verification failure",
     );
     return new AccountVerificationOperationFailedException();

@@ -209,7 +209,9 @@ export class FlutterwaveService {
         );
       }
 
-      const banks = parsed.data.data.sort((left, right) => left.name.localeCompare(right.name));
+      const banks = [...parsed.data.data].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
       this.bankListCache = { data: banks, expiresAt: Date.now() + BANK_LIST_TTL_MS };
       return banks;
     } catch (error) {
