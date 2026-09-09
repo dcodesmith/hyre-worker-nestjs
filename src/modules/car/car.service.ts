@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   CarApprovalStatus,
@@ -240,6 +241,30 @@ export class CarService {
         });
         if (consumed.count !== 1) {
           throw new CarCreateFailedException();
+        }
+
+        if (
+          verification.insurancePolicyNumber &&
+          verification.insurancePolicyStatus?.trim().toLowerCase() === "active" &&
+          verification.insurancePolicyExpiresAt &&
+          verification.insurancePolicyExpiresAt > new Date()
+        ) {
+          const policyNumber = verification.insurancePolicyNumber.trim().toUpperCase();
+          await tx.insuranceVerification.create({
+            data: {
+              ownerId,
+              carId: car.id,
+              idempotencyKey: `initial-insurance:${verification.id}`,
+              requestHash: createHash("sha256")
+                .update(JSON.stringify({ carId: car.id, policyNumber }))
+                .digest("hex"),
+              policyNumber,
+              policyStatus: verification.insurancePolicyStatus,
+              policyExpiresAt: verification.insurancePolicyExpiresAt,
+              providerRef: verification.insuranceProviderRef,
+              status: ProviderVerificationStatus.SUCCEEDED,
+            },
+          });
         }
         return car;
       });

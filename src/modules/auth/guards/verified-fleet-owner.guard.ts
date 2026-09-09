@@ -2,6 +2,7 @@ import { type CanActivate, type ExecutionContext, Injectable } from "@nestjs/com
 import { FleetOwnerStatus } from "@prisma/client";
 import type { Request } from "express";
 import { DatabaseService } from "../../database/database.service";
+import { ADMIN, STAFF } from "../auth.const";
 import { AuthErrorCode, AuthForbiddenException } from "../auth.error";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
 
@@ -13,7 +14,12 @@ export class VerifiedFleetOwnerGuard implements CanActivate {
     const request = context
       .switchToHttp()
       .getRequest<Request & { [AUTH_SESSION_KEY]?: AuthSession }>();
-    const userId = request[AUTH_SESSION_KEY]?.user.id;
+    const sessionUser = request[AUTH_SESSION_KEY]?.user;
+    if (sessionUser?.roles.some((role) => role === ADMIN || role === STAFF)) {
+      return true;
+    }
+
+    const userId = sessionUser?.id;
     const owner = userId
       ? await this.databaseService.user.findUnique({
           where: { id: userId },

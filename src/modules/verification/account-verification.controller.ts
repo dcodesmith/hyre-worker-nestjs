@@ -31,10 +31,16 @@ import {
   MAX_ACCOUNT_DOCUMENT_SIZE_BYTES,
 } from "./account-documents.pipe";
 import {
+  type AccountIdentityVerificationDto,
+  accountIdentityVerificationSchema,
   type CheckPhoneVerificationDto,
   type CreateAccountVerificationDto,
   checkPhoneVerificationSchema,
   createAccountVerificationSchema,
+  type DrivingCredentialsDto,
+  drivingCredentialsSchema,
+  type PayoutVerificationDto,
+  payoutVerificationSchema,
   type SendPhoneVerificationDto,
   sendPhoneVerificationSchema,
   type UploadedAccountDocument,
@@ -102,6 +108,72 @@ export class AccountVerificationController {
     return this.phoneVerificationService.check(user.id, body);
   }
 
+  @Post("onboarding/identity-verifications")
+  @UseGuards(VerificationThrottlerGuard)
+  verifyIdentity(
+    @CurrentUser() user: AuthSession["user"],
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @ZodBody(accountIdentityVerificationSchema) body: AccountIdentityVerificationDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.verifyIdentityStage(user.id, idempotencyKey, body),
+    );
+  }
+
+  @Post("onboarding/payout-verifications")
+  @UseGuards(VerificationThrottlerGuard)
+  verifyPayout(
+    @CurrentUser() user: AuthSession["user"],
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @ZodBody(payoutVerificationSchema) body: PayoutVerificationDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.verifyPayoutStage(user.id, idempotencyKey, body),
+    );
+  }
+
+  @Put("onboarding/driving-credentials")
+  @UseGuards(VerificationThrottlerGuard)
+  @UseInterceptors(
+    FileFieldsInterceptor([...ACCOUNT_DOCUMENT_FIELDS], {
+      limits: { fileSize: MAX_ACCOUNT_DOCUMENT_SIZE_BYTES },
+    }),
+  )
+  saveDrivingCredentials(
+    @CurrentUser() user: AuthSession["user"],
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @ZodBody(drivingCredentialsSchema) body: DrivingCredentialsDto,
+    @UploadedFiles(new AccountDocumentsPipe()) documents: AccountDocuments,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.saveDrivingCredentialsStage(
+        user.id,
+        idempotencyKey,
+        body,
+        documents,
+      ),
+    );
+  }
+
+  @Post("onboarding/submissions")
+  @UseGuards(VerificationThrottlerGuard)
+  submit(
+    @CurrentUser() user: AuthSession["user"],
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.submitStage(user.id, idempotencyKey),
+    );
+  }
+
   @Post("account-verifications")
   @UseGuards(VerificationThrottlerGuard)
   @UseInterceptors(
@@ -117,8 +189,14 @@ export class AccountVerificationController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.create(user.id, idempotencyKey, body, documents),
+    );
+  }
+
+  private async withRetryAfter<T>(response: Response, operation: () => Promise<T>): Promise<T> {
     try {
-      return await this.accountVerificationService.create(user.id, idempotencyKey, body, documents);
+      return await operation();
     } catch (error) {
       if (error instanceof VerificationRequestInProgressException) {
         response.setHeader("Retry-After", String(error.retryAfterSeconds));

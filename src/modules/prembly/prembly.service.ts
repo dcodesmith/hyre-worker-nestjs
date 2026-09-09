@@ -116,6 +116,10 @@ export class PremblyService {
       { channel: "policy", number: policyNumber },
       premblyInsuranceResponseSchema,
     );
+    const chassisNumber = response.data.vehicle_chasis?.trim().toUpperCase() ?? null;
+    if (chassisNumber && !VIN_PATTERN.test(chassisNumber)) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
 
     return {
       policyNumber: response.data.policy_number,
@@ -123,7 +127,8 @@ export class PremblyService {
       plateNumbers: [response.data.new_reg_number, response.data.reg_number].filter(
         (plate): plate is string => Boolean(plate),
       ),
-      chassisNumber: response.data.vehicle_chasis?.trim().toUpperCase() ?? null,
+      chassisNumber,
+      color: response.data.vehicle_color,
       expiresAt: response.data.expiry_date,
       reference: response.verification.reference,
     };

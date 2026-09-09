@@ -3,7 +3,9 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { FleetOwnerStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseService } from "../../database/database.service";
+import { ADMIN, STAFF } from "../auth.const";
 import { AuthErrorCode, AuthForbiddenException } from "../auth.error";
+import type { RoleName } from "../auth.interface";
 import { AUTH_SESSION_KEY, type AuthSession } from "./session.guard";
 import { VerifiedFleetOwnerGuard } from "./verified-fleet-owner.guard";
 
@@ -41,6 +43,11 @@ describe("VerifiedFleetOwnerGuard", () => {
     fleetOwnerStatus: FleetOwnerStatus.APPROVED,
   };
 
+  const sessionWithRoles = (roles: RoleName[]): AuthSession => ({
+    ...session,
+    user: { ...session.user, roles },
+  });
+
   const createContext = (attachedSession?: AuthSession) =>
     ({
       switchToHttp: () => ({
@@ -57,6 +64,14 @@ describe("VerifiedFleetOwnerGuard", () => {
 
     guard = module.get(VerifiedFleetOwnerGuard);
   });
+
+  it.each([ADMIN, STAFF] as const)(
+    "allows %s without looking up fleet-owner verification",
+    async (role) => {
+      await expect(guard.canActivate(createContext(sessionWithRoles([role])))).resolves.toBe(true);
+      expect(databaseService.user.findUnique).not.toHaveBeenCalled();
+    },
+  );
 
   it("allows a fully verified onboarded fleet owner", async () => {
     await expect(guard.canActivate(createContext(session))).resolves.toBe(true);

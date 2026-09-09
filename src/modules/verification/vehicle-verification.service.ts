@@ -50,7 +50,8 @@ export class VehicleVerificationService {
     input: CreateVehicleVerificationDto,
   ) {
     const plateNumber = this.normalizePlate(input.plateNumber);
-    const requestHash = this.hash({ plateNumber });
+    const policyNumber = input.policyNumber.trim().toUpperCase();
+    const requestHash = this.hash({ plateNumber, policyNumber });
 
     let verification: VehicleVerification;
     try {
@@ -60,6 +61,7 @@ export class VehicleVerificationService {
           idempotencyKey,
           requestHash,
           plateNumber,
+          insurancePolicyNumber: policyNumber,
           expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
         },
       });
@@ -82,31 +84,37 @@ export class VehicleVerificationService {
     }
 
     try {
-      const plate = await this.premblyService.verifyPlate(plateNumber);
-      if (this.normalizePlate(plate.plateNumber) !== plateNumber) {
-        throw new VehicleMismatchException();
+      const insurance = await this.premblyService.verifyInsurance(policyNumber);
+      if (
+        insurance.policyStatus.trim().toLowerCase() !== "active" ||
+        insurance.expiresAt <= new Date()
+      ) {
+        throw new InsuranceInactiveException();
+      }
+      if (!insurance.plateNumbers.some((plate) => this.normalizePlate(plate) === plateNumber)) {
+        throw new InsuranceVehicleMismatchException();
+      }
+      if (!insurance.chassisNumber) {
+        throw new ProviderVerificationException("INVALID_RESPONSE");
       }
 
-      const vin = await this.premblyService.verifyVin(plate.chassisNumber);
-      if (
-        !this.identityMatches(plate.make, vin.make) ||
-        !this.identityMatches(plate.model, vin.model)
-      ) {
-        throw new VehicleMismatchException();
-      }
+      const vin = await this.premblyService.verifyVin(insurance.chassisNumber);
 
       const completed = await this.databaseService.vehicleVerification.update({
         where: { id: verification.id },
         data: {
           status: ProviderVerificationStatus.SUCCEEDED,
-          chassisNumber: plate.chassisNumber,
+          chassisNumber: insurance.chassisNumber,
           make: vin.make,
           model: vin.model,
           year: vin.year,
-          color: plate.color,
+          color: insurance.color,
           passengerCapacity: vin.passengerCapacity,
-          plateProviderRef: plate.reference,
           vinProviderRef: vin.reference,
+          insurancePolicyNumber: insurance.policyNumber,
+          insurancePolicyStatus: insurance.policyStatus,
+          insurancePolicyExpiresAt: insurance.expiresAt,
+          insuranceProviderRef: insurance.reference,
         },
       });
       return this.toVehicleResponse(completed);
@@ -262,13 +270,6 @@ export class VehicleVerificationService {
       isEligible: year !== null && reasons.length === 0,
       reasons,
     };
-  }
-
-  private identityMatches(plateValue: string | null, vinValue: string): boolean {
-    if (!plateValue) return true;
-    const plate = plateValue.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
-    const vin = vinValue.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
-    return plate.includes(vin) || vin.includes(plate);
   }
 
   private normalizePlate(plateNumber: string): string {

@@ -6,12 +6,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
+import { FlutterwaveError } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import {
+  type AccountIdentityVerificationDto,
   type CreateAccountVerificationDto,
   createAccountVerificationSchema,
+  type PayoutVerificationDto,
 } from "../src/modules/verification/account-verification.dto";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -39,6 +42,22 @@ const INDIVIDUAL_FIELDS = {
   accountType: "INDIVIDUAL",
   nin: "12345678901",
   isOwnerDriver: "false",
+  bankName: "GTBank",
+  bankCode: "058",
+  accountNumber: ACCOUNT_NUMBER,
+} as const;
+const INDIVIDUAL_IDENTITY = {
+  accountType: "INDIVIDUAL",
+  nin: "12345678901",
+} as const;
+const BUSINESS_IDENTITY = {
+  accountType: "BUSINESS",
+  nin: "12345678901",
+  businessName: "Hyre Mobility Limited",
+  registrationNumber: "RC123456",
+  registrationType: "RC",
+} as const;
+const PAYOUT_FIELDS = {
   bankName: "GTBank",
   bankCode: "058",
   accountNumber: ACCOUNT_NUMBER,
@@ -146,6 +165,67 @@ describe("Fleet-owner account verification E2E Tests", () => {
     return req;
   }
 
+  function hashIdentity(input: AccountIdentityVerificationDto): string {
+    return createHmac("sha256", process.env.HMAC_KEY ?? "")
+      .update(JSON.stringify({ stage: "IDENTITY", input }))
+      .digest("hex");
+  }
+
+  function hashPayout(input: PayoutVerificationDto): string {
+    return createHmac("sha256", process.env.HMAC_KEY ?? "")
+      .update(JSON.stringify({ stage: "PAYOUT", input }))
+      .digest("hex");
+  }
+
+  function identityVerificationRequest(
+    cookie: string,
+    idempotencyKey: string,
+    body: AccountIdentityVerificationDto = INDIVIDUAL_IDENTITY,
+  ) {
+    return withAuth(
+      http("post", "/api/fleet-owner/onboarding/identity-verifications")
+        .set("Idempotency-Key", idempotencyKey)
+        .send(body),
+      cookie,
+    );
+  }
+
+  function payoutVerificationRequest(
+    cookie: string,
+    idempotencyKey: string,
+    body: PayoutVerificationDto = PAYOUT_FIELDS,
+  ) {
+    return withAuth(
+      http("post", "/api/fleet-owner/onboarding/payout-verifications")
+        .set("Idempotency-Key", idempotencyKey)
+        .send(body),
+      cookie,
+    );
+  }
+
+  function drivingCredentialsRequest(
+    cookie: string,
+    idempotencyKey: string,
+    isOwnerDriver = "false",
+  ) {
+    return withAuth(
+      http("put", "/api/fleet-owner/onboarding/driving-credentials")
+        .set("Idempotency-Key", idempotencyKey)
+        .field("isOwnerDriver", isOwnerDriver),
+      cookie,
+    );
+  }
+
+  function submitRequest(cookie: string, idempotencyKey: string) {
+    return withAuth(
+      http("post", "/api/fleet-owner/onboarding/submissions").set(
+        "Idempotency-Key",
+        idempotencyKey,
+      ),
+      cookie,
+    );
+  }
+
   beforeAll(async () => {
     premblyService = {
       verifyNin: vi.fn(),
@@ -180,9 +260,20 @@ describe("Fleet-owner account verification E2E Tests", () => {
     await app.init();
     // prisma db push does not apply this partial unique index from the migration.
     await databaseService.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX IF NOT EXISTS "FleetOwnerAccountVerification_one_active_per_user_idx"
+      DROP INDEX IF EXISTS "FleetOwnerAccountVerification_one_active_per_user_idx"
+    `);
+    await databaseService.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "FleetOwnerAccountVerification_one_active_per_user_idx"
       ON "FleetOwnerAccountVerification"("userId")
-      WHERE "status" IN ('PROCESSING', 'REVIEW_REQUIRED')
+      WHERE "status" IN ('DRAFT', 'PROCESSING', 'REVIEW_REQUIRED')
+    `);
+    await databaseService.$executeRawUnsafe(`
+      DROP INDEX IF EXISTS "FleetOwnerAccountVerificationStageRequest_one_processing_per_stage_idx"
+    `);
+    await databaseService.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "FleetOwnerAccountVerificationStageRequest_one_processing_per_stage_idx"
+      ON "FleetOwnerAccountVerificationStageRequest"("verificationId", "stage")
+      WHERE "status" = 'PROCESSING'
     `);
 
     const owner = await readyOwner("acct-owner");
@@ -255,6 +346,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       status: "ACTION_REQUIRED",
       phone: { number: "**********5678", verified: false },
       requiredActions: expect.arrayContaining(["VERIFY_PHONE", "VERIFY_ACCOUNT"]),
+      steps: { contact: "PENDING" },
     });
   });
 
@@ -728,9 +820,16 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const second = await accountVerificationRequest(owner.cookie, "account-failed-1");
 
     expect(first.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-    expect(first.body.errorCode).toBe("PROVIDER_REJECTED");
+    expect(first.body.errorCode).toBe("ACCOUNT_NIN_NOT_VERIFIED");
+    expect(first.body.errors).toEqual([
+      {
+        field: "nin",
+        code: "NOT_VERIFIED",
+        message: "We couldn't verify this NIN. Check the number and try again.",
+      },
+    ]);
     expect(second.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-    expect(second.body.errorCode).toBe("PROVIDER_REJECTED");
+    expect(second.body.errorCode).toBe("ACCOUNT_NIN_NOT_VERIFIED");
     expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
   });
 
@@ -1015,5 +1114,516 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(user?.chauffeurApprovalStatus).toBe("APPROVED");
     expect(pendingLasdri?.status).toBe("PENDING");
     expect(nin.id).toBeTruthy();
+  });
+
+  it("walks an individual non-driver through staged onboarding to approval", async () => {
+    const owner = await readyOwner("acct-stage-individual");
+
+    const before = await http("get", "/api/fleet-owner/onboarding").set("Cookie", owner.cookie);
+    expect(before.body).toMatchObject({
+      nextAction: "VERIFY_IDENTITY",
+      steps: { identity: "PENDING", payout: "PENDING", driving: "PENDING", submission: "PENDING" },
+    });
+
+    const identity = await identityVerificationRequest(owner.cookie, "stage-individual-identity-1");
+    expect(identity.status).toBe(HttpStatus.CREATED);
+    expect(identity.body).toMatchObject({
+      status: "VERIFIED",
+      accountType: "INDIVIDUAL",
+      legalName: "JOHN MIDDLE DOE",
+    });
+    expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+    expect(premblyService.verifyCac).not.toHaveBeenCalled();
+
+    const afterIdentity = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterIdentity.body).toMatchObject({
+      nextAction: "VERIFY_PAYOUT",
+      identity: { status: "SUCCEEDED", legalName: "JOHN MIDDLE DOE" },
+      steps: {
+        contact: "VERIFIED",
+        identity: "VERIFIED",
+        payout: "PENDING",
+        driving: "PENDING",
+        submission: "PENDING",
+      },
+    });
+    expect(afterIdentity.body.identity.status).not.toBe("DRAFT");
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-individual-payout-1");
+    expect(payout.status).toBe(HttpStatus.CREATED);
+    expect(payout.body).toMatchObject({
+      status: "VERIFIED",
+      bank: { accountName: "JOHN DOE", accountNumber: "******6789", nameMatch: "MATCHED" },
+    });
+
+    const afterPayout = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterPayout.body).toMatchObject({
+      nextAction: "PROVIDE_DRIVING_CREDENTIALS",
+      steps: { payout: "VERIFIED", driving: "PENDING", submission: "PENDING" },
+    });
+
+    const driving = await drivingCredentialsRequest(owner.cookie, "stage-individual-driving-1");
+    expect(driving.status).toBe(HttpStatus.OK);
+    expect(driving.body).toMatchObject({ status: "COMPLETED", isOwnerDriver: false });
+
+    const afterDriving = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterDriving.body).toMatchObject({
+      nextAction: "SUBMIT_ACCOUNT",
+      steps: { driving: "COMPLETED", submission: "PENDING" },
+    });
+
+    const submitted = await submitRequest(owner.cookie, "stage-individual-submit-1");
+    expect(submitted.status).toBe(HttpStatus.CREATED);
+    expect(submitted.body).toMatchObject({ status: "SUCCEEDED", accountType: "INDIVIDUAL" });
+
+    const [user, bank, verification] = await Promise.all([
+      databaseService.user.findUnique({
+        where: { id: owner.id },
+        select: { fleetOwnerStatus: true, hasOnboarded: true, isOwnerDriver: true },
+      }),
+      databaseService.bankDetails.findUnique({
+        where: { userId: owner.id },
+        select: { isVerified: true },
+      }),
+      databaseService.fleetOwnerAccountVerification.findFirst({
+        where: { userId: owner.id },
+        orderBy: { createdAt: "desc" },
+        select: {
+          status: true,
+          identityVerifiedAt: true,
+          payoutVerifiedAt: true,
+          drivingCompletedAt: true,
+          submittedAt: true,
+        },
+      }),
+    ]);
+    expect(user).toMatchObject({
+      fleetOwnerStatus: "APPROVED",
+      hasOnboarded: true,
+      isOwnerDriver: false,
+    });
+    expect(bank?.isVerified).toBe(true);
+    expect(verification).toMatchObject({ status: "SUCCEEDED" });
+    expect(verification?.identityVerifiedAt).toBeInstanceOf(Date);
+    expect(verification?.payoutVerifiedAt).toBeInstanceOf(Date);
+    expect(verification?.drivingCompletedAt).toBeInstanceOf(Date);
+    expect(verification?.submittedAt).toBeInstanceOf(Date);
+
+    const afterSubmit = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterSubmit.body).toMatchObject({
+      status: "VERIFIED",
+      nextAction: "COMPLETE",
+      steps: { submission: "VERIFIED" },
+    });
+  });
+
+  it("verifies a business identity, skips driving, then submits after payout", async () => {
+    const owner = await readyOwner("acct-stage-business");
+    premblyService.verifyCac.mockResolvedValue({
+      businessName: "HYRE MOBILITY LTD",
+      registrationNumber: "RC123456",
+      registrationType: "RC",
+      status: "ACTIVE",
+      directors: [{ firstName: "JOHN", middleName: null, lastName: "DOE" }],
+      reference: "cac-ref",
+    });
+    flutterwaveService.resolveBankAccount.mockResolvedValue({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "HYRE MOBILITY LIMITED",
+      bankCode: "058",
+    });
+
+    const identity = await identityVerificationRequest(
+      owner.cookie,
+      "stage-business-identity-1",
+      BUSINESS_IDENTITY,
+    );
+    expect(identity.status).toBe(HttpStatus.CREATED);
+    expect(identity.body).toMatchObject({
+      status: "VERIFIED",
+      accountType: "BUSINESS",
+      businessName: "HYRE MOBILITY LTD",
+    });
+    expect(premblyService.verifyCac).toHaveBeenCalledWith(
+      "RC123456",
+      "RC",
+      "Hyre Mobility Limited",
+    );
+
+    const afterIdentity = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterIdentity.body).toMatchObject({
+      nextAction: "VERIFY_PAYOUT",
+      identity: { status: "SUCCEEDED" },
+      steps: { identity: "VERIFIED", driving: "SKIPPED", payout: "PENDING" },
+    });
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-business-payout-1");
+    expect(payout.status).toBe(HttpStatus.CREATED);
+    expect(payout.body.bank.nameMatch).toBe("MATCHED");
+
+    const afterPayout = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterPayout.body).toMatchObject({
+      nextAction: "SUBMIT_ACCOUNT",
+      steps: { driving: "SKIPPED", payout: "VERIFIED" },
+    });
+
+    const submitted = await submitRequest(owner.cookie, "stage-business-submit-1");
+    expect(submitted.status).toBe(HttpStatus.CREATED);
+    expect(submitted.body).toMatchObject({ status: "SUCCEEDED", accountType: "BUSINESS" });
+  });
+
+  it("keeps hard identity, payout, and driving failures on the current stage", async () => {
+    const owner = await readyOwner("acct-stage-hard-fail");
+    premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+    const rejectedNin = await identityVerificationRequest(owner.cookie, "stage-fail-nin-1");
+    expect(rejectedNin.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(rejectedNin.body.errorCode).toBe("ACCOUNT_NIN_NOT_VERIFIED");
+
+    premblyService.verifyNin.mockResolvedValueOnce({
+      firstName: "JOHN",
+      middleName: "MIDDLE",
+      lastName: "DOE",
+      reference: "nin-ref",
+    });
+    const identity = await identityVerificationRequest(owner.cookie, "stage-fail-identity-2");
+    expect(identity.status).toBe(HttpStatus.CREATED);
+
+    flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
+      new FlutterwaveError("Account not found", "ACCOUNT_NOT_FOUND", 404),
+    );
+    const unresolved = await payoutVerificationRequest(owner.cookie, "stage-fail-payout-1");
+    expect(unresolved.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(unresolved.body.errorCode).toBe("BANK_ACCOUNT_UNRESOLVED");
+
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "JANE SMITH",
+      bankCode: "058",
+    });
+    const mismatch = await payoutVerificationRequest(owner.cookie, "stage-fail-payout-2");
+    expect(mismatch.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(mismatch.body.errorCode).toBe("BANK_ACCOUNT_NAME_MISMATCH");
+
+    const draft = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { status: true, identityVerifiedAt: true, payoutVerifiedAt: true },
+    });
+    expect(draft).toMatchObject({ status: "DRAFT" });
+    expect(draft?.identityVerifiedAt).toBeInstanceOf(Date);
+    expect(draft?.payoutVerifiedAt).toBeNull();
+
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "JOHN DOE",
+      bankCode: "058",
+    });
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-fail-payout-3");
+    expect(payout.status).toBe(HttpStatus.CREATED);
+
+    const missingLicense = await drivingCredentialsRequest(
+      owner.cookie,
+      "stage-fail-driving-1",
+      "true",
+    );
+    expect(missingLicense.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(missingLicense.body.errorCode).toBe("OWNER_DRIVER_LICENSE_REQUIRED");
+    const stillDraft = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { drivingCompletedAt: true },
+    });
+    expect(stillDraft?.drivingCompletedAt).toBeNull();
+  });
+
+  it("enforces staged prerequisites before payout, driving, and submit", async () => {
+    const owner = await readyOwner("acct-stage-prereq");
+
+    const payoutFirst = await payoutVerificationRequest(owner.cookie, "stage-prereq-payout-1");
+    expect(payoutFirst.status).toBe(HttpStatus.NOT_FOUND);
+    expect(payoutFirst.body.errorCode).toBe("ACCOUNT_VERIFICATION_NOT_FOUND");
+
+    const drivingFirst = await drivingCredentialsRequest(owner.cookie, "stage-prereq-driving-1");
+    expect(drivingFirst.status).toBe(HttpStatus.NOT_FOUND);
+
+    const submitFirst = await submitRequest(owner.cookie, "stage-prereq-submit-1");
+    expect(submitFirst.status).toBe(HttpStatus.NOT_FOUND);
+
+    const identity = await identityVerificationRequest(owner.cookie, "stage-prereq-identity-1");
+    expect(identity.status).toBe(HttpStatus.CREATED);
+
+    const drivingBeforePayout = await drivingCredentialsRequest(
+      owner.cookie,
+      "stage-prereq-driving-2",
+    );
+    expect(drivingBeforePayout.status).toBe(HttpStatus.CONFLICT);
+    expect(drivingBeforePayout.body.errorCode).toBe("ACCOUNT_VERIFICATION_STEP_INCOMPLETE");
+
+    const submitBeforePayout = await submitRequest(owner.cookie, "stage-prereq-submit-2");
+    expect(submitBeforePayout.status).toBe(HttpStatus.CONFLICT);
+    expect(submitBeforePayout.body.errorCode).toBe("ACCOUNT_VERIFICATION_STEP_INCOMPLETE");
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-prereq-payout-2");
+    expect(payout.status).toBe(HttpStatus.CREATED);
+
+    const submitBeforeDriving = await submitRequest(owner.cookie, "stage-prereq-submit-3");
+    expect(submitBeforeDriving.status).toBe(HttpStatus.CONFLICT);
+    expect(submitBeforeDriving.body.errorCode).toBe("ACCOUNT_VERIFICATION_STEP_INCOMPLETE");
+  });
+
+  it("replays staged idempotency keys, rejects changed payloads, and returns Retry-After", async () => {
+    const owner = await readyOwner("acct-stage-idem");
+
+    const firstIdentity = await identityVerificationRequest(owner.cookie, "stage-idem-identity-1");
+    const replayIdentity = await identityVerificationRequest(owner.cookie, "stage-idem-identity-1");
+    expect(firstIdentity.status).toBe(HttpStatus.CREATED);
+    expect(replayIdentity.status).toBe(HttpStatus.CREATED);
+    expect(replayIdentity.body).toEqual(firstIdentity.body);
+    expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+
+    const changedIdentity = await identityVerificationRequest(
+      owner.cookie,
+      "stage-idem-identity-1",
+      {
+        accountType: "INDIVIDUAL",
+        nin: "10987654321",
+      },
+    );
+    expect(changedIdentity.status).toBe(HttpStatus.CONFLICT);
+    expect(changedIdentity.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
+
+    const firstPayout = await payoutVerificationRequest(owner.cookie, "stage-idem-payout-1");
+    const replayPayout = await payoutVerificationRequest(owner.cookie, "stage-idem-payout-1");
+    expect(firstPayout.status).toBe(HttpStatus.CREATED);
+    expect(replayPayout.body).toEqual(firstPayout.body);
+    expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+
+    const changedPayout = await payoutVerificationRequest(owner.cookie, "stage-idem-payout-1", {
+      ...PAYOUT_FIELDS,
+      accountNumber: "9876543210",
+    });
+    expect(changedPayout.status).toBe(HttpStatus.CONFLICT);
+    expect(changedPayout.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
+
+    const verification = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { id: true },
+    });
+    if (!verification) {
+      throw new Error("Expected a DRAFT account verification after payout replay");
+    }
+    await databaseService.fleetOwnerAccountVerificationStageRequest.create({
+      data: {
+        verificationId: verification.id,
+        stage: "PAYOUT",
+        idempotencyKey: "stage-idem-payout-in-progress-1",
+        requestHash: hashPayout(PAYOUT_FIELDS),
+        status: "PROCESSING",
+        processingExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    const payoutInProgress = await payoutVerificationRequest(
+      owner.cookie,
+      "stage-idem-payout-in-progress-1",
+    );
+    expect(payoutInProgress.status).toBe(HttpStatus.CONFLICT);
+    expect(payoutInProgress.body.errorCode).toBe("VERIFICATION_REQUEST_IN_PROGRESS");
+    expect(payoutInProgress.headers["retry-after"]).toBe("5");
+
+    const inProgressOwner = await readyOwner("acct-stage-idem-progress");
+    await databaseService.fleetOwnerAccountVerification.create({
+      data: {
+        userId: inProgressOwner.id,
+        idempotencyKey: "stage-idem-identity-in-progress-1",
+        requestHash: hashIdentity(INDIVIDUAL_IDENTITY),
+        accountType: "INDIVIDUAL",
+        status: "PROCESSING",
+        processingExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    const identityInProgress = await identityVerificationRequest(
+      inProgressOwner.cookie,
+      "stage-idem-identity-in-progress-1",
+    );
+    expect(identityInProgress.status).toBe(HttpStatus.CONFLICT);
+    expect(identityInProgress.body.errorCode).toBe("VERIFICATION_REQUEST_IN_PROGRESS");
+    expect(identityInProgress.headers["retry-after"]).toBe("5");
+  });
+
+  it("requires a fleet-owner session, validation, and Idempotency-Key on staged endpoints", async () => {
+    const unauthenticated = await http(
+      "post",
+      "/api/fleet-owner/onboarding/identity-verifications",
+    ).send(INDIVIDUAL_IDENTITY);
+    const forbidden = await identityVerificationRequest(userCookie, "stage-auth-identity-1");
+    const missingKey = await http("post", "/api/fleet-owner/onboarding/identity-verifications")
+      .set("Cookie", ownerCookie)
+      .send(INDIVIDUAL_IDENTITY);
+    const invalidBody = await identityVerificationRequest(ownerCookie, "stage-auth-invalid-1", {
+      accountType: "INDIVIDUAL",
+      nin: "123",
+    });
+
+    expect(unauthenticated.status).toBe(HttpStatus.UNAUTHORIZED);
+    expect(forbidden.status).toBe(HttpStatus.FORBIDDEN);
+    expect(missingKey.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(invalidBody.status).toBe(HttpStatus.BAD_REQUEST);
+  });
+
+  it("surfaces REVIEW_REQUIRED identity and payout on GET onboarding before submit", async () => {
+    const owner = await readyOwner("acct-stage-review-steps");
+    premblyService.verifyCac.mockResolvedValueOnce({
+      businessName: "HYRE MOBILITY LTD",
+      registrationNumber: "RC123456",
+      registrationType: "RC",
+      status: null,
+      directors: [{ firstName: "JANE", middleName: null, lastName: "SMITH" }],
+      reference: "cac-ref",
+    });
+
+    const identity = await identityVerificationRequest(
+      owner.cookie,
+      "stage-review-identity-1",
+      BUSINESS_IDENTITY,
+    );
+    expect(identity.status).toBe(HttpStatus.CREATED);
+    expect(identity.body.status).toBe("REVIEW_REQUIRED");
+
+    const afterIdentity = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterIdentity.body).toMatchObject({
+      nextAction: "VERIFY_PAYOUT",
+      identity: { status: "REVIEW_REQUIRED" },
+      steps: { identity: "REVIEW_REQUIRED", driving: "SKIPPED" },
+    });
+
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "HYRE MOBILITY SERVICES LIMITED",
+      bankCode: "058",
+    });
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-review-payout-1");
+    expect(payout.status).toBe(HttpStatus.CREATED);
+    expect(payout.body.status).toBe("REVIEW_REQUIRED");
+
+    const afterPayout = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterPayout.body).toMatchObject({
+      nextAction: "SUBMIT_ACCOUNT",
+      steps: { payout: "REVIEW_REQUIRED", driving: "SKIPPED", submission: "PENDING" },
+    });
+
+    const submitted = await submitRequest(owner.cookie, "stage-review-submit-1");
+    expect(submitted.status).toBe(HttpStatus.CREATED);
+    expect(submitted.body.status).toBe("REVIEW_REQUIRED");
+
+    const afterSubmit = await http("get", "/api/fleet-owner/onboarding").set(
+      "Cookie",
+      owner.cookie,
+    );
+    expect(afterSubmit.body).toMatchObject({
+      status: "UNDER_REVIEW",
+      nextAction: "WAIT_FOR_REVIEW",
+      identity: { status: "REVIEW_REQUIRED" },
+      steps: { identity: "REVIEW_REQUIRED", submission: "REVIEW_REQUIRED" },
+    });
+  });
+
+  it("blocks payout after identity when phone verification is revoked", async () => {
+    const owner = await readyOwner("acct-stage-phone-revoked");
+    const identity = await identityVerificationRequest(
+      owner.cookie,
+      "stage-phone-revoked-identity-1",
+    );
+    expect(identity.status).toBe(HttpStatus.CREATED);
+
+    await databaseService.user.update({
+      where: { id: owner.id },
+      data: { phoneVerifiedAt: null },
+    });
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-phone-revoked-payout-1");
+    expect(payout.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(payout.body.errorCode).toBe("ACCOUNT_PHONE_NOT_VERIFIED");
+    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different payout key while another payout is processing", async () => {
+    const owner = await readyOwner("acct-stage-payout-collision");
+    const identity = await identityVerificationRequest(owner.cookie, "stage-collision-identity-1");
+    expect(identity.status).toBe(HttpStatus.CREATED);
+
+    const verification = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { id: true },
+    });
+    if (!verification) {
+      throw new Error("Expected a DRAFT account verification after identity");
+    }
+    await databaseService.fleetOwnerAccountVerificationStageRequest.create({
+      data: {
+        verificationId: verification.id,
+        stage: "PAYOUT",
+        idempotencyKey: "stage-collision-payout-a",
+        requestHash: hashPayout(PAYOUT_FIELDS),
+        status: "PROCESSING",
+        processingExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-collision-payout-b");
+    expect(payout.status).toBe(HttpStatus.CONFLICT);
+    expect(payout.body.errorCode).toBe("VERIFICATION_REQUEST_IN_PROGRESS");
+    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+  });
+
+  it("fails an expired same-key PROCESSING payout as ACCOUNT_VERIFICATION_CHANGED", async () => {
+    const owner = await readyOwner("acct-stage-payout-expired");
+    const identity = await identityVerificationRequest(owner.cookie, "stage-expired-identity-1");
+    expect(identity.status).toBe(HttpStatus.CREATED);
+
+    const verification = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { id: true },
+    });
+    if (!verification) {
+      throw new Error("Expected a DRAFT account verification after identity");
+    }
+    await databaseService.fleetOwnerAccountVerificationStageRequest.create({
+      data: {
+        verificationId: verification.id,
+        stage: "PAYOUT",
+        idempotencyKey: "stage-expired-payout-1",
+        requestHash: hashPayout(PAYOUT_FIELDS),
+        status: "PROCESSING",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      },
+    });
+
+    const payout = await payoutVerificationRequest(owner.cookie, "stage-expired-payout-1");
+    expect(payout.status).toBe(HttpStatus.CONFLICT);
+    expect(payout.body.errorCode).toBe("ACCOUNT_VERIFICATION_CHANGED");
+    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
   });
 });

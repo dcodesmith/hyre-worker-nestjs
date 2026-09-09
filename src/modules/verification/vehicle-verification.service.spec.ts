@@ -7,6 +7,10 @@ import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService } from "../database/database.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
+import {
+  createInsuranceVerificationSchema,
+  createVehicleVerificationSchema,
+} from "./vehicle-verification.dto";
 import { VehicleVerificationService } from "./vehicle-verification.service";
 import {
   InsuranceInactiveException,
@@ -29,6 +33,9 @@ const PLATE = "KJA-123AB";
 const NORMALIZED_PLATE = "KJA123AB";
 const CHASSIS = "1HGCM82633A004352";
 const VERIFICATION_ID = "ver-1";
+const POLICY_NUMBER = "TEST/POLICY/123";
+const POLICY_STATUS = "Active";
+const POLICY_EXPIRES_AT = new Date("2027-01-14T22:59:59.999Z");
 
 const uniqueConstraintError = () =>
   new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
@@ -39,7 +46,7 @@ const uniqueConstraintError = () =>
 const hash = (value: Record<string, string>) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-const plateHash = hash({ plateNumber: NORMALIZED_PLATE });
+const requestHash = hash({ plateNumber: NORMALIZED_PLATE, policyNumber: POLICY_NUMBER });
 
 const futureExpiry = () => new Date(Date.now() + 60 * 60 * 1000);
 const pastExpiry = () => new Date(Date.now() - 60 * 1000);
@@ -48,7 +55,7 @@ const processingRecord = (overrides: Record<string, unknown> = {}) => ({
   id: VERIFICATION_ID,
   ownerId: OWNER_ID,
   idempotencyKey: IDEMPOTENCY_KEY,
-  requestHash: plateHash,
+  requestHash,
   plateNumber: NORMALIZED_PLATE,
   chassisNumber: null,
   make: null,
@@ -60,6 +67,10 @@ const processingRecord = (overrides: Record<string, unknown> = {}) => ({
   failureReason: null,
   expiresAt: futureExpiry(),
   carId: null,
+  insurancePolicyNumber: POLICY_NUMBER,
+  insurancePolicyStatus: null,
+  insurancePolicyExpiresAt: null,
+  insuranceProviderRef: null,
   ...overrides,
 });
 
@@ -72,10 +83,77 @@ const succeededRecord = (overrides: Record<string, unknown> = {}) =>
     year: 2020,
     color: "Black",
     passengerCapacity: 5,
-    plateProviderRef: "plate-ref",
     vinProviderRef: "vin-ref",
+    insurancePolicyNumber: POLICY_NUMBER,
+    insurancePolicyStatus: POLICY_STATUS,
+    insurancePolicyExpiresAt: POLICY_EXPIRES_AT,
+    insuranceProviderRef: "ins-ref",
     ...overrides,
   });
+
+const succeededResponse = {
+  id: VERIFICATION_ID,
+  status: ProviderVerificationStatus.SUCCEEDED,
+  vehicle: {
+    plateNumber: NORMALIZED_PLATE,
+    chassisNumber: CHASSIS,
+    make: "Toyota",
+    model: "Camry",
+    year: 2020,
+    color: "Black",
+    passengerCapacity: 5,
+  },
+  eligibility: { isEligible: true, reasons: [] },
+  carId: null,
+};
+
+describe("createVehicleVerificationSchema", () => {
+  it("accepts plate and policy and trims the policy number", () => {
+    const parsed = createVehicleVerificationSchema.safeParse({
+      plateNumber: "kja-123ab",
+      policyNumber: "  test/policy/123  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({
+        plateNumber: "KJA-123AB",
+        policyNumber: "test/policy/123",
+      });
+    }
+  });
+
+  it.each([
+    [{ plateNumber: PLATE }, "policyNumber"],
+    [{ policyNumber: POLICY_NUMBER }, "plateNumber"],
+    [{ plateNumber: "not-a-plate", policyNumber: POLICY_NUMBER }, "plateNumber"],
+    [{ plateNumber: PLATE, policyNumber: "ab" }, "policyNumber"],
+    [{ plateNumber: PLATE, policyNumber: "x".repeat(101) }, "policyNumber"],
+  ])("rejects %j", (input, field) => {
+    const parsed = createVehicleVerificationSchema.safeParse(input);
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some((issue) => issue.path.includes(field))).toBe(true);
+    }
+  });
+});
+
+describe("createInsuranceVerificationSchema", () => {
+  it("accepts and trims a policy number", () => {
+    const parsed = createInsuranceVerificationSchema.safeParse({ policyNumber: "  pol-123  " });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.policyNumber).toBe("pol-123");
+    }
+  });
+
+  it("rejects a missing or too-short policy number", () => {
+    expect(createInsuranceVerificationSchema.safeParse({}).success).toBe(false);
+    expect(createInsuranceVerificationSchema.safeParse({ policyNumber: "ab" }).success).toBe(false);
+  });
+});
 
 describe("VehicleVerificationService", () => {
   let service: VehicleVerificationService;
@@ -102,13 +180,14 @@ describe("VehicleVerificationService", () => {
   };
   let carService: { createDraftCarFromVerification: ReturnType<typeof vi.fn> };
 
-  const mockPlate = {
-    plateNumber: NORMALIZED_PLATE,
+  const mockInsurance = {
+    policyNumber: POLICY_NUMBER,
+    policyStatus: POLICY_STATUS,
+    plateNumbers: [PLATE],
     chassisNumber: CHASSIS,
-    make: "Toyota",
-    model: "Camry",
     color: "Black",
-    reference: "plate-ref",
+    expiresAt: POLICY_EXPIRES_AT,
+    reference: "ins-ref",
   };
   const mockVin = {
     year: 2020,
@@ -116,6 +195,12 @@ describe("VehicleVerificationService", () => {
     model: "Camry",
     passengerCapacity: 5,
     reference: "vin-ref",
+  };
+
+  const mockSuccessfulProviders = () => {
+    premblyService.verifyInsurance.mockResolvedValueOnce(mockInsurance);
+    premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+    databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
   };
 
   beforeEach(async () => {
@@ -157,41 +242,171 @@ describe("VehicleVerificationService", () => {
   });
 
   describe("createVehicleVerification", () => {
-    it("verifies plate then chassis VIN and returns an eligible vehicle", async () => {
+    it("hashes plate and policy, verifies insurance then VIN, and persists the insurance snapshot", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
-      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
-      databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
+      mockSuccessfulProviders();
 
       const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
-        plateNumber: PLATE,
+        plateNumber: "kja-123 ab",
+        policyNumber: "  test/policy/123  ",
       });
 
-      expect(premblyService.verifyPlate).toHaveBeenCalledWith(NORMALIZED_PLATE);
-      expect(premblyService.verifyVin).toHaveBeenCalledWith(CHASSIS);
-      expect(result).toMatchObject({
-        id: VERIFICATION_ID,
-        status: ProviderVerificationStatus.SUCCEEDED,
-        vehicle: {
+      expect(databaseService.vehicleVerification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          ownerId: OWNER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          requestHash,
           plateNumber: NORMALIZED_PLATE,
+          insurancePolicyNumber: POLICY_NUMBER,
+        }),
+      });
+      expect(premblyService.verifyInsurance).toHaveBeenCalledWith(POLICY_NUMBER);
+      expect(premblyService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+      expect(premblyService.verifyVin.mock.invocationCallOrder[0]).toBeGreaterThan(
+        premblyService.verifyInsurance.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: {
+          status: ProviderVerificationStatus.SUCCEEDED,
           chassisNumber: CHASSIS,
           make: "Toyota",
           model: "Camry",
           year: 2020,
           color: "Black",
           passengerCapacity: 5,
+          vinProviderRef: "vin-ref",
+          insurancePolicyNumber: POLICY_NUMBER,
+          insurancePolicyStatus: POLICY_STATUS,
+          insurancePolicyExpiresAt: POLICY_EXPIRES_AT,
+          insuranceProviderRef: "ins-ref",
         },
-        eligibility: { isEligible: true, reasons: [] },
-        carId: null,
       });
+      expect(result).toMatchObject(succeededResponse);
+      expect(result).not.toHaveProperty("insurance");
+      expect(result).not.toHaveProperty("policyNumber");
+      expect(result.vehicle.color).toBe("Black");
     });
 
-    it("maps a Prembly timeout to PROVIDER_UNAVAILABLE and marks the request failed", async () => {
+    it("rejects an inactive policy and does not call Prembly VIN", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-      premblyService.verifyPlate.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      premblyService.verifyInsurance.mockResolvedValueOnce({
+        ...mockInsurance,
+        policyStatus: "Expired",
+      });
 
       await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, { plateNumber: PLATE }),
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(InsuranceInactiveException);
+
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.INSURANCE_INACTIVE,
+        },
+      });
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    });
+
+    it("rejects an active but expired policy and does not call Prembly VIN", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyInsurance.mockResolvedValueOnce({
+        ...mockInsurance,
+        expiresAt: pastExpiry(),
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(InsuranceInactiveException);
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    });
+
+    it("rejects a policy whose plates do not include the requested plate", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyInsurance.mockResolvedValueOnce({
+        ...mockInsurance,
+        plateNumbers: ["ABC-999ZZ"],
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(InsuranceVehicleMismatchException);
+
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.INSURANCE_VEHICLE_MISMATCH,
+        },
+      });
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing chassis and does not call Prembly VIN", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyInsurance.mockResolvedValueOnce({
+        ...mockInsurance,
+        chassisNumber: null,
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(ProviderVerificationException);
+
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.PROVIDER_INVALID_RESPONSE,
+        },
+      });
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    });
+
+    it("maps an invalid chassis Prembly response and does not call VIN", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyInsurance.mockRejectedValueOnce(new PremblyError("INVALID_RESPONSE"));
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(ProviderVerificationException);
+
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.PROVIDER_INVALID_RESPONSE,
+        },
+      });
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    });
+
+    it("maps Prembly UNAVAILABLE and marks the request failed", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyInsurance.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
       ).rejects.toBeInstanceOf(ProviderVerificationException);
 
       expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
@@ -210,12 +425,27 @@ describe("VehicleVerificationService", () => {
 
       const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
         plateNumber: PLATE,
+        policyNumber: POLICY_NUMBER,
       });
 
-      expect(result.id).toBe(VERIFICATION_ID);
-      expect(result.status).toBe(ProviderVerificationStatus.SUCCEEDED);
-      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+      expect(result).toMatchObject(succeededResponse);
+      expect(result).not.toHaveProperty("insurance");
+      expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
       expect(premblyService.verifyVin).not.toHaveBeenCalled();
+      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+    });
+
+    it("conflicts when the same idempotency key is reused with a different policy", async () => {
+      databaseService.vehicleVerification.create.mockRejectedValueOnce(uniqueConstraintError());
+      databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(succeededRecord());
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: "OTHER/POLICY/999",
+        }),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+      expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     });
 
     it("conflicts when the same idempotency key is reused with a different plate", async () => {
@@ -223,14 +453,17 @@ describe("VehicleVerificationService", () => {
       databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(succeededRecord());
 
       await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, { plateNumber: "ABC-999ZZ" }),
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: "ABC-999ZZ",
+          policyNumber: POLICY_NUMBER,
+        }),
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
-      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+      expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     });
 
     it("marks a vehicle under 2015 as ineligible after a successful provider lookup", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
+      premblyService.verifyInsurance.mockResolvedValueOnce(mockInsurance);
       premblyService.verifyVin.mockResolvedValueOnce({ ...mockVin, year: 2014 });
       databaseService.vehicleVerification.update.mockResolvedValueOnce(
         succeededRecord({ year: 2014 }),
@@ -238,33 +471,14 @@ describe("VehicleVerificationService", () => {
 
       const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
         plateNumber: PLATE,
+        policyNumber: POLICY_NUMBER,
       });
 
       expect(result.eligibility).toEqual({
         isEligible: false,
         reasons: ["VEHICLE_YEAR_BELOW_MINIMUM"],
       });
-    });
-
-    it("rejects a plate/VIN identity mismatch and marks the request failed", async () => {
-      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
-      premblyService.verifyVin.mockResolvedValueOnce({
-        ...mockVin,
-        make: "Honda",
-        model: "Accord",
-      });
-
-      await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, { plateNumber: PLATE }),
-      ).rejects.toBeInstanceOf(VehicleMismatchException);
-      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
-        data: {
-          status: ProviderVerificationStatus.FAILED,
-          failureReason: VerificationErrorCode.VEHICLE_MISMATCH,
-        },
-      });
+      expect(result).not.toHaveProperty("insurance");
     });
 
     it("replays a failed request with the stored failure reason", async () => {
@@ -277,9 +491,30 @@ describe("VehicleVerificationService", () => {
       );
 
       await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, { plateNumber: PLATE }),
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
       ).rejects.toBeInstanceOf(VehicleMismatchException);
-      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+      expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
+    });
+
+    it("replays a failed inactive-policy request as INSURANCE_INACTIVE", async () => {
+      databaseService.vehicleVerification.create.mockRejectedValueOnce(uniqueConstraintError());
+      databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(
+        processingRecord({
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.INSURANCE_INACTIVE,
+        }),
+      );
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
+      ).rejects.toBeInstanceOf(InsuranceInactiveException);
+      expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     });
 
     it("conflicts when an identical request is still processing", async () => {
@@ -287,22 +522,23 @@ describe("VehicleVerificationService", () => {
       databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(processingRecord());
 
       await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, { plateNumber: PLATE }),
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          policyNumber: POLICY_NUMBER,
+        }),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
     });
   });
 
   describe("getVehicleVerification and createDraftCar", () => {
-    it("returns an owned verification", async () => {
+    it("returns an owned verification without an insurance field", async () => {
       databaseService.vehicleVerification.findFirst.mockResolvedValueOnce(succeededRecord());
 
-      await expect(
-        service.getVehicleVerification(OWNER_ID, VERIFICATION_ID),
-      ).resolves.toMatchObject({
-        id: VERIFICATION_ID,
-        status: ProviderVerificationStatus.SUCCEEDED,
-        eligibility: { isEligible: true, reasons: [] },
-      });
+      const result = await service.getVehicleVerification(OWNER_ID, VERIFICATION_ID);
+
+      expect(result).toMatchObject(succeededResponse);
+      expect(result).not.toHaveProperty("insurance");
+      expect(result).not.toHaveProperty("policyNumber");
     });
 
     it("hides another owner's verification", async () => {

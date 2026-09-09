@@ -1,10 +1,12 @@
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerGuard } from "@nestjs/throttler";
 import { BookingCompletionSource } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ADMIN, FLEET_OWNER } from "../auth/auth.const";
+import { ADMIN, FLEET_OWNER, STAFF } from "../auth/auth.const";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { BookingNotFoundException } from "../booking/booking.error";
 import { hashBookingCompletionToken } from "../booking/booking-completion-token.helper";
 import {
@@ -32,6 +34,8 @@ describe("airport trip completion controllers", () => {
       .useValue({ canActivate: vi.fn() })
       .overrideGuard(RoleGuard)
       .useValue({ canActivate: vi.fn() })
+      .overrideGuard(VerifiedFleetOwnerGuard)
+      .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
       .overrideGuard(ThrottlerGuard)
       .useValue({ canActivate: vi.fn() })
       .compile();
@@ -98,6 +102,15 @@ describe("airport trip completion controllers", () => {
     expect(html).toContain("invalid or no longer active");
   });
 
+  it("requires session, role, and verified fleet-owner guards on the fleet-owner completion route", () => {
+    const guards =
+      Reflect.getMetadata(GUARDS_METADATA, FleetOwnerAirportTripCompletionController) ?? [];
+
+    expect(guards).toEqual(
+      expect.arrayContaining([SessionGuard, RoleGuard, VerifiedFleetOwnerGuard]),
+    );
+  });
+
   it("completes a fleet-owned trip as the fleet owner", async () => {
     await fleetController.completeTrip("booking-1", {
       id: "owner-1",
@@ -111,15 +124,15 @@ describe("airport trip completion controllers", () => {
     );
   });
 
-  it("records privileged completion as an operations action", async () => {
-    await fleetController.completeTrip("booking-1", {
-      id: "admin-1",
-      roles: [ADMIN],
-    } as never);
+  it.each([
+    { id: "admin-1", roles: [ADMIN] },
+    { id: "staff-1", roles: [STAFF] },
+  ])("records privileged completion as an operations action for $id", async (user) => {
+    await fleetController.completeTrip("booking-1", user as never);
 
     expect(statusChangeService.completeAirportBookingForUser).toHaveBeenCalledWith(
       "booking-1",
-      "admin-1",
+      user.id,
       BookingCompletionSource.OPERATIONS,
     );
   });

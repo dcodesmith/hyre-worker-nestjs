@@ -20,6 +20,7 @@ export type PremblyInsuranceResult = {
   policyStatus: string;
   plateNumbers: string[];
   chassisNumber: string | null;
+  color: string;
   expiresAt: Date;
   reference: string;
 };

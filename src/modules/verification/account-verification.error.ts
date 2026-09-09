@@ -9,11 +9,17 @@ export const AccountVerificationErrorCode = {
   DOCUMENT_INVALID: "ACCOUNT_DOCUMENT_INVALID",
   DRIVER_LICENSE_REQUIRED: "OWNER_DRIVER_LICENSE_REQUIRED",
   ACCOUNT_ALREADY_VERIFIED: "ACCOUNT_ALREADY_VERIFIED",
+  NIN_NOT_VERIFIED: "ACCOUNT_NIN_NOT_VERIFIED",
+  CAC_NOT_VERIFIED: "ACCOUNT_CAC_NOT_VERIFIED",
   BANK_ACCOUNT_UNRESOLVED: "BANK_ACCOUNT_UNRESOLVED",
   BANK_PROVIDER_UNAVAILABLE: "BANK_ACCOUNT_PROVIDER_UNAVAILABLE",
   BANK_ACCOUNT_NAME_MISMATCH: "BANK_ACCOUNT_NAME_MISMATCH",
   BUSINESS_INACTIVE: "BUSINESS_INACTIVE",
   BUSINESS_NAME_MISMATCH: "BUSINESS_NAME_MISMATCH",
+  VERIFICATION_NOT_FOUND: "ACCOUNT_VERIFICATION_NOT_FOUND",
+  VERIFICATION_CHANGED: "ACCOUNT_VERIFICATION_CHANGED",
+  STEP_INCOMPLETE: "ACCOUNT_VERIFICATION_STEP_INCOMPLETE",
+  BUSINESS_DRIVER_INVALID: "BUSINESS_OWNER_DRIVER_INVALID",
   REVIEW_NOT_FOUND: "ACCOUNT_VERIFICATION_REVIEW_NOT_FOUND",
   REVIEW_NOT_PENDING: "ACCOUNT_VERIFICATION_REVIEW_NOT_PENDING",
   REVIEW_PENDING: "ACCOUNT_VERIFICATION_REVIEW_PENDING",
@@ -98,6 +104,26 @@ export class AccountAlreadyVerifiedException extends AccountVerificationExceptio
   }
 }
 
+export class NinNotVerifiedException extends AccountVerificationException {
+  constructor() {
+    const message = "We couldn't verify this NIN. Check the number and try again.";
+    super(AccountVerificationErrorCode.NIN_NOT_VERIFIED, message, HttpStatus.UNPROCESSABLE_ENTITY, {
+      title: "NIN Not Verified",
+      errors: [{ field: "nin", code: "NOT_VERIFIED", message }],
+    });
+  }
+}
+
+export class CacNotVerifiedException extends AccountVerificationException {
+  constructor() {
+    const message = "We couldn't verify these CAC details. Check them and try again.";
+    super(AccountVerificationErrorCode.CAC_NOT_VERIFIED, message, HttpStatus.UNPROCESSABLE_ENTITY, {
+      title: "CAC Details Not Verified",
+      errors: [{ field: "registrationNumber", code: "NOT_VERIFIED", message }],
+    });
+  }
+}
+
 export class BankAccountUnresolvedException extends AccountVerificationException {
   constructor() {
     super(
@@ -149,6 +175,54 @@ export class BusinessNameMismatchException extends AccountVerificationException 
       "The supplied business name does not match the CAC record",
       HttpStatus.UNPROCESSABLE_ENTITY,
       { title: "Business Name Mismatch" },
+    );
+  }
+}
+
+export class AccountVerificationNotFoundException extends AccountVerificationException {
+  constructor() {
+    super(
+      AccountVerificationErrorCode.VERIFICATION_NOT_FOUND,
+      "No account verification is ready for this step",
+      HttpStatus.NOT_FOUND,
+      { title: "Account Verification Not Found" },
+    );
+  }
+}
+
+export class AccountVerificationChangedException extends AccountVerificationException {
+  constructor() {
+    super(
+      AccountVerificationErrorCode.VERIFICATION_CHANGED,
+      "The onboarding details changed while this step was processing",
+      HttpStatus.CONFLICT,
+      { title: "Account Verification Changed" },
+    );
+  }
+}
+
+export class AccountVerificationStepIncompleteException extends AccountVerificationException {
+  constructor(requiredStep: "IDENTITY" | "PAYOUT" | "DRIVING") {
+    super(
+      AccountVerificationErrorCode.STEP_INCOMPLETE,
+      `Complete the ${requiredStep.toLowerCase()} step first`,
+      HttpStatus.CONFLICT,
+      { title: "Onboarding Step Incomplete", details: { requiredStep } },
+    );
+  }
+}
+
+export class BusinessOwnerDriverInvalidException extends AccountVerificationException {
+  constructor() {
+    const message = "Business accounts cannot be registered as owner-drivers";
+    super(
+      AccountVerificationErrorCode.BUSINESS_DRIVER_INVALID,
+      message,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      {
+        title: "Invalid Driving Arrangement",
+        errors: [{ field: "isOwnerDriver", code: "INVALID_ACCOUNT_TYPE", message }],
+      },
     );
   }
 }

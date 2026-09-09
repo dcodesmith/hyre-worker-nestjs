@@ -49,6 +49,7 @@ export const premblyInsuranceResponseSchema = z.looseObject({
     policy_number: z.string().min(1),
     new_reg_number: z.string().optional(),
     reg_number: z.string().optional(),
+    vehicle_color: z.string().trim().min(1),
     vehicle_chasis: z.string().optional(),
     policy_status: z.string().min(1),
     expiry_date: z.coerce.date(),

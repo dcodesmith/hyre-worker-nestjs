@@ -51,27 +51,31 @@ model Car {
 }
 
 model VehicleVerification {
-  id                String                     @id @default(cuid())
-  ownerId           String
-  idempotencyKey    String
-  requestHash       String
-  plateNumber       String
-  chassisNumber     String?
-  make              String?
-  model             String?
-  year              Int?
-  color             String?
-  passengerCapacity Int?
-  plateProviderRef  String?
-  vinProviderRef    String?
-  status            ProviderVerificationStatus @default(PROCESSING)
-  failureReason     String?
-  expiresAt         DateTime
-  carId             String?                    @unique
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
-  owner             User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  car               Car?                       @relation(fields: [carId], references: [id], onDelete: SetNull)
+  id                       String                     @id @default(cuid())
+  ownerId                  String
+  idempotencyKey           String
+  requestHash              String
+  plateNumber              String
+  chassisNumber            String?
+  make                     String?
+  model                    String?
+  year                     Int?
+  color                    String?
+  passengerCapacity        Int?
+  plateProviderRef         String?
+  vinProviderRef           String?
+  insurancePolicyNumber    String?
+  insurancePolicyStatus    String?
+  insurancePolicyExpiresAt DateTime?
+  insuranceProviderRef     String?
+  status                   ProviderVerificationStatus @default(PROCESSING)
+  failureReason            String?
+  expiresAt                DateTime
+  carId                    String?                    @unique
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime                   @updatedAt
+  owner                    User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  car                      Car?                       @relation(fields: [carId], references: [id], onDelete: SetNull)
 
   @@unique([ownerId, idempotencyKey])
   @@index([ownerId, plateNumber])
@@ -752,14 +756,16 @@ model BankDetails {
 }
 
 model FleetOwnerAccountVerification {
-  id                      String                    @id @default(cuid())
+  id                      String                                      @id @default(cuid())
   userId                  String
   idempotencyKey          String
   requestHash             String
   accountType             FleetOwnerAccountType
-  isOwnerDriver           Boolean
-  status                  AccountVerificationStatus @default(PROCESSING)
+  isOwnerDriver           Boolean?
+  status                  AccountVerificationStatus                   @default(PROCESSING)
   processingExpiresAt     DateTime
+  identityFirstName       String?
+  identityLastName        String?
   legalName               String?
   businessName            String?
   businessNameMatch       NameMatchStatus?
@@ -767,29 +773,56 @@ model FleetOwnerAccountVerification {
   registrationType        String?
   identityProviderRef     String?
   businessProviderRef     String?
+  identityRequiresReview  Boolean                                     @default(false)
+  identityVerifiedAt      DateTime?
   bankName                String?
   bankCode                String?
   accountNumberLast4      String?
   accountName             String?
   bankNameMatch           NameMatchStatus?
+  payoutVerifiedAt        DateTime?
   representativeNameMatch NameMatchStatus?
+  drivingCompletedAt      DateTime?
+  submittedAt             DateTime?
   failureReason           String?
   reviewedById            String?
   reviewedAt              DateTime?
   reviewNotes             String?
-  createdAt               DateTime                  @default(now())
-  updatedAt               DateTime                  @updatedAt
-  user                    User                      @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
-  reviewedBy              User?                     @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt               DateTime                                    @default(now())
+  updatedAt               DateTime                                    @updatedAt
+  user                    User                                        @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy              User?                                       @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
+  stageRequests           FleetOwnerAccountVerificationStageRequest[]
 
   @@unique([userId, idempotencyKey])
-  // One active PROCESSING/REVIEW_REQUIRED row per user is enforced by a
+  // One active DRAFT/PROCESSING/REVIEW_REQUIRED row per user is enforced by a
   // partial unique index in the account-verification migration. Prisma db
   // push cannot represent that predicate without treating it as a full
   // userId unique, so it stays in SQL.
   @@index([userId, createdAt])
   @@index([status, createdAt])
   @@index([reviewedById])
+}
+
+model FleetOwnerAccountVerificationStageRequest {
+  id                  String                        @id @default(cuid())
+  verificationId      String
+  stage               AccountVerificationStage
+  idempotencyKey      String
+  requestHash         String
+  status              ProviderVerificationStatus    @default(PROCESSING)
+  failureReason       String?
+  response            Json?
+  processingExpiresAt DateTime
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
+  verification        FleetOwnerAccountVerification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@unique([verificationId, idempotencyKey])
+  // One active PROCESSING request per verification stage is enforced by a
+  // partial unique index in the staged account-verification migration.
+  @@index([verificationId, stage, createdAt])
+  @@index([status, processingExpiresAt])
 }
 
 model UserReferralStats {
@@ -1145,10 +1178,17 @@ enum FleetOwnerAccountType {
 }
 
 enum AccountVerificationStatus {
+  DRAFT
   PROCESSING
   SUCCEEDED
   REVIEW_REQUIRED
   FAILED
+}
+
+enum AccountVerificationStage {
+  PAYOUT
+  DRIVING
+  SUBMISSION
 }
 
 enum NameMatchStatus {

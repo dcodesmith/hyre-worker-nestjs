@@ -118,9 +118,20 @@ async function initializeWorkerIsolation(): Promise<void> {
         $constraint$
       `);
       await tx.$executeRawUnsafe(`
-        CREATE UNIQUE INDEX IF NOT EXISTS "FleetOwnerAccountVerification_one_active_per_user_idx"
+        DROP INDEX IF EXISTS "FleetOwnerAccountVerification_one_active_per_user_idx"
+      `);
+      await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX "FleetOwnerAccountVerification_one_active_per_user_idx"
         ON "FleetOwnerAccountVerification"("userId")
-        WHERE "status" IN ('PROCESSING', 'REVIEW_REQUIRED')
+        WHERE "status" IN ('DRAFT', 'PROCESSING', 'REVIEW_REQUIRED')
+      `);
+      await tx.$executeRawUnsafe(`
+        DROP INDEX IF EXISTS "FleetOwnerAccountVerificationStageRequest_one_processing_per_stage_idx"
+      `);
+      await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX "FleetOwnerAccountVerificationStageRequest_one_processing_per_stage_idx"
+        ON "FleetOwnerAccountVerificationStageRequest"("verificationId", "stage")
+        WHERE "status" = 'PROCESSING'
       `);
       await tx.$executeRawUnsafe(`
         DO $constraint$

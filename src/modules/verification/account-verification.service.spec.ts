@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
+  AccountVerificationStage,
   AccountVerificationStatus,
   DocumentStatus,
   DocumentType,
@@ -9,6 +10,7 @@ import {
   FleetOwnerStatus,
   NameMatchStatus,
   Prisma,
+  ProviderVerificationStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +21,10 @@ import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import type {
+  AccountIdentityVerificationDto,
   CreateAccountVerificationDto,
+  DrivingCredentialsDto,
+  PayoutVerificationDto,
   UploadedAccountDocument,
 } from "./account-verification.dto";
 import {
@@ -28,23 +33,27 @@ import {
   AccountEmailNotVerifiedException,
   AccountManualReviewRejectedException,
   AccountPhoneNotVerifiedException,
+  AccountVerificationChangedException,
   AccountVerificationErrorCode,
+  AccountVerificationNotFoundException,
   AccountVerificationOperationFailedException,
   AccountVerificationReviewNotFoundException,
   AccountVerificationReviewNotPendingException,
   AccountVerificationReviewPendingException,
+  AccountVerificationStepIncompleteException,
   BankAccountNameMismatchException,
   BankAccountProviderUnavailableException,
   BankAccountUnresolvedException,
   BusinessInactiveException,
   BusinessNameMismatchException,
+  BusinessOwnerDriverInvalidException,
+  CacNotVerifiedException,
+  NinNotVerifiedException,
   OwnerDriverLicenseNotApprovedException,
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
 import {
-  ProviderVerificationException,
-  VerificationErrorCode,
   VerificationIdempotencyKeyReusedException,
   VerificationRequestInProgressException,
 } from "./verification.error";
@@ -54,6 +63,7 @@ const USER_ID = "user-1";
 const REVIEWER_ID = "admin-1";
 const IDEMPOTENCY_KEY = "account-key-1";
 const VERIFICATION_ID = "ver-1";
+const STAGE_REQUEST_ID = "stage-req-1";
 const PHONE_NUMBER = "+2348012345678";
 
 const uniqueConstraintError = () =>
@@ -96,22 +106,66 @@ const businessInput = (
   ...overrides,
 });
 
+const hashValue = (value: unknown) =>
+  createHmac("sha256", HMAC_KEY).update(JSON.stringify(value)).digest("hex");
+
+const fileHash = (file?: UploadedAccountDocument) =>
+  file ? createHash("sha256").update(file.buffer).digest("hex") : null;
+
 const requestHash = (
   input: CreateAccountVerificationDto,
   documents: { driversLicense?: UploadedAccountDocument; lasdri?: UploadedAccountDocument } = {},
-) => {
-  const fileHash = (file?: UploadedAccountDocument) =>
-    file ? createHash("sha256").update(file.buffer).digest("hex") : null;
-  return createHmac("sha256", HMAC_KEY)
-    .update(
-      JSON.stringify({
-        ...input,
-        driversLicense: fileHash(documents.driversLicense),
-        lasdri: fileHash(documents.lasdri),
-      }),
-    )
-    .digest("hex");
-};
+) =>
+  hashValue({
+    ...input,
+    driversLicense: fileHash(documents.driversLicense),
+    lasdri: fileHash(documents.lasdri),
+  });
+
+const individualIdentity = (
+  overrides: Partial<Extract<AccountIdentityVerificationDto, { accountType: "INDIVIDUAL" }>> = {},
+): Extract<AccountIdentityVerificationDto, { accountType: "INDIVIDUAL" }> => ({
+  accountType: "INDIVIDUAL",
+  nin: "12345678901",
+  ...overrides,
+});
+
+const businessIdentity = (
+  overrides: Partial<Extract<AccountIdentityVerificationDto, { accountType: "BUSINESS" }>> = {},
+): Extract<AccountIdentityVerificationDto, { accountType: "BUSINESS" }> => ({
+  accountType: "BUSINESS",
+  nin: "12345678901",
+  businessName: "Hyre Mobility Limited",
+  registrationNumber: "RC123456",
+  registrationType: "RC",
+  ...overrides,
+});
+
+const payoutInput = (overrides: Partial<PayoutVerificationDto> = {}): PayoutVerificationDto => ({
+  bankName: "GTBank",
+  bankCode: "058",
+  accountNumber: "0123456789",
+  ...overrides,
+});
+
+const identityHash = (input: AccountIdentityVerificationDto = individualIdentity()) =>
+  hashValue({ stage: "IDENTITY", input });
+
+const payoutHash = (input: PayoutVerificationDto = payoutInput()) =>
+  hashValue({ stage: AccountVerificationStage.PAYOUT, input });
+
+const drivingHash = (
+  input: DrivingCredentialsDto = { isOwnerDriver: false },
+  documents: { driversLicense?: UploadedAccountDocument; lasdri?: UploadedAccountDocument } = {},
+) =>
+  hashValue({
+    stage: AccountVerificationStage.DRIVING,
+    input,
+    driversLicense: fileHash(documents.driversLicense),
+    lasdri: fileHash(documents.lasdri),
+  });
+
+const submissionHash = () => hashValue({ stage: AccountVerificationStage.SUBMISSION });
 
 const identity = {
   firstName: "JOHN",
@@ -156,6 +210,13 @@ const processingRecord = (overrides: Record<string, unknown> = {}) => ({
   bankNameMatch: null,
   representativeNameMatch: null,
   businessNameMatch: null,
+  identityFirstName: null,
+  identityLastName: null,
+  identityRequiresReview: false,
+  identityVerifiedAt: null,
+  payoutVerifiedAt: null,
+  drivingCompletedAt: null,
+  submittedAt: null,
   processingExpiresAt: new Date("2026-01-01T00:15:00Z"),
   reviewedById: null,
   reviewedAt: null,
@@ -178,14 +239,80 @@ const succeededRecord = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   });
 
+const draftRecord = (overrides: Record<string, unknown> = {}) =>
+  processingRecord({
+    status: AccountVerificationStatus.DRAFT,
+    requestHash: identityHash(),
+    isOwnerDriver: null,
+    identityFirstName: "JOHN",
+    identityLastName: "DOE",
+    legalName: "JOHN MIDDLE DOE",
+    identityProviderRef: "nin-ref",
+    identityRequiresReview: false,
+    identityVerifiedAt: new Date("2026-01-01T00:05:00Z"),
+    ...overrides,
+  });
+
+const payoutReadyDraft = (overrides: Record<string, unknown> = {}) =>
+  draftRecord({
+    bankName: "GTBank",
+    bankCode: "058",
+    accountNumberLast4: "6789",
+    accountName: "JOHN DOE",
+    bankNameMatch: NameMatchStatus.MATCHED,
+    payoutVerifiedAt: new Date("2026-01-01T00:10:00Z"),
+    ...overrides,
+  });
+
+const drivingReadyDraft = (overrides: Record<string, unknown> = {}) =>
+  payoutReadyDraft({
+    isOwnerDriver: false,
+    drivingCompletedAt: new Date("2026-01-01T00:12:00Z"),
+    ...overrides,
+  });
+
+const stageRequest = (overrides: Record<string, unknown> = {}) => ({
+  id: STAGE_REQUEST_ID,
+  verificationId: VERIFICATION_ID,
+  stage: AccountVerificationStage.PAYOUT,
+  idempotencyKey: IDEMPOTENCY_KEY,
+  requestHash: payoutHash(),
+  status: ProviderVerificationStatus.SUCCEEDED,
+  failureReason: null,
+  response: {
+    status: "VERIFIED",
+    bank: {
+      bankName: "GTBank",
+      accountName: "JOHN DOE",
+      accountNumber: "******6789",
+      nameMatch: NameMatchStatus.MATCHED,
+    },
+  },
+  processingExpiresAt: new Date("2026-01-01T00:15:00Z"),
+  createdAt: new Date("2026-01-01T00:00:00Z"),
+  updatedAt: new Date("2026-01-01T00:00:00Z"),
+  ...overrides,
+});
+
 describe("AccountVerificationService", () => {
   let service: AccountVerificationService;
   let databaseService: {
-    user: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+    user: {
+      findUnique: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
+    };
     fleetOwnerAccountVerification: {
       create: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
       findFirst: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
+    };
+    fleetOwnerAccountVerificationStageRequest: {
+      create: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
     };
@@ -215,11 +342,22 @@ describe("AccountVerificationService", () => {
 
   beforeEach(async () => {
     databaseService = {
-      user: { findUnique: vi.fn().mockResolvedValue(readyUser), update: vi.fn() },
+      user: {
+        findUnique: vi.fn().mockResolvedValue(readyUser),
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       fleetOwnerAccountVerification: {
         create: vi.fn().mockResolvedValue(processingRecord()),
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        update: vi.fn().mockResolvedValue(succeededRecord()),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      fleetOwnerAccountVerificationStageRequest: {
+        create: vi.fn().mockResolvedValue({ id: STAGE_REQUEST_ID }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        findUnique: vi.fn(),
         update: vi.fn(),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
@@ -251,9 +389,9 @@ describe("AccountVerificationService", () => {
         bankDetails: databaseService.bankDetails,
         documentApproval: databaseService.documentApproval,
         user: databaseService.user,
-        fleetOwnerAccountVerification: {
-          update: vi.fn().mockResolvedValue(succeededRecord()),
-        },
+        fleetOwnerAccountVerification: databaseService.fleetOwnerAccountVerification,
+        fleetOwnerAccountVerificationStageRequest:
+          databaseService.fleetOwnerAccountVerificationStageRequest,
       }),
     );
 
@@ -285,6 +423,7 @@ describe("AccountVerificationService", () => {
         user: databaseService.user,
         fleetOwnerAccountVerification: {
           update: vi.fn().mockResolvedValue(record),
+          updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
         },
       }),
     );
@@ -332,6 +471,30 @@ describe("AccountVerificationService", () => {
           nameMatch: NameMatchStatus.MATCHED,
         },
       });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          status: AccountVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: expect.any(Date) },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
+    });
+
+    it("fences a late combined worker whose PROCESSING lease has already expired", async () => {
+      databaseService.fleetOwnerAccountVerification.updateMany.mockImplementation(
+        async (args: { where?: { processingExpiresAt?: { gt?: Date; lte?: Date } } }) =>
+          args.where?.processingExpiresAt && "gt" in args.where.processingExpiresAt
+            ? { count: 0 }
+            : { count: 1 },
+      );
+
+      await expect(
+        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(databaseService.bankDetails.upsert).not.toHaveBeenCalled();
+      expect(databaseService.user.update).not.toHaveBeenCalled();
+      expect(databaseService.documentApproval.upsert).not.toHaveBeenCalled();
     });
 
     it("verifies a business account against CAC and the company bank name", async () => {
@@ -352,6 +515,7 @@ describe("AccountVerificationService", () => {
                 accountName: "HYRE MOBILITY LIMITED",
               }),
             ),
+            updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
           },
         }),
       );
@@ -547,6 +711,7 @@ describe("AccountVerificationService", () => {
                 bankNameMatch: NameMatchStatus.REVIEW_REQUIRED,
               }),
             ),
+            updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
           },
         }),
       );
@@ -610,6 +775,7 @@ describe("AccountVerificationService", () => {
                 businessName: "HYRE MOBILITY SERVICES LTD",
               }),
             ),
+            updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
           },
         }),
       );
@@ -660,6 +826,7 @@ describe("AccountVerificationService", () => {
               .mockResolvedValue(
                 succeededRecord({ status: AccountVerificationStatus.REVIEW_REQUIRED }),
               ),
+            updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
           },
         }),
       );
@@ -690,6 +857,7 @@ describe("AccountVerificationService", () => {
                 representativeNameMatch: NameMatchStatus.REVIEW_REQUIRED,
               }),
             ),
+            updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
           },
         }),
       );
@@ -803,17 +971,32 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("maps a Prembly rejection to PROVIDER_REJECTED and marks the request failed", async () => {
+    it("maps a rejected NIN to a field-specific failure", async () => {
       premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
 
       await expect(
         service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
-      ).rejects.toBeInstanceOf(ProviderVerificationException);
+      ).rejects.toBeInstanceOf(NinNotVerifiedException);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
         data: {
           status: AccountVerificationStatus.FAILED,
-          failureReason: VerificationErrorCode.PROVIDER_REJECTED,
+          failureReason: AccountVerificationErrorCode.NIN_NOT_VERIFIED,
+        },
+      });
+    });
+
+    it("maps rejected CAC details to a field-specific failure", async () => {
+      premblyService.verifyCac.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+      ).rejects.toBeInstanceOf(CacNotVerifiedException);
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.CAC_NOT_VERIFIED,
         },
       });
     });
@@ -941,6 +1124,1059 @@ describe("AccountVerificationService", () => {
     });
   });
 
+  describe("staged onboarding", () => {
+    it("walks an individual non-driver from identity through payout, driving, and approval", async () => {
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(draftRecord());
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).resolves.toMatchObject({ status: "VERIFIED", legalName: "JOHN MIDDLE DOE" });
+      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+      expect(premblyService.verifyCac).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: AccountVerificationStatus.DRAFT,
+          identityVerifiedAt: expect.any(Date),
+          identityFirstName: "JOHN",
+          identityLastName: "DOE",
+        }),
+      });
+
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(draftRecord());
+      await expect(
+        service.verifyPayoutStage(USER_ID, "payout-key-1", payoutInput()),
+      ).resolves.toMatchObject({
+        status: "VERIFIED",
+        bank: { nameMatch: NameMatchStatus.MATCHED, accountNumber: "******6789" },
+      });
+      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith("058", "0123456789");
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          bankNameMatch: NameMatchStatus.MATCHED,
+          payoutVerifiedAt: expect.any(Date),
+        }),
+      });
+
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(payoutReadyDraft());
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, "driving-key-1", { isOwnerDriver: false }, {}),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: false });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: { isOwnerDriver: false, drivingCompletedAt: expect.any(Date) },
+      });
+
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        drivingReadyDraft(),
+      );
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(
+        drivingReadyDraft(),
+      );
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          submittedAt: new Date("2026-01-01T00:15:00Z"),
+          drivingCompletedAt: new Date("2026-01-01T00:12:00Z"),
+        }),
+      );
+      await expect(service.submitStage(USER_ID, "submit-key-1")).resolves.toMatchObject({
+        status: AccountVerificationStatus.SUCCEEDED,
+      });
+      expect(databaseService.user.updateMany).toHaveBeenCalledWith({
+        where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
+        data: expect.objectContaining({
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+          hasOnboarded: true,
+          isOwnerDriver: false,
+        }),
+      });
+      expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("verifyIdentityStage", () => {
+    it("verifies an individual non-driver identity and persists DRAFT timestamps", async () => {
+      const completed = draftRecord();
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(completed);
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).resolves.toEqual({
+        id: VERIFICATION_ID,
+        status: "VERIFIED",
+        accountType: FleetOwnerAccountType.INDIVIDUAL,
+        legalName: "JOHN MIDDLE DOE",
+        businessName: null,
+      });
+      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+      expect(premblyService.verifyCac).not.toHaveBeenCalled();
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          requestHash: identityHash(),
+          accountType: FleetOwnerAccountType.INDIVIDUAL,
+          isOwnerDriver: undefined,
+        }),
+      });
+      expect(databaseService.bankDetails.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        data: { isVerified: false },
+      });
+      const persisted = databaseService.fleetOwnerAccountVerification.update.mock.calls[0]?.[0];
+      expect(persisted).toEqual({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: AccountVerificationStatus.DRAFT,
+          identityFirstName: "JOHN",
+          identityLastName: "DOE",
+          legalName: "JOHN MIDDLE DOE",
+          identityProviderRef: "nin-ref",
+          identityRequiresReview: false,
+          identityVerifiedAt: expect.any(Date),
+        }),
+      });
+      expect(persisted?.data.isOwnerDriver).toBeUndefined();
+      expect(persisted?.data.drivingCompletedAt).toBeUndefined();
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          status: AccountVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: expect.any(Date) },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
+    });
+
+    it("fences a late identity worker whose PROCESSING lease has already expired", async () => {
+      databaseService.fleetOwnerAccountVerification.updateMany.mockImplementation(
+        async (args: { where?: { processingExpiresAt?: { gt?: Date; lte?: Date } } }) =>
+          args.where?.processingExpiresAt && "gt" in args.where.processingExpiresAt
+            ? { count: 0 }
+            : { count: 1 },
+      );
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(databaseService.bankDetails.updateMany).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("verifies a business representative, skips driving, and marks the draft complete for driving", async () => {
+      const completed = draftRecord({
+        accountType: FleetOwnerAccountType.BUSINESS,
+        businessName: "HYRE MOBILITY LTD",
+        registrationNumber: "RC123456",
+        registrationType: "RC",
+        businessProviderRef: "cac-ref",
+        businessNameMatch: NameMatchStatus.MATCHED,
+        representativeNameMatch: NameMatchStatus.MATCHED,
+        isOwnerDriver: false,
+        drivingCompletedAt: new Date("2026-01-01T00:05:00Z"),
+      });
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(completed);
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, businessIdentity()),
+      ).resolves.toMatchObject({
+        status: "VERIFIED",
+        accountType: FleetOwnerAccountType.BUSINESS,
+        legalName: "JOHN MIDDLE DOE",
+        businessName: "HYRE MOBILITY LTD",
+      });
+      expect(premblyService.verifyCac).toHaveBeenCalledWith(
+        "RC123456",
+        "RC",
+        "Hyre Mobility Limited",
+      );
+      expect(databaseService.fleetOwnerAccountVerification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          accountType: FleetOwnerAccountType.BUSINESS,
+          isOwnerDriver: false,
+        }),
+      });
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: AccountVerificationStatus.DRAFT,
+          isOwnerDriver: false,
+          drivingCompletedAt: expect.any(Date),
+          representativeNameMatch: NameMatchStatus.MATCHED,
+          businessNameMatch: NameMatchStatus.MATCHED,
+          identityRequiresReview: false,
+        }),
+      });
+    });
+
+    it("keeps a rejected NIN on the identity claim and marks PROCESSING failed", async () => {
+      premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).rejects.toBeInstanceOf(NinNotVerifiedException);
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.NIN_NOT_VERIFIED,
+        },
+      });
+      expect(databaseService.fleetOwnerAccountVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("keeps rejected CAC details on the identity claim", async () => {
+      premblyService.verifyCac.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, businessIdentity()),
+      ).rejects.toBeInstanceOf(CacNotVerifiedException);
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.CAC_NOT_VERIFIED,
+        },
+      });
+    });
+
+    it("replays a completed identity request with the same idempotency key", async () => {
+      const replay = draftRecord();
+      databaseService.fleetOwnerAccountVerification.create.mockRejectedValueOnce(
+        uniqueConstraintError(),
+      );
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(replay);
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).resolves.toEqual({
+        id: VERIFICATION_ID,
+        status: "VERIFIED",
+        accountType: FleetOwnerAccountType.INDIVIDUAL,
+        legalName: "JOHN MIDDLE DOE",
+        businessName: null,
+      });
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    });
+
+    it("rejects the same identity idempotency key used with a different payload", async () => {
+      databaseService.fleetOwnerAccountVerification.create.mockRejectedValueOnce(
+        uniqueConstraintError(),
+      );
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(
+        draftRecord({ requestHash: "other-hash" }),
+      );
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+    });
+
+    it("rejects an in-progress identity replay", async () => {
+      databaseService.fleetOwnerAccountVerification.create.mockRejectedValueOnce(
+        uniqueConstraintError(),
+      );
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(
+        processingRecord({ requestHash: identityHash() }),
+      );
+
+      await expect(
+        service.verifyIdentityStage(USER_ID, IDEMPOTENCY_KEY, individualIdentity()),
+      ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+    });
+  });
+
+  describe("verifyPayoutStage", () => {
+    beforeEach(() => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(draftRecord());
+    });
+
+    it("resolves an individual payout, matches the verified name, and persists payout timestamps", async () => {
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).resolves.toEqual({
+        status: "VERIFIED",
+        bank: {
+          bankName: "GTBank",
+          accountName: "JOHN DOE",
+          accountNumber: "******6789",
+          nameMatch: NameMatchStatus.MATCHED,
+        },
+      });
+      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith("058", "0123456789");
+      expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            isVerified: false,
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+          }),
+          update: expect.objectContaining({ isVerified: false }),
+        }),
+      );
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          verificationId: VERIFICATION_ID,
+          stage: AccountVerificationStage.PAYOUT,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { lte: expect.any(Date) },
+        },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.VERIFICATION_CHANGED,
+        },
+      });
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: STAGE_REQUEST_ID,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: expect.any(Date) },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
+      const persisted = databaseService.fleetOwnerAccountVerification.updateMany.mock.calls.find(
+        ([args]) => args.where?.status === AccountVerificationStatus.DRAFT,
+      )?.[0];
+      expect(persisted).toEqual({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          bankName: "GTBank",
+          bankCode: "058",
+          accountNumberLast4: "6789",
+          accountName: "JOHN DOE",
+          bankNameMatch: NameMatchStatus.MATCHED,
+          payoutVerifiedAt: expect.any(Date),
+        }),
+      });
+      expect(persisted?.data).not.toHaveProperty("payoutRequiresReview");
+      expect(databaseService.fleetOwnerAccountVerificationStageRequest.update).toHaveBeenCalledWith(
+        {
+          where: { id: STAGE_REQUEST_ID },
+          data: expect.objectContaining({ status: ProviderVerificationStatus.SUCCEEDED }),
+        },
+      );
+    });
+
+    it("matches a business payout against the verified company name", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        draftRecord({
+          accountType: FleetOwnerAccountType.BUSINESS,
+          businessName: "HYRE MOBILITY LTD",
+        }),
+      );
+      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+        ...resolvedAccount,
+        accountName: "HYRE MOBILITY LIMITED",
+      });
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).resolves.toMatchObject({
+        status: "VERIFIED",
+        bank: { nameMatch: NameMatchStatus.MATCHED, accountName: "HYRE MOBILITY LIMITED" },
+      });
+    });
+
+    it("rejects payout before identity has created a draft", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationNotFoundException);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("rejects payout when the draft has not completed identity", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        draftRecord({ identityVerifiedAt: null }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationStepIncompleteException);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("keeps an unresolved bank account on the payout stage", async () => {
+      flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
+        new FlutterwaveError("Account not found", "ACCOUNT_NOT_FOUND", 404),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(BankAccountUnresolvedException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: { id: STAGE_REQUEST_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.BANK_ACCOUNT_UNRESOLVED,
+        },
+      });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        }),
+      );
+    });
+
+    it("keeps a mismatched bank name on the payout stage", async () => {
+      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+        ...resolvedAccount,
+        accountName: "JANE SMITH",
+      });
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(BankAccountNameMismatchException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: { id: STAGE_REQUEST_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.BANK_ACCOUNT_NAME_MISMATCH,
+        },
+      });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        }),
+      );
+    });
+
+    it("replays a succeeded payout request with the same idempotency key", async () => {
+      const replay = stageRequest();
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        replay,
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).resolves.toEqual(replay.response);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.findFirst).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects the same payout idempotency key used with a different payload", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({ requestHash: "other-hash" }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+    });
+
+    it("rejects a changed payout payload on an expired PROCESSING key without mutating expiry", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          status: ProviderVerificationStatus.PROCESSING,
+          requestHash: "other-hash",
+          processingExpiresAt: new Date("2025-12-31T23:59:00Z"),
+        }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects an in-progress payout replay", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: new Date("2026-12-31T00:00:00Z"),
+        }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+    });
+
+    it("rejects payout when the owner's phone is no longer verified, before replay", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce({
+        ...readyUser,
+        phoneVerifiedAt: null,
+      });
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest(),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountPhoneNotVerifiedException);
+      expect(databaseService.fleetOwnerAccountVerification.findFirst).not.toHaveBeenCalled();
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
+      ).not.toHaveBeenCalled();
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("rejects a stale draft that is no longer DRAFT during payout", async () => {
+      databaseService.fleetOwnerAccountVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: { id: STAGE_REQUEST_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.VERIFICATION_CHANGED,
+        },
+      });
+    });
+
+    it("fences a late payout worker whose PROCESSING lease has already expired", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(databaseService.bankDetails.upsert).not.toHaveBeenCalled();
+    });
+
+    it("fails an expired same-key PROCESSING payout before a new claim", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: new Date("2025-12-31T23:59:00Z"),
+        }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: STAGE_REQUEST_ID,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { lte: expect.any(Date) },
+        },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.VERIFICATION_CHANGED,
+        },
+      });
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("scopes a payout key to the latest verification attempt", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst
+        .mockResolvedValueOnce({ id: "latest-ver" })
+        .mockResolvedValueOnce(draftRecord({ id: "latest-ver" }));
+
+      await service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput());
+
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
+      ).toHaveBeenCalledWith({
+        where: {
+          verificationId_idempotencyKey: {
+            verificationId: "latest-ver",
+            idempotencyKey: IDEMPOTENCY_KEY,
+          },
+        },
+      });
+      expect(databaseService.fleetOwnerAccountVerificationStageRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ verificationId: "latest-ver" }),
+        }),
+      );
+    });
+
+    it("rejects a payout key that was already used for another stage", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.DRIVING,
+          requestHash: drivingHash(),
+        }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("maps a processing-per-stage collision to an in-progress payout", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.create.mockRejectedValueOnce(
+        uniqueConstraintError(),
+      );
+      databaseService.fleetOwnerAccountVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "active-payout",
+      });
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+
+    it("retries once when a processing-per-stage collision disappears before lookup", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.create.mockRejectedValueOnce(
+        uniqueConstraintError(),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).resolves.toMatchObject({ status: "VERIFIED" });
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).toHaveBeenCalledTimes(2);
+      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("replays a changed-workflow payout failure as ACCOUNT_VERIFICATION_CHANGED", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.VERIFICATION_CHANGED,
+        }),
+      );
+
+      await expect(
+        service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("saveDrivingCredentialsStage", () => {
+    beforeEach(() => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(payoutReadyDraft());
+    });
+
+    it("completes driving for an individual non-driver without uploading documents", async () => {
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).resolves.toEqual({
+        status: "COMPLETED",
+        isOwnerDriver: false,
+        documents: { driversLicense: null, lasdri: null },
+      });
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: { isOwnerDriver: false, drivingCompletedAt: expect.any(Date) },
+      });
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: STAGE_REQUEST_ID,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: expect.any(Date) },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
+    });
+
+    it("does not delete the new object when the same filename is resubmitted", async () => {
+      databaseService.documentApproval.findMany.mockResolvedValueOnce([
+        { documentType: DocumentType.DRIVERS_LICENSE, documentUrl: "old-license-key" },
+      ]);
+
+      await expect(
+        service.saveDrivingCredentialsStage(
+          USER_ID,
+          IDEMPOTENCY_KEY,
+          { isOwnerDriver: true },
+          { driversLicense: licenseFile() },
+        ),
+      ).resolves.toMatchObject({
+        status: "COMPLETED",
+        isOwnerDriver: true,
+        documents: { driversLicense: "PENDING" },
+      });
+
+      const uploadedKey = storageService.uploadBuffer.mock.calls[0]?.[1] as string;
+      expect(uploadedKey).toMatch(
+        new RegExp(
+          `^${USER_ID}/${VERIFICATION_ID}/documents/drivers_license-[0-9a-f-]{36}-license\\.pdf$`,
+        ),
+      );
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-license-key");
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(
+        `https://cdn.test/${uploadedKey}`,
+      );
+    });
+
+    it("rejects driving before payout is complete", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(draftRecord());
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).rejects.toBeInstanceOf(AccountVerificationStepIncompleteException);
+    });
+
+    it("rejects a missing required owner-driver licence and leaves the draft in place", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: true }, {}),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        }),
+      );
+    });
+
+    it("rejects owner-driver documents on a business draft", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        payoutReadyDraft({
+          accountType: FleetOwnerAccountType.BUSINESS,
+          businessName: "HYRE MOBILITY LTD",
+          isOwnerDriver: false,
+          drivingCompletedAt: new Date("2026-01-01T00:05:00Z"),
+        }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage(
+          USER_ID,
+          IDEMPOTENCY_KEY,
+          { isOwnerDriver: true },
+          { driversLicense: licenseFile() },
+        ),
+      ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("replays a completed driving request with the same idempotency key", async () => {
+      const replay = stageRequest({
+        stage: AccountVerificationStage.DRIVING,
+        requestHash: drivingHash(),
+        response: {
+          status: "COMPLETED",
+          isOwnerDriver: false,
+          documents: { driversLicense: null },
+        },
+      });
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        replay,
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).resolves.toEqual(replay.response);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects the same driving idempotency key used with a different payload", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.DRIVING,
+          requestHash: "other-hash",
+        }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
+    });
+
+    it("rejects an in-progress driving replay", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.DRIVING,
+          requestHash: drivingHash(),
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: new Date("2026-12-31T00:00:00Z"),
+        }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+    });
+
+    it("rejects driving when the owner's email is no longer verified, before replay", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce({
+        ...readyUser,
+        emailVerified: false,
+      });
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.DRIVING,
+          requestHash: drivingHash(),
+        }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).rejects.toBeInstanceOf(AccountEmailNotVerifiedException);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a stale draft that is no longer DRAFT during driving", async () => {
+      databaseService.fleetOwnerAccountVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+    });
+  });
+
+  describe("submitStage", () => {
+    beforeEach(() => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        drivingReadyDraft(),
+      );
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(
+        drivingReadyDraft(),
+      );
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
+        succeededRecord({
+          identityVerifiedAt: new Date("2026-01-01T00:05:00Z"),
+          payoutVerifiedAt: new Date("2026-01-01T00:10:00Z"),
+          drivingCompletedAt: new Date("2026-01-01T00:12:00Z"),
+          submittedAt: new Date("2026-01-01T00:15:00Z"),
+        }),
+      );
+    });
+
+    it("approves an individual non-driver after identity, payout, and driving", async () => {
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toMatchObject({
+        id: VERIFICATION_ID,
+        status: AccountVerificationStatus.SUCCEEDED,
+        accountType: FleetOwnerAccountType.INDIVIDUAL,
+        legalName: "JOHN MIDDLE DOE",
+        bank: {
+          bankName: "GTBank",
+          accountName: "JOHN DOE",
+          accountNumber: "******6789",
+          nameMatch: NameMatchStatus.MATCHED,
+        },
+      });
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: STAGE_REQUEST_ID,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: expect.any(Date) },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: { status: AccountVerificationStatus.PROCESSING },
+      });
+      expect(databaseService.fleetOwnerAccountVerification.findUnique).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+      });
+      expect(databaseService.bankDetails.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        data: { isVerified: true },
+      });
+      expect(databaseService.user.updateMany).toHaveBeenCalledWith({
+        where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
+        data: expect.objectContaining({
+          name: "JOHN MIDDLE DOE",
+          isOwnerDriver: false,
+          hasOnboarded: true,
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+        }),
+      });
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: { status: AccountVerificationStatus.SUCCEEDED, submittedAt: expect.any(Date) },
+      });
+    });
+
+    it("submits a business draft without a separate driving stage", async () => {
+      const businessDraft = payoutReadyDraft({
+        accountType: FleetOwnerAccountType.BUSINESS,
+        businessName: "HYRE MOBILITY LTD",
+        isOwnerDriver: false,
+        drivingCompletedAt: new Date("2026-01-01T00:05:00Z"),
+      });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(businessDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(businessDraft);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          accountType: FleetOwnerAccountType.BUSINESS,
+          businessName: "HYRE MOBILITY LTD",
+          isOwnerDriver: false,
+        }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toMatchObject({
+        status: AccountVerificationStatus.SUCCEEDED,
+        accountType: FleetOwnerAccountType.BUSINESS,
+        businessName: "HYRE MOBILITY LTD",
+      });
+    });
+
+    it.each([
+      ["identity review", { identityRequiresReview: true }],
+      ["payout review", { bankNameMatch: NameMatchStatus.REVIEW_REQUIRED }],
+    ])("sends a %s draft to REVIEW_REQUIRED on submit", async (_label, overrides) => {
+      const reviewDraft = drivingReadyDraft(overrides);
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(reviewDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(reviewDraft);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
+        succeededRecord({ status: AccountVerificationStatus.REVIEW_REQUIRED }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toMatchObject({
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+      });
+      expect(databaseService.user.updateMany).toHaveBeenCalledWith({
+        where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
+      });
+    });
+
+    it("rejects submit before identity has created a draft", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(null);
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountVerificationNotFoundException,
+      );
+    });
+
+    it("rejects submit before payout is complete", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(draftRecord());
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountVerificationStepIncompleteException,
+      );
+    });
+
+    it("rejects submit before driving is complete", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(payoutReadyDraft());
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountVerificationStepIncompleteException,
+      );
+    });
+
+    it("replays a succeeded submission with the same idempotency key", async () => {
+      const replay = stageRequest({
+        stage: AccountVerificationStage.SUBMISSION,
+        requestHash: submissionHash(),
+        response: { id: VERIFICATION_ID, status: AccountVerificationStatus.SUCCEEDED },
+      });
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        replay,
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toEqual(replay.response);
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("replays a failed submission that required an owner-driver licence", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.SUBMISSION,
+          requestHash: submissionHash(),
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.DRIVER_LICENSE_REQUIRED,
+        }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        OwnerDriverLicenseRequiredException,
+      );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects an in-progress submission replay", async () => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.SUBMISSION,
+          requestHash: submissionHash(),
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: new Date("2026-12-31T00:00:00Z"),
+        }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        VerificationRequestInProgressException,
+      );
+    });
+
+    it("rejects submit when the owner's phone is no longer verified, before replay", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce({
+        ...readyUser,
+        phoneVerifiedAt: null,
+      });
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.SUBMISSION,
+          requestHash: submissionHash(),
+        }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountPhoneNotVerifiedException,
+      );
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a stale draft that can no longer move from DRAFT to PROCESSING", async () => {
+      databaseService.fleetOwnerAccountVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountVerificationChangedException,
+      );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects submit when email or phone is revoked during the guarded user update", async () => {
+      databaseService.user.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        AccountVerificationChangedException,
+      );
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: { status: AccountVerificationStatus.PROCESSING },
+      });
+    });
+  });
+
   describe("getStatus", () => {
     it("returns ACTION_REQUIRED with verify steps when onboarding has not started", async () => {
       databaseService.user.findUnique.mockResolvedValueOnce({
@@ -961,6 +2197,7 @@ describe("AccountVerificationService", () => {
         requiredActions: ["VERIFY_EMAIL", "VERIFY_PHONE", "VERIFY_ACCOUNT"],
         bank: null,
         identity: null,
+        steps: { contact: "PENDING" },
       });
     });
 
@@ -986,6 +2223,7 @@ describe("AccountVerificationService", () => {
 
       await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
         status: "UNDER_REVIEW",
+        identity: { status: AccountVerificationStatus.SUCCEEDED },
         bank: {
           bankName: "GTBank",
           accountName: "JOHN DOE",
@@ -1011,7 +2249,7 @@ describe("AccountVerificationService", () => {
           isVerified: true,
         },
         documents: [{ documentType: DocumentType.LASDRI, status: DocumentStatus.PENDING }],
-        accountVerifications: [succeededRecord()],
+        accountVerifications: [succeededRecord({ isOwnerDriver: true })],
       });
 
       await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
@@ -1043,6 +2281,7 @@ describe("AccountVerificationService", () => {
       await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
         status: "ACTION_REQUIRED",
         requiredActions: ["VERIFY_PHONE"],
+        steps: { contact: "PENDING" },
       });
     });
 
@@ -1071,6 +2310,253 @@ describe("AccountVerificationService", () => {
       await expect(service.getStatus(USER_ID)).rejects.toBeInstanceOf(
         AccountVerificationOperationFailedException,
       );
+    });
+
+    const readyStatusUser = (overrides: Record<string, unknown> = {}) => ({
+      emailVerified: true,
+      phoneNumber: PHONE_NUMBER,
+      phoneVerifiedAt: new Date(),
+      hasOnboarded: false,
+      isOwnerDriver: false,
+      fleetOwnerStatus: FleetOwnerStatus.PROCESSING,
+      bankDetails: null,
+      documents: [],
+      accountVerifications: [],
+      ...overrides,
+    });
+
+    it.each([
+      { emailVerified: false, phoneVerified: false, contact: "PENDING" },
+      { emailVerified: true, phoneVerified: false, contact: "PENDING" },
+      { emailVerified: false, phoneVerified: true, contact: "PENDING" },
+      { emailVerified: true, phoneVerified: true, contact: "VERIFIED" },
+    ])(
+      "marks steps.contact $contact when emailVerified=$emailVerified and phoneVerified=$phoneVerified",
+      async ({ emailVerified, phoneVerified, contact }) => {
+        databaseService.user.findUnique.mockResolvedValueOnce(
+          readyStatusUser({
+            emailVerified,
+            phoneVerifiedAt: phoneVerified ? new Date("2026-01-01T00:00:00Z") : null,
+          }),
+        );
+
+        await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+          steps: { contact },
+        });
+      },
+    );
+
+    it("asks for identity before any staged verification exists", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(readyStatusUser());
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        status: "ACTION_REQUIRED",
+        requiredActions: ["VERIFY_ACCOUNT"],
+        nextAction: "VERIFY_IDENTITY",
+        steps: {
+          contact: "VERIFIED",
+          identity: "PENDING",
+          payout: "PENDING",
+          driving: "PENDING",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("advances nextAction to payout after a successful individual identity stage", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({ accountVerifications: [draftRecord()] }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        status: "ACTION_REQUIRED",
+        requiredActions: ["VERIFY_ACCOUNT"],
+        nextAction: "VERIFY_PAYOUT",
+        identity: {
+          status: AccountVerificationStatus.SUCCEEDED,
+          legalName: "JOHN MIDDLE DOE",
+        },
+        steps: {
+          contact: "VERIFIED",
+          identity: "VERIFIED",
+          payout: "PENDING",
+          driving: "PENDING",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("skips driving and still requires payout after a business identity stage", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          accountVerifications: [
+            draftRecord({
+              accountType: FleetOwnerAccountType.BUSINESS,
+              businessName: "HYRE MOBILITY LTD",
+              isOwnerDriver: false,
+              drivingCompletedAt: new Date("2026-01-01T00:05:00Z"),
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "VERIFY_PAYOUT",
+        steps: {
+          identity: "VERIFIED",
+          payout: "PENDING",
+          driving: "SKIPPED",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("asks for driving credentials after an individual payout stage", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [payoutReadyDraft()],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "PROVIDE_DRIVING_CREDENTIALS",
+        steps: {
+          identity: "VERIFIED",
+          payout: "VERIFIED",
+          driving: "PENDING",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("asks to submit after driving credentials are stored", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [drivingReadyDraft()],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "SUBMIT_ACCOUNT",
+        steps: {
+          identity: "VERIFIED",
+          payout: "VERIFIED",
+          driving: "COMPLETED",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("surfaces REVIEW_REQUIRED identity and payout while advancing through later stages", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN SMITH",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [
+            drivingReadyDraft({
+              identityRequiresReview: true,
+              accountName: "JOHN SMITH",
+              bankNameMatch: NameMatchStatus.REVIEW_REQUIRED,
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "SUBMIT_ACCOUNT",
+        identity: { status: AccountVerificationStatus.REVIEW_REQUIRED },
+        steps: {
+          identity: "REVIEW_REQUIRED",
+          payout: "REVIEW_REQUIRED",
+          driving: "COMPLETED",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("waits for review after a review-required submission", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          hasOnboarded: true,
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [
+            drivingReadyDraft({
+              status: AccountVerificationStatus.REVIEW_REQUIRED,
+              identityRequiresReview: true,
+              submittedAt: new Date("2026-01-01T00:15:00Z"),
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        status: "UNDER_REVIEW",
+        requiredActions: [],
+        nextAction: "WAIT_FOR_REVIEW",
+        identity: { status: AccountVerificationStatus.REVIEW_REQUIRED },
+        steps: {
+          identity: "REVIEW_REQUIRED",
+          payout: "VERIFIED",
+          driving: "COMPLETED",
+          submission: "REVIEW_REQUIRED",
+        },
+      });
+    });
+
+    it("returns COMPLETE after a succeeded staged submission", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          hasOnboarded: true,
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: true,
+          },
+          accountVerifications: [
+            succeededRecord({
+              identityVerifiedAt: new Date("2026-01-01T00:05:00Z"),
+              payoutVerifiedAt: new Date("2026-01-01T00:10:00Z"),
+              drivingCompletedAt: new Date("2026-01-01T00:12:00Z"),
+              submittedAt: new Date("2026-01-01T00:15:00Z"),
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        status: "VERIFIED",
+        requiredActions: [],
+        nextAction: "COMPLETE",
+        steps: {
+          identity: "VERIFIED",
+          payout: "VERIFIED",
+          driving: "COMPLETED",
+          submission: "VERIFIED",
+        },
+      });
     });
   });
 

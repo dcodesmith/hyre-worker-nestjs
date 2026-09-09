@@ -55,6 +55,7 @@ const insuranceSuccess = () => ({
   data: {
     policy_number: "POLICY-123",
     reg_number: "KJA-123AB",
+    vehicle_color: "Black",
     vehicle_chasis: VALID_CHASSIS,
     policy_status: "Active",
     expiry_date: "2099-12-31",
@@ -206,6 +207,7 @@ describe("PremblyService", () => {
         policyStatus: "Active",
         plateNumbers: ["KJA-123AB"],
         chassisNumber: VALID_CHASSIS,
+        color: "Black",
         expiresAt: new Date("2099-12-31"),
         reference: "prembly-ref-1",
       });
@@ -219,6 +221,7 @@ describe("PremblyService", () => {
             policy_number: "POLICY-456",
             new_reg_number: "ABC-999ZZ",
             reg_number: "KJA-123AB",
+            vehicle_color: "  Silver  ",
             vehicle_chasis: VALID_CHASSIS,
             policy_status: "Active",
             expiry_date: "2099-06-15T23:59:59.000Z",
@@ -231,6 +234,7 @@ describe("PremblyService", () => {
         policyStatus: "Active",
         plateNumbers: ["ABC-999ZZ", "KJA-123AB"],
         chassisNumber: VALID_CHASSIS,
+        color: "Silver",
         expiresAt: new Date("2099-06-15T23:59:59.000Z"),
         reference: "prembly-ref-1",
       });
@@ -253,6 +257,62 @@ describe("PremblyService", () => {
         new PremblyError("INVALID_RESPONSE"),
       );
     });
+
+    it("rejects an insurance chassis that is not a valid VIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          ...insuranceSuccess(),
+          data: {
+            ...insuranceSuccess().data,
+            vehicle_chasis: "1HGCM82633A00435I",
+          },
+        },
+      });
+
+      await expect(service.verifyInsurance("POLICY-123")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
+    });
+
+    it("returns a null chassis when insurance omits vehicle_chasis", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          ...insuranceSuccess(),
+          data: {
+            policy_number: "POLICY-123",
+            reg_number: "KJA-123AB",
+            vehicle_color: "Black",
+            policy_status: "Active",
+            expiry_date: "2099-12-31",
+          },
+        },
+      });
+
+      await expect(service.verifyInsurance("POLICY-123")).resolves.toMatchObject({
+        chassisNumber: null,
+        plateNumbers: ["KJA-123AB"],
+        color: "Black",
+      });
+    });
+
+    it.each([undefined, "", "   "])(
+      "rejects a missing or blank vehicle_color as an invalid provider response",
+      async (vehicleColor) => {
+        mockAxiosInstance.post.mockResolvedValueOnce({
+          data: {
+            ...insuranceSuccess(),
+            data: {
+              ...insuranceSuccess().data,
+              vehicle_color: vehicleColor,
+            },
+          },
+        });
+
+        await expect(service.verifyInsurance("POLICY-123")).rejects.toEqual(
+          new PremblyError("INVALID_RESPONSE"),
+        );
+      },
+    );
   });
 
   describe("provider errors", () => {

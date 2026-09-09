@@ -4,12 +4,12 @@ const multipartBooleanSchema = z
   .union([z.boolean(), z.enum(["true", "false"])])
   .transform((value) => value === true || value === "true");
 
-const commonAccountVerificationSchema = z.object({
-  nin: z
-    .string()
-    .trim()
-    .regex(/^\d{11}$/, "NIN must contain exactly 11 digits"),
-  isOwnerDriver: multipartBooleanSchema,
+const ninSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{11}$/, "NIN must contain exactly 11 digits");
+
+export const payoutVerificationSchema = z.object({
   bankName: z.string().trim().min(2).max(100),
   bankCode: z
     .string()
@@ -21,12 +21,14 @@ const commonAccountVerificationSchema = z.object({
     .regex(/^\d{10}$/, "Account number must contain exactly 10 digits"),
 });
 
-const individualAccountVerificationSchema = commonAccountVerificationSchema.extend({
+const individualIdentityVerificationSchema = z.object({
   accountType: z.literal("INDIVIDUAL"),
+  nin: ninSchema,
 });
 
-const businessAccountVerificationSchema = commonAccountVerificationSchema.extend({
+const businessIdentityVerificationSchema = z.object({
   accountType: z.literal("BUSINESS"),
+  nin: ninSchema,
   businessName: z.string().trim().min(2).max(200),
   registrationNumber: z
     .string()
@@ -35,9 +37,24 @@ const businessAccountVerificationSchema = commonAccountVerificationSchema.extend
   registrationType: z.enum(["RC", "BN", "IT", "LP", "LLP"]),
 });
 
+export const accountIdentityVerificationSchema = z.discriminatedUnion("accountType", [
+  individualIdentityVerificationSchema,
+  businessIdentityVerificationSchema,
+]);
+
+export const drivingCredentialsSchema = z.object({
+  isOwnerDriver: multipartBooleanSchema,
+});
+
 export const createAccountVerificationSchema = z.discriminatedUnion("accountType", [
-  individualAccountVerificationSchema,
-  businessAccountVerificationSchema,
+  individualIdentityVerificationSchema.extend({
+    ...payoutVerificationSchema.shape,
+    ...drivingCredentialsSchema.shape,
+  }),
+  businessIdentityVerificationSchema.extend({
+    ...payoutVerificationSchema.shape,
+    ...drivingCredentialsSchema.shape,
+  }),
 ]);
 
 export const sendPhoneVerificationSchema = z.object({
@@ -55,6 +72,9 @@ export const checkPhoneVerificationSchema = sendPhoneVerificationSchema.extend({
 });
 
 export type CreateAccountVerificationDto = z.infer<typeof createAccountVerificationSchema>;
+export type AccountIdentityVerificationDto = z.infer<typeof accountIdentityVerificationSchema>;
+export type PayoutVerificationDto = z.infer<typeof payoutVerificationSchema>;
+export type DrivingCredentialsDto = z.infer<typeof drivingCredentialsSchema>;
 export type SendPhoneVerificationDto = z.infer<typeof sendPhoneVerificationSchema>;
 export type CheckPhoneVerificationDto = z.infer<typeof checkPhoneVerificationSchema>;
 
