@@ -49,7 +49,11 @@ export const premblyInsuranceResponseSchema = z.looseObject({
     policy_number: z.string().min(1),
     new_reg_number: z.string().optional(),
     reg_number: z.string().optional(),
-    vehicle_color: z.string().trim().min(1),
+    vehicle_color: z
+      .string()
+      .trim()
+      .nullish()
+      .transform((value) => value || null),
     vehicle_chasis: z.string().optional(),
     policy_status: z.string().min(1),
     expiry_date: z.coerce.date(),
@@ -57,18 +61,36 @@ export const premblyInsuranceResponseSchema = z.looseObject({
   verification: verificationSchema,
 });
 
-export const premblyNinResponseSchema = z.looseObject({
-  status: z.literal(true),
-  response_code: z.literal("00"),
-  data: z.looseObject({
-    firstname: z.string().min(1),
-    middlename: z.string().nullish(),
-    surname: z.string().min(1),
-    nin: z.string().regex(/^\d{11}$/),
-    nin_suspension_status: z.boolean(),
-  }),
-  verification: verificationSchema,
+const premblyNinIdentitySchema = z.looseObject({
+  firstname: z.string().min(1),
+  middlename: z.string().nullish(),
+  surname: z.string().min(1),
+  nin: z.string().regex(/^\d{11}$/),
+  nin_suspension_status: z.boolean(),
 });
+
+export const premblyNinResponseSchema = z
+  .looseObject({
+    status: z.literal(true),
+    response_code: z.literal("00"),
+    data: premblyNinIdentitySchema.optional(),
+    nin_data: premblyNinIdentitySchema.optional(),
+    verification: verificationSchema,
+  })
+  .transform((payload, ctx) => {
+    const data = payload.nin_data ?? payload.data;
+    if (!data) {
+      ctx.addIssue({ code: "custom", message: "Missing nin identity payload" });
+      return z.NEVER;
+    }
+
+    return {
+      status: payload.status,
+      response_code: payload.response_code,
+      data,
+      verification: payload.verification,
+    };
+  });
 
 const cacDirectorSchema = z.looseObject({
   firstname: z.string().default(""),

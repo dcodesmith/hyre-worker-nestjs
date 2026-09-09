@@ -1,5 +1,3 @@
-ALTER TYPE "AccountVerificationStatus" ADD VALUE IF NOT EXISTS 'DRAFT' BEFORE 'PROCESSING';
-
 CREATE TYPE "AccountVerificationStage" AS ENUM ('PAYOUT', 'DRIVING', 'SUBMISSION');
 
 ALTER TABLE "FleetOwnerAccountVerification"

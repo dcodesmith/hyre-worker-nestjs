@@ -296,7 +296,7 @@ describe("PremblyService", () => {
     });
 
     it.each([undefined, "", "   "])(
-      "rejects a missing or blank vehicle_color as an invalid provider response",
+      "treats a missing or blank vehicle_color as null",
       async (vehicleColor) => {
         mockAxiosInstance.post.mockResolvedValueOnce({
           data: {
@@ -308,9 +308,9 @@ describe("PremblyService", () => {
           },
         });
 
-        await expect(service.verifyInsurance("POLICY-123")).rejects.toEqual(
-          new PremblyError("INVALID_RESPONSE"),
-        );
+        await expect(service.verifyInsurance("POLICY-123")).resolves.toMatchObject({
+          color: null,
+        });
       },
     );
   });
@@ -420,6 +420,20 @@ describe("PremblyService", () => {
       });
       expect(mockAxiosInstance.post).toHaveBeenCalledWith("/verification/vnin-basic", {
         number: "12345678901",
+      });
+    });
+
+    it("accepts Prembly nin_data payloads", async () => {
+      const { data, ...rest } = ninSuccess();
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: { ...rest, nin_data: data },
+      });
+
+      await expect(service.verifyNin("12345678901")).resolves.toEqual({
+        firstName: "JOHN",
+        middleName: "MIDDLE",
+        lastName: "DOE",
+        reference: "prembly-ref-1",
       });
     });
 
