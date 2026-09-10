@@ -98,6 +98,7 @@ describe("UsersService", () => {
 
   it("updates only the provided profile fields", async () => {
     const updated = { ...profile, city: "Abuja", marketingConsent: true };
+    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
     databaseService.user.update.mockResolvedValue(updated);
 
     const result = await service.updateCurrentUserProfile("user-1", {
@@ -105,16 +106,19 @@ describe("UsersService", () => {
       marketingConsent: true,
     });
 
-    expect(databaseService.user.findUnique).not.toHaveBeenCalled();
+    expect(databaseService.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      select: { phoneNumber: true },
+    });
     expect(databaseService.user.update).toHaveBeenCalledWith({
       where: { id: "user-1" },
-      data: {
+      data: expect.objectContaining({
         name: undefined,
         phoneNumber: undefined,
         city: "Abuja",
         address: undefined,
         marketingConsent: true,
-      },
+      }),
       select: {
         name: true,
         phoneNumber: true,
@@ -126,16 +130,63 @@ describe("UsersService", () => {
     expect(result).toEqual(updated);
   });
 
+  it("clears phoneVerifiedAt when the phone number changes", async () => {
+    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
+    databaseService.user.update.mockResolvedValue({
+      ...profile,
+      phoneNumber: "+2348099999999",
+    });
+
+    await service.updateCurrentUserProfile("user-1", { phoneNumber: "+2348099999999" });
+
+    expect(databaseService.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: expect.objectContaining({
+        phoneNumber: "+2348099999999",
+        phoneVerifiedAt: null,
+      }),
+      select: expect.any(Object),
+    });
+  });
+
+  it("does not clear phoneVerifiedAt when the phone number is unchanged", async () => {
+    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
+    databaseService.user.update.mockResolvedValue(profile);
+
+    await service.updateCurrentUserProfile("user-1", { phoneNumber: profile.phoneNumber });
+
+    expect(databaseService.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: expect.not.objectContaining({ phoneVerifiedAt: null }),
+      select: expect.any(Object),
+    });
+  });
+
+  it("does not clear phoneVerifiedAt when the phone number is omitted", async () => {
+    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
+    databaseService.user.update.mockResolvedValue({ ...profile, city: "Abuja" });
+
+    await service.updateCurrentUserProfile("user-1", { city: "Abuja" });
+
+    expect(databaseService.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: expect.not.objectContaining({ phoneVerifiedAt: null }),
+      select: expect.any(Object),
+    });
+  });
+
   it("throws not found when updating a missing user", async () => {
-    databaseService.user.update.mockRejectedValue(recordNotFoundError());
+    databaseService.user.findUnique.mockResolvedValue(null);
 
     await expect(
       service.updateCurrentUserProfile("missing-user", { city: "Lagos" }),
     ).rejects.toThrow(UsersUserNotFoundException);
+    expect(databaseService.user.update).not.toHaveBeenCalled();
   });
 
   it("rethrows unexpected update errors", async () => {
     const unexpected = new Error("db failure");
+    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
     databaseService.user.update.mockRejectedValue(unexpected);
 
     await expect(service.updateCurrentUserProfile("user-1", { city: "Lagos" })).rejects.toBe(

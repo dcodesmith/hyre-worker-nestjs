@@ -62,9 +62,15 @@ describe("Cars E2E Tests", () => {
     userCookie = userAuth.cookie;
     userId = userAuth.user.id;
 
-    await databaseService.user.update({
-      where: { id: ownerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    await databaseService.user.updateMany({
+      where: { id: { in: [ownerId, secondOwnerId] } },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
 
     const publicCar = await factory.createCar(ownerId, {

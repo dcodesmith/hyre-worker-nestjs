@@ -5,10 +5,18 @@ import type { z } from "zod";
 import type { EnvConfig } from "../../config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
 import { VIN_PATTERN } from "./prembly.const";
-import { PremblyInsuranceResult, PremblyPlateResult, PremblyVinResult } from "./prembly.interface";
 import {
+  PremblyCacResult,
+  PremblyInsuranceResult,
+  PremblyNinResult,
+  PremblyPlateResult,
+  PremblyVinResult,
+} from "./prembly.interface";
+import {
+  premblyCacResponseSchema,
   premblyEnvelopeSchema,
   premblyInsuranceResponseSchema,
+  premblyNinResponseSchema,
   premblyPlateResponseSchema,
   premblyVinResponseSchema,
 } from "./prembly.schema";
@@ -108,6 +116,10 @@ export class PremblyService {
       { channel: "policy", number: policyNumber },
       premblyInsuranceResponseSchema,
     );
+    const chassisNumber = response.data.vehicle_chasis?.trim().toUpperCase() ?? null;
+    if (chassisNumber && !VIN_PATTERN.test(chassisNumber)) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
 
     return {
       policyNumber: response.data.policy_number,
@@ -115,10 +127,84 @@ export class PremblyService {
       plateNumbers: [response.data.new_reg_number, response.data.reg_number].filter(
         (plate): plate is string => Boolean(plate),
       ),
-      chassisNumber: response.data.vehicle_chasis?.trim().toUpperCase() ?? null,
+      chassisNumber,
+      color: response.data.vehicle_color,
       expiresAt: response.data.expiry_date,
       reference: response.verification.reference,
     };
+  }
+
+  async verifyNin(nin: string): Promise<PremblyNinResult> {
+    const response = await this.post(
+      "/verification/vnin-basic",
+      { number: nin },
+      premblyNinResponseSchema,
+    );
+    if (response.data.nin !== nin || response.data.nin_suspension_status) {
+      throw new PremblyError("REJECTED");
+    }
+
+    return {
+      firstName: response.data.firstname.trim(),
+      middleName: response.data.middlename?.trim() || null,
+      lastName: response.data.surname.trim(),
+      reference: response.verification.reference,
+    };
+  }
+
+  async verifyCac(
+    registrationNumber: string,
+    registrationType: string,
+    businessName: string,
+  ): Promise<PremblyCacResult> {
+    const response = await this.post(
+      "/verification/cac/advance",
+      {
+        rc_number: registrationNumber,
+        company_type: registrationType,
+        company_name: businessName,
+      },
+      premblyCacResponseSchema,
+    );
+    const normalizedNumber = this.normalizeCacRegistrationNumber(registrationNumber);
+    const normalizedType = registrationType.trim().toUpperCase();
+    const candidates = response.data.filter(
+      (company) =>
+        this.normalizeCacRegistrationNumber(company.rc_number) === normalizedNumber &&
+        company.entity_type.trim().toUpperCase() === normalizedType,
+    );
+    const company =
+      candidates.find(
+        (candidate) =>
+          this.normalizeName(candidate.company_name) === this.normalizeName(businessName),
+      ) ?? candidates[0];
+
+    if (!company) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
+
+    return {
+      businessName: company.company_name.trim(),
+      registrationNumber: company.rc_number.trim().toUpperCase(),
+      registrationType: company.entity_type.trim().toUpperCase(),
+      status: company.company_status?.trim().toUpperCase() || null,
+      directors: company.directors
+        .map((director) => ({
+          firstName: director.firstname.trim(),
+          middleName: director.otherName?.trim() || null,
+          lastName: director.surname.trim(),
+        }))
+        .filter((director) => director.firstName || director.lastName),
+      reference: response.verification.reference,
+    };
+  }
+
+  private normalizeCacRegistrationNumber(value: string): string {
+    return value.replaceAll(/\D/g, "").replace(/^0+/, "");
+  }
+
+  private normalizeName(value: string): string {
+    return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
   }
 
   private async post<T>(

@@ -6,6 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { BookingUpdateService } from "./booking-update.service";
 import {
   type AssignBookingChauffeurBodyDto,
@@ -14,7 +15,7 @@ import {
 import { bookingIdParamSchema } from "./dto/create-extension.dto";
 
 @Controller("api/fleet-owner/bookings")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class FleetOwnerBookingController {
   constructor(private readonly bookingUpdateService: BookingUpdateService) {}

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createOwnerPromotionListItem, createPromotionRecord } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { FleetOwnerPromotionController } from "./fleet-owner-promotion.controller";
 import { PromotionService } from "./promotion.service";
 
@@ -43,6 +44,8 @@ describe("FleetOwnerPromotionController", () => {
         Reflector,
       ],
     })
+      .overrideGuard(VerifiedFleetOwnerGuard)
+      .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
       .useMocker(mockPinoLoggerToken)
       .compile();
 

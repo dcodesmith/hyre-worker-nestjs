@@ -6,6 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import {
   type CreatePromotionBodyDto,
   createPromotionBodySchema,
@@ -14,7 +15,7 @@ import {
 import { PromotionService } from "./promotion.service";
 
 @Controller("api/fleet-owner/promotions")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class FleetOwnerPromotionController {
   constructor(private readonly promotionService: PromotionService) {}

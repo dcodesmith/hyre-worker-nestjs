@@ -33,10 +33,10 @@ export interface FlutterwaveTransferData {
   bank_name: string;
 }
 
-export interface FlutterwaveAccountVerificationData {
-  account_number: string;
-  account_name: string;
-  bank_code: string;
+export interface ResolvedBankAccount {
+  accountNumber: string;
+  accountName: string;
+  bankCode: string;
 }
 
 export interface FlutterwaveConfig {

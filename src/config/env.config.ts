@@ -160,6 +160,7 @@ export const envSchema = z
 
     TWILIO_ACCOUNT_SID: z.string().min(1, "TWILIO_ACCOUNT_SID is required"),
     TWILIO_AUTH_TOKEN: z.string().min(1, "TWILIO_AUTH_TOKEN is required"),
+    TWILIO_VERIFY_SERVICE_SID: z.string().min(1, "TWILIO_VERIFY_SERVICE_SID is required"),
     TWILIO_SECRET: z.string().min(1, "TWILIO_SECRET is required"),
     TWILIO_WHATSAPP_NUMBER: z.string().min(1, "TWILIO_WHATSAPP_NUMBER is required"),
     TWILIO_WEBHOOK_URL: z.url("TWILIO_WEBHOOK_URL must be a valid URL").optional(),

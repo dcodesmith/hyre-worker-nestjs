@@ -8,6 +8,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { idempotencyKeySchema } from "../booking/dto/idempotency-key.dto";
 import { carIdParamSchema } from "../car/dto/update-car.dto";
 import {
@@ -32,7 +33,7 @@ const idempotencyKeyPipe = new ZodValidationPipe(idempotencyKeySchema, {
 });
 
 @Controller("api/fleet-owner/vehicle-verifications")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class VehicleVerificationController {
   constructor(private readonly verificationService: VehicleVerificationService) {}
@@ -78,7 +79,7 @@ export class VehicleVerificationController {
 }
 
 @Controller("api/fleet-owner/cars/:carId/insurance-verifications")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 @Roles(FLEET_OWNER)
 export class InsuranceVerificationController {
   constructor(private readonly verificationService: VehicleVerificationService) {}
@@ -94,12 +95,12 @@ export class InsuranceVerificationController {
   ) {
     const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
     try {
-      return await this.verificationService.createInsuranceVerification(
-        sessionUser.id,
+      return await this.verificationService.createInsuranceVerification({
+        ownerId: sessionUser.id,
         carId,
         idempotencyKey,
-        body,
-      );
+        input: body,
+      });
     } catch (error) {
       if (error instanceof VerificationRequestInProgressException) {
         response.setHeader("Retry-After", String(error.retryAfterSeconds));

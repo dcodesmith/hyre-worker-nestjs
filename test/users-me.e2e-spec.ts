@@ -147,6 +147,51 @@ describe("Current user profile E2E Tests", () => {
     });
   });
 
+  it("PATCH /api/users/me clears phoneVerifiedAt when the phone number changes", async () => {
+    await seedProfile(userId);
+    await databaseService.user.update({
+      where: { id: userId },
+      data: { phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z") },
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch("/api/users/me")
+      .set("Cookie", userCookie)
+      .send({ phoneNumber: "+2348099999999" });
+
+    expect(response.status).toBe(HttpStatus.OK);
+    const persisted = await databaseService.user.findUnique({
+      where: { id: userId },
+      select: { phoneNumber: true, phoneVerifiedAt: true },
+    });
+    expect(persisted).toEqual({
+      phoneNumber: "+2348099999999",
+      phoneVerifiedAt: null,
+    });
+  });
+
+  it("PATCH /api/users/me keeps phoneVerifiedAt when the phone number is omitted", async () => {
+    const verifiedAt = new Date("2026-01-01T00:00:00.000Z");
+    await seedProfile(userId);
+    await databaseService.user.update({
+      where: { id: userId },
+      data: { phoneVerifiedAt: verifiedAt },
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch("/api/users/me")
+      .set("Cookie", userCookie)
+      .send({ city: "Abuja" });
+
+    expect(response.status).toBe(HttpStatus.OK);
+    const persisted = await databaseService.user.findUnique({
+      where: { id: userId },
+      select: { city: true, phoneVerifiedAt: true },
+    });
+    expect(persisted?.city).toBe("Abuja");
+    expect(persisted?.phoneVerifiedAt).toEqual(verifiedAt);
+  });
+
   it("PATCH /api/users/me rejects email", async () => {
     await seedProfile(userId);
 

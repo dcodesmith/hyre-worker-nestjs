@@ -39,7 +39,14 @@ describe("Dashboard E2E Tests", () => {
     ownerCookie = ownerAuth.cookie;
     await databaseService.user.update({
       where: { id: ownerId },
-      data: { isOwnerDriver: true },
+      data: {
+        isOwnerDriver: true,
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
 
     const nonOwnerAuth = await factory.authenticateAndGetUser(

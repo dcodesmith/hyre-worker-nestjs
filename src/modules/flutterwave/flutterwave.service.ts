@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { AxiosError, AxiosInstance } from "axios";
 import { PinoLogger } from "nestjs-pino";
 import { EnvConfig } from "src/config/env.config";
+import { z } from "zod";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
   FlutterwaveConfig,
@@ -19,7 +20,28 @@ import {
   PayoutResponse,
   RefundOptions,
   RefundResponse,
+  ResolvedBankAccount,
 } from "./flutterwave.interface";
+
+const accountResolutionResponseSchema = z.object({
+  status: z.literal("success"),
+  data: z.object({
+    account_number: z.string().min(1),
+    account_name: z.string().min(1),
+    bank_code: z.string().optional(),
+  }),
+});
+
+const bankSchema = z.object({
+  code: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+});
+const bankListResponseSchema = z.object({
+  status: z.literal("success"),
+  data: z.array(bankSchema),
+});
+const BANK_LIST_TTL_MS = 60 * 60 * 1000;
+type NigerianBank = z.infer<typeof bankSchema>;
 
 function stripTrailingPunctuation(value: string): string {
   let message = value;
@@ -33,6 +55,7 @@ function stripTrailingPunctuation(value: string): string {
 export class FlutterwaveService {
   private readonly config: FlutterwaveConfig;
   private readonly httpClient: AxiosInstance;
+  private bankListCache?: { data: NigerianBank[]; expiresAt: number };
 
   constructor(
     private readonly configService: ConfigService<EnvConfig>,
@@ -132,6 +155,67 @@ export class FlutterwaveService {
         success: false,
         data: { message: handledError.message },
       };
+    }
+  }
+
+  async resolveBankAccount(bankCode: string, accountNumber: string): Promise<ResolvedBankAccount> {
+    try {
+      const { data } = await this.httpClient.post<unknown>("/v3/accounts/resolve", {
+        account_bank: bankCode,
+        account_number: accountNumber,
+      });
+      const parsed = accountResolutionResponseSchema.safeParse(data);
+      if (!parsed.success) {
+        throw new FlutterwaveError(
+          "Flutterwave returned an invalid account resolution response",
+          "INVALID_ACCOUNT_RESOLUTION_RESPONSE",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+      if (
+        parsed.data.data.account_number !== accountNumber ||
+        (parsed.data.data.bank_code !== undefined && parsed.data.data.bank_code !== bankCode)
+      ) {
+        throw new FlutterwaveError(
+          "Resolved bank account does not match the request",
+          "ACCOUNT_RESOLUTION_MISMATCH",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return {
+        accountNumber: parsed.data.data.account_number,
+        accountName: parsed.data.data.account_name.trim(),
+        bankCode: parsed.data.data.bank_code ?? bankCode,
+      };
+    } catch (error) {
+      throw this.handleError(error, "resolveBankAccount");
+    }
+  }
+
+  async listNigerianBanks() {
+    if (this.bankListCache && this.bankListCache.expiresAt > Date.now()) {
+      return this.bankListCache.data;
+    }
+
+    try {
+      const { data } = await this.httpClient.get<unknown>("/v3/banks/NG");
+      const parsed = bankListResponseSchema.safeParse(data);
+      if (!parsed.success) {
+        throw new FlutterwaveError(
+          "Flutterwave returned an invalid bank list response",
+          "INVALID_BANK_LIST_RESPONSE",
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      const banks = [...parsed.data.data].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+      this.bankListCache = { data: banks, expiresAt: Date.now() + BANK_LIST_TTL_MS };
+      return banks;
+    } catch (error) {
+      throw this.handleError(error, "listNigerianBanks");
     }
   }
 

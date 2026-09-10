@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
   CarApprovalStatus,
@@ -78,6 +79,7 @@ describe("CarService", () => {
     },
     insuranceVerification: {
       count: vi.fn(),
+      create: vi.fn(),
     },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -138,6 +140,44 @@ describe("CarService", () => {
     const result = await service.getOwnerCarById("car-1", "owner-1");
 
     expect(result).toEqual({ id: "car-1", ownerId: "owner-1", promotion: null });
+  });
+
+  it("requests the latest insurance verification fields for owner car list and detail", async () => {
+    const submittedAt = new Date("2026-09-07T00:00:00.000Z");
+    const ownerCar = { id: "car-1", ownerId: "owner-1", submittedAt };
+    const latestInsuranceVerification = {
+      select: {
+        id: true,
+        status: true,
+        policyNumber: true,
+        policyStatus: true,
+        policyExpiresAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    };
+
+    databaseServiceMock.car.findMany.mockResolvedValueOnce([ownerCar]);
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce(ownerCar);
+
+    const [list, detail] = await Promise.all([
+      service.listOwnerCars("owner-1"),
+      service.getOwnerCarById("car-1", "owner-1"),
+    ]);
+
+    expect(list).toEqual([{ ...ownerCar, promotion: null }]);
+    expect(detail).toEqual({ ...ownerCar, promotion: null });
+    expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ insuranceVerifications: latestInsuranceVerification }),
+      }),
+    );
+    expect(databaseServiceMock.car.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ insuranceVerifications: latestInsuranceVerification }),
+      }),
+    );
   });
 
   it("throws CarNotFoundException for unknown owner car", async () => {
@@ -623,6 +663,7 @@ describe("CarService", () => {
             make: "Toyota",
             model: "Camry",
             year: 2020,
+            color: "Black",
             status: Status.HOLD,
             approvalStatus: CarApprovalStatus.PENDING,
           }),
@@ -632,6 +673,129 @@ describe("CarService", () => {
         where: { id: "ver-1", carId: null },
         data: { carId: "car-1" },
       });
+      expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
+    });
+
+    it("creates a SUCCEEDED InsuranceVerification in the same transaction when an unexpired snapshot exists", async () => {
+      const policyExpiresAt = new Date("2027-01-14T22:59:59.999Z");
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
+        ...verification,
+        insurancePolicyNumber: "TEST/POLICY/123",
+        insurancePolicyStatus: "Active",
+        insurancePolicyExpiresAt: policyExpiresAt,
+        insuranceProviderRef: "ins-ref",
+      });
+      databaseServiceMock.car.create.mockResolvedValueOnce({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
+      databaseServiceMock.insuranceVerification.create.mockResolvedValueOnce({ id: "ins-1" });
+
+      const result = await service.createDraftCarFromVerification("owner-1", "ver-1");
+
+      expect(result).toMatchObject({ id: "car-1" });
+      expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(1);
+      expect(databaseServiceMock.insuranceVerification.create).toHaveBeenCalledWith({
+        data: {
+          ownerId: "owner-1",
+          carId: "car-1",
+          idempotencyKey: "initial-insurance:ver-1",
+          requestHash: createHash("sha256")
+            .update(JSON.stringify({ carId: "car-1", policyNumber: "TEST/POLICY/123" }))
+            .digest("hex"),
+          policyNumber: "TEST/POLICY/123",
+          policyStatus: "Active",
+          policyExpiresAt,
+          providerRef: "ins-ref",
+          status: ProviderVerificationStatus.SUCCEEDED,
+        },
+      });
+    });
+
+    it("uses a deterministic initial-insurance idempotency key and request hash across calls", async () => {
+      const snapshot = {
+        ...verification,
+        insurancePolicyNumber: "TEST/POLICY/123",
+        insurancePolicyStatus: "Active",
+        insurancePolicyExpiresAt: new Date("2027-01-14T22:59:59.999Z"),
+        insuranceProviderRef: "ins-ref",
+      };
+      databaseServiceMock.user.findUnique.mockResolvedValue({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValue(snapshot);
+      databaseServiceMock.car.create.mockResolvedValue({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValue({ count: 1 });
+      databaseServiceMock.insuranceVerification.create.mockResolvedValue({ id: "ins-1" });
+
+      await service.createDraftCarFromVerification("owner-1", "ver-1");
+      await service.createDraftCarFromVerification("owner-1", "ver-1");
+
+      const [first, second] = databaseServiceMock.insuranceVerification.create.mock.calls;
+      expect(first?.[0]).toEqual(second?.[0]);
+      expect(first?.[0]?.data.idempotencyKey).toBe("initial-insurance:ver-1");
+      expect(first?.[0]?.data.requestHash).toBe(
+        createHash("sha256")
+          .update(JSON.stringify({ carId: "car-1", policyNumber: "TEST/POLICY/123" }))
+          .digest("hex"),
+      );
+    });
+
+    it("still creates the draft and skips insurance when the snapshot is already expired", async () => {
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
+        ...verification,
+        insurancePolicyNumber: "TEST/POLICY/123",
+        insurancePolicyStatus: "Active",
+        insurancePolicyExpiresAt: new Date(Date.now() - 60_000),
+      });
+      databaseServiceMock.car.create.mockResolvedValueOnce({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      await expect(
+        service.createDraftCarFromVerification("owner-1", "ver-1"),
+      ).resolves.toMatchObject({ id: "car-1" });
+      expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
+    });
+
+    it("still creates the draft and skips insurance when the snapshot is missing", async () => {
+      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
+      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
+        ...verification,
+        color: null,
+        insurancePolicyNumber: null,
+        insurancePolicyStatus: null,
+        insurancePolicyExpiresAt: null,
+      });
+      databaseServiceMock.car.create.mockResolvedValueOnce({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      await expect(
+        service.createDraftCarFromVerification("owner-1", "ver-1"),
+      ).resolves.toMatchObject({ id: "car-1" });
+      expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ color: "" }),
+        }),
+      );
+      expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
     });
 
     it("fails when the verification is consumed concurrently", async () => {

@@ -73,19 +73,19 @@ export class ProviderVerificationException extends VerificationException {
     const definition = {
       REJECTED: {
         code: VerificationErrorCode.PROVIDER_REJECTED,
-        message: "Prembly could not verify the supplied information",
+        message: "The supplied information could not be verified",
         status: HttpStatus.UNPROCESSABLE_ENTITY,
         title: "Verification Rejected",
       },
       INVALID_RESPONSE: {
         code: VerificationErrorCode.PROVIDER_INVALID_RESPONSE,
-        message: "Prembly returned an invalid response",
+        message: "The verification provider returned an invalid response",
         status: HttpStatus.BAD_GATEWAY,
         title: "Invalid Provider Response",
       },
       UNAVAILABLE: {
         code: VerificationErrorCode.PROVIDER_UNAVAILABLE,
-        message: "Prembly is temporarily unavailable",
+        message: "Verification is temporarily unavailable",
         status: HttpStatus.BAD_GATEWAY,
         title: "Verification Provider Unavailable",
       },

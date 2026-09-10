@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { PremblyService } from "../src/modules/prembly/prembly.service";
+import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { VerificationErrorCode } from "../src/modules/verification/verification.error";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -15,6 +15,7 @@ import { TestDataFactory, uniqueEmail } from "./helpers";
 const PDF_BUFFER = Buffer.from("%PDF-1.4 test-certificate");
 const IMAGE_BUFFER = Buffer.from("fake-jpeg-bytes");
 const FUTURE_INSURANCE_EXPIRY = new Date("2099-12-31T00:00:00.000Z");
+const POLICY_NUMBER = "TEST/POLICY/123";
 
 describe("Vehicle verification E2E Tests", () => {
   let app: INestApplication;
@@ -46,19 +47,21 @@ describe("Vehicle verification E2E Tests", () => {
     return `1HGCM82633A${String(chassisSequence).padStart(6, "0")}`;
   };
 
-  const mockSuccessfulPrembly = (
+  const mockSuccessfulProviders = (
     plateNumber: string,
     year = 2020,
     chassisNumber = uniqueChassis(),
+    policyExpiresAt = FUTURE_INSURANCE_EXPIRY,
   ) => {
-    premblyService.verifyPlate.mockResolvedValue({
-      plateNumber,
+    const normalizedPlate = plateNumber.replace("-", "");
+    premblyService.verifyInsurance.mockResolvedValue({
+      policyNumber: POLICY_NUMBER,
+      policyStatus: "Active",
+      plateNumbers: [normalizedPlate],
       chassisNumber,
-      make: "Toyota",
-      model: "Camry",
       color: "Black",
-      passengerCapacity: 5,
-      reference: "plate-ref",
+      expiresAt: policyExpiresAt,
+      reference: "ins-ref",
     });
     premblyService.verifyVin.mockResolvedValue({
       year,
@@ -69,6 +72,11 @@ describe("Vehicle verification E2E Tests", () => {
     });
     return chassisNumber;
   };
+
+  const verificationBody = (plateNumber: string, policyNumber = POLICY_NUMBER) => ({
+    plateNumber,
+    policyNumber,
+  });
 
   const withOwner = (req: request.Test, cookie = ownerCookie) =>
     req.set("Cookie", cookie).set("X-Forwarded-For", clientIp);
@@ -116,9 +124,15 @@ describe("Vehicle verification E2E Tests", () => {
     const adminAuth = await factory.createAuthenticatedAdmin(uniqueEmail("verify-admin"));
     adminCookie = adminAuth.cookie;
 
-    await databaseService.user.update({
-      where: { id: ownerId },
-      data: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
+    await databaseService.user.updateMany({
+      where: { id: { in: [ownerId, secondOwnerAuth.user.id] } },
+      data: {
+        fleetOwnerStatus: "APPROVED",
+        hasOnboarded: true,
+        emailVerified: true,
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
     });
   });
 
@@ -135,9 +149,11 @@ describe("Vehicle verification E2E Tests", () => {
   it("POST /api/fleet-owner/vehicle-verifications returns 401 when unauthenticated", async () => {
     const response = await request(app.getHttpServer())
       .post("/api/fleet-owner/vehicle-verifications")
-      .send({ plateNumber: uniquePlate() });
+      .send(verificationBody(uniquePlate()));
 
     expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
   });
 
@@ -146,38 +162,47 @@ describe("Vehicle verification E2E Tests", () => {
       .post("/api/fleet-owner/vehicle-verifications")
       .set("Cookie", userCookie)
       .set("Idempotency-Key", randomUUID())
-      .send({ plateNumber: uniquePlate() });
+      .send(verificationBody(uniquePlate()));
 
     expect(response.status).toBe(HttpStatus.FORBIDDEN);
+    expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing Idempotency-Key and an invalid plate", async () => {
+  it("rejects a missing Idempotency-Key, invalid plate, and missing policy", async () => {
     const missingKey = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
-    ).send({ plateNumber: uniquePlate() });
+    ).send(verificationBody(uniquePlate()));
     const invalidPlate = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", randomUUID())
-      .send({ plateNumber: "not-a-plate" });
+      .send(verificationBody("not-a-plate"));
+    const missingPolicy = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send({ plateNumber: uniquePlate() });
 
     expect(missingKey.status).toBe(HttpStatus.BAD_REQUEST);
     expect(missingKey.body.errorCode).toBe("VALIDATION_ERROR");
     expect(invalidPlate.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(missingPolicy.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
   });
 
   it("creates a verification, replays the same key, then creates a draft car once", async () => {
     const plateNumber = uniquePlate();
-    const chassisNumber = mockSuccessfulPrembly(plateNumber);
+    const chassisNumber = mockSuccessfulProviders(plateNumber);
     const idempotencyKey = randomUUID();
 
     const created = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", idempotencyKey)
-      .send({ plateNumber });
+      .send(verificationBody(plateNumber));
 
     expect(created.status).toBe(HttpStatus.CREATED);
     expect(created.body).toMatchObject({
@@ -188,21 +213,41 @@ describe("Vehicle verification E2E Tests", () => {
         make: "Toyota",
         model: "Camry",
         year: 2020,
+        color: "Black",
       },
       eligibility: { isEligible: true, reasons: [] },
       carId: null,
     });
+    expect(created.body).not.toHaveProperty("insurance");
+    expect(created.body).not.toHaveProperty("policyNumber");
+
+    const stored = await databaseService.vehicleVerification.findUnique({
+      where: { id: created.body.id },
+    });
+    expect(stored).toMatchObject({
+      color: "Black",
+      insurancePolicyNumber: POLICY_NUMBER,
+      insurancePolicyStatus: "Active",
+      insuranceProviderRef: "ins-ref",
+    });
+    expect(stored?.insurancePolicyExpiresAt?.toISOString()).toBe(
+      FUTURE_INSURANCE_EXPIRY.toISOString(),
+    );
 
     const replay = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", idempotencyKey)
-      .send({ plateNumber });
+      .send(verificationBody(plateNumber));
 
     expect(replay.status).toBe(HttpStatus.CREATED);
     expect(replay.body.id).toBe(created.body.id);
-    expect(premblyService.verifyPlate).toHaveBeenCalledTimes(1);
+    expect(premblyService.verifyInsurance).toHaveBeenCalledTimes(1);
     expect(premblyService.verifyVin).toHaveBeenCalledTimes(1);
+    expect(premblyService.verifyVin.mock.invocationCallOrder[0]).toBeGreaterThan(
+      premblyService.verifyInsurance.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
 
     const otherOwner = await request(app.getHttpServer())
       .get(`/api/fleet-owner/vehicle-verifications/${created.body.id}`)
@@ -234,29 +279,128 @@ describe("Vehicle verification E2E Tests", () => {
 
     expect(reused.status).toBe(HttpStatus.CONFLICT);
     expect(reused.body.errorCode).toBe("VEHICLE_VERIFICATION_ALREADY_USED");
+
+    const initialInsurance = await databaseService.insuranceVerification.findFirst({
+      where: { carId: draft.body.id, status: ProviderVerificationStatus.SUCCEEDED },
+    });
+    expect(initialInsurance).toMatchObject({
+      idempotencyKey: `initial-insurance:${created.body.id}`,
+      policyNumber: POLICY_NUMBER,
+    });
+    expect(initialInsurance?.policyExpiresAt?.toISOString()).toBe(
+      FUTURE_INSURANCE_EXPIRY.toISOString(),
+    );
   });
 
-  it("conflicts when the same idempotency key is reused with a different plate", async () => {
+  it("returns INSURANCE_INACTIVE when Prembly reports an inactive or expired policy", async () => {
+    const plateNumber = uniquePlate();
+    premblyService.verifyInsurance.mockResolvedValueOnce({
+      policyNumber: POLICY_NUMBER,
+      policyStatus: "Active",
+      plateNumbers: [plateNumber.replace("-", "")],
+      chassisNumber: uniqueChassis(),
+      expiresAt: new Date(Date.now() - 60_000),
+      reference: "ins-expired",
+    });
+
+    const response = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send(verificationBody(plateNumber));
+
+    expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(response.body.errorCode).toBe("INSURANCE_INACTIVE");
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+  });
+
+  it("returns INSURANCE_VEHICLE_MISMATCH when the policy plates omit the requested plate", async () => {
+    premblyService.verifyInsurance.mockResolvedValueOnce({
+      policyNumber: POLICY_NUMBER,
+      policyStatus: "Active",
+      plateNumbers: ["ABC999ZZ"],
+      chassisNumber: uniqueChassis(),
+      expiresAt: FUTURE_INSURANCE_EXPIRY,
+      reference: "ins-mismatch",
+    });
+
+    const response = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send(verificationBody(uniquePlate()));
+
+    expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(response.body.errorCode).toBe("INSURANCE_VEHICLE_MISMATCH");
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
+  });
+
+  it("returns PROVIDER_INVALID_RESPONSE when insurance has no chassis", async () => {
+    const plateNumber = uniquePlate();
+    premblyService.verifyInsurance.mockResolvedValueOnce({
+      policyNumber: POLICY_NUMBER,
+      policyStatus: "Active",
+      plateNumbers: [plateNumber.replace("-", "")],
+      chassisNumber: null,
+      expiresAt: FUTURE_INSURANCE_EXPIRY,
+      reference: "ins-no-chassis",
+    });
+
+    const response = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send(verificationBody(plateNumber));
+
+    expect(response.status).toBe(HttpStatus.BAD_GATEWAY);
+    expect(response.body.errorCode).toBe("PROVIDER_INVALID_RESPONSE");
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
+  });
+
+  it("maps an invalid chassis Prembly response without calling VIN", async () => {
+    premblyService.verifyInsurance.mockRejectedValueOnce(new PremblyError("INVALID_RESPONSE"));
+
+    const response = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send(verificationBody(uniquePlate()));
+
+    expect(response.status).toBe(HttpStatus.BAD_GATEWAY);
+    expect(response.body.errorCode).toBe("PROVIDER_INVALID_RESPONSE");
+    expect(premblyService.verifyVin).not.toHaveBeenCalled();
+  });
+
+  it("conflicts when the same idempotency key is reused with a different plate or policy", async () => {
     const firstPlate = uniquePlate();
     const secondPlate = uniquePlate();
     const idempotencyKey = randomUUID();
-    mockSuccessfulPrembly(firstPlate);
+    mockSuccessfulProviders(firstPlate);
 
     const first = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", idempotencyKey)
-      .send({ plateNumber: firstPlate });
-    const conflict = await withOwner(
+      .send(verificationBody(firstPlate));
+    const plateConflict = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", idempotencyKey)
-      .send({ plateNumber: secondPlate });
+      .send(verificationBody(secondPlate));
+    const policyConflict = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", idempotencyKey)
+      .send(verificationBody(firstPlate, "OTHER/POLICY/999"));
 
     expect(first.status).toBe(HttpStatus.CREATED);
-    expect(conflict.status).toBe(HttpStatus.CONFLICT);
-    expect(conflict.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
-    expect(premblyService.verifyPlate).toHaveBeenCalledTimes(1);
+    expect(plateConflict.status).toBe(HttpStatus.CONFLICT);
+    expect(plateConflict.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
+    expect(policyConflict.status).toBe(HttpStatus.CONFLICT);
+    expect(policyConflict.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
+    expect(premblyService.verifyInsurance).toHaveBeenCalledTimes(1);
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
   });
 
   it("returns 410 for an expired verification and 422 for an under-2015 vehicle", async () => {
@@ -283,12 +427,12 @@ describe("Vehicle verification E2E Tests", () => {
     expect(expiredResponse.body.errorCode).toBe("VEHICLE_VERIFICATION_EXPIRED");
 
     const oldPlate = uniquePlate();
-    mockSuccessfulPrembly(oldPlate, 2014);
+    mockSuccessfulProviders(oldPlate, 2014);
     const ineligible = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", randomUUID())
-      .send({ plateNumber: oldPlate });
+      .send(verificationBody(oldPlate));
     const ineligibleCar = await request(app.getHttpServer())
       .post(`/api/fleet-owner/vehicle-verifications/${ineligible.body.id}/car`)
       .set("Cookie", ownerCookie);
@@ -313,12 +457,12 @@ describe("Vehicle verification E2E Tests", () => {
 
   async function createVerifiedDraftCar() {
     const plateNumber = uniquePlate();
-    const chassisNumber = mockSuccessfulPrembly(plateNumber);
+    const chassisNumber = mockSuccessfulProviders(plateNumber);
     const created = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", randomUUID())
-      .send({ plateNumber });
+      .send(verificationBody(plateNumber));
     const draft = await request(app.getHttpServer())
       .post(`/api/fleet-owner/vehicle-verifications/${created.body.id}/car`)
       .set("Cookie", ownerCookie);
@@ -331,6 +475,65 @@ describe("Vehicle verification E2E Tests", () => {
       carId: draft.body.id as string,
     };
   }
+
+  async function createLegacyDraftCarWithoutInsurance() {
+    const plateNumber = uniquePlate().replace("-", "");
+    const chassisNumber = uniqueChassis();
+    const verification = await databaseService.vehicleVerification.create({
+      data: {
+        ownerId,
+        idempotencyKey: `legacy-${randomUUID()}`,
+        requestHash: randomUUID(),
+        plateNumber,
+        chassisNumber,
+        make: "Toyota",
+        model: "Camry",
+        year: 2020,
+        color: "Black",
+        passengerCapacity: 5,
+        status: ProviderVerificationStatus.SUCCEEDED,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const draft = await request(app.getHttpServer())
+      .post(`/api/fleet-owner/vehicle-verifications/${verification.id}/car`)
+      .set("Cookie", ownerCookie);
+
+    expect(draft.status).toBe(HttpStatus.CREATED);
+    return { plateNumber, chassisNumber, carId: draft.body.id as string };
+  }
+
+  it("creates a draft without auto-insurance when the verification snapshot is expired", async () => {
+    const plateNumber = uniquePlate().replace("-", "");
+    const chassisNumber = uniqueChassis();
+    const verification = await databaseService.vehicleVerification.create({
+      data: {
+        ownerId,
+        idempotencyKey: `expired-snap-${randomUUID()}`,
+        requestHash: randomUUID(),
+        plateNumber,
+        chassisNumber,
+        make: "Toyota",
+        model: "Camry",
+        year: 2020,
+        passengerCapacity: 5,
+        status: ProviderVerificationStatus.SUCCEEDED,
+        insurancePolicyNumber: POLICY_NUMBER,
+        insurancePolicyStatus: "Active",
+        insurancePolicyExpiresAt: new Date(Date.now() - 60_000),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const draft = await request(app.getHttpServer())
+      .post(`/api/fleet-owner/vehicle-verifications/${verification.id}/car`)
+      .set("Cookie", ownerCookie);
+
+    expect(draft.status).toBe(HttpStatus.CREATED);
+    const insurance = await databaseService.insuranceVerification.findFirst({
+      where: { carId: draft.body.id },
+    });
+    expect(insurance).toBeNull();
+  });
 
   const pricingBody = {
     hourlyRate: 5000,
@@ -461,7 +664,7 @@ describe("Vehicle verification E2E Tests", () => {
   });
 
   it("requires unexpired insurance before a verified draft can be submitted", async () => {
-    const { plateNumber, chassisNumber, carId } = await createVerifiedDraftCar();
+    const { plateNumber, chassisNumber, carId } = await createLegacyDraftCarWithoutInsurance();
     await uploadDraftAssets(carId);
 
     const missingInsurance = await request(app.getHttpServer())
@@ -571,7 +774,7 @@ describe("Vehicle verification E2E Tests", () => {
   });
 
   it("blocks admin approval when a verified car's insurance has expired", async () => {
-    const { plateNumber, chassisNumber, carId } = await createVerifiedDraftCar();
+    const { plateNumber, chassisNumber, carId } = await createLegacyDraftCarWithoutInsurance();
     await uploadDraftAssets(carId);
     mockSuccessfulInsurance(plateNumber, chassisNumber);
 

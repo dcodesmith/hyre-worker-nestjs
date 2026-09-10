@@ -19,6 +19,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { BookingNotFoundException } from "../booking/booking.error";
 import { hashBookingCompletionToken } from "../booking/booking-completion-token.helper";
 import { bookingIdParamSchema } from "../booking/dto/create-extension.dto";
@@ -94,7 +95,7 @@ export class AirportTripCompletionPageController {
 }
 
 @Controller("api/fleet-owner/bookings")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, RoleGuard, VerifiedFleetOwnerGuard)
 export class FleetOwnerAirportTripCompletionController {
   constructor(private readonly statusChangeService: StatusChangeService) {}
 

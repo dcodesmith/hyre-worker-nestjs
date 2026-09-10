@@ -3,18 +3,26 @@ import {
   CarApprovalStatus,
   ChauffeurApprovalStatus,
   DocumentStatus,
+  DocumentType,
   type Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { REJECTION_ACTION_NOTE } from "../car/car.const";
 import { CarApprovalService } from "../car/car-approval.service";
-import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
+import {
+  DatabaseService,
+  isRecordNotFoundError,
+  lockCarRow,
+  lockUserRow,
+} from "../database/database.service";
 import {
   DocumentApprovalFailedException,
   DocumentNotFoundException,
   DocumentsException,
 } from "./documents.error";
+
+const REQUIRED_CHAUFFEUR_DOCUMENT_TYPES = [DocumentType.NIN, DocumentType.DRIVERS_LICENSE] as const;
 
 @Injectable()
 export class DocumentApprovalService {
@@ -84,10 +92,13 @@ export class DocumentApprovalService {
         }
 
         if (updated.userId) {
-          await tx.user.update({
-            where: { id: updated.userId },
-            data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
-          });
+          await lockUserRow(tx, updated.userId);
+          if (await this.isRequiredChauffeurDocument(updated.userId, updated.documentType, tx)) {
+            await tx.user.update({
+              where: { id: updated.userId },
+              data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.REJECTED },
+            });
+          }
         }
 
         return updated;
@@ -103,16 +114,44 @@ export class DocumentApprovalService {
     userId: string,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    const unresolvedDocuments = await tx.documentApproval.count({
-      where: { userId, status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] } },
+    await lockUserRow(tx, userId);
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { fleetOwnerId: true, isOwnerDriver: true },
+    });
+    if (!user || (!user.fleetOwnerId && !user.isOwnerDriver)) return;
+
+    const requiredTypes = user.isOwnerDriver
+      ? [DocumentType.DRIVERS_LICENSE]
+      : [...REQUIRED_CHAUFFEUR_DOCUMENT_TYPES];
+    const approvedDocuments = await tx.documentApproval.count({
+      where: {
+        userId,
+        documentType: { in: requiredTypes },
+        status: DocumentStatus.APPROVED,
+      },
     });
 
-    if (unresolvedDocuments === 0) {
+    if (approvedDocuments === requiredTypes.length) {
       await tx.user.update({
         where: { id: userId },
         data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
       });
     }
+  }
+
+  private async isRequiredChauffeurDocument(
+    userId: string,
+    documentType: DocumentType,
+    tx: Prisma.TransactionClient,
+  ): Promise<boolean> {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { fleetOwnerId: true, isOwnerDriver: true },
+    });
+    if (!user || (!user.fleetOwnerId && !user.isOwnerDriver)) return false;
+    if (documentType === DocumentType.DRIVERS_LICENSE) return true;
+    return !user.isOwnerDriver && documentType === DocumentType.NIN;
   }
 
   private toApprovalError(
