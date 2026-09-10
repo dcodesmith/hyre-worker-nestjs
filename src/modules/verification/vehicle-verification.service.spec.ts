@@ -661,8 +661,13 @@ describe("VehicleVerificationService", () => {
         insuranceRecord({ policyExpiresAt: expiresAt }),
       );
 
-      const result = await service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, {
-        policyNumber,
+      const result = await service.createInsuranceVerification({
+        ownerId: OWNER_ID,
+        carId: "car-1",
+        idempotencyKey: insuranceKey,
+        input: {
+          policyNumber,
+        },
       });
 
       expect(databaseService.insuranceVerification.update).toHaveBeenCalledWith({
@@ -702,7 +707,12 @@ describe("VehicleVerificationService", () => {
       databaseService.insuranceVerification.update.mockResolvedValueOnce(insuranceRecord());
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, { policyNumber }),
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: { policyNumber },
+        }),
       ).resolves.toMatchObject({ status: ProviderVerificationStatus.SUCCEEDED });
     });
 
@@ -721,7 +731,12 @@ describe("VehicleVerificationService", () => {
       });
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, { policyNumber }),
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: { policyNumber },
+        }),
       ).rejects.toBeInstanceOf(InsuranceInactiveException);
       expect(databaseService.insuranceVerification.updateMany).toHaveBeenCalledWith({
         where: { id: "ins-1", status: ProviderVerificationStatus.PROCESSING },
@@ -747,7 +762,12 @@ describe("VehicleVerificationService", () => {
       });
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, { policyNumber }),
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: { policyNumber },
+        }),
       ).rejects.toBeInstanceOf(InsuranceInactiveException);
       expect(databaseService.insuranceVerification.updateMany).toHaveBeenCalledWith({
         where: { id: "ins-1", status: ProviderVerificationStatus.PROCESSING },
@@ -763,8 +783,13 @@ describe("VehicleVerificationService", () => {
       databaseService.insuranceVerification.create.mockRejectedValueOnce(uniqueConstraintError());
       databaseService.insuranceVerification.findUnique.mockResolvedValueOnce(insuranceRecord());
 
-      const result = await service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, {
-        policyNumber,
+      const result = await service.createInsuranceVerification({
+        ownerId: OWNER_ID,
+        carId: "car-1",
+        idempotencyKey: insuranceKey,
+        input: {
+          policyNumber,
+        },
       });
 
       expect(result.id).toBe("ins-1");
@@ -777,8 +802,13 @@ describe("VehicleVerificationService", () => {
       databaseService.insuranceVerification.findUnique.mockResolvedValueOnce(insuranceRecord());
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, {
-          policyNumber: "OTHER-POL",
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: {
+            policyNumber: "OTHER-POL",
+          },
         }),
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
     });
@@ -798,7 +828,12 @@ describe("VehicleVerificationService", () => {
       });
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, { policyNumber }),
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: { policyNumber },
+        }),
       ).rejects.toBeInstanceOf(InsuranceVehicleMismatchException);
     });
 
@@ -806,7 +841,12 @@ describe("VehicleVerificationService", () => {
       databaseService.car.findFirst.mockResolvedValueOnce(null);
 
       await expect(
-        service.createInsuranceVerification(OWNER_ID, "car-1", insuranceKey, { policyNumber }),
+        service.createInsuranceVerification({
+          ownerId: OWNER_ID,
+          carId: "car-1",
+          idempotencyKey: insuranceKey,
+          input: { policyNumber },
+        }),
       ).rejects.toBeInstanceOf(CarNotFoundException);
       expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     });

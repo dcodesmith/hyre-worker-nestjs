@@ -437,7 +437,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountEmailNotVerifiedException);
       expect(premblyService.verifyNin).not.toHaveBeenCalled();
     });
@@ -449,12 +454,22 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountPhoneNotVerifiedException);
     });
 
     it("verifies an individual account and returns a masked bank number", async () => {
-      const result = await service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {});
+      const result = await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: individualInput(),
+        documents: {},
+      });
 
       expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
       expect(premblyService.verifyCac).not.toHaveBeenCalled();
@@ -490,7 +505,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
       expect(databaseService.bankDetails.upsert).not.toHaveBeenCalled();
       expect(databaseService.user.update).not.toHaveBeenCalled();
@@ -520,7 +540,12 @@ describe("AccountVerificationService", () => {
         }),
       );
 
-      const result = await service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {});
+      const result = await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: businessInput(),
+        documents: {},
+      });
 
       expect(premblyService.verifyCac).toHaveBeenCalledWith(
         "RC123456",
@@ -537,7 +562,12 @@ describe("AccountVerificationService", () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
       expect(premblyService.verifyNin).not.toHaveBeenCalled();
     });
@@ -548,7 +578,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
     });
 
@@ -558,7 +593,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
@@ -585,7 +625,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -601,8 +646,13 @@ describe("AccountVerificationService", () => {
 
     it("rejects driver documents uploaded for a non-owner-driver", async () => {
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {
-          driversLicense: licenseFile(),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {
+            driversLicense: licenseFile(),
+          },
         }),
       ).rejects.toBeInstanceOf(AccountDocumentInvalidException);
     });
@@ -616,12 +666,12 @@ describe("AccountVerificationService", () => {
         }),
       );
 
-      const result = await service.create(
-        USER_ID,
-        IDEMPOTENCY_KEY,
-        individualInput({ isOwnerDriver: true }),
-        { driversLicense: licence },
-      );
+      const result = await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: individualInput({ isOwnerDriver: true }),
+        documents: { driversLicense: licence },
+      });
 
       expect(result.status).toBe(AccountVerificationStatus.REVIEW_REQUIRED);
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
@@ -657,9 +707,14 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {
-          driversLicense: licence,
-          lasdri,
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {
+            driversLicense: licence,
+            lasdri,
+          },
         }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
@@ -678,7 +733,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
     });
 
@@ -689,7 +749,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
     });
 
@@ -716,7 +781,12 @@ describe("AccountVerificationService", () => {
         }),
       );
 
-      const result = await service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {});
+      const result = await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: individualInput(),
+        documents: {},
+      });
 
       expect(result.status).toBe(AccountVerificationStatus.REVIEW_REQUIRED);
       expect(databaseService.user.update).toHaveBeenCalledWith({
@@ -732,7 +802,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(BankAccountNameMismatchException);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
@@ -750,7 +825,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
     });
 
@@ -781,12 +861,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(
-          USER_ID,
-          IDEMPOTENCY_KEY,
-          businessInput({ businessName: "Hyre Mobility Limited" }),
-          {},
-        ),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput({ businessName: "Hyre Mobility Limited" }),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
     });
 
@@ -797,7 +877,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(BusinessNameMismatchException);
     });
 
@@ -805,7 +890,12 @@ describe("AccountVerificationService", () => {
       premblyService.verifyCac.mockResolvedValueOnce({ ...cac, status: "INACTIVE" });
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(BusinessInactiveException);
     });
 
@@ -832,7 +922,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
     });
 
@@ -863,7 +958,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
     });
 
@@ -875,7 +975,12 @@ describe("AccountVerificationService", () => {
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(replay);
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({
         id: VERIFICATION_ID,
         status: AccountVerificationStatus.REVIEW_REQUIRED,
@@ -891,7 +996,12 @@ describe("AccountVerificationService", () => {
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(replay);
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({
         id: VERIFICATION_ID,
         status: AccountVerificationStatus.SUCCEEDED,
@@ -909,7 +1019,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
     });
 
@@ -922,7 +1037,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
     });
 
@@ -938,7 +1058,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(BankAccountNameMismatchException);
     });
 
@@ -950,7 +1075,12 @@ describe("AccountVerificationService", () => {
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.create(USER_ID, "another-key-1", individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: "another-key-1",
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountAlreadyVerifiedException);
     });
 
@@ -964,7 +1094,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).resolves.toMatchObject({
         id: VERIFICATION_ID,
         status: AccountVerificationStatus.SUCCEEDED,
@@ -975,7 +1110,12 @@ describe("AccountVerificationService", () => {
       premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(NinNotVerifiedException);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
@@ -990,7 +1130,12 @@ describe("AccountVerificationService", () => {
       premblyService.verifyCac.mockRejectedValueOnce(new PremblyError("REJECTED"));
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, businessInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(CacNotVerifiedException);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
@@ -1009,7 +1154,12 @@ describe("AccountVerificationService", () => {
         );
 
         await expect(
-          service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+          service.create({
+            userId: USER_ID,
+            idempotencyKey: IDEMPOTENCY_KEY,
+            input: individualInput(),
+            documents: {},
+          }),
         ).rejects.toBeInstanceOf(BankAccountUnresolvedException);
       },
     );
@@ -1022,7 +1172,12 @@ describe("AccountVerificationService", () => {
         );
 
         await expect(
-          service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+          service.create({
+            userId: USER_ID,
+            idempotencyKey: IDEMPOTENCY_KEY,
+            input: individualInput(),
+            documents: {},
+          }),
         ).rejects.toBeInstanceOf(BankAccountProviderUnavailableException);
       },
     );
@@ -1032,8 +1187,13 @@ describe("AccountVerificationService", () => {
       databaseService.$transaction.mockRejectedValueOnce(new Error("db write failed"));
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {
-          driversLicense: licence,
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {
+            driversLicense: licence,
+          },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(
@@ -1047,19 +1207,29 @@ describe("AccountVerificationService", () => {
       storageService.deleteObjectByKey.mockRejectedValue(new Error("s3 down"));
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {
-          driversLicense: licence,
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: {
+            driversLicense: licence,
+          },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
       expect(storageService.deleteObjectByKey).toHaveBeenCalledTimes(3);
       expect(logger.warn).toHaveBeenCalledWith(
-        { error: "s3 down" },
+        { err: expect.objectContaining({ message: "s3 down" }) },
         "Failed to delete an unreferenced account document after retries",
       );
     });
 
     it("fails stale PROCESSING attempts before claiming a new request", async () => {
-      await service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {});
+      await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: individualInput(),
+        documents: {},
+      });
 
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: {
@@ -1091,7 +1261,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, "other-key-1", individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: "other-key-1",
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
       expect(premblyService.verifyNin).not.toHaveBeenCalled();
     });
@@ -1106,7 +1281,12 @@ describe("AccountVerificationService", () => {
       });
 
       await expect(
-        service.create(USER_ID, "other-key-1", individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: "other-key-1",
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountVerificationReviewPendingException);
     });
 
@@ -1116,8 +1296,13 @@ describe("AccountVerificationService", () => {
         { documentType: DocumentType.DRIVERS_LICENSE, documentUrl: "old-license-key" },
       ]);
 
-      await service.create(USER_ID, IDEMPOTENCY_KEY, individualInput({ isOwnerDriver: true }), {
-        driversLicense: licence,
+      await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: individualInput({ isOwnerDriver: true }),
+        documents: {
+          driversLicense: licence,
+        },
       });
 
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-license-key");
@@ -1161,7 +1346,12 @@ describe("AccountVerificationService", () => {
 
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(payoutReadyDraft());
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, "driving-key-1", { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: "driving-key-1",
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: false });
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
@@ -1775,7 +1965,12 @@ describe("AccountVerificationService", () => {
 
     it("completes driving for an individual non-driver without uploading documents", async () => {
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).resolves.toEqual({
         status: "COMPLETED",
         isOwnerDriver: false,
@@ -1804,12 +1999,12 @@ describe("AccountVerificationService", () => {
       ]);
 
       await expect(
-        service.saveDrivingCredentialsStage(
-          USER_ID,
-          IDEMPOTENCY_KEY,
-          { isOwnerDriver: true },
-          { driversLicense: licenseFile() },
-        ),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: true },
+          documents: { driversLicense: licenseFile() },
+        }),
       ).resolves.toMatchObject({
         status: "COMPLETED",
         isOwnerDriver: true,
@@ -1832,7 +2027,12 @@ describe("AccountVerificationService", () => {
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(draftRecord());
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountVerificationStepIncompleteException);
     });
 
@@ -1840,7 +2040,12 @@ describe("AccountVerificationService", () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: true }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: true },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.create,
@@ -1863,12 +2068,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.saveDrivingCredentialsStage(
-          USER_ID,
-          IDEMPOTENCY_KEY,
-          { isOwnerDriver: true },
-          { driversLicense: licenseFile() },
-        ),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: true },
+          documents: { driversLicense: licenseFile() },
+        }),
       ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
     });
@@ -1888,7 +2093,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).resolves.toEqual(replay.response);
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.create,
@@ -1904,7 +2114,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
     });
 
@@ -1919,7 +2134,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
     });
 
@@ -1936,7 +2156,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountEmailNotVerifiedException);
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
@@ -1947,7 +2172,12 @@ describe("AccountVerificationService", () => {
       databaseService.fleetOwnerAccountVerification.updateMany.mockResolvedValueOnce({ count: 0 });
 
       await expect(
-        service.saveDrivingCredentialsStage(USER_ID, IDEMPOTENCY_KEY, { isOwnerDriver: false }, {}),
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: false },
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
     });
   });
@@ -2734,7 +2964,12 @@ describe("AccountVerificationService", () => {
       );
 
       await expect(
-        service.create(USER_ID, IDEMPOTENCY_KEY, individualInput(), {}),
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
       ).rejects.toBeInstanceOf(AccountManualReviewRejectedException);
     });
   });

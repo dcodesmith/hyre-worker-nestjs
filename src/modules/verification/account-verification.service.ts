@@ -14,6 +14,7 @@ import {
   ProviderVerificationStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
@@ -89,6 +90,15 @@ type IdentityStageClaim =
   | { kind: "CLAIMED"; verification: FleetOwnerAccountVerification }
   | { kind: "REPLAYED"; response: StageResponse };
 
+type IdentityStageClaimArgs = {
+  userId: string;
+  idempotencyKey: string;
+  requestHash: string;
+  input: AccountIdentityVerificationDto;
+  accountIsApproved: boolean;
+  attempt?: number;
+};
+
 type OnboardingProgress = {
   identityComplete: boolean;
   payoutComplete: boolean;
@@ -111,12 +121,17 @@ function onboardingProgress(
   };
 }
 
-function nextOnboardingAction(
-  emailVerified: boolean,
-  phoneVerified: boolean,
-  progress: OnboardingProgress,
-  verificationStatus?: AccountVerificationStatus,
-) {
+function nextOnboardingAction({
+  emailVerified,
+  phoneVerified,
+  progress,
+  verificationStatus,
+}: {
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  progress: OnboardingProgress;
+  verificationStatus?: AccountVerificationStatus;
+}) {
   if (!emailVerified) return "VERIFY_EMAIL";
   if (!phoneVerified) return "VERIFY_PHONE";
   if (!progress.identityComplete) return "VERIFY_IDENTITY";
@@ -155,14 +170,21 @@ function drivingDocumentStatus(
   return isOwnerDriver && existingDocumentApproved ? "APPROVED" : null;
 }
 
-function accountRequiredActions(
-  emailVerified: boolean,
-  phoneVerified: boolean,
-  fleetOwnerStatus: FleetOwnerStatus,
-  verificationStatus: AccountVerificationStatus | undefined,
-  isOwnerDriver: boolean,
-  driverLicenseStatus: DocumentStatus | undefined,
-): string[] {
+function accountRequiredActions({
+  emailVerified,
+  phoneVerified,
+  fleetOwnerStatus,
+  verificationStatus,
+  isOwnerDriver,
+  driverLicenseStatus,
+}: {
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  fleetOwnerStatus: FleetOwnerStatus;
+  verificationStatus: AccountVerificationStatus | undefined;
+  isOwnerDriver: boolean;
+  driverLicenseStatus: DocumentStatus | undefined;
+}): string[] {
   const requiredActions: string[] = [];
   if (!emailVerified) requiredActions.push("VERIFY_EMAIL");
   if (!phoneVerified) requiredActions.push("VERIFY_PHONE");
@@ -179,27 +201,22 @@ function accountRequiredActions(
   return requiredActions;
 }
 
-function accountOnboardingStatus(
-  requiredActions: string[],
-  verificationStatus: AccountVerificationStatus | undefined,
-  hasOnboarded: boolean,
-  fleetOwnerStatus: FleetOwnerStatus,
-) {
+function accountOnboardingStatus({
+  requiredActions,
+  verificationStatus,
+  hasOnboarded,
+  fleetOwnerStatus,
+}: {
+  requiredActions: string[];
+  verificationStatus: AccountVerificationStatus | undefined;
+  hasOnboarded: boolean;
+  fleetOwnerStatus: FleetOwnerStatus;
+}) {
   if (requiredActions.length > 0) return "ACTION_REQUIRED";
   if (verificationStatus === AccountVerificationStatus.REVIEW_REQUIRED) return "UNDER_REVIEW";
   return hasOnboarded && fleetOwnerStatus === FleetOwnerStatus.APPROVED
     ? "VERIFIED"
     : "ACTION_REQUIRED";
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  try {
-    return JSON.stringify(error) ?? "Unknown error";
-  } catch {
-    return "Unserializable error";
-  }
 }
 
 @Injectable()
@@ -218,12 +235,17 @@ export class AccountVerificationService {
     this.logger.setContext(AccountVerificationService.name);
   }
 
-  async create(
-    userId: string,
-    idempotencyKey: string,
-    input: CreateAccountVerificationDto,
-    documents: AccountDocuments,
-  ) {
+  async create({
+    userId,
+    idempotencyKey,
+    input,
+    documents,
+  }: {
+    userId: string;
+    idempotencyKey: string;
+    input: CreateAccountVerificationDto;
+    documents: AccountDocuments;
+  }) {
     const user = await this.assertUserCanVerify(userId);
     const driverLicenseApproved = await this.assertDocumentsValid(
       userId,
@@ -232,13 +254,13 @@ export class AccountVerificationService {
     );
 
     const requestHash = this.hashRequest(input, documents);
-    const claim = await this.claimVerification(
+    const claim = await this.claimVerification({
       userId,
       idempotencyKey,
       requestHash,
       input,
-      user.fleetOwnerStatus === FleetOwnerStatus.APPROVED,
-    );
+      accountIsApproved: user.fleetOwnerStatus === FleetOwnerStatus.APPROVED,
+    });
     if (claim.kind === "REPLAYED") return claim.response;
     const verification = claim.verification;
 
@@ -251,12 +273,12 @@ export class AccountVerificationService {
         input.bankCode,
         input.accountNumber,
       );
-      const bankNameMatch = this.matchBankAccountName(
-        input.accountType,
+      const bankNameMatch = this.matchBankAccountName({
+        accountType: input.accountType,
         identity,
         business,
-        resolvedAccount.accountName,
-      );
+        accountName: resolvedAccount.accountName,
+      });
       if (bankNameMatch === NameMatchStatus.MISMATCHED) {
         throw new BankAccountNameMismatchException();
       }
@@ -265,7 +287,16 @@ export class AccountVerificationService {
         [DocumentType.DRIVERS_LICENSE, documents.driversLicense],
         [DocumentType.LASDRI, documents.lasdri],
       ] as const) {
-        if (file) uploaded.push(await this.uploadDocument(userId, verification.id, type, file));
+        if (file) {
+          uploaded.push(
+            await this.uploadDocument({
+              userId,
+              verificationId: verification.id,
+              type,
+              file,
+            }),
+          );
+        }
       }
 
       const verifiedAt = new Date();
@@ -398,13 +429,13 @@ export class AccountVerificationService {
   ) {
     const user = await this.assertUserCanVerify(userId);
     const requestHash = this.hashValue({ stage: "IDENTITY", input });
-    const claim = await this.claimIdentityStage(
+    const claim = await this.claimIdentityStage({
       userId,
       idempotencyKey,
       requestHash,
       input,
-      user.fleetOwnerStatus === FleetOwnerStatus.APPROVED,
-    );
+      accountIsApproved: user.fleetOwnerStatus === FleetOwnerStatus.APPROVED,
+    });
     if (claim.kind === "REPLAYED") return claim.response;
 
     try {
@@ -461,24 +492,24 @@ export class AccountVerificationService {
   async verifyPayoutStage(userId: string, idempotencyKey: string, input: PayoutVerificationDto) {
     await this.assertUserCanVerify(userId);
     const requestHash = this.hashValue({ stage: AccountVerificationStage.PAYOUT, input });
-    const replay = await this.findStageReplay(
+    const replay = await this.findStageReplay({
       userId,
       idempotencyKey,
-      AccountVerificationStage.PAYOUT,
+      stage: AccountVerificationStage.PAYOUT,
       requestHash,
-    );
+    });
     if (replay) return replay;
 
     const verification = await this.findDraft(userId);
     if (!verification.identityVerifiedAt) {
       throw new AccountVerificationStepIncompleteException("IDENTITY");
     }
-    const claim = await this.claimStageRequest(
-      verification.id,
-      AccountVerificationStage.PAYOUT,
+    const claim = await this.claimStageRequest({
+      verificationId: verification.id,
+      stage: AccountVerificationStage.PAYOUT,
       idempotencyKey,
       requestHash,
-    );
+    });
     if (claim.kind === "REPLAYED") return claim.response;
 
     try {
@@ -560,12 +591,17 @@ export class AccountVerificationService {
     }
   }
 
-  async saveDrivingCredentialsStage(
-    userId: string,
-    idempotencyKey: string,
-    input: DrivingCredentialsDto,
-    documents: AccountDocuments,
-  ) {
+  async saveDrivingCredentialsStage({
+    userId,
+    idempotencyKey,
+    input,
+    documents,
+  }: {
+    userId: string;
+    idempotencyKey: string;
+    input: DrivingCredentialsDto;
+    documents: AccountDocuments;
+  }) {
     await this.assertUserCanVerify(userId);
     const requestHash = this.hashValue({
       stage: AccountVerificationStage.DRIVING,
@@ -573,12 +609,12 @@ export class AccountVerificationService {
       driversLicense: this.fileHash(documents.driversLicense),
       lasdri: this.fileHash(documents.lasdri),
     });
-    const replay = await this.findStageReplay(
+    const replay = await this.findStageReplay({
       userId,
       idempotencyKey,
-      AccountVerificationStage.DRIVING,
+      stage: AccountVerificationStage.DRIVING,
       requestHash,
-    );
+    });
     if (replay) return replay;
 
     const verification = await this.findDraft(userId);
@@ -596,12 +632,12 @@ export class AccountVerificationService {
       input.isOwnerDriver,
       documents,
     );
-    const claim = await this.claimStageRequest(
-      verification.id,
-      AccountVerificationStage.DRIVING,
+    const claim = await this.claimStageRequest({
+      verificationId: verification.id,
+      stage: AccountVerificationStage.DRIVING,
       idempotencyKey,
       requestHash,
-    );
+    });
     if (claim.kind === "REPLAYED") return claim.response;
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
@@ -610,7 +646,16 @@ export class AccountVerificationService {
         [DocumentType.DRIVERS_LICENSE, documents.driversLicense],
         [DocumentType.LASDRI, documents.lasdri],
       ] as const) {
-        if (file) uploaded.push(await this.uploadDocument(userId, verification.id, type, file));
+        if (file) {
+          uploaded.push(
+            await this.uploadDocument({
+              userId,
+              verificationId: verification.id,
+              type,
+              file,
+            }),
+          );
+        }
       }
       const previousDocuments = await this.databaseService.documentApproval.findMany({
         where: {
@@ -684,12 +729,12 @@ export class AccountVerificationService {
   async submitStage(userId: string, idempotencyKey: string) {
     await this.assertUserCanVerify(userId);
     const requestHash = this.hashValue({ stage: AccountVerificationStage.SUBMISSION });
-    const replay = await this.findStageReplay(
+    const replay = await this.findStageReplay({
       userId,
       idempotencyKey,
-      AccountVerificationStage.SUBMISSION,
+      stage: AccountVerificationStage.SUBMISSION,
       requestHash,
-    );
+    });
     if (replay) return replay;
 
     const verification = await this.findDraft(userId);
@@ -702,12 +747,12 @@ export class AccountVerificationService {
     if (!verification.drivingCompletedAt || verification.isOwnerDriver === null) {
       throw new AccountVerificationStepIncompleteException("DRIVING");
     }
-    const claim = await this.claimStageRequest(
-      verification.id,
-      AccountVerificationStage.SUBMISSION,
+    const claim = await this.claimStageRequest({
+      verificationId: verification.id,
+      stage: AccountVerificationStage.SUBMISSION,
       idempotencyKey,
       requestHash,
-    );
+    });
     if (claim.kind === "REPLAYED") return claim.response;
 
     try {
@@ -826,12 +871,12 @@ export class AccountVerificationService {
       throw new AccountVerificationReviewNotPendingException();
     }
 
-    const uploaded = await this.uploadDocument(
+    const uploaded = await this.uploadDocument({
       userId,
-      verification.id,
-      DocumentType.DRIVERS_LICENSE,
+      verificationId: verification.id,
+      type: DocumentType.DRIVERS_LICENSE,
       file,
-    );
+    });
     let updated: Awaited<ReturnType<typeof this.databaseService.documentApproval.update>>;
     try {
       updated = await this.databaseService.$transaction((tx) =>
@@ -891,13 +936,19 @@ export class AccountVerificationService {
     });
   }
 
-  private async claimVerification(
-    userId: string,
-    idempotencyKey: string,
-    requestHash: string,
-    input: CreateAccountVerificationDto,
-    accountIsApproved: boolean,
-  ) {
+  private async claimVerification({
+    userId,
+    idempotencyKey,
+    requestHash,
+    input,
+    accountIsApproved,
+  }: {
+    userId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    input: CreateAccountVerificationDto;
+    accountIsApproved: boolean;
+  }) {
     await this.expireStaleVerification(userId);
 
     if (accountIsApproved) {
@@ -933,14 +984,14 @@ export class AccountVerificationService {
     }
   }
 
-  private async claimIdentityStage(
-    userId: string,
-    idempotencyKey: string,
-    requestHash: string,
-    input: AccountIdentityVerificationDto,
-    accountIsApproved: boolean,
+  private async claimIdentityStage({
+    userId,
+    idempotencyKey,
+    requestHash,
+    input,
+    accountIsApproved,
     attempt = 1,
-  ): Promise<IdentityStageClaim> {
+  }: IdentityStageClaimArgs): Promise<IdentityStageClaim> {
     await this.expireStaleVerification(userId);
 
     if (accountIsApproved) {
@@ -966,27 +1017,30 @@ export class AccountVerificationService {
       return { kind: "CLAIMED" as const, verification };
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error;
-      return this.resolveIdentityStageConflict(
+      return this.resolveIdentityStageConflict({
         userId,
         idempotencyKey,
         requestHash,
         input,
         accountIsApproved,
         attempt,
-        error,
-      );
+        originalError: error,
+      });
     }
   }
 
-  private async resolveIdentityStageConflict(
-    userId: string,
-    idempotencyKey: string,
-    requestHash: string,
-    input: AccountIdentityVerificationDto,
-    accountIsApproved: boolean,
-    attempt: number,
-    originalError: unknown,
-  ): Promise<IdentityStageClaim> {
+  private async resolveIdentityStageConflict({
+    userId,
+    idempotencyKey,
+    requestHash,
+    input,
+    accountIsApproved,
+    attempt,
+    originalError,
+  }: IdentityStageClaimArgs & {
+    attempt: number;
+    originalError: unknown;
+  }): Promise<IdentityStageClaim> {
     const existing = await this.findVerificationByKey(userId, idempotencyKey);
     if (existing) {
       return {
@@ -1005,14 +1059,14 @@ export class AccountVerificationService {
         },
       });
       if (superseded.count === 1) {
-        return this.claimIdentityStage(
+        return this.claimIdentityStage({
           userId,
           idempotencyKey,
           requestHash,
           input,
           accountIsApproved,
-          attempt + 1,
-        );
+          attempt: attempt + 1,
+        });
       }
     }
     if (active?.status === AccountVerificationStatus.REVIEW_REQUIRED) {
@@ -1031,12 +1085,17 @@ export class AccountVerificationService {
     return verification;
   }
 
-  private async findStageReplay(
-    userId: string,
-    idempotencyKey: string,
-    stage: AccountVerificationStage,
-    requestHash: string,
-  ): Promise<StageResponse | undefined> {
+  private async findStageReplay({
+    userId,
+    idempotencyKey,
+    stage,
+    requestHash,
+  }: {
+    userId: string;
+    idempotencyKey: string;
+    stage: AccountVerificationStage;
+    requestHash: string;
+  }): Promise<StageResponse | undefined> {
     const verification = await this.databaseService.fleetOwnerAccountVerification.findFirst({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -1088,13 +1147,19 @@ export class AccountVerificationService {
     return this.replayStageRequest(existing, requestHash);
   }
 
-  private async claimStageRequest(
-    verificationId: string,
-    stage: AccountVerificationStage,
-    idempotencyKey: string,
-    requestHash: string,
+  private async claimStageRequest({
+    verificationId,
+    stage,
+    idempotencyKey,
+    requestHash,
     attempt = 1,
-  ) {
+  }: {
+    verificationId: string;
+    stage: AccountVerificationStage;
+    idempotencyKey: string;
+    requestHash: string;
+    attempt?: number;
+  }) {
     await this.databaseService.fleetOwnerAccountVerificationStageRequest.updateMany({
       where: {
         verificationId,
@@ -1138,13 +1203,13 @@ export class AccountVerificationService {
           });
         if (active) throw new VerificationRequestInProgressException();
         if (attempt === 1) {
-          return this.claimStageRequest(
+          return this.claimStageRequest({
             verificationId,
             stage,
             idempotencyKey,
             requestHash,
-            attempt + 1,
-          );
+            attempt: attempt + 1,
+          });
         }
         throw error;
       }
@@ -1268,12 +1333,17 @@ export class AccountVerificationService {
     };
   }
 
-  private matchBankAccountName(
-    accountType: FleetOwnerAccountType,
-    identity: PremblyNinResult,
-    business: PremblyCacResult | undefined,
-    accountName: string,
-  ): NameMatchStatus {
+  private matchBankAccountName({
+    accountType,
+    identity,
+    business,
+    accountName,
+  }: {
+    accountType: FleetOwnerAccountType;
+    identity: PremblyNinResult;
+    business: PremblyCacResult | undefined;
+    accountName: string;
+  }): NameMatchStatus {
     return accountType === FleetOwnerAccountType.BUSINESS && business
       ? this.compareBusinessNames(business.businessName, accountName)
       : this.comparePersonName(identity, accountName);
@@ -1334,20 +1404,20 @@ export class AccountVerificationService {
     );
     const lasdri = user.documents.find(({ documentType }) => documentType === DocumentType.LASDRI);
     const progress = onboardingProgress(verification);
-    const requiredActions = accountRequiredActions(
-      user.emailVerified,
-      user.phoneVerifiedAt !== null,
-      user.fleetOwnerStatus,
-      verification?.status,
-      user.isOwnerDriver,
-      driversLicense?.status,
-    );
-    const status = accountOnboardingStatus(
+    const requiredActions = accountRequiredActions({
+      emailVerified: user.emailVerified,
+      phoneVerified: user.phoneVerifiedAt !== null,
+      fleetOwnerStatus: user.fleetOwnerStatus,
+      verificationStatus: verification?.status,
+      isOwnerDriver: user.isOwnerDriver,
+      driverLicenseStatus: driversLicense?.status,
+    });
+    const status = accountOnboardingStatus({
       requiredActions,
-      verification?.status,
-      user.hasOnboarded,
-      user.fleetOwnerStatus,
-    );
+      verificationStatus: verification?.status,
+      hasOnboarded: user.hasOnboarded,
+      fleetOwnerStatus: user.fleetOwnerStatus,
+    });
 
     const identity =
       verification && progress.identityComplete
@@ -1397,12 +1467,12 @@ export class AccountVerificationService {
         driving: drivingStepStatus(verification, progress.drivingComplete),
         submission: submissionStepStatus(verification),
       },
-      nextAction: nextOnboardingAction(
-        user.emailVerified,
-        user.phoneVerifiedAt !== null,
+      nextAction: nextOnboardingAction({
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerifiedAt !== null,
         progress,
-        verification?.status,
-      ),
+        verificationStatus: verification?.status,
+      }),
       requiredActions,
     };
   }
@@ -1604,12 +1674,17 @@ export class AccountVerificationService {
     return file ? createHash("sha256").update(file.buffer).digest("hex") : null;
   }
 
-  private async uploadDocument(
-    userId: string,
-    verificationId: string,
-    type: DocumentType,
-    file: UploadedAccountDocument,
-  ) {
+  private async uploadDocument({
+    userId,
+    verificationId,
+    type,
+    file,
+  }: {
+    userId: string;
+    verificationId: string;
+    type: DocumentType;
+    file: UploadedAccountDocument;
+  }) {
     const safeName = file.originalname.replaceAll(/[^a-zA-Z0-9.-]/g, "_");
     const key = `${userId}/${verificationId}/documents/${type.toLowerCase()}-${randomUUID()}-${safeName}`;
     const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
@@ -1643,7 +1718,7 @@ export class AccountVerificationService {
       }
     }
     this.logger.warn(
-      { error: errorMessage(lastError) },
+      { err: toLogError(lastError) },
       "Failed to delete an unreferenced account document after retries",
     );
   }
@@ -1706,7 +1781,7 @@ export class AccountVerificationService {
         : new BankAccountProviderUnavailableException();
     }
     this.logger.error(
-      { error: errorMessage(error) },
+      { err: toLogError(error) },
       "Unexpected fleet-owner account verification failure",
     );
     return new AccountVerificationOperationFailedException();

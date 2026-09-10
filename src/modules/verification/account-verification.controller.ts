@@ -152,12 +152,12 @@ export class AccountVerificationController {
   ) {
     const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
     return this.withRetryAfter(response, () =>
-      this.accountVerificationService.saveDrivingCredentialsStage(
-        user.id,
+      this.accountVerificationService.saveDrivingCredentialsStage({
+        userId: user.id,
         idempotencyKey,
-        body,
+        input: body,
         documents,
-      ),
+      }),
     );
   }
 
@@ -190,7 +190,12 @@ export class AccountVerificationController {
   ) {
     const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
     return this.withRetryAfter(response, () =>
-      this.accountVerificationService.create(user.id, idempotencyKey, body, documents),
+      this.accountVerificationService.create({
+        userId: user.id,
+        idempotencyKey,
+        input: body,
+        documents,
+      }),
     );
   }
 

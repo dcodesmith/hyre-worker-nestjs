@@ -243,12 +243,12 @@ describe("AccountVerificationController", () => {
         response,
       ),
     ).resolves.toEqual(result);
-    expect(accountVerificationService.saveDrivingCredentialsStage).toHaveBeenCalledWith(
-      "owner-1",
-      idempotencyKey,
-      { isOwnerDriver: true },
-      documents,
-    );
+    expect(accountVerificationService.saveDrivingCredentialsStage).toHaveBeenCalledWith({
+      userId: "owner-1",
+      idempotencyKey: idempotencyKey,
+      input: { isOwnerDriver: true },
+      documents: documents,
+    });
   });
 
   it("delegates staged submission with the session user and idempotency key", async () => {

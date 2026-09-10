@@ -159,12 +159,17 @@ export class VehicleVerificationService {
     return this.carService.createDraftCarFromVerification(ownerId, verificationId);
   }
 
-  async createInsuranceVerification(
-    ownerId: string,
-    carId: string,
-    idempotencyKey: string,
-    input: CreateInsuranceVerificationDto,
-  ) {
+  async createInsuranceVerification({
+    ownerId,
+    carId,
+    idempotencyKey,
+    input,
+  }: {
+    ownerId: string;
+    carId: string;
+    idempotencyKey: string;
+    input: CreateInsuranceVerificationDto;
+  }) {
     const car = await this.databaseService.car.findFirst({
       where: { id: carId, ownerId },
       select: { id: true, registrationNumber: true, chassisNumber: true },

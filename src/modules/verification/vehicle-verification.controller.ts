@@ -95,12 +95,12 @@ export class InsuranceVerificationController {
   ) {
     const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
     try {
-      return await this.verificationService.createInsuranceVerification(
-        sessionUser.id,
+      return await this.verificationService.createInsuranceVerification({
+        ownerId: sessionUser.id,
         carId,
         idempotencyKey,
-        body,
-      );
+        input: body,
+      });
     } catch (error) {
       if (error instanceof VerificationRequestInProgressException) {
         response.setHeader("Retry-After", String(error.retryAfterSeconds));
