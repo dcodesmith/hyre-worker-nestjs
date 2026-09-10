@@ -105,6 +105,7 @@ describe("Booking Agent", () => {
       where: { id: ownerId },
       data: {
         fleetOwnerStatus: "APPROVED",
+        chauffeurApprovalStatus: "APPROVED",
         hasOnboarded: true,
         isOwnerDriver: true,
         emailVerified: true,

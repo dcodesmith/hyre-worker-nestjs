@@ -103,6 +103,67 @@ model InsuranceVerification {
   @@index([carId, status, createdAt])
 }
 
+model ChauffeurVerification {
+  id                        String                              @id @default(cuid())
+  fleetOwnerId              String
+  chauffeurId               String?                             @unique
+  name                      String
+  email                     String
+  phoneNumber               String
+  invitationIdempotencyKey  String
+  invitationRequestHash     String
+  inviteTokenHash           String                              @unique
+  inviteExpiresAt           DateTime
+  inviteAcceptedAt          DateTime?
+  sessionTokenHash          String?                             @unique
+  sessionExpiresAt          DateTime?
+  termsAcceptedAt           DateTime?
+  privacyAcceptedAt         DateTime?
+  phoneVerifiedAt           DateTime?
+  ninHash                   String?
+  ninLast4                  String?
+  identityFirstName         String?
+  identityMiddleName        String?
+  identityLastName          String?
+  identityProviderRef       String?
+  driversLicenseHash        String?
+  driversLicenseLast4       String?
+  driversLicenseExpiresAt   DateTime?
+  driversLicenseProviderRef String?
+  dateOfBirth               DateTime?
+  livenessProviderRef       String?
+  livenessConfidence        Float?
+  faceMatchConfidence       Float?
+  selfieObjectKey           String?
+  status                    ChauffeurVerificationStatus         @default(INVITED)
+  createdAt                 DateTime                            @default(now())
+  updatedAt                 DateTime                            @updatedAt
+  fleetOwner                User                                @relation("FleetOwnerChauffeurVerifications", fields: [fleetOwnerId], references: [id], onDelete: Cascade)
+  chauffeur                 User?                               @relation("ChauffeurVerificationUser", fields: [chauffeurId], references: [id], onDelete: SetNull)
+  stageRequests             ChauffeurVerificationStageRequest[]
+
+  @@unique([fleetOwnerId, invitationIdempotencyKey], map: "ChauffeurVerification_owner_invitation_idempotency_key")
+  @@unique([fleetOwnerId, email])
+  @@index([fleetOwnerId, status, createdAt])
+}
+
+model ChauffeurVerificationStageRequest {
+  id                  String                     @id @default(cuid())
+  verificationId      String
+  stage               ChauffeurVerificationStage
+  idempotencyKey      String
+  requestHash         String
+  status              ProviderVerificationStatus @default(PROCESSING)
+  failureReason       String?
+  processingExpiresAt DateTime
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  verification        ChauffeurVerification      @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@unique([verificationId, idempotencyKey], map: "ChauffeurStageRequest_verification_idempotency_key")
+  @@index([verificationId, stage, createdAt])
+}
+
 model User {
   id                           String                          @id @default(cuid())
   email                        String                          @unique
@@ -130,6 +191,7 @@ model User {
   privacyAcceptedAt            DateTime?
   marketingConsent             Boolean                         @default(false)
   staffRevokedAt               DateTime?
+  chauffeurDisabledAt          DateTime?
   bankDetails                  BankDetails?                    @relation("UserBankDetails")
   attributedBookings           Booking[]                       @relation("BookingAcquisitionPartner")
   bookingsAsChauffeur          Booking[]                       @relation("BookingChauffeur")
@@ -141,6 +203,8 @@ model User {
   insuranceVerifications       InsuranceVerification[]
   accountVerifications         FleetOwnerAccountVerification[] @relation("FleetOwnerAccountVerifications")
   reviewedAccountVerifications FleetOwnerAccountVerification[] @relation("ReviewedFleetOwnerAccountVerifications")
+  chauffeurVerifications       ChauffeurVerification[]         @relation("FleetOwnerChauffeurVerifications")
+  chauffeurVerification        ChauffeurVerification?          @relation("ChauffeurVerificationUser")
   approvedDocuments            DocumentApproval[]              @relation("ApprovedBy")
   documents                    DocumentApproval[]              @relation("UserDocuments")
   payoutsReceived              PayoutTransaction[]             @relation("FleetOwnerPayouts")
@@ -172,6 +236,7 @@ model User {
   @@index([referralCode])
   @@index([referredByUserId])
   @@index([staffRevokedAt])
+  @@index([chauffeurDisabledAt])
 }
 
 model UserPushToken {
@@ -1224,6 +1289,19 @@ enum ChauffeurApprovalStatus {
   REJECTED
 }
 
+enum ChauffeurVerificationStatus {
+  INVITED
+  CONSENTED
+  PHONE_VERIFIED
+  IDENTITY_VERIFIED
+  APPROVED
+}
+
+enum ChauffeurVerificationStage {
+  IDENTITY
+  DRIVING
+}
+
 enum DocumentStatus {
   PENDING
   APPROVED
@@ -1238,6 +1316,8 @@ enum DocumentType {
   VEHICLE_IMAGES
   CERTIFICATE_OF_INCORPORATION
   LASDRI
+  LASRRA
+  DRIVER_BADGE
 }
 
 enum PlatformFeeType {

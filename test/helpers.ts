@@ -261,14 +261,15 @@ export class TestDataFactory {
   async createUser(
     options: CreateUserOptions = {},
   ): Promise<{ id: string; email: string; name: string | null }> {
-    const email = options.email ?? uniqueEmail("test-user");
+    const { roles, email, name, emailVerified, ...rest } = options;
     const user = await this.prisma.user.create({
       data: {
-        email,
-        name: options.name ?? "Test User",
-        emailVerified: options.emailVerified ?? true,
-        roles: options.roles?.length
-          ? { connect: options.roles.map((name) => ({ name })) }
+        email: email ?? uniqueEmail("test-user"),
+        name: name ?? "Test User",
+        emailVerified: emailVerified ?? true,
+        ...rest,
+        roles: roles?.length
+          ? { connect: roles.map((roleName) => ({ name: roleName })) }
           : undefined,
       },
       select: { id: true, email: true, name: true },

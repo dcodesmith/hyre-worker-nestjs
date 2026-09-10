@@ -37,6 +37,7 @@ describe("Car Search Availability E2E Flow", () => {
       where: { id: ownerId },
       data: {
         fleetOwnerStatus: "APPROVED",
+        chauffeurApprovalStatus: "APPROVED",
         hasOnboarded: true,
         isOwnerDriver: true,
         emailVerified: true,

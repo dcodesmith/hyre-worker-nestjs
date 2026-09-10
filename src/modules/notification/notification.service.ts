@@ -251,6 +251,54 @@ export class NotificationService {
     };
   }
 
+  buildChauffeurAssignmentRecipientJobData(
+    booking: BookingWithRelations,
+    recipient: {
+      id: string;
+      name: string | null;
+      email: string;
+      phoneNumber: string | null;
+    },
+    assigned: boolean,
+  ): NotificationJobData | null {
+    const bookingDetails = normaliseBookingDetails(booking);
+    const channels = this.recipientChannelResolver.resolve({
+      audience: NotificationAudience.CHAUFFEUR,
+      email: recipient.email,
+      phoneNumber: recipient.phoneNumber ?? undefined,
+      userId: recipient.id,
+    });
+    if (channels.length === 0) {
+      return null;
+    }
+    const subject = assigned ? "You have been assigned a booking" : "Booking reassigned";
+    return {
+      id: `chauffeur-booking-${assigned ? "assigned" : "removed"}-${booking.id}-${recipient.id}-${Date.now()}`,
+      type: NotificationType.CHAUFFEUR_ASSIGNED,
+      audience: NotificationAudience.CHAUFFEUR,
+      channels,
+      bookingId: booking.id,
+      recipients: {
+        [CHAUFFEUR_RECIPIENT_TYPE]: {
+          userId: recipient.id,
+          email: recipient.email,
+          phoneNumber: recipient.phoneNumber ?? undefined,
+        },
+      },
+      templateData: {
+        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
+        ...bookingDetails,
+        recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+        recipientName: recipient.name ?? "chauffeur",
+        title: assigned ? "been assigned to you" : "been reassigned",
+        status: assigned ? "assigned" : "reassigned",
+        oldStatus: booking.status.toLowerCase(),
+        newStatus: assigned ? "chauffeur_assigned" : "chauffeur_reassigned",
+        subject,
+      },
+    };
+  }
+
   async buildBookingConfirmedJobData(booking: BookingWithRelations): Promise<{
     customer: NotificationJobData | null;
     owner: NotificationJobData | null;

@@ -32,6 +32,26 @@ export type PremblyNinResult = {
   reference: string;
 };
 
+export type PremblyDriversLicenseResult = {
+  licenseNumber: string;
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+  dateOfBirth: Date;
+  expiresAt: Date;
+  officialPhoto: string;
+  reference: string;
+};
+
+export type PremblyLivenessResult = {
+  confidence: number;
+  reference: string;
+};
+
+export type PremblyFaceComparisonResult = {
+  confidence: number;
+};
+
 export type PremblyCacDirector = {
   firstName: string;
   middleName: string | null;

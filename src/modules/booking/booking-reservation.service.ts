@@ -6,7 +6,8 @@ import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "./booking.const";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 
 const EXPIRED_RESERVATION_REASON = "Payment session expired";
-const BOOKING_OVERLAP_CONSTRAINT = "Booking_car_active_window_excl";
+const BOOKING_CAR_OVERLAP_CONSTRAINT = "Booking_car_active_window_excl";
+const BOOKING_CHAUFFEUR_OVERLAP_CONSTRAINT = "Booking_chauffeur_active_window_excl";
 
 @Injectable()
 export class BookingReservationService {
@@ -108,20 +109,24 @@ export class BookingReservationService {
   }
 
   isOverlapConstraintViolation(error: unknown): boolean {
+    return (
+      this.hasOverlapConstraint(error, BOOKING_CAR_OVERLAP_CONSTRAINT) ||
+      this.hasOverlapConstraint(error, BOOKING_CHAUFFEUR_OVERLAP_CONSTRAINT)
+    );
+  }
+
+  isChauffeurOverlapConstraintViolation(error: unknown): boolean {
+    return this.hasOverlapConstraint(error, BOOKING_CHAUFFEUR_OVERLAP_CONSTRAINT);
+  }
+
+  private hasOverlapConstraint(error: unknown, constraint: string): boolean {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       const metadata = JSON.stringify(error.meta ?? {});
-      return (
-        (error.code === "P2002" || error.code === "P2004") &&
-        metadata.includes(BOOKING_OVERLAP_CONSTRAINT)
-      );
+      return (error.code === "P2002" || error.code === "P2004") && metadata.includes(constraint);
     }
 
     if (error instanceof Prisma.PrismaClientUnknownRequestError) {
-      return (
-        error.message.includes(BOOKING_OVERLAP_CONSTRAINT) ||
-        error.message.includes("23P01") ||
-        error.message.includes("exclusion_violation")
-      );
+      return error.message.includes(constraint);
     }
 
     return false;

@@ -17,15 +17,16 @@ export class BookingStatusMapper extends BaseTemplateMapper {
     return Template.BookingStatusUpdate;
   }
 
-  mapVariables(
-    templateData: TemplateData,
-    _recipientType: string,
-  ): Record<string, string | number> {
+  mapVariables(templateData: TemplateData, recipientType: string): Record<string, string | number> {
     if (templateData.templateKind !== BOOKING_STATUS_TEMPLATE_KIND) {
       return {};
     }
     return {
-      "1": this.text(templateData.customerName),
+      "1": this.text(
+        recipientType === "chauffeur"
+          ? (templateData.recipientName ?? "chauffeur")
+          : templateData.customerName,
+      ),
       "2": this.text(templateData.carName),
       "3": this.text(templateData.title),
       "4": this.text(templateData.status),

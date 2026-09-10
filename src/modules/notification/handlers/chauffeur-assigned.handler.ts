@@ -21,6 +21,12 @@ const SUBTYPE = "CHAUFFEUR_ASSIGNED";
 export type ChauffeurAssignedInput = {
   booking: BookingWithRelations & { flight?: Flight | null };
   chauffeurId: string;
+  previousChauffeur?: {
+    id: string;
+    name: string | null;
+    email: string;
+    phoneNumber: string | null;
+  } | null;
 };
 
 @Injectable()
@@ -29,7 +35,11 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
 
   constructor(private readonly notificationService: NotificationService) {}
 
-  async buildEvents({ booking, chauffeurId }: ChauffeurAssignedInput): Promise<HandlerEvent[]> {
+  async buildEvents({
+    booking,
+    chauffeurId,
+    previousChauffeur,
+  }: ChauffeurAssignedInput): Promise<HandlerEvent[]> {
     const jobData = await this.notificationService.buildChauffeurAssignedJobData(booking);
     const dedupeKey = `chauffeur-assigned:${booking.id}:${chauffeurId}:${booking.updatedAt.toISOString()}`;
 
@@ -53,6 +63,48 @@ export class ChauffeurAssignedHandler implements OutboxEventHandler<ChauffeurAss
     const events: HandlerEvent[] = [];
     if (event.inbox || event.jobData) {
       events.push(event);
+    }
+
+    if (booking.chauffeur) {
+      const assignedJobData = this.notificationService.buildChauffeurAssignmentRecipientJobData(
+        booking,
+        booking.chauffeur,
+        true,
+      );
+      events.push({
+        jobData: assignedJobData ?? undefined,
+        dedupeKey: `chauffeur-booking-assigned:${booking.id}:${chauffeurId}:${booking.updatedAt.toISOString()}`,
+        userId: chauffeurId,
+        subtype: "CHAUFFEUR_BOOKING_ASSIGNED",
+        inbox: {
+          userId: chauffeurId,
+          type: NotificationInboxType.CHAUFFEUR_ASSIGNED,
+          title: "New booking assigned",
+          body: `You have been assigned booking ${booking.bookingReference}.`,
+          payload: { bookingId: booking.id },
+        },
+      });
+    }
+
+    if (previousChauffeur && previousChauffeur.id !== chauffeurId) {
+      const removedJobData = this.notificationService.buildChauffeurAssignmentRecipientJobData(
+        booking,
+        previousChauffeur,
+        false,
+      );
+      events.push({
+        jobData: removedJobData ?? undefined,
+        dedupeKey: `chauffeur-booking-removed:${booking.id}:${previousChauffeur.id}:${booking.updatedAt.toISOString()}`,
+        userId: previousChauffeur.id,
+        subtype: "CHAUFFEUR_BOOKING_REMOVED",
+        inbox: {
+          userId: previousChauffeur.id,
+          type: NotificationInboxType.CHAUFFEUR_ASSIGNED,
+          title: "Booking reassigned",
+          body: `Booking ${booking.bookingReference} has been reassigned.`,
+          payload: { bookingId: booking.id },
+        },
+      });
     }
 
     const flightBriefingEvent = this.buildFlightBriefingEvent(booking, chauffeurId);

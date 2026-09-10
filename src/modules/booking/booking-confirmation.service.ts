@@ -4,6 +4,7 @@ import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitt
 import {
   BookingReferralStatus,
   BookingStatus,
+  ChauffeurApprovalStatus,
   type Payment,
   PaymentStatus,
   Prisma,
@@ -17,6 +18,7 @@ import type { BookingWithRelations } from "../../types";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interface";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
+import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 
 /**
@@ -36,6 +38,7 @@ export class BookingConfirmationService {
     private readonly logger: PinoLogger,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly bookingConfirmedHandler: BookingConfirmedHandler,
+    private readonly chauffeurAssignedHandler: ChauffeurAssignedHandler,
     @InjectQueue(FLIGHT_ALERTS_QUEUE)
     private readonly flightAlertQueue: Queue<FlightAlertJobData>,
   ) {
@@ -97,6 +100,26 @@ export class BookingConfirmationService {
         return null;
       }
 
+      const car = await tx.car.findUnique({
+        where: { id: pendingBooking.carId },
+        select: {
+          owner: {
+            select: {
+              id: true,
+              isOwnerDriver: true,
+              chauffeurApprovalStatus: true,
+              chauffeurDisabledAt: true,
+            },
+          },
+        },
+      });
+      const ownerDriverId =
+        car?.owner.isOwnerDriver &&
+        car.owner.chauffeurApprovalStatus === ChauffeurApprovalStatus.APPROVED &&
+        !car.owner.chauffeurDisabledAt
+          ? car.owner.id
+          : undefined;
+
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.
       const updateResult = await tx.booking.updateMany({
@@ -105,6 +128,7 @@ export class BookingConfirmationService {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           paymentId: payment.id,
+          chauffeurId: ownerDriverId ?? null,
         },
       });
 
@@ -149,6 +173,17 @@ export class BookingConfirmationService {
           { booking: confirmedBooking },
           tx,
         );
+        if (ownerDriverId) {
+          await this.notificationOutboxService.create(
+            this.chauffeurAssignedHandler,
+            {
+              booking: confirmedBooking,
+              chauffeurId: ownerDriverId,
+              previousChauffeur: null,
+            },
+            tx,
+          );
+        }
       }
 
       return confirmedBooking;

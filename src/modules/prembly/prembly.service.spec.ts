@@ -632,4 +632,107 @@ describe("PremblyService", () => {
       );
     });
   });
+
+  describe("verifyDriversLicense", () => {
+    const licenseSuccess = (overrides: Record<string, unknown> = {}) => ({
+      status: true,
+      response_code: "00",
+      frsc_data: {
+        driversLicense: "ABC12345",
+        firstname: "Ada",
+        middlename: "King",
+        lastname: "Lovelace",
+        birthdate: "15-12-1990",
+        photo: "official-photo",
+        expiry_date: "31-12-2099",
+        ...overrides,
+      },
+      verification,
+    });
+
+    it("normalizes FRSC licence details and parses DD-MM-YYYY dates as UTC", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: licenseSuccess() });
+
+      await expect(service.verifyDriversLicense("abc-12345", "Ada", "Lovelace")).resolves.toEqual({
+        licenseNumber: "ABC12345",
+        firstName: "Ada",
+        middleName: "King",
+        lastName: "Lovelace",
+        dateOfBirth: new Date(Date.UTC(1990, 11, 15)),
+        expiresAt: new Date(Date.UTC(2099, 11, 31)),
+        officialPhoto: "official-photo",
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/verification/drivers_license/advance/v2",
+        {
+          number: "abc-12345",
+          first_name: "Ada",
+          last_name: "Lovelace",
+        },
+      );
+    });
+
+    it("rejects a licence number that does not match the submitted identifier", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: licenseSuccess({ driversLicense: "OTHER999" }),
+      });
+
+      await expect(service.verifyDriversLicense("ABC12345", "Ada", "Lovelace")).rejects.toEqual(
+        new PremblyError("REJECTED"),
+      );
+    });
+
+    it("rejects an impossible FRSC date as an invalid response", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: licenseSuccess({ birthdate: "31-02-1990" }),
+      });
+
+      await expect(service.verifyDriversLicense("ABC12345", "Ada", "Lovelace")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
+    });
+  });
+
+  describe("verifyFaceLiveness", () => {
+    it("returns the liveness confidence and reference", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: true,
+          response_code: "00",
+          confidence: 0.92,
+          verification,
+        },
+      });
+
+      await expect(service.verifyFaceLiveness("selfie-b64")).resolves.toEqual({
+        confidence: 0.92,
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/verification/biometrics/face/liveliness_check",
+        { image: "selfie-b64" },
+      );
+    });
+  });
+
+  describe("compareFaces", () => {
+    it("returns the face-match confidence", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: true,
+          response_code: "00",
+          confidence: 87.5,
+        },
+      });
+
+      await expect(service.compareFaces("official-photo", "selfie-b64")).resolves.toEqual({
+        confidence: 87.5,
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/verification/biometrics/face/comparison",
+        { image_one: "official-photo", image_two: "selfie-b64" },
+      );
+    });
+  });
 });

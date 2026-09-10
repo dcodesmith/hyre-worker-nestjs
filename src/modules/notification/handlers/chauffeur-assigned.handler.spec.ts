@@ -33,12 +33,14 @@ describe("ChauffeurAssignedHandler", () => {
   let notificationService: {
     buildChauffeurAssignedJobData: ReturnType<typeof vi.fn>;
     buildFlightUpdateJobData: ReturnType<typeof vi.fn>;
+    buildChauffeurAssignmentRecipientJobData: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     notificationService = {
       buildChauffeurAssignedJobData: vi.fn(),
       buildFlightUpdateJobData: vi.fn(),
+      buildChauffeurAssignmentRecipientJobData: vi.fn().mockReturnValue(null),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -200,9 +202,74 @@ describe("ChauffeurAssignedHandler", () => {
     );
     expect(events).toEqual([
       expect.objectContaining({
+        userId: "chauffeur-9",
+        subtype: "CHAUFFEUR_BOOKING_ASSIGNED",
+        inbox: expect.objectContaining({
+          title: "New booking assigned",
+          payload: { bookingId: "booking-airport" },
+        }),
+      }),
+      expect.objectContaining({
         jobData: expect.objectContaining({ id: "flight-briefing" }),
         userId: "chauffeur-9",
         subtype: NotificationType.FLIGHT_ASSIGNMENT_SNAPSHOT,
+      }),
+    ]);
+  });
+
+  it("notifies the newly assigned chauffeur and the previous chauffeur on reassignment", async () => {
+    notificationService.buildChauffeurAssignedJobData.mockResolvedValueOnce(null);
+    notificationService.buildChauffeurAssignmentRecipientJobData
+      .mockReturnValueOnce({ ...sampleJobData, id: "assigned-job" })
+      .mockReturnValueOnce({ ...sampleJobData, id: "removed-job" });
+    const booking = createBooking({
+      id: "booking-1",
+      userId: "user-1",
+      user: createUser({ id: "user-1" }),
+      chauffeur: createChauffeur({ id: "chauffeur-new", email: "new@example.com" }),
+      car: createCar({ make: "Toyota", model: "Camry", year: 2024, owner: createOwner() }),
+      updatedAt: new Date("2026-05-09T10:00:00Z"),
+    });
+
+    const events = await handler.buildEvents({
+      booking,
+      chauffeurId: "chauffeur-new",
+      previousChauffeur: {
+        id: "chauffeur-old",
+        name: "Old Driver",
+        email: "old@example.com",
+        phoneNumber: "+2348011111111",
+      },
+    });
+
+    expect(notificationService.buildChauffeurAssignmentRecipientJobData).toHaveBeenNthCalledWith(
+      1,
+      booking,
+      booking.chauffeur,
+      true,
+    );
+    expect(notificationService.buildChauffeurAssignmentRecipientJobData).toHaveBeenNthCalledWith(
+      2,
+      booking,
+      {
+        id: "chauffeur-old",
+        name: "Old Driver",
+        email: "old@example.com",
+        phoneNumber: "+2348011111111",
+      },
+      false,
+    );
+    expect(events).toEqual([
+      expect.objectContaining({ subtype: "CHAUFFEUR_ASSIGNED", userId: "user-1" }),
+      expect.objectContaining({
+        subtype: "CHAUFFEUR_BOOKING_ASSIGNED",
+        userId: "chauffeur-new",
+        jobData: expect.objectContaining({ id: "assigned-job" }),
+      }),
+      expect.objectContaining({
+        subtype: "CHAUFFEUR_BOOKING_REMOVED",
+        userId: "chauffeur-old",
+        inbox: expect.objectContaining({ title: "Booking reassigned" }),
       }),
     ]);
   });

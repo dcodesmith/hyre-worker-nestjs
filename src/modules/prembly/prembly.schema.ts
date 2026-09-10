@@ -92,6 +92,36 @@ export const premblyNinResponseSchema = z
     };
   });
 
+const frscDateSchema = z.string().regex(/^\d{2}-\d{2}-\d{4}$/);
+
+export const premblyDriversLicenseResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  frsc_data: z.looseObject({
+    driversLicense: z.string().min(1),
+    firstname: z.string().min(1),
+    middlename: z.string().nullish(),
+    lastname: z.string().min(1),
+    birthdate: frscDateSchema,
+    photo: z.string().min(1),
+    expiry_date: frscDateSchema,
+  }),
+  verification: verificationSchema,
+});
+
+export const premblyLivenessResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  confidence: z.number().min(0).max(1),
+  verification: verificationSchema,
+});
+
+export const premblyFaceComparisonResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  confidence: z.number().min(0).max(100),
+});
+
 const cacDirectorSchema = z.looseObject({
   firstname: z.string().default(""),
   surname: z.string().default(""),

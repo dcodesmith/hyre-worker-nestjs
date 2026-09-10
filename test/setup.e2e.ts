@@ -134,6 +134,22 @@ async function initializeWorkerIsolation(): Promise<void> {
         WHERE "status" = 'PROCESSING'
       `);
       await tx.$executeRawUnsafe(`
+        DROP INDEX IF EXISTS "ChauffeurVerification_approved_ninHash_key"
+      `);
+      await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX "ChauffeurVerification_approved_ninHash_key"
+        ON "ChauffeurVerification"("ninHash")
+        WHERE "ninHash" IS NOT NULL AND "status" = 'APPROVED'::"ChauffeurVerificationStatus"
+      `);
+      await tx.$executeRawUnsafe(`
+        DROP INDEX IF EXISTS "ChauffeurVerification_approved_driversLicenseHash_key"
+      `);
+      await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX "ChauffeurVerification_approved_driversLicenseHash_key"
+        ON "ChauffeurVerification"("driversLicenseHash")
+        WHERE "driversLicenseHash" IS NOT NULL AND "status" = 'APPROVED'::"ChauffeurVerificationStatus"
+      `);
+      await tx.$executeRawUnsafe(`
         DO $constraint$
         BEGIN
           IF NOT EXISTS (
@@ -154,6 +170,38 @@ async function initializeWorkerIsolation(): Promise<void> {
             )
             WHERE (
               "deletedAt" IS NULL
+              AND "status" IN (
+                'PENDING'::"BookingStatus",
+                'CONFIRMED'::"BookingStatus",
+                'ACTIVE'::"BookingStatus"
+              )
+            );
+          END IF;
+        END
+        $constraint$
+      `);
+      await tx.$executeRawUnsafe(`
+        DO $constraint$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'Booking_chauffeur_active_window_excl'
+              AND connamespace = current_schema()::regnamespace
+          ) THEN
+            ALTER TABLE "Booking"
+            ADD CONSTRAINT "Booking_chauffeur_active_window_excl"
+            EXCLUDE USING gist (
+              "chauffeurId" WITH =,
+              tsrange(
+                "startDate",
+                "endDate" + INTERVAL '2 hours',
+                '[)'
+              ) WITH &&
+            )
+            WHERE (
+              "chauffeurId" IS NOT NULL
+              AND "deletedAt" IS NULL
               AND "status" IN (
                 'PENDING'::"BookingStatus",
                 'CONFIRMED'::"BookingStatus",
@@ -217,6 +265,11 @@ vi.mock("../src/templates/emails", () => ({
     .fn()
     .mockImplementation(({ accessUrl }) =>
       Promise.resolve(`<a href="${accessUrl}">View booking</a>`),
+    ),
+  renderChauffeurInvitationEmail: vi
+    .fn()
+    .mockImplementation(({ inviteUrl }) =>
+      Promise.resolve(`<a href="${inviteUrl}">Start chauffeur verification</a>`),
     ),
   renderFleetOwnerNewBookingEmail: vi
     .fn()

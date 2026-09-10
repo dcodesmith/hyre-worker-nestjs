@@ -7,15 +7,21 @@ import { HttpClientService } from "../http-client/http-client.service";
 import { VIN_PATTERN } from "./prembly.const";
 import {
   PremblyCacResult,
+  PremblyDriversLicenseResult,
+  PremblyFaceComparisonResult,
   PremblyInsuranceResult,
+  PremblyLivenessResult,
   PremblyNinResult,
   PremblyPlateResult,
   PremblyVinResult,
 } from "./prembly.interface";
 import {
   premblyCacResponseSchema,
+  premblyDriversLicenseResponseSchema,
   premblyEnvelopeSchema,
+  premblyFaceComparisonResponseSchema,
   premblyInsuranceResponseSchema,
+  premblyLivenessResponseSchema,
   premblyNinResponseSchema,
   premblyPlateResponseSchema,
   premblyVinResponseSchema,
@@ -152,6 +158,58 @@ export class PremblyService {
     };
   }
 
+  async verifyDriversLicense(
+    licenseNumber: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<PremblyDriversLicenseResult> {
+    const response = await this.post(
+      "/verification/drivers_license/advance/v2",
+      {
+        number: licenseNumber,
+        first_name: firstName,
+        last_name: lastName,
+      },
+      premblyDriversLicenseResponseSchema,
+    );
+    const license = response.frsc_data;
+    if (this.normalizeName(license.driversLicense) !== this.normalizeName(licenseNumber)) {
+      throw new PremblyError("REJECTED");
+    }
+
+    return {
+      licenseNumber: license.driversLicense.trim().toUpperCase(),
+      firstName: license.firstname.trim(),
+      middleName: license.middlename?.trim() || null,
+      lastName: license.lastname.trim(),
+      dateOfBirth: this.parseFrscDate(license.birthdate),
+      expiresAt: this.parseFrscDate(license.expiry_date),
+      officialPhoto: license.photo,
+      reference: response.verification.reference,
+    };
+  }
+
+  async verifyFaceLiveness(image: string): Promise<PremblyLivenessResult> {
+    const response = await this.post(
+      "/verification/biometrics/face/liveliness_check",
+      { image },
+      premblyLivenessResponseSchema,
+    );
+    return {
+      confidence: response.confidence,
+      reference: response.verification.reference,
+    };
+  }
+
+  async compareFaces(officialPhoto: string, selfie: string): Promise<PremblyFaceComparisonResult> {
+    const response = await this.post(
+      "/verification/biometrics/face/comparison",
+      { image_one: officialPhoto, image_two: selfie },
+      premblyFaceComparisonResponseSchema,
+    );
+    return { confidence: response.confidence };
+  }
+
   async verifyCac(
     registrationNumber: string,
     registrationType: string,
@@ -205,6 +263,19 @@ export class PremblyService {
 
   private normalizeName(value: string): string {
     return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
+  }
+
+  private parseFrscDate(value: string): Date {
+    const [day, month, year] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
+    return date;
   }
 
   private async post<T>(

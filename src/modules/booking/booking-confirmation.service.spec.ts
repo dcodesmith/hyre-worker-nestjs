@@ -5,6 +5,7 @@ import type { Payment } from "@prisma/client";
 import {
   BookingReferralStatus,
   BookingStatus,
+  ChauffeurApprovalStatus,
   PaymentAttemptStatus,
   PaymentStatus,
   Status,
@@ -18,6 +19,7 @@ import { createBooking, createCar, createUser } from "../../shared/helper.fixtur
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService } from "../database/database.service";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
+import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 
@@ -84,6 +86,7 @@ describe("BookingConfirmationService", () => {
   let databaseService: DatabaseService;
   let notificationOutboxService: NotificationOutboxService;
   let bookingConfirmedHandler: BookingConfirmedHandler;
+  let chauffeurAssignedHandler: ChauffeurAssignedHandler;
   let eventEmitter: EventEmitter2;
   let eventEmitterReadinessWatcher: EventEmitterReadinessWatcher;
   let flightAlertQueue: { add: ReturnType<typeof vi.fn> };
@@ -119,6 +122,14 @@ describe("BookingConfirmationService", () => {
             },
             car: {
               update: vi.fn(),
+              findUnique: vi.fn().mockResolvedValue({
+                owner: {
+                  id: "owner-123",
+                  isOwnerDriver: false,
+                  chauffeurApprovalStatus: null,
+                  chauffeurDisabledAt: null,
+                },
+              }),
             },
             flight: {
               findUnique: findFlightForAlert,
@@ -132,6 +143,7 @@ describe("BookingConfirmationService", () => {
           },
         },
         { provide: BookingConfirmedHandler, useValue: {} },
+        { provide: ChauffeurAssignedHandler, useValue: {} },
         {
           provide: getQueueToken(FLIGHT_ALERTS_QUEUE),
           useValue: { add: vi.fn() },
@@ -157,6 +169,7 @@ describe("BookingConfirmationService", () => {
     databaseService = module.get<DatabaseService>(DatabaseService);
     notificationOutboxService = module.get(NotificationOutboxService);
     bookingConfirmedHandler = module.get(BookingConfirmedHandler);
+    chauffeurAssignedHandler = module.get(ChauffeurAssignedHandler);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
     eventEmitterReadinessWatcher = module.get<EventEmitterReadinessWatcher>(
       EventEmitterReadinessWatcher,
@@ -191,6 +204,7 @@ describe("BookingConfirmationService", () => {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           paymentId: "payment-123",
+          chauffeurId: null,
         },
       });
       expect(databaseService.booking.findUnique).toHaveBeenCalledWith({
@@ -203,6 +217,85 @@ describe("BookingConfirmationService", () => {
         },
       });
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it("auto-assigns an approved active owner-driver and notifies the assignment", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        chauffeurId: "owner-123",
+      });
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+        owner: {
+          id: "owner-123",
+          isOwnerDriver: true,
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          chauffeurDisabledAt: null,
+        },
+      } as never);
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+
+      await expect(service.confirmFromPayment(mockPayment)).resolves.toBe(true);
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "booking-123", status: BookingStatus.PENDING },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          paymentId: "payment-123",
+          chauffeurId: "owner-123",
+        },
+      });
+      expect(notificationOutboxService.create).toHaveBeenCalledWith(
+        chauffeurAssignedHandler,
+        {
+          booking: mockBooking,
+          chauffeurId: "owner-123",
+          previousChauffeur: null,
+        },
+        databaseService,
+      );
+    });
+
+    it("clears a pending owner-driver assignment when the owner is no longer eligible", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        chauffeurId: null,
+      });
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+        owner: {
+          id: "owner-123",
+          isOwnerDriver: true,
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          chauffeurDisabledAt: new Date(),
+        },
+      } as never);
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+
+      await expect(service.confirmFromPayment(mockPayment)).resolves.toBe(true);
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "booking-123", status: BookingStatus.PENDING },
+        data: expect.objectContaining({ chauffeurId: null }),
+      });
+      expect(
+        vi
+          .mocked(notificationOutboxService.create)
+          .mock.calls.some(([handler]) => handler === chauffeurAssignedHandler),
+      ).toBe(false);
     });
 
     it("skips confirmation when the booking moved to a different car before locking", async () => {

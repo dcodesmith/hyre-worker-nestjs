@@ -1058,17 +1058,14 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(verification?.reviewedById).toBeTruthy();
   });
 
-  it("POST /api/admin/documents/:id/approve ignores optional LASDRI when approving a chauffeur", async () => {
-    const fleetOwner = await factory.createFleetOwner({
-      email: uniqueEmail("acct-lasdri-owner"),
-    });
+  it("POST /api/admin/documents/:id/approve ignores optional LASDRI when approving an owner-driver", async () => {
     const chauffeur = await factory.createUser({
       email: uniqueEmail("acct-lasdri"),
       name: "Owner Driver",
     });
     await databaseService.user.update({
       where: { id: chauffeur.id },
-      data: { chauffeurApprovalStatus: "PENDING", fleetOwnerId: fleetOwner.id },
+      data: { chauffeurApprovalStatus: "PENDING", isOwnerDriver: true },
     });
     const [nin, license, lasdri] = await Promise.all([
       databaseService.documentApproval.create({
