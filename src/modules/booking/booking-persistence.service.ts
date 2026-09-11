@@ -265,7 +265,11 @@ export class BookingPersistenceService {
     const numberOfLegs = financials.numberOfLegs;
     const commissionPerLeg = financials.platformFleetOwnerCommissionAmount.div(numberOfLegs);
     const netPerLeg = financials.netTotal.div(numberOfLegs);
-    const earningsPerLeg = netPerLeg.sub(commissionPerLeg);
+    const fleetOwnerAddonPerLeg = financials.addons
+      .filter((addon) => addon.financialTreatment === "FLEET_OWNER")
+      .reduce((sum, addon) => sum.add(addon.totalPrice), new Decimal(0))
+      .div(numberOfLegs);
+    const earningsPerLeg = netPerLeg.sub(commissionPerLeg).add(fleetOwnerAddonPerLeg);
 
     return {
       create: legs.map((leg, index) => ({

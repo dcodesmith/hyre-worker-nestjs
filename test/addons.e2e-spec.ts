@@ -358,9 +358,17 @@ describe("Add-ons E2E", () => {
 
       const stored = await databaseService.booking.findUnique({
         where: { id: created.body.bookingId },
-        select: { fleetOwnerPayoutAmountNet: true },
+        select: {
+          fleetOwnerPayoutAmountNet: true,
+          legs: { select: { fleetOwnerEarningForLeg: true } },
+        },
       });
       expect(stored?.fleetOwnerPayoutAmountNet.toNumber()).toBe(47500);
+      const legEarnings = stored?.legs.reduce(
+        (sum, leg) => sum + leg.fleetOwnerEarningForLeg.toNumber(),
+        0,
+      );
+      expect(legEarnings).toBe(47500);
     });
 
     it("rejects stale, deactivated, and inapplicable add-ons", async () => {
