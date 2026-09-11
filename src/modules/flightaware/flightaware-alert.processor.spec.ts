@@ -2,7 +2,23 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { CREATE_FLIGHT_ALERT_JOB } from "../../config/constants";
+import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { captureException } from "../../sentry";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
+
+const { captureExceptionMock, captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../../sentry", () => ({
+  captureException: captureExceptionMock,
+}));
+
+vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
 import { FlightAwareAlertService } from "./flightaware-alert.service";
@@ -21,6 +37,7 @@ describe("FlightAlertProcessor", () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FlightAlertProcessor,
@@ -112,6 +129,41 @@ describe("FlightAlertProcessor", () => {
       );
 
       await expect(processor.process(job)).rejects.toThrow("FlightAware API rate limit exceeded");
+    });
+  });
+
+  describe("onFailed", () => {
+    it("delegates a missing-job worker failure to terminal capture", () => {
+      const error = new Error("job lost");
+
+      processor.onFailed(undefined, error);
+
+      expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+        undefined,
+        error,
+        FLIGHT_ALERTS_QUEUE,
+      );
+      expect(captureException).not.toHaveBeenCalled();
+    });
+
+    it("delegates job failures to terminal-only capture", () => {
+      const job = {
+        id: "job-123",
+        name: CREATE_FLIGHT_ALERT_JOB,
+        data: mockJobData,
+        attemptsMade: 1,
+        opts: { attempts: 3 },
+      } as Job<FlightAlertJobData>;
+      const error = new Error("FlightAware API rate limit exceeded");
+
+      processor.onFailed(job, error);
+
+      expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+        job,
+        error,
+        FLIGHT_ALERTS_QUEUE,
+      );
+      expect(captureException).not.toHaveBeenCalled();
     });
   });
 });

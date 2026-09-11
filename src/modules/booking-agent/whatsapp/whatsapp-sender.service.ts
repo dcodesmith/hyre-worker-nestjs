@@ -8,6 +8,7 @@ import twilio, { type Twilio } from "twilio";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { PROCESS_WHATSAPP_OUTBOX_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import type { EnvConfig } from "../../../config/env.config";
+import { captureException } from "../../../sentry";
 import {
   computeOutboxRetryDelayMs,
   WHATSAPP_OUTBOX_MAX_ATTEMPTS,
@@ -123,6 +124,14 @@ export class WhatsAppSenderService {
         throw error;
       }
 
+      captureException(error, {
+        message: "WhatsApp outbox message failed permanently",
+        tags: {
+          "error.source": "bullmq",
+          "job.name": PROCESS_WHATSAPP_OUTBOX_JOB,
+          "queue.name": WHATSAPP_AGENT_QUEUE,
+        },
+      });
       this.logger.error(
         {
           outboxId: outbox.id,

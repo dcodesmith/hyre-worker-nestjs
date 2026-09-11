@@ -2,8 +2,17 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DomainOutboxScheduler } from "./domain-outbox.scheduler";
 import { DomainOutboxService } from "./domain-outbox.service";
+
+const { reportBackgroundFailureMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+}));
 
 describe("DomainOutboxScheduler", () => {
   let scheduler: DomainOutboxScheduler;
@@ -67,6 +76,12 @@ describe("DomainOutboxScheduler", () => {
     await scheduler.processDomainOutbox();
 
     expect(domainOutboxService.processPendingEvents).toHaveBeenCalledTimes(2);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Database unavailable" }),
+      expect.objectContaining({
+        message: "Failed to process domain outbox events",
+      }),
+    );
     expect(logger.error).toHaveBeenCalledWith(
       { err: expect.objectContaining({ message: "Database unavailable" }) },
       "Failed to process domain outbox events",

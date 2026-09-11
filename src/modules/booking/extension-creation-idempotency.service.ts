@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { ExtensionCreationIdempotencyState, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { observeBackgroundOperation } from "../../common/observability/background-operation";
 import { DatabaseService } from "../database/database.service";
 import {
   EXTENSION_IDEMPOTENCY_PROCESSING_LEASE_MS,
@@ -271,6 +272,14 @@ export class ExtensionCreationIdempotencyService {
 
   @Cron("15 3 * * *")
   async cleanupExpiredRecords(): Promise<number> {
+    return observeBackgroundOperation(
+      "ExtensionCreationIdempotencyService.cleanupExpiredRecords",
+      "scheduler",
+      () => this.deleteExpiredRecords(),
+    );
+  }
+
+  private async deleteExpiredRecords(): Promise<number> {
     const staleBefore = new Date(Date.now() - EXTENSION_IDEMPOTENCY_RETENTION_MS);
     const result = await this.databaseService.extensionCreationIdempotency.deleteMany({
       where: {

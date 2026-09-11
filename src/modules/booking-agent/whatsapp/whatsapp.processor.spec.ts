@@ -10,6 +10,22 @@ import {
   PROCESS_WHATSAPP_INBOUND_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
+import { captureException } from "../../../sentry";
+import { captureTerminalJobFailure } from "../../infra/queue-infra/bullmq-telemetry";
+
+const { captureExceptionMock, captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../../../sentry", () => ({
+  captureException: captureExceptionMock,
+}));
+
+vi.mock("../../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import { WhatsAppProcessingLockAcquireFailedException } from "../booking-agent.error";
 import type {
   ProcessWhatsAppInactivityClearJobData,
@@ -74,6 +90,7 @@ describe("WhatsAppProcessor", () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     persistenceService = {
       acquireProcessingLock: vi.fn(),
       getConversationActivity: vi.fn(),
@@ -572,5 +589,36 @@ describe("WhatsAppProcessor", () => {
 
     expect(langGraphStateService.clearState).not.toHaveBeenCalled();
     expect(senderService.enqueueOutbound).not.toHaveBeenCalled();
+  });
+
+  it("delegates a missing-job worker failure to terminal capture", () => {
+    const error = new Error("job lost");
+
+    processor.onFailed(undefined, error);
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      error,
+      WHATSAPP_AGENT_QUEUE,
+    );
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("delegates job failures to terminal-only capture", () => {
+    const job = buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+      conversationId: "conv-1",
+      messageId: "msg-1",
+      dedupeKey: "dedupe-1",
+    });
+    const error = new Error("processor failed for user@example.com");
+
+    processor.onFailed(job, error);
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      job,
+      error,
+      WHATSAPP_AGENT_QUEUE,
+    );
+    expect(captureException).not.toHaveBeenCalled();
   });
 });

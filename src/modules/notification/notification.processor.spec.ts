@@ -3,10 +3,21 @@ import { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { NOTIFICATIONS_QUEUE } from "../../config/constants";
 import * as emailTemplates from "../../templates/emails";
 import { createBookingCompletionToken } from "../booking/booking-completion-token.helper";
 import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
+
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
@@ -1248,5 +1259,46 @@ describe("NotificationProcessor", () => {
       "ExponentPushToken[x]",
       "ExponentPushToken[y]",
     ]);
+  });
+
+  it("delegates worker failures to terminal-only capture", () => {
+    const job = createJob("job-failed", {
+      id: "notification-1",
+      type: NotificationType.BOOKING_STATUS_CHANGE,
+      channels: [NotificationChannel.EMAIL],
+      bookingId: "booking-123",
+      recipients: {
+        [CLIENT_RECIPIENT_TYPE]: {
+          email: "client@example.com",
+        },
+      },
+      templateData: pushTemplateData,
+    });
+    const error = new Error("provider token=super-secret");
+
+    processor.onFailed(job, error);
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      job,
+      error,
+      NOTIFICATIONS_QUEUE,
+    );
+  });
+
+  it("captures a missing-job worker failure without dereferencing the job", () => {
+    vi.clearAllMocks();
+    const error = new Error("job lost");
+
+    expect(() => processor.onFailed(undefined, error)).not.toThrow();
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      error,
+      NOTIFICATIONS_QUEUE,
+    );
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      { err: error },
+      "Notification job failed without context",
+    );
   });
 });

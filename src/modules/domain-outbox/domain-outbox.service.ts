@@ -9,6 +9,7 @@ import {
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError, toPersistedErrorMessage } from "../../common/logging/error-logging.helper";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
@@ -143,6 +144,13 @@ export class DomainOutboxService {
       });
       return 1;
     } catch (error) {
+      if (currentAttempt >= MAX_ATTEMPTS) {
+        reportBackgroundFailure(error, {
+          message: "Failed to dispatch domain outbox event",
+          operation: "DomainOutboxService.processEvent",
+          source: "scheduler",
+        });
+      }
       await this.markFailed(event.id, currentAttempt, error);
 
       this.logger.error(

@@ -3,6 +3,7 @@ import { Inject } from "@nestjs/common";
 import { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAwareAlertService } from "./flightaware-alert.service";
 
@@ -76,6 +77,7 @@ export class FlightAlertProcessor extends WorkerHost {
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<FlightAlertJobData> | undefined, error: Error): void {
+    captureTerminalJobFailure(job, error, FLIGHT_ALERTS_QUEUE);
     if (!job) {
       this.logger.error(
         { error: error.message, stack: error.stack },

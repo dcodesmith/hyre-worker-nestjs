@@ -5,6 +5,7 @@ import { Cron } from "@nestjs/schedule";
 import { BookingCreationIdempotencyState, BookingStatus, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import { observeBackgroundOperation } from "../../common/observability/background-operation";
 import type { EnvConfig } from "../../config/env.config";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -256,6 +257,14 @@ export class BookingCreationIdempotencyService {
 
   @Cron("0 3 * * *")
   async cleanupExpiredRecords(): Promise<number> {
+    return observeBackgroundOperation(
+      "BookingCreationIdempotencyService.cleanupExpiredRecords",
+      "scheduler",
+      () => this.deleteExpiredRecords(),
+    );
+  }
+
+  private async deleteExpiredRecords(): Promise<number> {
     const staleBefore = new Date(Date.now() - BOOKING_IDEMPOTENCY_RETENTION_MS);
     const abandonedProcessingWhere: Prisma.BookingCreationIdempotencyWhereInput = {
       state: BookingCreationIdempotencyState.PROCESSING,

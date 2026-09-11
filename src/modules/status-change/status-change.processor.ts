@@ -8,6 +8,7 @@ import {
   CONFIRMED_TO_ACTIVE,
   STATUS_UPDATES_QUEUE,
 } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 import {
   InvalidStatusUpdateJobPayloadException,
   StatusChangeException,
@@ -119,7 +120,12 @@ export class StatusChangeProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent("failed")
-  onFailed(job: Job<StatusUpdateJobData>, error: Error) {
+  onFailed(job: Job<StatusUpdateJobData> | undefined, error: Error) {
+    captureTerminalJobFailure(job, error, STATUS_UPDATES_QUEUE);
+    if (!job) {
+      this.logger.error({ error: error.message, stack: error.stack }, "Job failed without context");
+      return;
+    }
     this.logger.error(
       {
         jobName: job.name,

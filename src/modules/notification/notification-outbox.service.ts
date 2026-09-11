@@ -3,6 +3,7 @@ import { NotificationOutboxStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import pLimit from "p-limit";
 import type { z } from "zod";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DatabaseService } from "../database/database.service";
 import type { HandlerEvent, OutboxEventHandler } from "./handlers/outbox-event-handler.interface";
 import { HIGH_PRIORITY_JOB_OPTIONS } from "./notification.const";
@@ -259,6 +260,11 @@ export class NotificationOutboxService {
             processedAt: new Date(),
           },
         });
+        reportBackgroundFailure(new Error("Invalid notification outbox payload"), {
+          message: "Failed to dispatch notification outbox event",
+          operation: "NotificationOutboxService.processEvent",
+          source: "scheduler",
+        });
         // Terminal scrub — not “progress toward dispatch”; count as 0 so the
         // scheduler does not burn re-ticks on rows already removed from work.
         return 0;
@@ -285,20 +291,25 @@ export class NotificationOutboxService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const nextAttemptAt = this.computeNextAttemptAt(currentAttempt);
+      const failureStatus = this.resolveFailureStatus(currentAttempt);
 
       await this.databaseService.notificationOutboxEvent.update({
         where: { id: event.id },
         data: {
-          status: this.resolveFailureStatus(currentAttempt),
+          status: failureStatus,
           nextAttemptAt,
           lastError: errorMessage.slice(0, 500),
-          processedAt:
-            this.resolveFailureStatus(currentAttempt) === NotificationOutboxStatus.DEAD_LETTER
-              ? new Date()
-              : null,
+          processedAt: failureStatus === NotificationOutboxStatus.DEAD_LETTER ? new Date() : null,
         },
       });
 
+      if (failureStatus === NotificationOutboxStatus.DEAD_LETTER) {
+        reportBackgroundFailure(error, {
+          message: "Failed to dispatch notification outbox event",
+          operation: "NotificationOutboxService.processEvent",
+          source: "scheduler",
+        });
+      }
       this.logger.error(
         {
           outboxEventId: event.id,

@@ -85,4 +85,15 @@ if (telemetryEnabled) {
   sdk.start();
 }
 
+let shutdownPromise: Promise<void> | undefined;
+
+export function shutdownOpenTelemetry(): Promise<void> {
+  if (!telemetryEnabled) {
+    return Promise.resolve();
+  }
+
+  shutdownPromise ??= sdk.shutdown();
+  return shutdownPromise;
+}
+
 export default sdk;

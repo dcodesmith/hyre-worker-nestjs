@@ -4,6 +4,7 @@ import type { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
+import { captureException } from "../../sentry";
 import {
   PayoutBookingNotCompletedException,
   PayoutBookingNotFoundException,
@@ -53,11 +54,16 @@ export class DomainOutboxProcessor extends WorkerHost {
         default:
           throw new Error(`Unsupported domain outbox event type: ${event.eventType}`);
       }
+      await this.domainOutboxService.markCompleted(
+        job.data.outboxEventId,
+        job.data.dispatchAttempt,
+      );
     } catch (error) {
       if (
         error instanceof PayoutBookingNotFoundException ||
         error instanceof PayoutBookingNotCompletedException
       ) {
+        this.captureTerminalFailure(job, error);
         await this.domainOutboxService.markFailed(
           job.data.outboxEventId,
           job.data.dispatchAttempt,
@@ -68,6 +74,7 @@ export class DomainOutboxProcessor extends WorkerHost {
       }
 
       if (this.isFinalAttempt(job)) {
+        this.captureTerminalFailure(job, error);
         try {
           await this.domainOutboxService.markFailed(
             job.data.outboxEventId,
@@ -86,11 +93,20 @@ export class DomainOutboxProcessor extends WorkerHost {
       }
       throw error;
     }
-
-    await this.domainOutboxService.markCompleted(job.data.outboxEventId, job.data.dispatchAttempt);
   }
 
   private isFinalAttempt(job: Job<DomainOutboxJobData>): boolean {
     return job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+  }
+
+  private captureTerminalFailure(job: Job<DomainOutboxJobData>, error: unknown): void {
+    captureException(error, {
+      message: "Domain outbox event failed permanently",
+      tags: {
+        "error.source": "bullmq",
+        "job.name": job.name,
+        "queue.name": DOMAIN_OUTBOX_QUEUE,
+      },
+    });
   }
 }

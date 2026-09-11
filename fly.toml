@@ -9,6 +9,7 @@ primary_region = 'lhr'
 [env]
   TZ = 'Africa/Lagos'
   APP_ENV = 'development'
+  GRAFANA_TRACES_BASE_URL = 'https://gallantcricket1373.grafana.net'
 
 [deploy]
   release_command = '/bin/sh scripts/run-prisma-migrations.sh'

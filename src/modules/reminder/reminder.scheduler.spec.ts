@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
@@ -13,11 +14,24 @@ import {
 import { ReminderJobData } from "./reminder.interface";
 import { ReminderScheduler } from "./reminder.scheduler";
 
+const { reportBackgroundFailureMock, observeBackgroundOperationMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
+
 describe("ReminderScheduler", () => {
   let scheduler: ReminderScheduler;
   let reminderQueue: Queue<ReminderJobData>;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const mockQueue = {
       add: vi.fn().mockResolvedValue({ id: "job-123" }),
     };
@@ -58,8 +72,13 @@ describe("ReminderScheduler", () => {
       const error = new Error("Queue error");
       vi.mocked(reminderQueue.add).mockRejectedValueOnce(error);
 
-      // Should not throw, just log error
       await expect(scheduler.scheduleBookingStartReminders()).resolves.toBeUndefined();
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          message: "Failed to schedule booking reminders",
+        }),
+      );
     });
   });
 
@@ -84,8 +103,13 @@ describe("ReminderScheduler", () => {
       const error = new Error("Queue error");
       vi.mocked(reminderQueue.add).mockRejectedValueOnce(error);
 
-      // Should not throw, just log error
       await expect(scheduler.scheduleBookingEndReminders()).resolves.toBeUndefined();
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          message: "Failed to schedule booking reminders",
+        }),
+      );
     });
   });
 });

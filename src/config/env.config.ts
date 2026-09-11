@@ -157,6 +157,9 @@ export const envSchema = z
     OTEL_EXPORTER_OTLP_HEADERS: optionalNonEmptyString,
     OTEL_SERVICE_NAME: optionalNonEmptyString,
     SENTRY_DSN: optionalSentryDsn,
+    GRAFANA_TRACES_BASE_URL: optionalHttpUrl(
+      "GRAFANA_TRACES_BASE_URL must use http:// or https://",
+    ),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z

@@ -4,6 +4,10 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
 import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
+import {
+  observeBackgroundOperation,
+  reportBackgroundFailure,
+} from "../../common/observability/background-operation";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
@@ -25,6 +29,14 @@ export class FlightAwareAlertScheduler {
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcileMissingAlerts(): Promise<void> {
+    return observeBackgroundOperation(
+      "FlightAwareAlertScheduler.reconcileMissingAlerts",
+      "scheduler",
+      () => this.reconcileAlerts(),
+    );
+  }
+
+  private async reconcileAlerts(): Promise<void> {
     const now = new Date();
 
     try {
@@ -62,6 +74,7 @@ export class FlightAwareAlertScheduler {
       let enqueued = 0;
       let failed = 0;
       let skipped = 0;
+      let firstFailure: unknown;
 
       for (const flight of flights) {
         if (!flight.scheduledDeparture) {
@@ -87,6 +100,7 @@ export class FlightAwareAlertScheduler {
           enqueued += 1;
         } catch (error) {
           failed += 1;
+          firstFailure ??= error;
           this.logger.error(
             {
               flightId: flight.id,
@@ -97,11 +111,24 @@ export class FlightAwareAlertScheduler {
         }
       }
 
+      if (firstFailure) {
+        reportBackgroundFailure(firstFailure, {
+          message: "Failed to requeue one or more FlightAware alerts",
+          operation: "FlightAwareAlertScheduler.reconcileMissingAlerts",
+          source: "scheduler",
+        });
+      }
+
       this.logger.info(
         { found: flights.length, enqueued, failed, skipped },
         "Reconciled missing FlightAware alerts",
       );
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to reconcile missing FlightAware alerts",
+        operation: "FlightAwareAlertScheduler.reconcileMissingAlerts",
+        source: "scheduler",
+      });
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to reconcile missing FlightAware alerts",

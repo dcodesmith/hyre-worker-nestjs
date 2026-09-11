@@ -4,9 +4,22 @@ import { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { FlightAwareAlertScheduler } from "./flightaware-alert.scheduler";
+
+const { reportBackgroundFailureMock, observeBackgroundOperationMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
 
 describe("FlightAwareAlertScheduler", () => {
   let scheduler: FlightAwareAlertScheduler;
@@ -15,6 +28,7 @@ describe("FlightAwareAlertScheduler", () => {
   let logger: PinoLogger;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2030-01-02T12:02:00.000Z"));
     databaseService = {
@@ -140,6 +154,12 @@ describe("FlightAwareAlertScheduler", () => {
       { found: 2, enqueued: 1, failed: 1, skipped: 0 },
       "Reconciled missing FlightAware alerts",
     );
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Redis unavailable" }),
+      expect.objectContaining({
+        message: "Failed to requeue one or more FlightAware alerts",
+      }),
+    );
   });
 
   it("skips a defensive null departure without aborting reconciliation", async () => {
@@ -171,6 +191,12 @@ describe("FlightAwareAlertScheduler", () => {
     expect(logger.error).toHaveBeenCalledWith(
       { error: "Database unavailable" },
       "Failed to reconcile missing FlightAware alerts",
+    );
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Database unavailable" }),
+      expect.objectContaining({
+        message: "Failed to reconcile missing FlightAware alerts",
+      }),
     );
   });
 });

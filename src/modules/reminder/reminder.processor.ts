@@ -7,6 +7,7 @@ import {
   BOOKING_LEG_START_REMINDER,
   REMINDERS_QUEUE,
 } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 import { ReminderJobData } from "./reminder.interface";
 import { ReminderService } from "./reminder.service";
 
@@ -45,7 +46,12 @@ export class ReminderProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent("failed")
-  onFailed(job: Job<ReminderJobData>, error: Error) {
+  onFailed(job: Job<ReminderJobData> | undefined, error: Error) {
+    captureTerminalJobFailure(job, error, REMINDERS_QUEUE);
+    if (!job) {
+      this.logger.error({ err: error }, "Reminder job failed without context");
+      return;
+    }
     this.logger.error(
       {
         jobName: job.name,

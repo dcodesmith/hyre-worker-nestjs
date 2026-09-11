@@ -3,10 +3,21 @@ import { DomainOutboxEventType, DomainOutboxStatus } from "@prisma/client";
 import type { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
+import { captureException } from "../../sentry";
 import {
   PayoutBookingNotCompletedException,
   PayoutBookingNotFoundException,
 } from "../payment/payment.error";
+
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("../../sentry", () => ({
+  captureException: captureExceptionMock,
+}));
+
 import { PaymentService } from "../payment/payment.service";
 import { ReferralProcessingService } from "../referral/referral-processing.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
@@ -110,6 +121,7 @@ describe("DomainOutboxProcessor", () => {
 
     expect(domainOutboxService.markFailed).not.toHaveBeenCalled();
     expect(domainOutboxService.markCompleted).not.toHaveBeenCalled();
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it("returns terminal worker failures to the durable outbox", async () => {
@@ -121,6 +133,14 @@ describe("DomainOutboxProcessor", () => {
     ).rejects.toThrow("persistent failure");
 
     expect(domainOutboxService.markFailed).toHaveBeenCalledExactlyOnceWith("outbox-1", 1, error);
+    expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+      message: "Domain outbox event failed permanently",
+      tags: {
+        "error.source": "bullmq",
+        "job.name": DomainOutboxEventType.REFERRAL_COMPLETION,
+        "queue.name": DOMAIN_OUTBOX_QUEUE,
+      },
+    });
   });
 
   it.each([
@@ -138,6 +158,14 @@ describe("DomainOutboxProcessor", () => {
       true,
     );
     expect(domainOutboxService.markCompleted).not.toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledWith(error, {
+      message: "Domain outbox event failed permanently",
+      tags: {
+        "error.source": "bullmq",
+        "job.name": DomainOutboxEventType.PAYOUT_PROCESSING,
+        "queue.name": DOMAIN_OUTBOX_QUEUE,
+      },
+    });
   });
 
   it("retries when persisting business completion fails", async () => {
@@ -146,18 +174,44 @@ describe("DomainOutboxProcessor", () => {
     await expect(processor.process(createJob())).rejects.toThrow("database unavailable");
 
     expect(domainOutboxService.markFailed).not.toHaveBeenCalled();
+    expect(captureException).not.toHaveBeenCalled();
   });
 
-  it("does not mark business execution failed when completion persistence fails on final attempt", async () => {
-    domainOutboxService.markCompleted.mockRejectedValueOnce(new Error("database unavailable"));
+  it("captures a terminal markCompleted failure before attempting markFailed", async () => {
+    const error = new Error("database unavailable");
+    domainOutboxService.markCompleted.mockRejectedValueOnce(error);
 
     await expect(
       processor.process(createJob(DomainOutboxEventType.REFERRAL_COMPLETION, 2)),
-    ).rejects.toThrow("database unavailable");
+    ).rejects.toBe(error);
 
     expect(
       referralProcessingService.processReferralCompletionForBooking,
     ).toHaveBeenCalledExactlyOnceWith("booking-1");
-    expect(domainOutboxService.markFailed).not.toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+      message: "Domain outbox event failed permanently",
+      tags: {
+        "error.source": "bullmq",
+        "job.name": DomainOutboxEventType.REFERRAL_COMPLETION,
+        "queue.name": DOMAIN_OUTBOX_QUEUE,
+      },
+    });
+    expect(domainOutboxService.markFailed).toHaveBeenCalledExactlyOnceWith("outbox-1", 1, error);
+    expect(captureExceptionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      domainOutboxService.markFailed.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("rethrows the original error when terminal markFailed persistence also fails", async () => {
+    const error = new Error("database unavailable");
+    domainOutboxService.markCompleted.mockRejectedValueOnce(error);
+    domainOutboxService.markFailed.mockRejectedValueOnce(new Error("persist failed"));
+
+    await expect(
+      processor.process(createJob(DomainOutboxEventType.REFERRAL_COMPLETION, 2)),
+    ).rejects.toBe(error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(domainOutboxService.markFailed).toHaveBeenCalledTimes(1);
   });
 });

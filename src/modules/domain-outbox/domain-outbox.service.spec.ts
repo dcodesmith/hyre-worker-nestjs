@@ -4,9 +4,18 @@ import { DomainOutboxEventType, DomainOutboxStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import { DomainOutboxService } from "./domain-outbox.service";
+
+const { reportBackgroundFailureMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+}));
 
 describe("DomainOutboxService", () => {
   let service: DomainOutboxService;
@@ -205,6 +214,26 @@ describe("DomainOutboxService", () => {
         processedAt: new Date("2030-01-02T12:05:00.000Z"),
       }),
     });
+  });
+
+  it("reports a terminal dispatch failure even if markFailed persistence throws", async () => {
+    const dispatchError = new Error("Persistent failure");
+    domainOutboxEvent.findMany.mockResolvedValueOnce([{ ...pendingEvent, attempts: 7 }]);
+    domainOutboxQueue.add.mockRejectedValueOnce(dispatchError);
+    domainOutboxEvent.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(service.processPendingEvents()).resolves.toBe(0);
+
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      dispatchError,
+      expect.objectContaining({
+        message: "Failed to dispatch domain outbox event",
+        operation: "DomainOutboxService.processEvent",
+        source: "scheduler",
+      }),
+    );
   });
 
   it("dead-letters a terminal failure without exhausting dispatch attempts", async () => {

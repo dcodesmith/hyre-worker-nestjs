@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DomainOutboxService } from "./domain-outbox.service";
 
 @Injectable()
@@ -28,6 +29,11 @@ export class DomainOutboxScheduler {
         this.logger.info({ processedCount }, "Processed pending domain outbox events");
       }
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to process domain outbox events",
+        operation: "DomainOutboxScheduler.processDomainOutbox",
+        source: "scheduler",
+      });
       this.logger.error({ err: toLogError(error) }, "Failed to process domain outbox events");
     } finally {
       this.isProcessing = false;

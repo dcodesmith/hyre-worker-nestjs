@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Queue } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import {
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,
@@ -11,11 +12,24 @@ import {
 import { StatusUpdateJobData } from "./status-change.interface";
 import { StatusChangeScheduler } from "./status-change.scheduler";
 
+const { reportBackgroundFailureMock, observeBackgroundOperationMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
+
 describe("StatusChangeScheduler", () => {
   let scheduler: StatusChangeScheduler;
   let statusUpdateQueue: Queue<StatusUpdateJobData>;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const mockQueue = {
       add: vi.fn().mockResolvedValue({ id: "job-123" }),
     };
@@ -55,8 +69,14 @@ describe("StatusChangeScheduler", () => {
       const error = new Error("Queue error");
       vi.mocked(statusUpdateQueue.add).mockRejectedValueOnce(error);
 
-      // Should not throw, just log error
       await expect(scheduler.scheduleConfirmedToActiveUpdates()).resolves.toBeUndefined();
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          message: "Failed to schedule status updates",
+          source: "scheduler",
+        }),
+      );
     });
   });
 
@@ -80,8 +100,13 @@ describe("StatusChangeScheduler", () => {
       const error = new Error("Queue error");
       vi.mocked(statusUpdateQueue.add).mockRejectedValueOnce(error);
 
-      // Should not throw, just log error
       await expect(scheduler.scheduleActiveToCompletedUpdates()).resolves.toBeUndefined();
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          message: "Failed to schedule status updates",
+        }),
+      );
     });
   });
 });

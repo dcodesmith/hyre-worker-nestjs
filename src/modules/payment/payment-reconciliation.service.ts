@@ -3,6 +3,10 @@ import { Cron } from "@nestjs/schedule";
 import { BookingStatus, type Payment, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import {
+  observeBackgroundOperation,
+  reportBackgroundFailure,
+} from "../../common/observability/background-operation";
 import { EVERY_HOUR, TIMEZONE } from "../../config/constants";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
@@ -29,6 +33,14 @@ export class PaymentReconciliationService {
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async reconcilePendingPayments(): Promise<number> {
+    return observeBackgroundOperation(
+      "PaymentReconciliationService.reconcilePendingPayments",
+      "scheduler",
+      () => this.reconcileSuccessfulPayments(),
+    );
+  }
+
+  private async reconcileSuccessfulPayments(): Promise<number> {
     const confirmedBefore = new Date(Date.now() - RECONCILIATION_GRACE_PERIOD_MS);
     let payments: Payment[];
 
@@ -70,6 +82,11 @@ export class PaymentReconciliationService {
         take: RECONCILIATION_BATCH_SIZE,
       });
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to load payments for reconciliation",
+        operation: "PaymentReconciliationService.reconcilePendingPayments",
+        source: "scheduler",
+      });
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to load successful payments for reconciliation",
@@ -78,10 +95,23 @@ export class PaymentReconciliationService {
     }
 
     let reconciledCount = 0;
+    let firstFailure: unknown;
     for (const payment of payments) {
-      if (await this.reconcilePayment(payment)) {
+      if (
+        await this.reconcilePayment(payment, (error) => {
+          firstFailure ??= error;
+        })
+      ) {
         reconciledCount += 1;
       }
+    }
+
+    if (firstFailure) {
+      reportBackgroundFailure(firstFailure, {
+        message: "Failed to reconcile one or more successful payments",
+        operation: "PaymentReconciliationService.reconcilePendingPayments",
+        source: "scheduler",
+      });
     }
 
     if (reconciledCount > 0) {
@@ -96,6 +126,14 @@ export class PaymentReconciliationService {
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async reconcileProcessingPayouts(): Promise<number> {
+    return observeBackgroundOperation(
+      "PaymentReconciliationService.reconcileProcessingPayouts",
+      "scheduler",
+      () => this.reconcilePayouts(),
+    );
+  }
+
+  private async reconcilePayouts(): Promise<number> {
     try {
       const reconciledCount = await this.paymentService.reconcileProcessingPayouts();
       if (reconciledCount > 0) {
@@ -103,6 +141,11 @@ export class PaymentReconciliationService {
       }
       return reconciledCount;
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to reconcile processing payouts",
+        operation: "PaymentReconciliationService.reconcileProcessingPayouts",
+        source: "scheduler",
+      });
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to reconcile processing payouts",
@@ -113,6 +156,14 @@ export class PaymentReconciliationService {
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async reconcileProcessingRefunds(): Promise<number> {
+    return observeBackgroundOperation(
+      "PaymentReconciliationService.reconcileProcessingRefunds",
+      "scheduler",
+      () => this.reconcileRefunds(),
+    );
+  }
+
+  private async reconcileRefunds(): Promise<number> {
     try {
       const reconciledCount = await this.refundReconciliationService.reconcileProcessingRefunds();
       if (reconciledCount > 0) {
@@ -120,6 +171,11 @@ export class PaymentReconciliationService {
       }
       return reconciledCount;
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to reconcile processing refunds",
+        operation: "PaymentReconciliationService.reconcileProcessingRefunds",
+        source: "scheduler",
+      });
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to reconcile processing refunds",
@@ -128,7 +184,10 @@ export class PaymentReconciliationService {
     }
   }
 
-  private async reconcilePayment(payment: Payment): Promise<boolean> {
+  private async reconcilePayment(
+    payment: Payment,
+    onFailure: (error: unknown) => void,
+  ): Promise<boolean> {
     if (!this.isEligibleForConfirmation(payment)) {
       return false;
     }
@@ -138,6 +197,7 @@ export class PaymentReconciliationService {
         ? await this.bookingConfirmationService.confirmFromPayment(payment)
         : await this.extensionConfirmationService.confirmFromPayment(payment);
     } catch (error) {
+      onFailure(error);
       this.logger.error(
         {
           paymentId: payment.id,

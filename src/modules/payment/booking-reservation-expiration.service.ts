@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { observeBackgroundOperation } from "../../common/observability/background-operation";
 import { TIMEZONE } from "../../config/constants";
 import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "../booking/booking.const";
 import { BookingReservationService } from "../booking/booking-reservation.service";
@@ -38,6 +39,14 @@ export class BookingReservationExpirationService {
 
   @Cron(EVERY_MINUTE, { timeZone: TIMEZONE })
   async reconcileExpiredReservations(): Promise<number> {
+    return observeBackgroundOperation(
+      "BookingReservationExpirationService.reconcileExpiredReservations",
+      "scheduler",
+      () => this.reconcileExpiredReservationBatches(),
+    );
+  }
+
+  private async reconcileExpiredReservationBatches(): Promise<number> {
     if (this.reconciliationInProgress) {
       this.logger.warn("Skipping overlapping expired-reservation reconciliation");
       return 0;

@@ -1,13 +1,15 @@
-import type { Context } from "@opentelemetry/api";
-import type {
-  Attributes,
-  AttributeValue,
-  Exception,
-  Span,
-  SpanOptions,
-  Telemetry,
-  Time,
-  Tracer,
+import { type Context, context as otelContext, propagation, trace } from "@opentelemetry/api";
+import {
+  type Attributes,
+  type AttributeValue,
+  type Exception,
+  type Job,
+  type Span,
+  type SpanOptions,
+  type Telemetry,
+  type Time,
+  type Tracer,
+  UnrecoverableError,
 } from "bullmq";
 import { BullMQOtel } from "bullmq-otel";
 import { captureException } from "../../../sentry";
@@ -28,10 +30,7 @@ function omitSensitiveAttributes(attributes?: Attributes): Attributes | undefine
 }
 
 class SafeBullMqSpan implements Span<Context> {
-  constructor(
-    private readonly span: Span<Context>,
-    private readonly operation: string,
-  ) {}
+  constructor(private readonly span: Span<Context>) {}
 
   setSpanOnContext(context: Context): Context {
     return this.span.setSpanOnContext(context);
@@ -51,14 +50,7 @@ class SafeBullMqSpan implements Span<Context> {
     this.span.addEvent(name, omitSensitiveAttributes(attributes));
   }
 
-  recordException(exception: Exception, time?: Time): void {
-    if (this.operation.startsWith("process ")) {
-      captureException(exception, {
-        message: "BullMQ job failed",
-        tags: { "error.source": "bullmq" },
-      });
-    }
-
+  recordException(_exception: Exception, time?: Time): void {
     this.span.recordException({ name: "Error", message: "BullMQ job failed" }, time);
   }
 
@@ -71,7 +63,7 @@ class SafeBullMqTracer implements Tracer<Context> {
   constructor(private readonly tracer: Tracer<Context>) {}
 
   startSpan(name: string, options?: SpanOptions, context?: Context): Span<Context> {
-    return new SafeBullMqSpan(this.tracer.startSpan(name, options, context), name);
+    return new SafeBullMqSpan(this.tracer.startSpan(name, options, context));
   }
 }
 
@@ -88,4 +80,56 @@ export function createBullMqTelemetry(name: string, version: string): Telemetry<
     meter: telemetry.meter,
     tracer: new SafeBullMqTracer(telemetry.tracer),
   };
+}
+
+function getProducerTraceContext(job: Job): CaptureContext["traceContext"] {
+  const metadata = job.opts.telemetry?.metadata;
+  if (!metadata) {
+    return undefined;
+  }
+
+  try {
+    const carrier = JSON.parse(metadata) as unknown;
+    if (!carrier || typeof carrier !== "object" || Array.isArray(carrier)) {
+      return undefined;
+    }
+    const extractedContext = propagation.extract(otelContext.active(), carrier);
+    return trace.getSpanContext(extractedContext);
+  } catch {
+    return undefined;
+  }
+}
+
+type CaptureContext = Parameters<typeof captureException>[1];
+
+export function captureTerminalJobFailure(
+  job: Job | undefined,
+  error: unknown,
+  queueName: string,
+): void {
+  if (!job) {
+    captureException(error, {
+      message: "BullMQ job failed without context",
+      tags: { "error.source": "bullmq", "queue.name": queueName },
+    });
+    return;
+  }
+
+  const maxAttempts = job.opts.attempts ?? 1;
+  const isUnrecoverable =
+    error instanceof UnrecoverableError ||
+    (error instanceof Error && error.name === "UnrecoverableError");
+  if (!job.finishedOn && !isUnrecoverable && job.attemptsMade < maxAttempts) {
+    return;
+  }
+
+  captureException(error, {
+    message: "BullMQ job exhausted retries",
+    tags: {
+      "error.source": "bullmq",
+      "job.name": job.name,
+      "queue.name": queueName,
+    },
+    traceContext: getProducerTraceContext(job),
+  });
 }

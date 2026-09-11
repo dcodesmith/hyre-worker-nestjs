@@ -1,17 +1,9 @@
 import "dotenv/config";
-import { captureException, flushSentry } from "./sentry";
-import otelSdk from "./tracing";
+import { captureException, flushSentry, registerUnhandledRejectionHandler } from "./sentry";
+import { shutdownOpenTelemetry } from "./tracing";
 import "reflect-metadata";
 
-// Surface unhandled rejections during bootstrap (e.g. Redis/DB connection failures)
-process.on("unhandledRejection", (reason, promise) => {
-  captureException(reason, {
-    message: "Unhandled promise rejection",
-    tags: { "error.source": "process" },
-  });
-  console.error("[Bootstrap] Unhandled rejection:", reason);
-  console.error("Promise:", promise);
-});
+registerUnhandledRejectionHandler();
 
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -76,20 +68,6 @@ async function bootstrap() {
 
     app.enableShutdownHooks();
 
-    // Register OpenTelemetry SDK shutdown with NestJS lifecycle
-    const closeApp = app.close.bind(app);
-    app.close = async () => {
-      logger.log("Shutting down OpenTelemetry SDK...");
-      try {
-        await otelSdk.shutdown();
-        logger.log("OpenTelemetry SDK shut down successfully");
-      } catch (error) {
-        logger.error("Error shutting down OpenTelemetry SDK:", error);
-      }
-      await flushSentry();
-      return closeApp();
-    };
-
     const port = configService.get("PORT", { infer: true });
     const host = configService.get("HOST", { infer: true });
     const timezone = configService.get("TZ", { infer: true });
@@ -110,7 +88,7 @@ async function bootstrap() {
     // Ensure error is visible even if logger hasn't flushed
     console.error(`[Bootstrap] Failed to start:`, errorMessage);
     if (errorStack) console.error(errorStack);
-    await flushSentry();
+    await Promise.allSettled([flushSentry(), shutdownOpenTelemetry()]);
     process.exit(1);
   }
 }

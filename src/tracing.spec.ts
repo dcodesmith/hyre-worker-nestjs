@@ -9,14 +9,21 @@ const {
   mockPeriodicExportingMetricReader,
   mockBatchSpanProcessor,
   mockGetNodeAutoInstrumentations,
+  sdkInstances,
 } = vi.hoisted(() => {
   const start = vi.fn();
+  const sdkInstances: Array<{ start: typeof start; shutdown: ReturnType<typeof vi.fn> }> = [];
   return {
     mockStart: start,
-    mockNodeSDK: vi.fn().mockImplementation(() => ({
-      start,
-      shutdown: vi.fn(),
-    })),
+    sdkInstances,
+    mockNodeSDK: vi.fn().mockImplementation(() => {
+      const instance = {
+        start,
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
+      sdkInstances.push(instance);
+      return instance;
+    }),
     mockOTLPTraceExporter: vi.fn(),
     mockOTLPMetricExporter: vi.fn(),
     mockPeriodicExportingMetricReader: vi.fn().mockImplementation((config) => config),
@@ -57,9 +64,9 @@ const OTEL_ENV_KEYS = [
   "OTEL_SERVICE_NAME",
 ] as const;
 
-async function loadTracing(): Promise<void> {
+async function loadTracing() {
   vi.resetModules();
-  await import("./tracing");
+  return import("./tracing");
 }
 
 function clearOtelEnv(): void {
@@ -74,6 +81,7 @@ describe("tracing bootstrap", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sdkInstances.length = 0;
     clearOtelEnv();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   });
@@ -195,5 +203,22 @@ describe("tracing bootstrap", () => {
     expect(mockOTLPTraceExporter).not.toHaveBeenCalled();
     expect(mockOTLPMetricExporter).not.toHaveBeenCalled();
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  it("does not shut down the SDK when telemetry is disabled", async () => {
+    const { shutdownOpenTelemetry } = await loadTracing();
+
+    await expect(shutdownOpenTelemetry()).resolves.toBeUndefined();
+    expect(sdkInstances.at(-1)?.shutdown).not.toHaveBeenCalled();
+  });
+
+  it("shuts down the started SDK once", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://tempo.example.com/v1/traces");
+    const { shutdownOpenTelemetry } = await loadTracing();
+
+    await shutdownOpenTelemetry();
+    await shutdownOpenTelemetry();
+
+    expect(sdkInstances.at(-1)?.shutdown).toHaveBeenCalledTimes(1);
   });
 });
