@@ -83,9 +83,28 @@ type FlightAlertRecord = {
   destinationCodeIATA: string | null;
 };
 
+type ConfirmationDatabaseMock = {
+  $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
+  booking: {
+    findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+  };
+  user: { update: ReturnType<typeof vi.fn> };
+  car: {
+    update: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+  };
+  flight: {
+    findUnique: ReturnType<typeof vi.fn<(args: unknown) => Promise<FlightAlertRecord | null>>>;
+  };
+};
+
 describe("BookingConfirmationService", () => {
   let service: BookingConfirmationService;
-  let databaseService: DatabaseService;
+  let databaseService: ConfirmationDatabaseMock;
   let notificationOutboxService: NotificationOutboxService;
   let bookingConfirmedHandler: BookingConfirmedHandler;
   let chauffeurAssignedHandler: ChauffeurAssignedHandler;
@@ -98,46 +117,47 @@ describe("BookingConfirmationService", () => {
 
   beforeEach(async () => {
     findFlightForAlert = vi.fn();
+    databaseService = {
+      $transaction: vi.fn(async (callback) => callback(databaseService)),
+      $queryRaw: vi.fn().mockResolvedValue([
+        {
+          id: "booking-123",
+          carId: "car-123",
+          startDate: new Date("2026-08-10T08:00:00.000Z"),
+          endDate: new Date("2026-08-10T18:00:00.000Z"),
+          status: BookingStatus.PENDING,
+        },
+      ]),
+      booking: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+      },
+      user: {
+        update: vi.fn(),
+      },
+      car: {
+        update: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue({
+          owner: {
+            id: "owner-123",
+            isOwnerDriver: false,
+            chauffeurApprovalStatus: null,
+            chauffeurDisabledAt: null,
+          },
+        }),
+      },
+      flight: {
+        findUnique: findFlightForAlert,
+      },
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingConfirmationService,
         {
           provide: DatabaseService,
-          useValue: {
-            $transaction: vi.fn(async (callback) => callback(databaseService)),
-            $queryRaw: vi.fn().mockResolvedValue([
-              {
-                id: "booking-123",
-                carId: "car-123",
-                startDate: new Date("2026-08-10T08:00:00.000Z"),
-                endDate: new Date("2026-08-10T18:00:00.000Z"),
-                status: BookingStatus.PENDING,
-              },
-            ]),
-            booking: {
-              findUnique: vi.fn(),
-              findFirst: vi.fn().mockResolvedValue(null),
-              update: vi.fn(),
-              updateMany: vi.fn(),
-            },
-            user: {
-              update: vi.fn(),
-            },
-            car: {
-              update: vi.fn(),
-              findUnique: vi.fn().mockResolvedValue({
-                owner: {
-                  id: "owner-123",
-                  isOwnerDriver: false,
-                  chauffeurApprovalStatus: null,
-                  chauffeurDisabledAt: null,
-                },
-              }),
-            },
-            flight: {
-              findUnique: findFlightForAlert,
-            },
-          },
+          useValue: databaseService,
         },
         {
           provide: NotificationOutboxService,
@@ -169,7 +189,6 @@ describe("BookingConfirmationService", () => {
       .compile();
 
     service = module.get<BookingConfirmationService>(BookingConfirmationService);
-    databaseService = module.get<DatabaseService>(DatabaseService);
     notificationOutboxService = module.get(NotificationOutboxService);
     bookingConfirmedHandler = module.get(BookingConfirmedHandler);
     chauffeurAssignedHandler = module.get(ChauffeurAssignedHandler);
@@ -233,14 +252,14 @@ describe("BookingConfirmationService", () => {
         paymentStatus: PaymentStatus.PAID,
         chauffeurId: "owner-123",
       });
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+      databaseService.car.findUnique.mockResolvedValueOnce({
         owner: {
           id: "owner-123",
           isOwnerDriver: true,
           chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           chauffeurDisabledAt: null,
         },
-      } as never);
+      });
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
@@ -281,17 +300,17 @@ describe("BookingConfirmationService", () => {
         startDate: new Date("2026-08-10T08:00:00.000Z"),
         endDate: new Date("2026-08-10T18:00:00.000Z"),
       });
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+      databaseService.car.findUnique.mockResolvedValueOnce({
         owner: {
           id: "owner-123",
           isOwnerDriver: true,
           chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           chauffeurDisabledAt: null,
         },
-      } as never);
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce({
+      });
+      databaseService.booking.findFirst.mockResolvedValueOnce({
         id: "overlap-1",
-      } as never);
+      });
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
@@ -330,14 +349,14 @@ describe("BookingConfirmationService", () => {
         paymentStatus: PaymentStatus.PAID,
         chauffeurId: null,
       });
-      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+      databaseService.car.findUnique.mockResolvedValueOnce({
         owner: {
           id: "owner-123",
           isOwnerDriver: true,
           chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           chauffeurDisabledAt: new Date(),
         },
-      } as never);
+      });
       vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
       vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
       vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
