@@ -18,18 +18,7 @@ type CaptureContext = {
   tags?: Record<string, string | number | boolean>;
 };
 
-function sanitizedError(exception: unknown, message: string): Error {
-  const error = new Error(message);
-
-  if (exception instanceof Error && exception.stack) {
-    const frames = exception.stack.split("\n").filter((line) => /^\s+at\s/.test(line));
-    error.stack = [`Error: ${message}`, ...frames].join("\n");
-  }
-
-  return error;
-}
-
-export function captureException(exception: unknown, context: CaptureContext): void {
+export function captureException(_exception: unknown, context: CaptureContext): void {
   if (!dsn) {
     return;
   }
@@ -48,7 +37,7 @@ export function captureException(exception: unknown, context: CaptureContext): v
       });
     }
 
-    Sentry.captureException(sanitizedError(exception, context.message));
+    Sentry.captureException(new Error(context.message));
   });
 }
 

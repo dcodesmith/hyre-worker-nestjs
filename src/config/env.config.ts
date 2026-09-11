@@ -13,15 +13,18 @@ const optionalNonEmptyString = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
 );
-const optionalHttpUrl = z.preprocess(
-  (value) => (value === "" ? undefined : value),
-  z
-    .url({
-      protocol: /^https?$/,
-      error: "OTLP endpoint must use http:// or https://",
-    })
-    .optional(),
-);
+const optionalHttpUrl = (error: string) =>
+  z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z
+      .url({
+        protocol: /^https?$/,
+        error,
+      })
+      .optional(),
+  );
+const optionalOtlpHttpUrl = optionalHttpUrl("OTLP endpoint must use http:// or https://");
+const optionalSentryDsn = optionalHttpUrl("SENTRY_DSN must use http:// or https://");
 const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
   "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
@@ -147,13 +150,13 @@ export const envSchema = z
       ])
       .default("local"),
     DEPLOYMENT_VERSION: z.string().min(1).max(128).default("local"),
-    OTEL_EXPORTER_OTLP_ENDPOINT: optionalHttpUrl,
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalHttpUrl,
-    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: optionalHttpUrl,
-    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalHttpUrl,
+    OTEL_EXPORTER_OTLP_ENDPOINT: optionalOtlpHttpUrl,
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalOtlpHttpUrl,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: optionalOtlpHttpUrl,
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalOtlpHttpUrl,
     OTEL_EXPORTER_OTLP_HEADERS: optionalNonEmptyString,
     OTEL_SERVICE_NAME: optionalNonEmptyString,
-    SENTRY_DSN: optionalHttpUrl,
+    SENTRY_DSN: optionalSentryDsn,
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z

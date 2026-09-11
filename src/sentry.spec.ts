@@ -49,6 +49,15 @@ function expectErrorsOnlyInit(dsn: string | undefined, enabled: boolean) {
   );
 }
 
+function expectCapturedError(): Error {
+  const sent = mockCaptureException.mock.calls.at(0)?.at(0);
+  expect(sent).toBeInstanceOf(Error);
+  if (!(sent instanceof Error)) {
+    throw new TypeError("Expected Sentry to capture an Error");
+  }
+  return sent;
+}
+
 describe("sentry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -108,11 +117,10 @@ describe("sentry", () => {
     expect(mockScope.setContext).not.toHaveBeenCalled();
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
 
-    const sent = mockCaptureException.mock.calls[0]?.[0] as Error;
-    expect(sent).toBeInstanceOf(Error);
+    const sent = expectCapturedError();
     expect(sent).not.toBe(original);
     expect(sent.message).toBe("BullMQ job failed");
-    expect(sent.stack).toContain("at Worker.process (/app/worker.js:10:5)");
+    expect(sent.stack).not.toContain("at Worker.process (/app/worker.js:10:5)");
 
     const payload = JSON.stringify({
       message: sent.message,
@@ -121,6 +129,39 @@ describe("sentry", () => {
     });
     expect(payload).not.toContain("4242");
     expect(payload).not.toContain("user@example.com");
+    expect(payload).not.toContain(original.message);
+  });
+
+  it("does not copy original stack frames including a secret-like indented at line", async () => {
+    vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+    const { captureException } = await loadSentry();
+    const original = new Error("failed\n    at token=secret");
+    original.stack = [
+      "Error: failed",
+      "    at token=secret",
+      "    at Worker.process (/app/worker.js:10:5)",
+    ].join("\n");
+
+    captureException(original, {
+      message: "HTTP request failed",
+      tags: { "error.source": "http" },
+    });
+
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+
+    const sent = expectCapturedError();
+    expect(sent).not.toBe(original);
+    expect(sent.message).toBe("HTTP request failed");
+    expect(sent.stack).not.toContain("at token=secret");
+    expect(sent.stack).not.toContain("token=secret");
+    expect(sent.stack).not.toContain("Worker.process");
+
+    const payload = JSON.stringify({
+      message: sent.message,
+      stack: sent.stack,
+    });
+    expect(payload).not.toContain("at token=secret");
+    expect(payload).not.toContain("token=secret");
     expect(payload).not.toContain(original.message);
   });
 
@@ -144,7 +185,7 @@ describe("sentry", () => {
       trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
       span_id: "00f067aa0ba902b7",
     });
-    expect((mockCaptureException.mock.calls[0]?.[0] as Error).message).toBe("HTTP request failed");
+    expect(expectCapturedError().message).toBe("HTTP request failed");
     expect(JSON.stringify(mockCaptureException.mock.calls)).not.toContain("db password rejected");
   });
 });

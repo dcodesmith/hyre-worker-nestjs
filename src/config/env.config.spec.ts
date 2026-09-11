@@ -424,6 +424,26 @@ describe("envSchema SENTRY_DSN", () => {
         expect.arrayContaining([
           expect.objectContaining({
             path: ["SENTRY_DSN"],
+            message: "SENTRY_DSN must use http:// or https://",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects a non-http SENTRY_DSN protocol", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      SENTRY_DSN: "ftp://abc123@o123.ingest.sentry.io/456",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["SENTRY_DSN"],
+            message: "SENTRY_DSN must use http:// or https://",
           }),
         ]),
       );
