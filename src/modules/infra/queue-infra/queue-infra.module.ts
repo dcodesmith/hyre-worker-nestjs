@@ -3,6 +3,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { type EnvConfig } from "../../../config/env.config";
+import { createBullMqTelemetry } from "./bullmq-telemetry";
 
 @Module({
   imports: [
@@ -26,6 +27,10 @@ import { type EnvConfig } from "../../../config/env.config";
               },
             }),
           },
+          telemetry: createBullMqTelemetry(
+            configService.get("OTEL_SERVICE_NAME", { infer: true }) || "hyre-worker-nestjs",
+            configService.get("DEPLOYMENT_VERSION", { infer: true }),
+          ),
         };
       },
       inject: [ConfigService],
