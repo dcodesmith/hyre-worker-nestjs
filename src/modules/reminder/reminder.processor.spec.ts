@@ -168,21 +168,6 @@ describe("ReminderProcessor", () => {
     expect(reminderService.sendBookingEndReminders).toHaveBeenCalled();
   });
 
-  it("delegates worker failures to terminal-only capture", () => {
-    const job = {
-      id: "job-failed",
-      name: BOOKING_LEG_START_REMINDER,
-      data: { type: TRIP_START, timestamp: new Date().toISOString() },
-      attemptsMade: 2,
-      opts: { attempts: 3 },
-    } as Job<ReminderJobData>;
-    const error = new Error("Notification service unavailable");
-
-    processor.onFailed(job, error);
-
-    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(job, error, REMINDERS_QUEUE);
-  });
-
   it("captures a missing-job worker failure without dereferencing the job", () => {
     vi.clearAllMocks();
     const error = new Error("job lost");

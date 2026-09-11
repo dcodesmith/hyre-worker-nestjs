@@ -10,8 +10,6 @@ const {
   mockInit,
   mockScope,
   mockWithScope,
-  mockDedupeIntegration,
-  mockInboundFiltersIntegration,
   mockOnUncaughtExceptionIntegration,
   mockOnUnhandledRejectionIntegration,
   mockShutdownOpenTelemetry,
@@ -28,8 +26,6 @@ const {
     mockFlush: vi.fn().mockResolvedValue(true),
     mockGetActiveSpan: vi.fn(),
     mockWithScope: vi.fn((callback: (scope: typeof mockScope) => void) => callback(mockScope)),
-    mockDedupeIntegration: vi.fn(() => ({ name: "Dedupe" })),
-    mockInboundFiltersIntegration: vi.fn(() => ({ name: "InboundFilters" })),
     mockOnUncaughtExceptionIntegration: vi.fn((options: unknown) => ({
       name: "OnUncaughtException",
       options,
@@ -47,8 +43,6 @@ vi.mock("@sentry/nestjs", () => ({
   captureException: mockCaptureException,
   withScope: mockWithScope,
   flush: mockFlush,
-  dedupeIntegration: mockDedupeIntegration,
-  inboundFiltersIntegration: mockInboundFiltersIntegration,
   onUncaughtExceptionIntegration: mockOnUncaughtExceptionIntegration,
   onUnhandledRejectionIntegration: mockOnUnhandledRejectionIntegration,
 }));
@@ -69,10 +63,16 @@ vi.mock("./tracing", () => ({
 }));
 
 const SENTRY_DSN = "https://key@o0.ingest.sentry.io/1";
+const GRAFANA_ORIGIN = "https://gallantcricket1373.grafana.net";
 const VALID_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
 const VALID_SPAN_ID = "00f067aa0ba902b7";
 const INVALID_TRACE_ID = "00000000000000000000000000000000";
 const INVALID_SPAN_ID = "0000000000000000";
+
+function enableSentry() {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+}
 
 async function loadSentry() {
   vi.resetModules();
@@ -112,20 +112,6 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-function grafanaExploreUrl(origin: string, traceId: string, timestampSeconds: number): string {
-  const occurredAtMs = timestampSeconds * 1000;
-  return `${origin}/explore?left=${encodeURIComponent(
-    JSON.stringify({
-      datasource: "grafanacloud-traces",
-      queries: [{ query: traceId, queryType: "traceql", refId: "A" }],
-      range: {
-        from: new Date(occurredAtMs - 60 * 60 * 1000).toISOString(),
-        to: new Date(occurredAtMs + 15 * 60 * 1000).toISOString(),
-      },
-    }),
-  )}`;
-}
-
 describe("sentry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -146,6 +132,7 @@ describe("sentry", () => {
 
   describe("init", () => {
     it("initializes Sentry disabled without fatal integrations when SENTRY_DSN is absent", async () => {
+      vi.stubEnv("NODE_ENV", "production");
       const { captureException } = await loadSentry();
 
       expect(mockInit).toHaveBeenCalledWith(
@@ -173,7 +160,6 @@ describe("sentry", () => {
           },
         }),
       );
-      expect(mockDedupeIntegration).not.toHaveBeenCalled();
       expect(mockOnUncaughtExceptionIntegration).not.toHaveBeenCalled();
       expect(mockOnUnhandledRejectionIntegration).not.toHaveBeenCalled();
 
@@ -186,8 +172,28 @@ describe("sentry", () => {
       expect(mockCaptureException).not.toHaveBeenCalled();
     });
 
-    it("configures fatal integrations only when a DSN exists", async () => {
+    it("stays disabled with a DSN when NODE_ENV is test", async () => {
+      vi.stubEnv("NODE_ENV", "test");
       vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      const { captureException, flushSentry } = await loadSentry();
+
+      expect(mockInit).not.toHaveBeenCalled();
+      expect(mockOnUncaughtExceptionIntegration).not.toHaveBeenCalled();
+      expect(mockOnUnhandledRejectionIntegration).not.toHaveBeenCalled();
+
+      captureException(new Error("secret token=abc"), {
+        message: "HTTP request failed",
+        tags: { "error.source": "http" },
+      });
+      await expect(flushSentry()).resolves.toBe(true);
+
+      expect(mockWithScope).not.toHaveBeenCalled();
+      expect(mockCaptureException).not.toHaveBeenCalled();
+      expect(mockFlush).not.toHaveBeenCalled();
+    });
+
+    it("configures fatal integrations only when Sentry is enabled", async () => {
+      enableSentry();
       const { terminateAfterFatalError } = await loadSentry();
 
       expect(mockInit).toHaveBeenCalledWith(
@@ -197,8 +203,6 @@ describe("sentry", () => {
           defaultIntegrations: false,
         }),
       );
-      expect(mockDedupeIntegration).not.toHaveBeenCalled();
-      expect(mockInboundFiltersIntegration).not.toHaveBeenCalled();
       expect(mockOnUncaughtExceptionIntegration).toHaveBeenCalledWith({
         exitEvenIfOtherHandlersAreRegistered: true,
         onFatalError: terminateAfterFatalError,
@@ -209,7 +213,7 @@ describe("sentry", () => {
 
   describe("captureException", () => {
     it("captures the original Error and stamps a generic summary tag", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const { captureException } = await loadSentry();
       const original = new Error("Card 4242 declined for user@example.com");
 
@@ -232,7 +236,7 @@ describe("sentry", () => {
     });
 
     it("wraps non-Error values instead of sending the raw value", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const { captureException } = await loadSentry();
 
       captureException("secret token=abc", {
@@ -246,8 +250,8 @@ describe("sentry", () => {
       expect(JSON.stringify(mockCaptureException.mock.calls)).not.toContain("secret token=abc");
     });
 
-    it("attaches valid active OpenTelemetry IDs as tags and context", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+    it("attaches valid active OpenTelemetry IDs as context only", async () => {
+      enableSentry();
       mockGetActiveSpan.mockReturnValue(validSpanContext());
       const { captureException } = await loadSentry();
 
@@ -257,8 +261,8 @@ describe("sentry", () => {
       });
 
       expect(mockScope.setTags).toHaveBeenCalledWith({
-        "otel.trace_id": VALID_TRACE_ID,
-        "otel.span_id": VALID_SPAN_ID,
+        "error.source": "http",
+        "error.summary": "HTTP request failed",
       });
       expect(mockScope.setContext).toHaveBeenCalledWith("opentelemetry", {
         trace_id: VALID_TRACE_ID,
@@ -268,7 +272,7 @@ describe("sentry", () => {
     });
 
     it("ignores invalid active span contexts", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       mockGetActiveSpan.mockReturnValue(
         validSpanContext({ traceId: INVALID_TRACE_ID, spanId: INVALID_SPAN_ID }),
       );
@@ -286,7 +290,7 @@ describe("sentry", () => {
     });
 
     it("uses explicit trace context for queue-terminal captures", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       mockGetActiveSpan.mockReturnValue(
         validSpanContext({
           traceId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -297,7 +301,7 @@ describe("sentry", () => {
       const original = new Error("processor failed for user@example.com");
 
       captureException(original, {
-        message: "BullMQ job exhausted retries",
+        message: "BullMQ job failed terminally",
         tags: {
           "error.source": "bullmq",
           "job.name": "send-notification",
@@ -312,8 +316,10 @@ describe("sentry", () => {
 
       expect(mockCaptureException).toHaveBeenCalledWith(original);
       expect(mockScope.setTags).toHaveBeenCalledWith({
-        "otel.trace_id": VALID_TRACE_ID,
-        "otel.span_id": VALID_SPAN_ID,
+        "error.source": "bullmq",
+        "job.name": "send-notification",
+        "queue.name": "notifications-queue",
+        "error.summary": "BullMQ job failed terminally",
       });
       expect(mockScope.setContext).toHaveBeenCalledWith("opentelemetry", {
         trace_id: VALID_TRACE_ID,
@@ -323,12 +329,12 @@ describe("sentry", () => {
     });
 
     it("falls back to the active span when explicit trace context is invalid", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       mockGetActiveSpan.mockReturnValue(validSpanContext());
       const { captureException } = await loadSentry();
 
       captureException(new Error("queue secret"), {
-        message: "BullMQ job exhausted retries",
+        message: "BullMQ job failed terminally",
         tags: { "error.source": "bullmq" },
         traceContext: {
           traceId: INVALID_TRACE_ID,
@@ -338,8 +344,8 @@ describe("sentry", () => {
       });
 
       expect(mockScope.setTags).toHaveBeenCalledWith({
-        "otel.trace_id": VALID_TRACE_ID,
-        "otel.span_id": VALID_SPAN_ID,
+        "error.source": "bullmq",
+        "error.summary": "BullMQ job failed terminally",
       });
       expect(mockScope.setContext).toHaveBeenCalledWith("opentelemetry", {
         trace_id: VALID_TRACE_ID,
@@ -350,7 +356,7 @@ describe("sentry", () => {
 
   describe("beforeSend", () => {
     it("replaces the exception value with a generic summary and drops sensitive event data", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
       const original = new Error("Card 4242 declined for user@example.com");
       const sourceFile = appPath("src/modules/payment/payment.service.ts");
@@ -480,7 +486,7 @@ describe("sentry", () => {
     });
 
     it("rewrites in-app, node_modules, file URL, and node: frames while dropping unsafe paths", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
       const original = new Error("failed");
 
@@ -574,7 +580,7 @@ describe("sentry", () => {
     });
 
     it("drops stack frames injected through the original error message", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
       const injectedPath = appPath("src/secret.ts");
       const original = new Error(`failed\n    at ${injectedPath}:10:5`);
@@ -622,7 +628,7 @@ describe("sentry", () => {
     });
 
     it("falls back to unhandled-rejection and uncaught-exception summaries", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
 
       const rejection = (await sanitizeOutgoing(
@@ -672,7 +678,7 @@ describe("sentry", () => {
     });
 
     it("attaches active OpenTelemetry IDs in beforeSend when event context is missing", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       mockGetActiveSpan.mockReturnValue(validSpanContext());
       await loadSentry();
 
@@ -698,13 +704,13 @@ describe("sentry", () => {
     });
 
     it("keeps allowlisted job and background tags while dropping unknown keys", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
 
       const sanitized = (await sanitizeOutgoing(
         {
           tags: {
-            "error.summary": "BullMQ job exhausted retries",
+            "error.summary": "BullMQ job failed terminally",
             "error.source": "bullmq",
             "job.name": "send-notification",
             "queue.name": "notifications-queue",
@@ -719,7 +725,7 @@ describe("sentry", () => {
       )) as { tags: Record<string, unknown> };
 
       expect(sanitized.tags).toEqual({
-        "error.summary": "BullMQ job exhausted retries",
+        "error.summary": "BullMQ job failed terminally",
         "error.source": "bullmq",
         "job.name": "send-notification",
         "queue.name": "notifications-queue",
@@ -728,7 +734,7 @@ describe("sentry", () => {
     });
 
     it("drops invalid OpenTelemetry context and unknown exception types", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
 
       const sanitized = (await sanitizeOutgoing(
@@ -765,7 +771,7 @@ describe("sentry", () => {
     });
 
     it("drops tags-only OpenTelemetry IDs and falls back to the active span for invalid event context", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
 
       const tagsOnly = (await sanitizeOutgoing(
@@ -814,12 +820,9 @@ describe("sentry", () => {
     });
 
     it("adds a Grafana Tempo explore link from a valid https origin and paired OTel IDs", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
-      vi.stubEnv(
-        "GRAFANA_TRACES_BASE_URL",
-        "https://gallantcricket1373.grafana.net/extra?tab=traces",
-      );
+      vi.stubEnv("GRAFANA_TRACES_BASE_URL", `${GRAFANA_ORIGIN}/extra?tab=traces`);
 
       const timestamp = 1_700_000_000;
       const sanitized = await sanitizeOutgoing(
@@ -848,15 +851,35 @@ describe("sentry", () => {
         "otel.trace_id": VALID_TRACE_ID,
         "otel.span_id": VALID_SPAN_ID,
       });
-      expect(sanitized?.contexts).toEqual({
-        opentelemetry: { trace_id: VALID_TRACE_ID, span_id: VALID_SPAN_ID },
-        grafana: {
-          "View trace": grafanaExploreUrl(
-            "https://gallantcricket1373.grafana.net",
-            VALID_TRACE_ID,
-            timestamp,
-          ),
+      const grafanaLink = (sanitized?.contexts?.grafana as { "View trace"?: string } | undefined)?.[
+        "View trace"
+      ];
+      expect(grafanaLink).toEqual(expect.any(String));
+      const grafanaUrl = new URL(grafanaLink as string);
+      expect(grafanaUrl.origin).toBe(GRAFANA_ORIGIN);
+      expect(grafanaUrl.pathname).toBe("/explore");
+      expect(grafanaUrl.searchParams.get("schemaVersion")).toBe("1");
+      expect(grafanaUrl.searchParams.get("orgId")).toBe("1");
+      expect(JSON.parse(grafanaUrl.searchParams.get("panes") ?? "")).toEqual({
+        trc: {
+          datasource: "grafanacloud-traces",
+          queries: [
+            {
+              datasource: { uid: "grafanacloud-traces", type: "tempo" },
+              query: VALID_TRACE_ID,
+              queryType: "traceql",
+              refId: "A",
+            },
+          ],
+          range: {
+            from: String(timestamp * 1000 - 60 * 60 * 1000),
+            to: String(timestamp * 1000 + 15 * 60 * 1000),
+          },
         },
+      });
+      expect(sanitized?.contexts?.opentelemetry).toEqual({
+        trace_id: VALID_TRACE_ID,
+        span_id: VALID_SPAN_ID,
       });
     });
 
@@ -866,7 +889,7 @@ describe("sentry", () => {
       { label: "http origin", value: "http://gallantcricket1373.grafana.net" },
       { label: "non-URL", value: "not-a-url" },
     ])("omits contexts.grafana when GRAFANA_TRACES_BASE_URL is $label", async ({ value }) => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       await loadSentry();
       if (value === undefined) {
         delete process.env.GRAFANA_TRACES_BASE_URL;
@@ -895,12 +918,12 @@ describe("sentry", () => {
   });
 
   describe("flush and fatal shutdown", () => {
-    it("flushSentry is a no-op without a DSN and forwards the timeout when enabled", async () => {
+    it("flushSentry is a no-op unless Sentry is enabled", async () => {
       const disabled = await loadSentry();
       await expect(disabled.flushSentry()).resolves.toBe(true);
       expect(mockFlush).not.toHaveBeenCalled();
 
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const enabled = await loadSentry();
       await expect(enabled.flushSentry(5_000)).resolves.toBe(true);
       expect(mockFlush).toHaveBeenCalledWith(5_000);
@@ -920,7 +943,7 @@ describe("sentry", () => {
     });
 
     it("registers only unhandledRejection when a DSN exists", async () => {
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const onSpy = vi.spyOn(process, "on").mockImplementation(() => process);
       const { registerUnhandledRejectionHandler, terminateAfterFatalError } = await loadSentry();
 
@@ -935,7 +958,7 @@ describe("sentry", () => {
 
     it("flushes Sentry and OpenTelemetry before exiting after a fatal error", async () => {
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const { terminateAfterFatalError } = await loadSentry();
 
       terminateAfterFatalError();
@@ -952,7 +975,7 @@ describe("sentry", () => {
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
       mockFlush.mockRejectedValueOnce(new Error("sentry unavailable"));
       mockShutdownOpenTelemetry.mockRejectedValueOnce(new Error("otel unavailable"));
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const { terminateAfterFatalError } = await loadSentry();
 
       terminateAfterFatalError();
@@ -965,7 +988,7 @@ describe("sentry", () => {
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
       mockFlush.mockImplementation(() => new Promise(() => {}));
       mockShutdownOpenTelemetry.mockImplementation(() => new Promise(() => {}));
-      vi.stubEnv("SENTRY_DSN", SENTRY_DSN);
+      enableSentry();
       const { terminateAfterFatalError } = await loadSentry();
 
       terminateAfterFatalError();

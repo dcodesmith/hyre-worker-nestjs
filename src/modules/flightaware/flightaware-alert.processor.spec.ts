@@ -3,16 +3,10 @@ import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
-import { captureException } from "../../sentry";
 import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 
-const { captureExceptionMock, captureTerminalJobFailureMock } = vi.hoisted(() => ({
-  captureExceptionMock: vi.fn(),
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
   captureTerminalJobFailureMock: vi.fn(),
-}));
-
-vi.mock("../../sentry", () => ({
-  captureException: captureExceptionMock,
 }));
 
 vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
@@ -143,27 +137,6 @@ describe("FlightAlertProcessor", () => {
         error,
         FLIGHT_ALERTS_QUEUE,
       );
-      expect(captureException).not.toHaveBeenCalled();
-    });
-
-    it("delegates job failures to terminal-only capture", () => {
-      const job = {
-        id: "job-123",
-        name: CREATE_FLIGHT_ALERT_JOB,
-        data: mockJobData,
-        attemptsMade: 1,
-        opts: { attempts: 3 },
-      } as Job<FlightAlertJobData>;
-      const error = new Error("FlightAware API rate limit exceeded");
-
-      processor.onFailed(job, error);
-
-      expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
-        job,
-        error,
-        FLIGHT_ALERTS_QUEUE,
-      );
-      expect(captureException).not.toHaveBeenCalled();
     });
   });
 });

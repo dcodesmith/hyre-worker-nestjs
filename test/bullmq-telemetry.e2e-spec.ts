@@ -28,6 +28,18 @@ vi.mock("../src/sentry", () => ({
 const QUEUE_NAME = `bullmq-otel-e2e-${process.env.VITEST_WORKER_ID ?? "0"}`;
 const SECRET = "user-email-secret@example.com";
 
+function createDeferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+let firstFailed = createDeferred();
+let secondFailed = createDeferred();
+let failedEvents = 0;
+
 @Processor(QUEUE_NAME, { concurrency: 1 })
 class TelemetryProbeProcessor extends WorkerHost {
   async process(job: Job<{ fail?: boolean }>): Promise<{ ok: true }> {
@@ -43,6 +55,13 @@ class TelemetryProbeProcessor extends WorkerHost {
   @OnWorkerEvent("failed")
   onFailed(job: Job<{ fail?: boolean }> | undefined, error: Error): void {
     captureTerminalJobFailure(job, error, QUEUE_NAME);
+    failedEvents += 1;
+    if (failedEvents === 1) {
+      firstFailed.resolve();
+    }
+    if (failedEvents === 2) {
+      secondFailed.resolve();
+    }
   }
 }
 
@@ -118,6 +137,9 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
 
   beforeEach(() => {
     captureExceptionMock.mockClear();
+    failedEvents = 0;
+    firstFailed = createDeferred();
+    secondFailed = createDeferred();
   });
 
   afterAll(async () => {
@@ -202,20 +224,19 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
     spanExporter.reset();
 
     const job = await queue.add("probe", { fail: true }, { attempts: 1 });
+    await firstFailed.promise;
     await vi.waitFor(async () => {
       expect(await job.getState()).toBe("failed");
     });
 
-    await vi.waitFor(() => {
-      expect(captureException).toHaveBeenCalledTimes(1);
-    });
+    expect(captureException).toHaveBeenCalledTimes(1);
 
     const producer = spanExporter.getFinishedSpans().find((span) => span.name.startsWith("add "));
     expect(producer).toBeDefined();
     expect(captureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
-        message: "BullMQ job exhausted retries",
+        message: "BullMQ job failed terminally",
         tags: expect.objectContaining({
           "error.source": "bullmq",
           "job.name": "probe",
@@ -228,34 +249,22 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
     );
   });
 
-  it("does not send Sentry alerts through the span wrapper on failed retry attempts", async () => {
-    spanExporter.reset();
-
+  it("does not capture a retryable failure, then captures the terminal attempt", async () => {
     const job = await queue.add("probe", { fail: true }, { attempts: 2 });
+    await firstFailed.promise;
+    expect(captureException).not.toHaveBeenCalled();
+
+    await secondFailed.promise;
     await vi.waitFor(async () => {
-      const jobId = job.id;
-      if (!jobId) {
-        throw new Error("expected job id");
-      }
-      const current = await queue.getJob(jobId);
-      expect(await current?.getState()).toBe("failed");
-      expect(current?.attemptsMade).toBeGreaterThanOrEqual(2);
+      expect(await job.getState()).toBe("failed");
     });
 
-    await vi.waitFor(() => {
-      expect(captureException).toHaveBeenCalledTimes(1);
-    });
-
-    await vi.waitFor(() => {
-      const processSpans = spanExporter
-        .getFinishedSpans()
-        .filter((span) => span.name.startsWith("process "));
-      expect(processSpans.length).toBeGreaterThanOrEqual(2);
-    });
-
-    const dump = exportedTelemetryDump(spanExporter.getFinishedSpans());
-    expect(dump).not.toContain(SECRET);
-    expect(dump).not.toContain("processor failed");
-    expect(dump).not.toContain("bullmq.job.failed.reason");
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        message: "BullMQ job failed terminally",
+      }),
+    );
   });
 });

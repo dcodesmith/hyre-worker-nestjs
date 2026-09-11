@@ -11,9 +11,10 @@ import * as Sentry from "@sentry/nestjs";
 import { shutdownOpenTelemetry } from "./tracing";
 
 const dsn = process.env.SENTRY_DSN;
+const sentryEnabled = Boolean(dsn) && process.env.NODE_ENV !== "test";
 const ERROR_SUMMARIES = [
   "Application bootstrap failed",
-  "BullMQ job exhausted retries",
+  "BullMQ job failed terminally",
   "BullMQ job failed without context",
   "Domain outbox event failed permanently",
   "Event handler failed",
@@ -23,6 +24,7 @@ const ERROR_SUMMARIES = [
   "Failed to process domain outbox events",
   "Failed to process notification outbox events",
   "Failed to reconcile missing FlightAware alerts",
+  "Failed to reconcile one or more expired reservations",
   "Failed to reconcile one or more successful payments",
   "Failed to reconcile processing payouts",
   "Failed to reconcile processing refunds",
@@ -159,15 +161,22 @@ function grafanaTraceUrl(traceId: string, timestamp: unknown): string | undefine
     }
     const occurredAtMs =
       typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp * 1000 : Date.now();
-    const left = JSON.stringify({
-      datasource: "grafanacloud-traces",
-      queries: [{ query: traceId, queryType: "traceql", refId: "A" }],
-      range: {
-        from: new Date(occurredAtMs - 60 * 60 * 1000).toISOString(),
-        to: new Date(occurredAtMs + 15 * 60 * 1000).toISOString(),
+    const datasource = { uid: "grafanacloud-traces", type: "tempo" };
+    const panes = JSON.stringify({
+      trc: {
+        datasource: datasource.uid,
+        queries: [{ datasource, query: traceId, queryType: "traceql", refId: "A" }],
+        range: {
+          from: String(occurredAtMs - 60 * 60 * 1000),
+          to: String(occurredAtMs + 15 * 60 * 1000),
+        },
       },
     });
-    return `${origin.origin}/explore?left=${encodeURIComponent(left)}`;
+    const url = new URL("/explore", origin.origin);
+    url.searchParams.set("panes", panes);
+    url.searchParams.set("schemaVersion", "1");
+    url.searchParams.set("orgId", "1");
+    return url.toString();
   } catch {
     return undefined;
   }
@@ -176,17 +185,23 @@ function grafanaTraceUrl(traceId: string, timestamp: unknown): string | undefine
 function sanitizeTags(tags: Sentry.ErrorEvent["tags"]): Sentry.ErrorEvent["tags"] {
   const safeTags: NonNullable<Sentry.ErrorEvent["tags"]> = {};
   for (const [key, value] of Object.entries(tags ?? {})) {
+    const stringValue = typeof value === "string" ? value : undefined;
     if (
       (key === "error.source" &&
-        ["bootstrap", "bullmq", "event", "http", "scheduler"].includes(String(value))) ||
-      (key === "error.summary" && SAFE_SUMMARIES.has(value as ErrorSummary)) ||
-      (key === "http.method" && /^[A-Z]{3,10}$/.test(String(value))) ||
+        stringValue !== undefined &&
+        ["bootstrap", "bullmq", "event", "http", "scheduler"].includes(stringValue)) ||
+      (key === "error.summary" && stringValue !== undefined && SAFE_SUMMARIES.has(stringValue)) ||
+      (key === "http.method" && stringValue !== undefined && /^[A-Z]{3,10}$/.test(stringValue)) ||
       (key === "http.status_code" &&
         Number.isInteger(value) &&
         Number(value) >= 500 &&
         Number(value) < 600) ||
-      (key === "background.operation" && SAFE_OPERATION.test(String(value))) ||
-      ((key === "job.name" || key === "queue.name") && SAFE_NAME.test(String(value)))
+      (key === "background.operation" &&
+        stringValue !== undefined &&
+        SAFE_OPERATION.test(stringValue)) ||
+      ((key === "job.name" || key === "queue.name") &&
+        stringValue !== undefined &&
+        SAFE_NAME.test(stringValue))
     ) {
       safeTags[key] = value;
     }
@@ -261,45 +276,47 @@ function sanitizeEvent(event: Sentry.ErrorEvent, hint: Sentry.EventHint): Sentry
   }
 }
 
-Sentry.init({
-  dsn,
-  enabled: Boolean(dsn),
-  environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
-  release: process.env.DEPLOYMENT_VERSION || "local",
-  defaultIntegrations: false,
-  integrations: dsn
-    ? [
-        Sentry.onUncaughtExceptionIntegration({
-          exitEvenIfOtherHandlersAreRegistered: true,
-          onFatalError: terminateAfterFatalError,
-        }),
-        Sentry.onUnhandledRejectionIntegration({ mode: "none" }),
-      ]
-    : [],
-  skipOpenTelemetrySetup: true,
-  tracesSampleRate: 0,
-  profileSessionSampleRate: 0,
-  registerEsmLoaderHooks: false,
-  includeServerName: false,
-  includeLocalVariables: false,
-  maxBreadcrumbs: 0,
-  enableLogs: false,
-  enableMetrics: false,
-  sendDefaultPii: false,
-  dataCollection: {
-    userInfo: false,
-    cookies: false,
-    httpHeaders: { request: false, response: false },
-    httpBodies: [],
-    urlQueryParams: false,
-    graphQL: { document: false, variables: false },
-    genAI: { inputs: false, outputs: false },
-    databaseQueryData: false,
-    stackFrameVariables: false,
-    frameContextLines: 0,
-  },
-  beforeSend: sanitizeEvent,
-});
+if (process.env.NODE_ENV !== "test") {
+  Sentry.init({
+    dsn,
+    enabled: sentryEnabled,
+    environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+    release: process.env.DEPLOYMENT_VERSION || "local",
+    defaultIntegrations: false,
+    integrations: sentryEnabled
+      ? [
+          Sentry.onUncaughtExceptionIntegration({
+            exitEvenIfOtherHandlersAreRegistered: true,
+            onFatalError: terminateAfterFatalError,
+          }),
+          Sentry.onUnhandledRejectionIntegration({ mode: "none" }),
+        ]
+      : [],
+    skipOpenTelemetrySetup: true,
+    tracesSampleRate: 0,
+    profileSessionSampleRate: 0,
+    registerEsmLoaderHooks: false,
+    includeServerName: false,
+    includeLocalVariables: false,
+    maxBreadcrumbs: 0,
+    enableLogs: false,
+    enableMetrics: false,
+    sendDefaultPii: false,
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+      urlQueryParams: false,
+      graphQL: { document: false, variables: false },
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      stackFrameVariables: false,
+      frameContextLines: 0,
+    },
+    beforeSend: sanitizeEvent,
+  });
+}
 
 type CaptureContext = {
   message: ErrorSummary;
@@ -308,7 +325,7 @@ type CaptureContext = {
 };
 
 export function captureException(exception: unknown, context: CaptureContext): void {
-  if (!dsn) {
+  if (!sentryEnabled) {
     return;
   }
 
@@ -323,10 +340,6 @@ export function captureException(exception: unknown, context: CaptureContext): v
         ? explicitTraceContext
         : trace.getActiveSpan()?.spanContext();
     if (spanContext && isSpanContextValid(spanContext)) {
-      scope.setTags({
-        "otel.trace_id": spanContext.traceId,
-        "otel.span_id": spanContext.spanId,
-      });
       scope.setContext("opentelemetry", {
         trace_id: spanContext.traceId,
         span_id: spanContext.spanId,
@@ -339,7 +352,7 @@ export function captureException(exception: unknown, context: CaptureContext): v
 }
 
 export async function flushSentry(timeout = 2_000): Promise<boolean> {
-  return dsn ? Sentry.flush(timeout) : true;
+  return sentryEnabled ? Sentry.flush(timeout) : true;
 }
 
 let fatalShutdownStarted = false;
@@ -365,7 +378,7 @@ export function registerUnhandledRejectionHandler(): void {
   }
   rejectionHandlerRegistered = true;
   process.on("unhandledRejection", terminateAfterFatalError);
-  if (!dsn) {
+  if (!sentryEnabled) {
     process.on("uncaughtException", terminateAfterFatalError);
   }
 }

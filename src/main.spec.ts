@@ -1,15 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { captureExceptionMock, flushSentryMock, shutdownOpenTelemetryMock } = vi.hoisted(() => ({
+const {
+  captureExceptionMock,
+  flushSentryMock,
+  shutdownOpenTelemetryMock,
+  registerUnhandledRejectionHandlerMock,
+} = vi.hoisted(() => ({
   captureExceptionMock: vi.fn(),
   flushSentryMock: vi.fn().mockResolvedValue(true),
   shutdownOpenTelemetryMock: vi.fn().mockResolvedValue(undefined),
+  registerUnhandledRejectionHandlerMock: vi.fn(),
 }));
 
 vi.mock("./sentry", () => ({
   captureException: captureExceptionMock,
   flushSentry: flushSentryMock,
-  registerUnhandledRejectionHandler: vi.fn(),
+  registerUnhandledRejectionHandler: registerUnhandledRejectionHandlerMock,
 }));
 
 vi.mock("./tracing", () => ({
@@ -67,6 +73,7 @@ describe("main bootstrap failure", () => {
 
     await importFailingBootstrap(error);
 
+    expect(registerUnhandledRejectionHandlerMock).toHaveBeenCalled();
     expect(captureExceptionMock).toHaveBeenCalledWith(error, {
       message: "Application bootstrap failed",
       tags: { "error.source": "bootstrap" },

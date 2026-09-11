@@ -12,7 +12,7 @@ import {
 import { PaymentService } from "../payment/payment.service";
 import { ReferralProcessingService } from "../referral/referral-processing.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
-import { DomainOutboxService } from "./domain-outbox.service";
+import { DOMAIN_OUTBOX_MAX_ATTEMPTS, DomainOutboxService } from "./domain-outbox.service";
 
 @Processor(DOMAIN_OUTBOX_QUEUE)
 export class DomainOutboxProcessor extends WorkerHost {
@@ -74,7 +74,9 @@ export class DomainOutboxProcessor extends WorkerHost {
       }
 
       if (this.isFinalAttempt(job)) {
-        this.captureTerminalFailure(job, error);
+        if (job.data.dispatchAttempt >= DOMAIN_OUTBOX_MAX_ATTEMPTS) {
+          this.captureTerminalFailure(job, error);
+        }
         try {
           await this.domainOutboxService.markFailed(
             job.data.outboxEventId,

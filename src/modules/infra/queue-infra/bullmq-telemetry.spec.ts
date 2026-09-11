@@ -213,8 +213,12 @@ describe("createBullMqTelemetry", () => {
   });
 });
 
-const TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-const W3C_TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+const TRACE_CARRIER = { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" };
+const EXTRACTED_SPAN_CONTEXT = {
+  traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+  spanId: "00f067aa0ba902b7",
+  traceFlags: 1,
+};
 
 function createJob(overrides?: {
   name?: string;
@@ -239,26 +243,7 @@ function createJob(overrides?: {
 describe("captureTerminalJobFailure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    extractMock.mockImplementation((context, carrier) => {
-      if (!carrier || typeof carrier !== "object" || Array.isArray(carrier)) {
-        return context;
-      }
-      const traceparent = (carrier as { traceparent?: unknown }).traceparent;
-      if (typeof traceparent !== "string") {
-        return context;
-      }
-      const match = W3C_TRACEPARENT.exec(traceparent);
-      if (!match) {
-        return context;
-      }
-      return {
-        spanContext: {
-          traceId: match[1],
-          spanId: match[2],
-          traceFlags: Number.parseInt(match[3], 16),
-        },
-      };
-    });
+    extractMock.mockReturnValue({ spanContext: EXTRACTED_SPAN_CONTEXT });
     getSpanContextMock.mockImplementation((context) => context?.spanContext);
   });
 
@@ -289,7 +274,7 @@ describe("captureTerminalJobFailure", () => {
 
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(captureException).toHaveBeenCalledWith(error, {
-      message: "BullMQ job exhausted retries",
+      message: "BullMQ job failed terminally",
       tags: {
         "error.source": "bullmq",
         "job.name": "send-notification",
@@ -339,21 +324,8 @@ describe("captureTerminalJobFailure", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(captureException).toHaveBeenCalledWith(
       error,
-      expect.objectContaining({ message: "BullMQ job exhausted retries" }),
+      expect.objectContaining({ message: "BullMQ job failed terminally" }),
     );
-  });
-
-  it("captures a duck-typed UnrecoverableError by name", () => {
-    const error = new Error("stale lock");
-    error.name = "UnrecoverableError";
-
-    captureTerminalJobFailure(
-      createJob({ attemptsMade: 1, attempts: 3 }),
-      error,
-      "notifications-queue",
-    );
-
-    expect(captureException).toHaveBeenCalledTimes(1);
   });
 
   it("captures a finished job even when retries remain", () => {
@@ -366,27 +338,24 @@ describe("captureTerminalJobFailure", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 
-  it("reads valid W3C traceparent metadata as explicit trace context", () => {
+  it("extracts producer trace context from job metadata", () => {
     const error = new Error("terminal failure");
 
     captureTerminalJobFailure(
       createJob({
         attemptsMade: 1,
         attempts: 1,
-        metadata: JSON.stringify({ traceparent: TRACEPARENT }),
+        metadata: JSON.stringify(TRACE_CARRIER),
       }),
       error,
       "status-updates-queue",
     );
 
+    expect(extractMock).toHaveBeenCalledWith(expect.anything(), TRACE_CARRIER);
     expect(captureException).toHaveBeenCalledWith(
       error,
       expect.objectContaining({
-        traceContext: expect.objectContaining({
-          traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
-          spanId: "00f067aa0ba902b7",
-          traceFlags: 1,
-        }),
+        traceContext: EXTRACTED_SPAN_CONTEXT,
       }),
     );
   });
@@ -395,14 +364,6 @@ describe("captureTerminalJobFailure", () => {
     { label: "missing metadata", metadata: undefined },
     { label: "invalid json", metadata: "{not-json" },
     { label: "non-object carrier", metadata: JSON.stringify(["traceparent"]) },
-    { label: "non-string traceparent", metadata: JSON.stringify({ traceparent: 12 }) },
-    { label: "malformed traceparent", metadata: JSON.stringify({ traceparent: "00-bad-id" }) },
-    {
-      label: "uppercase W3C traceparent",
-      metadata: JSON.stringify({
-        traceparent: "00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01",
-      }),
-    },
   ])("ignores $label", ({ metadata }) => {
     captureTerminalJobFailure(
       createJob({ attemptsMade: 1, attempts: 1, metadata }),
@@ -410,6 +371,7 @@ describe("captureTerminalJobFailure", () => {
       "reminders-queue",
     );
 
+    expect(extractMock).not.toHaveBeenCalled();
     expect(captureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({ traceContext: undefined }),

@@ -13,18 +13,18 @@ const optionalNonEmptyString = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
 );
-const optionalHttpUrl = (error: string) =>
+const optionalUrl = (protocol: RegExp, error: string) =>
   z.preprocess(
     (value) => (value === "" ? undefined : value),
     z
       .url({
-        protocol: /^https?$/,
+        protocol,
         error,
       })
       .optional(),
   );
-const optionalOtlpHttpUrl = optionalHttpUrl("OTLP endpoint must use http:// or https://");
-const optionalSentryDsn = optionalHttpUrl("SENTRY_DSN must use http:// or https://");
+const optionalOtlpHttpUrl = optionalUrl(/^https?$/, "OTLP endpoint must use http:// or https://");
+const optionalSentryDsn = optionalUrl(/^https?$/, "SENTRY_DSN must use http:// or https://");
 const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
   "TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID",
@@ -157,9 +157,7 @@ export const envSchema = z
     OTEL_EXPORTER_OTLP_HEADERS: optionalNonEmptyString,
     OTEL_SERVICE_NAME: optionalNonEmptyString,
     SENTRY_DSN: optionalSentryDsn,
-    GRAFANA_TRACES_BASE_URL: optionalHttpUrl(
-      "GRAFANA_TRACES_BASE_URL must use http:// or https://",
-    ),
+    GRAFANA_TRACES_BASE_URL: optionalUrl(/^https$/, "GRAFANA_TRACES_BASE_URL must use https://"),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z

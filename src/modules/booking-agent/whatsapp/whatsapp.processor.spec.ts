@@ -10,16 +10,10 @@ import {
   PROCESS_WHATSAPP_INBOUND_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
-import { captureException } from "../../../sentry";
 import { captureTerminalJobFailure } from "../../infra/queue-infra/bullmq-telemetry";
 
-const { captureExceptionMock, captureTerminalJobFailureMock } = vi.hoisted(() => ({
-  captureExceptionMock: vi.fn(),
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
   captureTerminalJobFailureMock: vi.fn(),
-}));
-
-vi.mock("../../../sentry", () => ({
-  captureException: captureExceptionMock,
 }));
 
 vi.mock("../../infra/queue-infra/bullmq-telemetry", () => ({
@@ -601,24 +595,5 @@ describe("WhatsAppProcessor", () => {
       error,
       WHATSAPP_AGENT_QUEUE,
     );
-    expect(captureException).not.toHaveBeenCalled();
-  });
-
-  it("delegates job failures to terminal-only capture", () => {
-    const job = buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
-      conversationId: "conv-1",
-      messageId: "msg-1",
-      dedupeKey: "dedupe-1",
-    });
-    const error = new Error("processor failed for user@example.com");
-
-    processor.onFailed(job, error);
-
-    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
-      job,
-      error,
-      WHATSAPP_AGENT_QUEUE,
-    );
-    expect(captureException).not.toHaveBeenCalled();
   });
 });

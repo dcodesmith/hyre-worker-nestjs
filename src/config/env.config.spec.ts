@@ -456,6 +456,7 @@ describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
     ...productionEnv,
     OPERATIONS_EMAIL: "operations@example.com",
   };
+  const grafanaOrigin = "https://gallantcricket1373.grafana.net";
 
   it("accepts a valid optional Grafana traces URL", () => {
     const omitted = envSchema.safeParse(baseEnv);
@@ -466,12 +467,12 @@ describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
 
     const result = envSchema.safeParse({
       ...baseEnv,
-      GRAFANA_TRACES_BASE_URL: "https://gallantcricket1373.grafana.net",
+      GRAFANA_TRACES_BASE_URL: grafanaOrigin,
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.GRAFANA_TRACES_BASE_URL).toBe("https://gallantcricket1373.grafana.net");
+      expect(result.data.GRAFANA_TRACES_BASE_URL).toBe(grafanaOrigin);
     }
   });
 
@@ -487,10 +488,14 @@ describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
     }
   });
 
-  it("rejects a malformed GRAFANA_TRACES_BASE_URL", () => {
+  it.each([
+    "not-a-url",
+    "http://gallantcricket1373.grafana.net",
+    "ftp://gallantcricket1373.grafana.net",
+  ])("rejects %s", (value) => {
     const result = envSchema.safeParse({
       ...baseEnv,
-      GRAFANA_TRACES_BASE_URL: "not-a-url",
+      GRAFANA_TRACES_BASE_URL: value,
     });
 
     expect(result.success).toBe(false);
@@ -499,26 +504,7 @@ describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
         expect.arrayContaining([
           expect.objectContaining({
             path: ["GRAFANA_TRACES_BASE_URL"],
-            message: "GRAFANA_TRACES_BASE_URL must use http:// or https://",
-          }),
-        ]),
-      );
-    }
-  });
-
-  it("rejects a non-http GRAFANA_TRACES_BASE_URL protocol", () => {
-    const result = envSchema.safeParse({
-      ...baseEnv,
-      GRAFANA_TRACES_BASE_URL: "ftp://gallantcricket1373.grafana.net",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: ["GRAFANA_TRACES_BASE_URL"],
-            message: "GRAFANA_TRACES_BASE_URL must use http:// or https://",
+            message: "GRAFANA_TRACES_BASE_URL must use https://",
           }),
         ]),
       );

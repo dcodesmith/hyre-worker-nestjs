@@ -192,7 +192,32 @@ describe("DomainOutboxService", () => {
       },
     });
     expect(domainOutboxQueue.add).toHaveBeenCalledTimes(2);
+    expect(reportBackgroundFailure).not.toHaveBeenCalled();
   });
+
+  it.each([new Error("claim failed first"), undefined])(
+    "reports the first claim or process rejection once per run",
+    async (first) => {
+      const second = new Error("claim failed second");
+      domainOutboxEvent.findMany.mockResolvedValueOnce([
+        pendingEvent,
+        { ...pendingEvent, id: "outbox-2" },
+      ]);
+      domainOutboxEvent.updateMany.mockRejectedValueOnce(first).mockRejectedValueOnce(second);
+
+      expect(await service.processPendingEvents()).toBe(0);
+
+      expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        first,
+        expect.objectContaining({
+          message: "Failed to process domain outbox events",
+          operation: "DomainOutboxService.processPendingEvents",
+          source: "scheduler",
+        }),
+      );
+    },
+  );
 
   it("dead-letters an event after the final attempt", async () => {
     domainOutboxEvent.findMany.mockResolvedValueOnce([{ ...pendingEvent, attempts: 7 }]);
@@ -226,13 +251,17 @@ describe("DomainOutboxService", () => {
 
     await expect(service.processPendingEvents()).resolves.toBe(0);
 
-    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+    expect(reportBackgroundFailure).toHaveBeenNthCalledWith(
+      1,
       dispatchError,
       expect.objectContaining({
         message: "Failed to dispatch domain outbox event",
         operation: "DomainOutboxService.processEvent",
         source: "scheduler",
       }),
+    );
+    expect(reportBackgroundFailureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      domainOutboxEvent.updateMany.mock.invocationCallOrder[1],
     );
   });
 

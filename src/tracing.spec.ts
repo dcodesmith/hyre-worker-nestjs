@@ -89,6 +89,7 @@ describe("tracing bootstrap", () => {
   afterEach(() => {
     warnSpy.mockRestore();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("does not start the SDK when no OTLP endpoint is configured", async () => {
@@ -220,5 +221,35 @@ describe("tracing bootstrap", () => {
     await shutdownOpenTelemetry();
 
     expect(sdkInstances.at(-1)?.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects shutdown after 2 seconds and keeps a late SDK completion on the same promise", async () => {
+    vi.useFakeTimers();
+    let finishShutdown: (() => void) | undefined;
+    mockNodeSDK.mockImplementationOnce(() => {
+      const instance = {
+        start: mockStart,
+        shutdown: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishShutdown = resolve;
+            }),
+        ),
+      };
+      sdkInstances.push(instance);
+      return instance;
+    });
+    vi.stubEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://tempo.example.com/v1/traces");
+    const { shutdownOpenTelemetry } = await loadTracing();
+
+    const first = shutdownOpenTelemetry();
+    const timedOut = expect(first).rejects.toThrow("OpenTelemetry shutdown timed out");
+    await vi.advanceTimersByTimeAsync(2_000);
+    await timedOut;
+
+    finishShutdown?.();
+    await expect(shutdownOpenTelemetry()).rejects.toThrow("OpenTelemetry shutdown timed out");
+    expect(sdkInstances.at(-1)?.shutdown).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

@@ -85,15 +85,31 @@ if (telemetryEnabled) {
   sdk.start();
 }
 
+const SHUTDOWN_TIMEOUT_MS = 2_000;
 let shutdownPromise: Promise<void> | undefined;
+
+async function shutdownSdk(): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      sdk.shutdown(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("OpenTelemetry shutdown timed out")),
+          SHUTDOWN_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export function shutdownOpenTelemetry(): Promise<void> {
   if (!telemetryEnabled) {
     return Promise.resolve();
   }
 
-  shutdownPromise ??= sdk.shutdown();
+  shutdownPromise ??= shutdownSdk();
   return shutdownPromise;
 }
-
-export default sdk;

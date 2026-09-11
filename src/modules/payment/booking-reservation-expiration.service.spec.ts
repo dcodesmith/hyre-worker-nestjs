@@ -1,12 +1,25 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { BookingReservationService } from "../booking/booking-reservation.service";
 import { ExtensionReservationService } from "../booking/extension-reservation.service";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
 import { ChargeCompletedHandler } from "./charge-completed.handler";
+
+const { reportBackgroundFailureMock, observeBackgroundOperationMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
 
 const transaction = {
   id: 123,
@@ -119,6 +132,15 @@ describe("BookingReservationExpirationService", () => {
 
     expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
+    expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        message: "Failed to reconcile one or more expired reservations",
+        operation: "BookingReservationExpirationService.reconcileExpiredReservations",
+        source: "scheduler",
+      }),
+    );
     expect(databaseService.booking.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: [
@@ -128,6 +150,30 @@ describe("BookingReservationExpirationService", () => {
       }),
     );
   });
+
+  it.each([new Error("provider timeout"), undefined])(
+    "reports the first reservation error once per scheduled run",
+    async (first) => {
+      const second = new Error("network reset");
+      databaseService.booking.findMany.mockResolvedValue([
+        { id: "booking-1", paymentIntent: "booking-1" },
+        { id: "booking-2", paymentIntent: "booking-2" },
+      ]);
+      flutterwaveService.findTransactionByReference
+        .mockRejectedValueOnce(first)
+        .mockRejectedValueOnce(second);
+
+      await expect(service.reconcileExpiredReservations()).resolves.toBe(0);
+
+      expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        first,
+        expect.objectContaining({
+          message: "Failed to reconcile one or more expired reservations",
+        }),
+      );
+    },
+  );
 
   it("retains the reservation while Flutterwave reports a non-terminal payment", async () => {
     flutterwaveService.findTransactionByReference.mockResolvedValue({

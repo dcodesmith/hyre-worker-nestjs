@@ -120,25 +120,6 @@ describe("background-operation", () => {
     expect(recorded).not.toContain("user@example.com");
   });
 
-  it("uses a scheduled-task summary for scheduler failures", async () => {
-    const error = new Error("redis down");
-
-    await expect(
-      observeBackgroundOperation(
-        "ReminderScheduler.scheduleBookingStartReminders",
-        "scheduler",
-        async () => {
-          throw error;
-        },
-      ),
-    ).rejects.toBe(error);
-
-    expect(captureExceptionMock).toHaveBeenCalledWith(
-      error,
-      expect.objectContaining({ message: "Scheduled task failed" }),
-    );
-  });
-
   it("reports swallowed errors without rethrowing and captures once", () => {
     const error = new Error("Queue error");
 

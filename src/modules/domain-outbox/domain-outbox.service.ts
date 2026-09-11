@@ -14,7 +14,7 @@ import { DOMAIN_OUTBOX_QUEUE } from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
 import type { DomainOutboxJobData } from "./domain-outbox.interface";
 
-const MAX_ATTEMPTS = 8;
+export const DOMAIN_OUTBOX_MAX_ATTEMPTS = 8;
 const PROCESSING_STALE_AFTER_MS = 2 * 60 * 1000;
 const DISPATCH_STALE_AFTER_MS = 30 * 60 * 1000;
 const JOB_ATTEMPTS = 3;
@@ -93,10 +93,16 @@ export class DomainOutboxService {
     }
 
     let processed = 0;
+    let hasFailure = false;
+    let firstFailure: unknown;
     for (const event of candidates) {
       try {
         processed += await this.processEvent(event, staleProcessingCutoff, now);
       } catch (error) {
+        if (!hasFailure) {
+          hasFailure = true;
+          firstFailure = error;
+        }
         this.logger.error(
           {
             outboxEventId: event.id,
@@ -106,6 +112,13 @@ export class DomainOutboxService {
           "Failed to claim or process domain outbox event",
         );
       }
+    }
+    if (hasFailure) {
+      reportBackgroundFailure(firstFailure, {
+        message: "Failed to process domain outbox events",
+        operation: "DomainOutboxService.processPendingEvents",
+        source: "scheduler",
+      });
     }
     return processed;
   }
@@ -144,7 +157,7 @@ export class DomainOutboxService {
       });
       return 1;
     } catch (error) {
-      if (currentAttempt >= MAX_ATTEMPTS) {
+      if (currentAttempt >= DOMAIN_OUTBOX_MAX_ATTEMPTS) {
         reportBackgroundFailure(error, {
           message: "Failed to dispatch domain outbox event",
           operation: "DomainOutboxService.processEvent",
@@ -227,7 +240,7 @@ export class DomainOutboxService {
     terminal = false,
   ): Promise<void> {
     const status =
-      terminal || dispatchAttempt >= MAX_ATTEMPTS
+      terminal || dispatchAttempt >= DOMAIN_OUTBOX_MAX_ATTEMPTS
         ? DomainOutboxStatus.DEAD_LETTER
         : DomainOutboxStatus.FAILED;
     const errorMessage = toPersistedErrorMessage(error);

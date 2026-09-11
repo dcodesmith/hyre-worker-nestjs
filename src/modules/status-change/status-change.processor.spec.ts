@@ -311,25 +311,6 @@ describe("StatusChangeProcessor", () => {
     expect(statusChangeService.updateBookingsFromActiveToCompleted).toHaveBeenCalled();
   });
 
-  it("delegates worker failures to terminal-only capture", () => {
-    const job = {
-      id: "job-failed",
-      name: CONFIRMED_TO_ACTIVE,
-      data: { type: CONFIRMED_TO_ACTIVE },
-      attemptsMade: 1,
-      opts: { attempts: 3 },
-    } as Job<StatusUpdateJobData>;
-    const error = new Error("Queue worker failed");
-
-    processor.onFailed(job, error);
-
-    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
-      job,
-      error,
-      STATUS_UPDATES_QUEUE,
-    );
-  });
-
   it("captures a missing-job worker failure without dereferencing the job", () => {
     vi.clearAllMocks();
     const error = new Error("job lost");

@@ -116,15 +116,13 @@ export function captureTerminalJobFailure(
   }
 
   const maxAttempts = job.opts.attempts ?? 1;
-  const isUnrecoverable =
-    error instanceof UnrecoverableError ||
-    (error instanceof Error && error.name === "UnrecoverableError");
+  const isUnrecoverable = error instanceof UnrecoverableError;
   if (!job.finishedOn && !isUnrecoverable && job.attemptsMade < maxAttempts) {
     return;
   }
 
   captureException(error, {
-    message: "BullMQ job exhausted retries",
+    message: "BullMQ job failed terminally",
     tags: {
       "error.source": "bullmq",
       "job.name": job.name,

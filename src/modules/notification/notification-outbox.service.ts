@@ -129,12 +129,18 @@ export class NotificationOutboxService {
       ),
     );
     let processed = 0;
+    let hasFailure = false;
+    let firstFailure: unknown;
     for (const [index, result] of results.entries()) {
       if (result.status === "fulfilled") {
         processed += result.value;
         continue;
       }
       const reason = result.reason;
+      if (!hasFailure) {
+        hasFailure = true;
+        firstFailure = reason;
+      }
       this.logger.error(
         {
           outboxEventId: candidates[index]?.id,
@@ -143,6 +149,13 @@ export class NotificationOutboxService {
         },
         "Failed to claim or process notification outbox event",
       );
+    }
+    if (hasFailure) {
+      reportBackgroundFailure(firstFailure, {
+        message: "Failed to process notification outbox events",
+        operation: "NotificationOutboxService.processPendingEvents",
+        source: "scheduler",
+      });
     }
     return processed;
   }
@@ -252,6 +265,11 @@ export class NotificationOutboxService {
     try {
       const notificationJobData = this.parseNotificationJobData(event.payload);
       if (!notificationJobData) {
+        reportBackgroundFailure(new Error("Invalid notification outbox payload"), {
+          message: "Failed to dispatch notification outbox event",
+          operation: "NotificationOutboxService.processEvent",
+          source: "scheduler",
+        });
         await this.databaseService.notificationOutboxEvent.update({
           where: { id: event.id },
           data: {
@@ -259,11 +277,6 @@ export class NotificationOutboxService {
             lastError: "Invalid notification outbox payload",
             processedAt: new Date(),
           },
-        });
-        reportBackgroundFailure(new Error("Invalid notification outbox payload"), {
-          message: "Failed to dispatch notification outbox event",
-          operation: "NotificationOutboxService.processEvent",
-          source: "scheduler",
         });
         // Terminal scrub — not “progress toward dispatch”; count as 0 so the
         // scheduler does not burn re-ticks on rows already removed from work.
@@ -293,6 +306,13 @@ export class NotificationOutboxService {
       const nextAttemptAt = this.computeNextAttemptAt(currentAttempt);
       const failureStatus = this.resolveFailureStatus(currentAttempt);
 
+      if (failureStatus === NotificationOutboxStatus.DEAD_LETTER) {
+        reportBackgroundFailure(error, {
+          message: "Failed to dispatch notification outbox event",
+          operation: "NotificationOutboxService.processEvent",
+          source: "scheduler",
+        });
+      }
       await this.databaseService.notificationOutboxEvent.update({
         where: { id: event.id },
         data: {
@@ -303,13 +323,6 @@ export class NotificationOutboxService {
         },
       });
 
-      if (failureStatus === NotificationOutboxStatus.DEAD_LETTER) {
-        reportBackgroundFailure(error, {
-          message: "Failed to dispatch notification outbox event",
-          operation: "NotificationOutboxService.processEvent",
-          source: "scheduler",
-        });
-      }
       this.logger.error(
         {
           outboxEventId: event.id,

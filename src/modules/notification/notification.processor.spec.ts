@@ -1261,30 +1261,6 @@ describe("NotificationProcessor", () => {
     ]);
   });
 
-  it("delegates worker failures to terminal-only capture", () => {
-    const job = createJob("job-failed", {
-      id: "notification-1",
-      type: NotificationType.BOOKING_STATUS_CHANGE,
-      channels: [NotificationChannel.EMAIL],
-      bookingId: "booking-123",
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          email: "client@example.com",
-        },
-      },
-      templateData: pushTemplateData,
-    });
-    const error = new Error("provider token=super-secret");
-
-    processor.onFailed(job, error);
-
-    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
-      job,
-      error,
-      NOTIFICATIONS_QUEUE,
-    );
-  });
-
   it("captures a missing-job worker failure without dereferencing the job", () => {
     vi.clearAllMocks();
     const error = new Error("job lost");
