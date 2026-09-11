@@ -49,7 +49,6 @@ const receiptBookingSelect = {
   returnLocation: true,
   totalAmount: true,
   netTotal: true,
-  securityDetailCost: true,
   fuelUpgradeCost: true,
   platformCustomerServiceFeeAmount: true,
   subtotalBeforeVat: true,
@@ -60,6 +59,10 @@ const receiptBookingSelect = {
   user: { select: { name: true } },
   car: { select: { make: true, model: true, year: true, color: true } },
   chauffeur: { select: { name: true } },
+  addons: {
+    orderBy: { name: "asc" },
+    select: { name: true, totalPrice: true },
+  },
   customerPayments: { select: receiptPaymentSelect },
   legs: {
     select: {
@@ -187,7 +190,10 @@ export class BookingReceiptService {
     }
 
     const bookingNet = this.requiredMoney(booking.netTotal);
-    const securityDetail = this.optionalMoney(booking.securityDetailCost);
+    const addonTotal = booking.addons.reduce(
+      (total, addon) => total.add(addon.totalPrice),
+      new Decimal(0),
+    );
     const fuelUpgrade = this.optionalMoney(booking.fuelUpgradeCost);
     const bookingFee = this.requiredMoney(booking.platformCustomerServiceFeeAmount);
     const referralDiscount = this.money(booking.referralDiscountAmount);
@@ -199,7 +205,7 @@ export class BookingReceiptService {
 
     this.assertEqual(
       bookingNet
-        .add(securityDetail)
+        .add(addonTotal)
         .add(fuelUpgrade)
         .add(bookingFee)
         .sub(referralDiscount)
@@ -253,7 +259,9 @@ export class BookingReceiptService {
       { label: "Base booking charge", amount: bookingNet.toNumber() },
     ];
     this.addPositiveLine(lineItems, `Paid extensions (${extensions.length})`, extensionNet);
-    this.addPositiveLine(lineItems, "Security detail", securityDetail);
+    for (const addon of booking.addons) {
+      this.addPositiveLine(lineItems, addon.name, this.money(addon.totalPrice));
+    }
     this.addPositiveLine(lineItems, "Fuel upgrade", fuelUpgrade);
     this.addPositiveLine(lineItems, "Platform service fee", bookingFee.add(extensionFees));
     this.addNegativeLine(lineItems, "Referral discount", referralDiscount);

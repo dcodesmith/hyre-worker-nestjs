@@ -3,12 +3,7 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
-import {
-  RateAlreadyEndedException,
-  RateDateOverlapException,
-  RateNotFoundException,
-  RateNotYetActiveException,
-} from "./rates.error";
+import { RateDateOverlapException } from "./rates.error";
 import { RatesService } from "./rates.service";
 import { RatesAdminService } from "./rates-admin.service";
 
@@ -26,13 +21,6 @@ describe("RatesAdminService", () => {
       findFirst: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
     };
-    addonRate: {
-      findMany: ReturnType<typeof vi.fn>;
-      findFirst: ReturnType<typeof vi.fn>;
-      findUnique: ReturnType<typeof vi.fn>;
-      create: ReturnType<typeof vi.fn>;
-      update: ReturnType<typeof vi.fn>;
-    };
   };
   let ratesService: { clearCache: ReturnType<typeof vi.fn> };
 
@@ -48,13 +36,6 @@ describe("RatesAdminService", () => {
         findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn(),
-      },
-      addonRate: {
-        findMany: vi.fn().mockResolvedValue([]),
-        findFirst: vi.fn().mockResolvedValue(null),
-        findUnique: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(),
       },
     };
     databaseService.$transaction.mockImplementation(
@@ -97,15 +78,6 @@ describe("RatesAdminService", () => {
           effectiveUntil: null,
         },
       ]);
-      databaseService.addonRate.findMany.mockResolvedValue([
-        {
-          id: "addon-1",
-          addonType: "SECURITY_DETAIL",
-          rateAmount: new Decimal("5000.00"),
-          effectiveSince: past,
-          effectiveUntil: null,
-        },
-      ]);
 
       const result = await service.getAllRates();
 
@@ -114,8 +86,7 @@ describe("RatesAdminService", () => {
       expect(result.platformFeeRates[0].active).toBe(true);
       expect(result.taxRates).toHaveLength(1);
       expect(result.taxRates[0].ratePercent).toBe(7.5);
-      expect(result.addonRates).toHaveLength(1);
-      expect(result.addonRates[0].rateAmount).toBe(5000);
+      expect(result).not.toHaveProperty("addonRates");
     });
 
     it("should mark expired rates as inactive", async () => {
@@ -132,7 +103,6 @@ describe("RatesAdminService", () => {
         },
       ]);
       databaseService.taxRate.findMany.mockResolvedValue([]);
-      databaseService.addonRate.findMany.mockResolvedValue([]);
 
       const result = await service.getAllRates();
 
@@ -205,97 +175,6 @@ describe("RatesAdminService", () => {
       await expect(service.createVatRate(validDto)).rejects.toBeInstanceOf(
         RateDateOverlapException,
       );
-    });
-  });
-
-  describe("createAddonRate", () => {
-    const validDto = {
-      addonType: "SECURITY_DETAIL" as const,
-      rateAmount: 5000,
-      effectiveSince: new Date("2026-03-01"),
-    };
-
-    it("should create an addon rate and clear cache", async () => {
-      databaseService.addonRate.create.mockResolvedValue({
-        id: "addon-new",
-        ...validDto,
-        rateAmount: new Decimal("5000.00"),
-        effectiveUntil: null,
-      });
-
-      const result = await service.createAddonRate(validDto);
-
-      expect(result.id).toBe("addon-new");
-      expect(result.rateAmount).toBe(5000);
-      expect(databaseService.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-        isolationLevel: "Serializable",
-      });
-      expect(ratesService.clearCache).toHaveBeenCalledOnce();
-    });
-
-    it("should throw on date overlap", async () => {
-      databaseService.addonRate.findFirst.mockResolvedValue({ id: "existing" });
-
-      await expect(service.createAddonRate(validDto)).rejects.toBeInstanceOf(
-        RateDateOverlapException,
-      );
-    });
-  });
-
-  describe("endAddonRate", () => {
-    it("should end an active addon rate and clear cache", async () => {
-      databaseService.addonRate.findUnique.mockResolvedValue({
-        id: "addon-1",
-        effectiveSince: new Date("2024-01-01"),
-        effectiveUntil: null,
-      });
-      databaseService.addonRate.update.mockResolvedValue({
-        id: "addon-1",
-        rateAmount: new Decimal("5000.00"),
-        effectiveUntil: new Date(),
-      });
-
-      const result = await service.endAddonRate("addon-1");
-
-      expect(result.rateAmount).toBe(5000);
-      expect(databaseService.addonRate.update).toHaveBeenCalledWith({
-        where: { id: "addon-1" },
-        data: { effectiveUntil: expect.any(Date) },
-      });
-      expect(ratesService.clearCache).toHaveBeenCalledOnce();
-    });
-
-    it("should throw RateNotFoundException when addon rate does not exist", async () => {
-      databaseService.addonRate.findUnique.mockResolvedValue(null);
-
-      await expect(service.endAddonRate("nonexistent")).rejects.toBeInstanceOf(
-        RateNotFoundException,
-      );
-    });
-
-    it("should throw RateAlreadyEndedException when addon rate is already ended", async () => {
-      databaseService.addonRate.findUnique.mockResolvedValue({
-        id: "addon-1",
-        effectiveSince: new Date("2024-01-01"),
-        effectiveUntil: new Date("2025-01-01"),
-      });
-
-      await expect(service.endAddonRate("addon-1")).rejects.toBeInstanceOf(
-        RateAlreadyEndedException,
-      );
-    });
-
-    it("should throw RateNotYetActiveException when addon rate starts in the future", async () => {
-      databaseService.addonRate.findUnique.mockResolvedValue({
-        id: "addon-1",
-        effectiveSince: new Date("2099-01-01"),
-        effectiveUntil: null,
-      });
-
-      await expect(service.endAddonRate("addon-1")).rejects.toBeInstanceOf(
-        RateNotYetActiveException,
-      );
-      expect(databaseService.addonRate.update).not.toHaveBeenCalled();
     });
   });
 });

@@ -108,7 +108,6 @@ describe("Bookings E2E Tests", () => {
         bookingType: "DAY",
         pickupTime: "9:00 AM",
         sameLocation: true,
-        includeSecurityDetail: false,
         requiresFullTank: false,
         useCredits: 0,
       };
@@ -505,6 +504,7 @@ describe("Bookings E2E Tests", () => {
         currency: "NGN",
         car: { images: expect.any(Array) },
         legs: expect.any(Array),
+        addons: [],
       });
       expect(details.body).not.toHaveProperty("guestUser");
       expect(details.body).not.toHaveProperty("paymentIntent");

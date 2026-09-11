@@ -228,6 +228,10 @@ model User {
   pushTokens                   UserPushToken[]
   notificationInboxItems       NotificationInbox[]
   notificationOutboxEvents     NotificationOutboxEvent[]
+  addonsCreated                Addon[]                         @relation("AddonCreatedBy")
+  addonsUpdated                Addon[]                         @relation("AddonUpdatedBy")
+  addonPricesCreated           AddonPrice[]                    @relation("AddonPriceCreatedBy")
+  addonPricesUpdated           AddonPrice[]                    @relation("AddonPriceUpdatedBy")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -439,7 +443,6 @@ model Booking {
   vatAmount                               Decimal?                    @db.Decimal(10, 2)
   vatRatePercent                          Decimal?                    @db.Decimal(5, 2)
   bookingReference                        String                      @unique
-  securityDetailCost                      Decimal?                    @db.Decimal(10, 2)
   fuelUpgradeCost                         Decimal?                    @db.Decimal(10, 2)
   referralDiscountAmount                  Decimal                     @default(0) @db.Decimal(10, 2)
   referralReferrerUserId                  String?
@@ -467,6 +470,7 @@ model Booking {
   review                                  Review?                     @relation("BookingReview")
   linkedDrafts                            BookingDraft[]              @relation("LinkedBookingDraft")
   creationIdempotency                     BookingCreationIdempotency?
+  addons                                  BookingAddon[]
 
   @@index([bookingReference])
   @@index([carId])
@@ -771,18 +775,63 @@ model PlatformFeeRate {
   @@index([feeType, effectiveSince, effectiveUntil])
 }
 
-model AddonRate {
+model Addon {
+  id                 String                  @id @default(cuid())
+  code               String                  @unique
+  name               String
+  description        String?
+  bookingTypes       BookingType[]
+  pricingUnit        AddonPricingUnit
+  financialTreatment AddonFinancialTreatment
+  isActive           Boolean                 @default(true)
+  createdById        String
+  updatedById        String
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  createdBy          User                    @relation("AddonCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy          User                    @relation("AddonUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  prices             AddonPrice[]
+  bookingAddons      BookingAddon[]
+
+  @@index([isActive])
+}
+
+model AddonPrice {
   id             String    @id @default(cuid())
-  addonType      AddonType
-  rateAmount     Decimal   @db.Decimal(10, 2)
+  addonId        String
+  amount         Decimal   @db.Decimal(10, 2)
   effectiveSince DateTime
   effectiveUntil DateTime?
-  description    String?
+  createdById    String
+  updatedById    String
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  addon          Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  createdBy      User      @relation("AddonPriceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User      @relation("AddonPriceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
-  @@unique([addonType, effectiveSince])
-  @@index([addonType, effectiveSince, effectiveUntil])
+  @@unique([addonId, effectiveSince])
+  @@index([addonId, effectiveSince, effectiveUntil])
+}
+
+model BookingAddon {
+  id                 String                  @id @default(cuid())
+  bookingId          String
+  addonId            String
+  code               String
+  name               String
+  pricingUnit        AddonPricingUnit
+  financialTreatment AddonFinancialTreatment
+  unitPrice          Decimal                 @db.Decimal(10, 2)
+  quantity           Int
+  totalPrice         Decimal                 @db.Decimal(10, 2)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  booking            Booking                 @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  addon              Addon                   @relation(fields: [addonId], references: [id], onDelete: Restrict)
+
+  @@unique([bookingId, addonId])
+  @@index([addonId])
 }
 
 model Promotion {
@@ -1325,8 +1374,14 @@ enum PlatformFeeType {
   FLEET_OWNER_COMMISSION
 }
 
-enum AddonType {
-  SECURITY_DETAIL
+enum AddonPricingUnit {
+  PER_BOOKING
+  PER_LEG
+}
+
+enum AddonFinancialTreatment {
+  PLATFORM
+  FLEET_OWNER
 }
 
 enum ReferralAttributionSource {

@@ -6,6 +6,7 @@ import { ThrottlerModule } from "@nestjs/throttler";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import { validateEnvironment } from "./config/env.config";
 import { AccountModule } from "./modules/account/account.module";
+import { AddonsModule } from "./modules/addons/addons.module";
 import { AiSearchModule } from "./modules/ai-search/ai-search.module";
 import { AI_SEARCH_THROTTLE_CONFIG } from "./modules/ai-search/ai-search-throttling.config";
 import { AuthModule } from "./modules/auth/auth.module";
@@ -99,6 +100,7 @@ import { RootController } from "./root.controller";
     DatabaseModule,
     AiSearchModule,
     AccountModule,
+    AddonsModule,
     UsersModule,
     FlutterwaveModule,
     DocumentsModule,

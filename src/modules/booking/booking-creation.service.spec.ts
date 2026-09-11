@@ -10,6 +10,8 @@ import {
   createCar,
   createUser,
 } from "../../shared/helper.fixtures";
+import { InvalidBookingAddonsException } from "../addons/addons.error";
+import { AddonsService } from "../addons/addons.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -52,7 +54,7 @@ const createBookingInput = (overrides: Partial<CreateBookingDto> = {}): CreateBo
     bookingType: "DAY" as const,
     pickupTime: "9 AM",
     sameLocation: true as const,
-    includeSecurityDetail: false,
+    addonIds: [],
     requiresFullTank: false,
     useCredits: 0,
     expectedTotalAmount: "56437.50",
@@ -100,6 +102,7 @@ describe("BookingCreationService", () => {
   let flutterwaveService: FlutterwaveService;
   let flightAwareService: FlightAwareService;
   let mapsService: MapsService;
+  let addonsService: AddonsService;
 
   // Mock transaction function
   const mockTransaction = vi.fn();
@@ -112,6 +115,12 @@ describe("BookingCreationService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingCreationService,
+        {
+          provide: AddonsService,
+          useValue: {
+            resolveBookingAddons: vi.fn().mockResolvedValue([]),
+          },
+        },
         {
           provide: DatabaseService,
           useValue: {
@@ -218,6 +227,7 @@ describe("BookingCreationService", () => {
     flutterwaveService = module.get<FlutterwaveService>(FlutterwaveService);
     flightAwareService = module.get<FlightAwareService>(FlightAwareService);
     mapsService = module.get<MapsService>(MapsService);
+    addonsService = module.get<AddonsService>(AddonsService);
   });
   describe("createBooking", () => {
     // Setup common mocks for successful booking flow
@@ -228,6 +238,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateGuestEmail).mockResolvedValue(undefined);
       vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
+      vi.mocked(addonsService.resolveBookingAddons).mockResolvedValue([]);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
@@ -321,6 +332,13 @@ describe("BookingCreationService", () => {
       });
 
       expect(calculationService.calculateBookingCost).toHaveBeenCalled();
+      expect(addonsService.resolveBookingAddons).toHaveBeenCalledWith([], "DAY", 1);
+      expect(addonsService.resolveBookingAddons).toHaveBeenCalledWith(
+        [],
+        "DAY",
+        1,
+        expect.anything(),
+      );
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalled();
       expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith(
         "idempotency-123",
@@ -330,6 +348,75 @@ describe("BookingCreationService", () => {
         null,
         result,
       );
+    });
+
+    it("sorts addonIds before hashing the idempotency request", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput({ addonIds: ["addon-b", "addon-a"] }),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(idempotencyService.createRequestHash).toHaveBeenCalledWith(
+        expect.objectContaining({ addonIds: ["addon-a", "addon-b"] }),
+        undefined,
+      );
+    });
+
+    it("passes resolved add-ons into financial calculation", async () => {
+      setupSuccessfulMocks();
+      const resolvedAddons = [
+        {
+          id: "addon-wifi",
+          code: "WIFI_HOTSPOT",
+          name: "Wi-Fi Hotspot",
+          pricingUnit: "PER_BOOKING" as const,
+          financialTreatment: "PLATFORM" as const,
+          unitPrice: new Decimal(10000),
+          quantity: 1,
+          totalPrice: new Decimal(10000),
+        },
+      ];
+      vi.mocked(addonsService.resolveBookingAddons).mockResolvedValue(resolvedAddons);
+
+      await service.createBooking({
+        input: createBookingInput({ addonIds: ["addon-wifi"] }),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(vi.mocked(calculationService.calculateBookingCost).mock.calls[0][0]).toEqual(
+        expect.objectContaining({ addons: resolvedAddons }),
+      );
+    });
+
+    it("rethrows invalid booking add-ons from the create transaction", async () => {
+      setupSuccessfulMocks();
+      vi.mocked(addonsService.resolveBookingAddons)
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new InvalidBookingAddonsException());
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({ addonIds: ["addon-missing"] }),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toBeInstanceOf(InvalidBookingAddonsException);
+    });
+
+    it("rethrows invalid booking add-ons before the create transaction", async () => {
+      setupSuccessfulMocks();
+      vi.mocked(addonsService.resolveBookingAddons).mockRejectedValue(
+        new InvalidBookingAddonsException(),
+      );
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({ addonIds: ["addon-missing"] }),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toBeInstanceOf(InvalidBookingAddonsException);
+      expect(mockTransaction).not.toHaveBeenCalled();
     });
 
     it("rechecks and applies referral credits inside the booking transaction", async () => {

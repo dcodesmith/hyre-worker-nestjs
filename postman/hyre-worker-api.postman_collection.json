@@ -514,31 +514,93 @@
               "path": ["api", "rates", "vat"]
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "Add-ons",
+      "item": [
+        {
+          "name": "List available add-ons",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/addons?bookingType=AIRPORT_PICKUP",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "addons"],
+              "query": [{ "key": "bookingType", "value": "AIRPORT_PICKUP" }]
+            }
+          }
         },
         {
-          "name": "Create addon rate",
+          "name": "List add-ons (admin/staff)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/addons",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "addons"]
+            }
+          }
+        },
+        {
+          "name": "Create add-on",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"After-hours\",\n  \"amount\": 2000\n}"
+              "raw": "{\n  \"code\": \"PROTOCOL_SERVICE\",\n  \"name\": \"Protocol Service\",\n  \"description\": \"Airport arrival assistance\",\n  \"bookingTypes\": [\"AIRPORT_PICKUP\"],\n  \"pricingUnit\": \"PER_BOOKING\",\n  \"financialTreatment\": \"PLATFORM\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/rates/addon",
+              "raw": "{{baseUrl}}/api/admin/addons",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "rates", "addon"]
+              "path": ["api", "admin", "addons"]
             }
           }
         },
         {
-          "name": "End addon rate",
+          "name": "Update add-on",
           "request": {
             "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"isActive\": false\n}" },
             "url": {
-              "raw": "{{baseUrl}}/api/rates/addon/{{addonRateId}}/end",
+              "raw": "{{baseUrl}}/api/admin/addons/{{addonId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "rates", "addon", "{{addonRateId}}", "end"]
+              "path": ["api", "admin", "addons", "{{addonId}}"]
+            }
+          }
+        },
+        {
+          "name": "Create add-on price",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 25000,\n  \"effectiveSince\": \"2026-09-11T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/addons/{{addonId}}/prices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "addons", "{{addonId}}", "prices"]
+            }
+          }
+        },
+        {
+          "name": "End add-on price",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveUntil\": \"2026-12-31T23:59:59.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/addons/{{addonId}}/prices/{{addonPriceId}}/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "addons", "{{addonId}}", "prices", "{{addonPriceId}}", "end"]
             }
           }
         }

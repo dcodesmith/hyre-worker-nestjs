@@ -70,7 +70,6 @@ describe("BookingAgentSearchService", () => {
         platformCustomerServiceFeeRatePercent: 10,
         platformFleetOwnerCommissionRatePercent: 5,
         vatRatePercent: 7.5,
-        securityDetailRate: 0,
       }),
     };
 

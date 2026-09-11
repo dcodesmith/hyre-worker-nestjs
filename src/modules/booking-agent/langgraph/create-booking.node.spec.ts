@@ -147,10 +147,15 @@ describe("CreateBookingNode", () => {
       expect.objectContaining({
         input: expect.objectContaining({
           guestEmail: "whatsapp.2348012345678@tripdly.com",
+          addonIds: [],
         }),
         sessionUser: null,
         context: { guestContactSource: "WHATSAPP_AGENT" },
       }),
+    );
+    expect(bookingPricingPreviewServiceMock.preview).toHaveBeenCalledWith(
+      expect.objectContaining({ addonIds: [] }),
+      null,
     );
   });
 

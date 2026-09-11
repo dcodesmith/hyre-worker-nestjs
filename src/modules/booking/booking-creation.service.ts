@@ -8,6 +8,9 @@ import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
+import { AddonsException } from "../addons/addons.error";
+import type { ResolvedBookingAddon } from "../addons/addons.interface";
+import { AddonsService } from "../addons/addons.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
@@ -75,6 +78,7 @@ export type CreateBookingRequest = {
 export class BookingCreationService {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly addonsService: AddonsService,
     private readonly validationService: BookingValidationService,
     private readonly legService: BookingLegService,
     private readonly calculationService: BookingCalculationService,
@@ -172,10 +176,16 @@ export class BookingCreationService {
           driveTimeMinutes: flightData?.driveTimeMinutes,
         }),
       );
+      const addons = await this.addonsService.resolveBookingAddons(
+        normalizedBooking.addonIds,
+        normalizedBooking.bookingType,
+        legs.length,
+      );
       const baseFinancials = await this.calculateFinancials(
         normalizedBooking,
         car,
         legs,
+        addons,
         new Decimal(0),
         new Decimal(0),
       );
@@ -197,6 +207,7 @@ export class BookingCreationService {
               normalizedBooking,
               car,
               legs,
+              addons,
               preliminaryReferralEligibility.discountAmount,
               preliminaryReferralCreditBalance,
             )
@@ -239,6 +250,7 @@ export class BookingCreationService {
       ...booking,
       startDate: normalizedWindow.startDate,
       endDate: normalizedWindow.endDate,
+      addonIds: [...booking.addonIds].sort(),
     };
   }
 
@@ -246,6 +258,7 @@ export class BookingCreationService {
     booking: CreateBookingInput,
     car: CarWithPricing,
     legs: GeneratedLeg[],
+    addons: ResolvedBookingAddon[],
     referralDiscountAmount: Decimal,
     userCreditsBalance: Decimal,
     tx?: Prisma.TransactionClient,
@@ -255,7 +268,7 @@ export class BookingCreationService {
         bookingType: booking.bookingType,
         legs,
         car,
-        includeSecurityDetail: booking.includeSecurityDetail,
+        addons,
         requiresFullTank: booking.requiresFullTank,
         userCreditsBalance,
         creditsToUse: new Decimal(booking.useCredits),
@@ -472,11 +485,18 @@ export class BookingCreationService {
               booking.useCredits,
             )
           : new Decimal(0);
+        const verifiedAddons = await this.addonsService.resolveBookingAddons(
+          booking.addonIds,
+          booking.bookingType,
+          legs.length,
+          tx,
+        );
 
         const recalculatedFinancials = await this.calculateFinancials(
           booking,
           freshCar,
           legs,
+          verifiedAddons,
           verifiedReferralEligibility.discountAmount,
           verifiedReferralCreditBalance,
           tx,
@@ -543,7 +563,11 @@ export class BookingCreationService {
       });
     } catch (error) {
       // Re-throw domain-specific exceptions (includes ReferralDiscountNoLongerAvailableException)
-      if (error instanceof BookingException || error instanceof FlightAwareException) {
+      if (
+        error instanceof BookingException ||
+        error instanceof FlightAwareException ||
+        error instanceof AddonsException
+      ) {
         throw error;
       }
       if (this.reservationService.isOverlapConstraintViolation(error)) {

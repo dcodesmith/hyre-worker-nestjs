@@ -3,8 +3,10 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createActivePromotion } from "../../shared/helper.fixtures";
+import type { ResolvedBookingAddon } from "../addons/addons.interface";
 import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
+import { BookingValidationException } from "./booking.error";
 import type { GeneratedLeg } from "./booking.interface";
 import type { BookingCalculationInput, CarPricing } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
@@ -19,7 +21,6 @@ describe("BookingCalculationService", () => {
     platformCustomerServiceFeeRatePercent: new Decimal("10.00"), // 10%
     platformFleetOwnerCommissionRatePercent: new Decimal("5.00"), // 5%
     vatRatePercent: new Decimal("7.50"), // 7.5%
-    securityDetailRate: new Decimal("5000.00"), // ₦5,000 per leg
   };
 
   // Standard mock car pricing
@@ -54,6 +55,38 @@ describe("BookingCalculationService", () => {
     });
   };
 
+  const fleetOwnerPerLegAddon = (quantity: number, unitPrice = 5000): ResolvedBookingAddon[] => {
+    const unit = new Decimal(unitPrice);
+    return [
+      {
+        id: "addon-security",
+        code: "SECURITY_DETAIL",
+        name: "Security Detail",
+        pricingUnit: "PER_LEG",
+        financialTreatment: "FLEET_OWNER",
+        unitPrice: unit,
+        quantity,
+        totalPrice: unit.mul(quantity),
+      },
+    ];
+  };
+
+  const platformPerBookingAddon = (unitPrice = 10000): ResolvedBookingAddon[] => {
+    const unit = new Decimal(unitPrice);
+    return [
+      {
+        id: "addon-wifi",
+        code: "WIFI_HOTSPOT",
+        name: "Wi-Fi Hotspot",
+        pricingUnit: "PER_BOOKING",
+        financialTreatment: "PLATFORM",
+        unitPrice: unit,
+        quantity: 1,
+        totalPrice: unit,
+      },
+    ];
+  };
+
   beforeEach(async () => {
     ratesService = {
       getRates: vi.fn().mockResolvedValue(mockRates),
@@ -80,7 +113,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -97,7 +130,7 @@ describe("BookingCalculationService", () => {
         bookingType: "NIGHT",
         legs: createLegs(3),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -111,7 +144,7 @@ describe("BookingCalculationService", () => {
         bookingType: "FULL_DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -125,7 +158,7 @@ describe("BookingCalculationService", () => {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -135,35 +168,104 @@ describe("BookingCalculationService", () => {
     });
   });
 
-  describe("security detail add-on", () => {
-    it("should add security detail cost when requested", async () => {
+  describe("platform add-ons", () => {
+    it("adds PER_LEG add-on cost using the resolved quantity", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true,
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: false,
       };
 
       const result = await service.calculateBookingCost(input);
 
-      // Security: 5,000 × 2 legs = 10,000
-      expect(result.securityDetailCost.equals(new Decimal(10000))).toBe(true);
-      expect(result.netTotalWithAddons.equals(new Decimal(110000))).toBe(true); // 100,000 + 10,000
+      expect(result.addonTotal.equals(new Decimal(10000))).toBe(true);
+      expect(result.netTotalWithAddons.equals(new Decimal(110000))).toBe(true);
     });
 
-    it("should not add security detail cost when not requested", async () => {
+    it("adds PER_BOOKING add-on cost once regardless of legs", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
-        legs: createLegs(2),
+        legs: createLegs(3),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: platformPerBookingAddon(8000),
         requiresFullTank: false,
       };
 
       const result = await service.calculateBookingCost(input);
 
-      expect(result.securityDetailCost.equals(new Decimal(0))).toBe(true);
+      expect(result.addonTotal.equals(new Decimal(8000))).toBe(true);
+      expect(result.netTotalWithAddons.equals(new Decimal(158000))).toBe(true); // 150,000 + 8,000
+    });
+
+    it("does not add add-on cost when none are selected", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        addons: [],
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      expect(result.addonTotal.equals(new Decimal(0))).toBe(true);
+      expect(result.addons).toEqual([]);
+    });
+
+    it("includes generic add-ons in VAT while excluding them from the customer platform-fee base", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        addons: platformPerBookingAddon(10000),
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      // Net 50,000 + addon 10,000 = 60,000
+      // Platform fee base excludes add-ons: 50,000 × 10% = 5,000
+      // Subtotal: 60,000 + 5,000 = 65,000
+      // VAT: 65,000 × 7.5% = 4,875
+      expect(result.platformFeeBase.equals(new Decimal(50000))).toBe(true);
+      expect(result.platformCustomerServiceFeeAmount.equals(new Decimal(5000))).toBe(true);
+      expect(result.subtotalBeforeDiscounts.equals(new Decimal(65000))).toBe(true);
+      expect(result.vatAmount.equals(new Decimal(4875))).toBe(true);
+    });
+
+    it("excludes PLATFORM add-ons from fleet-owner payout", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        addons: platformPerBookingAddon(10000),
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      // Commission: 100,000 × 5% = 5,000
+      // Payout: 100,000 - 5,000 = 95,000 (PLATFORM addon excluded)
+      expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5000))).toBe(true);
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(95000))).toBe(true);
+    });
+
+    it("includes FLEET_OWNER add-ons in fleet-owner payout", async () => {
+      const input: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        addons: fleetOwnerPerLegAddon(2),
+        requiresFullTank: false,
+      };
+
+      const result = await service.calculateBookingCost(input);
+
+      // Commission still on netTotal only: 5,000
+      // Payout: 100,000 + 10,000 - 5,000 = 105,000
+      expect(result.fleetOwnerPayoutAmountNet.equals(new Decimal(105000))).toBe(true);
     });
   });
 
@@ -173,7 +275,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2), // <= 2 legs
         car: { ...mockCar, pricingIncludesFuel: false },
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -187,7 +289,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: { ...mockCar, pricingIncludesFuel: true },
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -201,7 +303,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -215,7 +317,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(3), // > 2 legs
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -229,7 +331,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: { ...mockCar, fuelUpgradeRate: null },
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -243,7 +345,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: { ...mockCar, fuelUpgradeRate: 0 },
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -257,7 +359,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: [], // Empty legs array
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true,
       };
 
@@ -269,19 +371,19 @@ describe("BookingCalculationService", () => {
   });
 
   describe("platform fee calculation", () => {
-    it("should calculate platform fee on netTotal + fuelUpgrade (excluding security)", async () => {
+    it("should calculate platform fee on netTotal + fuelUpgrade (excluding add-ons)", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true, // Should NOT affect platform fee base
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: true, // Should affect platform fee base
       };
 
       const result = await service.calculateBookingCost(input);
 
       // Net: 100,000, Fuel: 10,000, Security: 10,000
-      // Platform fee base: 100,000 + 10,000 = 110,000 (excludes security)
+      // Platform fee base: 100,000 + 10,000 = 110,000 (excludes add-ons)
       // Platform fee: 110,000 × 10% = 11,000
       expect(result.platformFeeBase.equals(new Decimal(110000))).toBe(true);
       expect(result.platformCustomerServiceFeeAmount.equals(new Decimal(11000))).toBe(true);
@@ -292,7 +394,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -308,7 +410,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true,
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: true,
       };
 
@@ -331,7 +433,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(5000),
       };
@@ -346,7 +448,7 @@ describe("BookingCalculationService", () => {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(999999), // Way more than subtotal
       };
@@ -364,7 +466,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(0),
       };
@@ -379,7 +481,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -395,7 +497,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         userCreditsBalance: new Decimal(10000),
         creditsToUse: new Decimal(5000),
@@ -411,7 +513,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         userCreditsBalance: new Decimal(3000), // Only 3,000 available
         creditsToUse: new Decimal(5000), // Trying to use 5,000
@@ -427,7 +529,7 @@ describe("BookingCalculationService", () => {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(20000), // Leaves 7,500 remaining
         userCreditsBalance: new Decimal(50000),
@@ -448,7 +550,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         userCreditsBalance: new Decimal(10000),
         creditsToUse: new Decimal(0),
@@ -464,7 +566,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         userCreditsBalance: new Decimal(-500), // Corrupted/negative balance
         creditsToUse: new Decimal(1000),
@@ -481,7 +583,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         userCreditsBalance: new Decimal(0),
         creditsToUse: new Decimal(1000),
@@ -499,7 +601,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -517,7 +619,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(5000),
       };
@@ -537,7 +639,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -550,12 +652,12 @@ describe("BookingCalculationService", () => {
   });
 
   describe("fleet owner commission and payout", () => {
-    it("should calculate fleet owner commission on netTotal only (excludes fuel and security)", async () => {
+    it("should calculate fleet owner commission on netTotal only (excludes fuel and add-ons)", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true,
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: true,
       };
 
@@ -568,12 +670,12 @@ describe("BookingCalculationService", () => {
       expect(result.platformFleetOwnerCommissionAmount.equals(new Decimal(5000))).toBe(true);
     });
 
-    it("should calculate fleet owner payout (netTotal + security - commission)", async () => {
+    it("should calculate fleet owner payout (netTotal + FLEET_OWNER add-ons - commission)", async () => {
       const input: BookingCalculationInput = {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true,
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: true,
       };
 
@@ -591,7 +693,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: true, // Fuel upgrade applies
       };
 
@@ -612,7 +714,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: true,
+        addons: fleetOwnerPerLegAddon(2),
         requiresFullTank: true,
         referralDiscountAmount: new Decimal(10000),
         userCreditsBalance: new Decimal(20000),
@@ -629,12 +731,12 @@ describe("BookingCalculationService", () => {
       // Security: 5,000 × 2 = 10,000
       // Fuel: 10,000
       // NetWithAddons: 100,000 + 10,000 + 10,000 = 120,000
-      expect(result.securityDetailCost.equals(new Decimal(10000))).toBe(true);
+      expect(result.addonTotal.equals(new Decimal(10000))).toBe(true);
       expect(result.fuelUpgradeCost.equals(new Decimal(10000))).toBe(true);
       expect(result.netTotalWithAddons.equals(new Decimal(120000))).toBe(true);
 
       // Step 3: Platform fee
-      // Base: 100,000 + 10,000 = 110,000 (excludes security)
+      // Base: 100,000 + 10,000 = 110,000 (excludes add-ons)
       // Fee: 110,000 × 10% = 11,000
       expect(result.platformFeeBase.equals(new Decimal(110000))).toBe(true);
       expect(result.platformCustomerServiceFeeAmount.equals(new Decimal(11000))).toBe(true);
@@ -674,7 +776,7 @@ describe("BookingCalculationService", () => {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       };
 
@@ -689,7 +791,7 @@ describe("BookingCalculationService", () => {
         bookingType: "AIRPORT_PICKUP",
         legs: createLegs(1),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
         referralDiscountAmount: new Decimal(999999),
         userCreditsBalance: new Decimal(999999),
@@ -715,7 +817,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCar,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -727,7 +829,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: [],
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -743,7 +845,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -769,7 +871,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -798,7 +900,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(3), // 2025-03-01, 2025-03-02, 2025-03-03
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -833,7 +935,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(1),
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -856,7 +958,7 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
@@ -872,12 +974,58 @@ describe("BookingCalculationService", () => {
         bookingType: "DAY",
         legs: createLegs(2),
         car: mockCarWithIdentity,
-        includeSecurityDetail: false,
+        addons: [],
         requiresFullTank: false,
       });
 
       expect(result.netTotal.equals(result.compareAtNetTotal)).toBe(true);
       expect(result.appliedPromotion).toBeNull();
+    });
+  });
+
+  describe("DECIMAL(10,2) amount capacity", () => {
+    async function expectAmountTooLarge(input: BookingCalculationInput) {
+      const error = await service.calculateBookingCost(input).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(BookingValidationException);
+      expect((error as BookingValidationException).getProblemDetails().errors).toEqual([
+        {
+          field: "booking",
+          code: "AMOUNT_TOO_LARGE",
+          message: "The selected booking exceeds the maximum supported amount",
+        },
+      ]);
+    }
+
+    it("rejects a two-leg PER_LEG add-on whose snapshot total exceeds 99,999,999.99", async () => {
+      await expectAmountTooLarge({
+        bookingType: "DAY",
+        legs: createLegs(2),
+        car: mockCar,
+        addons: fleetOwnerPerLegAddon(2, 50_000_000),
+        requiresFullTank: false,
+      });
+    });
+
+    it("rejects when add-on snapshots fit but the aggregate total overflows", async () => {
+      await expectAmountTooLarge({
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        addons: [
+          ...platformPerBookingAddon(50_000_000),
+          {
+            id: "addon-child-seat",
+            code: "CHILD_SEAT",
+            name: "Child Seat",
+            pricingUnit: "PER_BOOKING",
+            financialTreatment: "PLATFORM",
+            unitPrice: new Decimal("50000000"),
+            quantity: 1,
+            totalPrice: new Decimal("50000000"),
+          },
+        ],
+        requiresFullTank: false,
+      });
     });
   });
 });

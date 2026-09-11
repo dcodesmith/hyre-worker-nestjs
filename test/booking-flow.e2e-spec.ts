@@ -113,7 +113,7 @@ describe("Booking Flow E2E", () => {
       bookingType: "DAY",
       pickupTime: "9:00 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "0",
@@ -416,7 +416,6 @@ describe("Booking Flow E2E", () => {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           pickupTime: "9:00 AM",
-          includeSecurityDetail: false,
           requiresFullTank: false,
         });
       expect(previewResponse.status).toBe(HttpStatus.OK);
@@ -509,7 +508,6 @@ describe("Booking Flow E2E", () => {
       bookingType: "DAY" as const,
       pickupTime: "9:00 AM",
       sameLocation: true as const,
-      includeSecurityDetail: false,
       requiresFullTank: false,
       useCredits: 0,
     };
@@ -624,7 +622,6 @@ describe("Booking Flow E2E", () => {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
         pickupTime: "9:00 AM",
-        includeSecurityDetail: false,
         requiresFullTank: false,
       });
     expect(previewResponse.status).toBe(HttpStatus.OK);

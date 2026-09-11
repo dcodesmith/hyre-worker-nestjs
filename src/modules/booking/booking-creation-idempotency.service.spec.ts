@@ -18,7 +18,7 @@ const input = (expectedTotalAmount = "100.00"): CreateBookingDto => ({
   bookingType: "DAY",
   pickupTime: "8 AM",
   sameLocation: true,
-  includeSecurityDetail: false,
+  addonIds: [],
   requiresFullTank: false,
   useCredits: 0,
   expectedTotalAmount,
@@ -98,6 +98,16 @@ describe("BookingCreationIdempotencyService", () => {
     } finally {
       localeCompare.mockRestore();
     }
+  });
+
+  it("treats different addonIds as distinct requests", () => {
+    const withAddonA = input();
+    withAddonA.addonIds = ["addon-a"];
+    const withAddonB = input();
+    withAddonB.addonIds = ["addon-b"];
+
+    expect(service.createRequestHash(withAddonA)).not.toBe(service.createRequestHash(withAddonB));
+    expect(service.createRequestHash(withAddonA)).not.toBe(service.createRequestHash(input()));
   });
 
   it("claims a new customer-scoped key", async () => {

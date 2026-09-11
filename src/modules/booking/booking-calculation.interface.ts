@@ -1,5 +1,6 @@
 import type { BookingType, Car } from "@prisma/client";
 import type Decimal from "decimal.js";
+import type { ResolvedBookingAddon } from "../addons/addons.interface";
 import type { ActivePromotion } from "../promotion/promotion.interface";
 import type { GeneratedLeg } from "./booking.interface";
 
@@ -64,7 +65,7 @@ export interface BookingCalculationInput {
   bookingType: BookingType;
   legs: GeneratedLeg[];
   car: CarPricingWithIdentity;
-  includeSecurityDetail: boolean;
+  addons: ResolvedBookingAddon[];
   requiresFullTank: boolean;
   /** User's available credit balance (optional) */
   userCreditsBalance?: Decimal;
@@ -96,12 +97,13 @@ export interface BookingFinancials {
   appliedPromotion: ActivePromotion | null;
 
   // Add-ons
-  securityDetailCost: Decimal;
+  addons: ResolvedBookingAddon[];
+  addonTotal: Decimal;
   fuelUpgradeCost: Decimal;
   netTotalWithAddons: Decimal;
 
   // Platform fee (customer pays)
-  /** Base amount for platform fee: netTotal + fuelUpgrade (excludes security) */
+  /** Base amount for platform fee: netTotal + fuelUpgrade (excludes add-ons) */
   platformFeeBase: Decimal;
   platformCustomerServiceFeeRatePercent: Decimal;
   platformCustomerServiceFeeAmount: Decimal;

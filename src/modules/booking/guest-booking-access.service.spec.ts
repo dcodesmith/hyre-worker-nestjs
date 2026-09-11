@@ -172,6 +172,16 @@ describe("GuestBookingAccessService", () => {
       flightNumber: null,
       totalAmount: { toNumber: () => 50_000 },
       guestAccessTokenExpiresAt: expiresAt,
+      addons: [
+        {
+          code: "WIFI_HOTSPOT",
+          name: "Wi-Fi Hotspot",
+          pricingUnit: "PER_BOOKING",
+          unitPrice: { toNumber: () => 10000 },
+          quantity: 1,
+          totalPrice: { toNumber: () => 10000 },
+        },
+      ],
       car: {
         make: "Toyota",
         model: "Camry",
@@ -200,6 +210,16 @@ describe("GuestBookingAccessService", () => {
       currency: "NGN",
       totalAmount: 50_000,
       accessExpiresAt: expiresAt.toISOString(),
+      addons: [
+        {
+          code: "WIFI_HOTSPOT",
+          name: "Wi-Fi Hotspot",
+          pricingUnit: "PER_BOOKING",
+          unitPrice: 10000,
+          quantity: 1,
+          totalPrice: 10000,
+        },
+      ],
       car: { images: ["https://cdn.example.com/car.jpg"] },
       chauffeur: { name: "Driver", phoneNumber: "08000000000" },
       legs: [{ id: "leg-1", extensions: [] }],

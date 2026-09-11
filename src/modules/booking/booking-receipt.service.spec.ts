@@ -71,7 +71,7 @@ function bookingFixture() {
     returnLocation: "Victoria Island",
     totalAmount: new Decimal("113412.50"),
     netTotal: new Decimal("100000"),
-    securityDetailCost: new Decimal("5000"),
+    addons: [{ name: "Security Detail", totalPrice: new Decimal("5000") }],
     fuelUpgradeCost: new Decimal("10000"),
     platformCustomerServiceFeeAmount: new Decimal("5500"),
     subtotalBeforeVat: new Decimal("105500"),
@@ -186,7 +186,7 @@ describe("BookingReceiptService", () => {
     expect(receipt.lineItems).toEqual([
       { label: "Base booking charge", amount: 100000 },
       { label: "Paid extensions (1)", amount: 10000 },
-      { label: "Security detail", amount: 5000 },
+      { label: "Security Detail", amount: 5000 },
       { label: "Fuel upgrade", amount: 10000 },
       { label: "Platform service fee", amount: 6000 },
       { label: "Referral discount", amount: -10000 },

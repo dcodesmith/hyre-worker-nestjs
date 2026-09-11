@@ -198,7 +198,7 @@ describe("BookingPersistenceService", () => {
           dropOffAddress: "Victoria Island, Lagos",
           flightNumber: "BA74",
           sameLocation: false,
-          includeSecurityDetail: false,
+          addonIds: [],
           requiresFullTank: false,
           useCredits: 0,
           expectedTotalAmount: "10000",
@@ -265,7 +265,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
@@ -322,14 +322,26 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: ["addon-wifi"],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
     };
 
+    const wifiAddon = {
+      id: "addon-wifi",
+      code: "WIFI_HOTSPOT",
+      name: "Wi-Fi Hotspot",
+      pricingUnit: "PER_BOOKING" as const,
+      financialTreatment: "PLATFORM" as const,
+      unitPrice: new Decimal(10000),
+      quantity: 1,
+      totalPrice: new Decimal(10000),
+    };
     const financials = createBookingFinancials({
       numberOfLegs: 1,
+      addons: [wifiAddon],
+      addonTotal: new Decimal(10000),
       legPrices: [
         {
           legDate: new Date("2026-03-03T00:00:00.000Z"),
@@ -372,6 +384,20 @@ describe("BookingPersistenceService", () => {
         paymentStatus: PaymentStatus.UNPAID,
         paymentSessionExpiresAt: expect.any(Date),
         chauffeurId: null,
+        addons: {
+          create: [
+            {
+              addonId: "addon-wifi",
+              code: "WIFI_HOTSPOT",
+              name: "Wi-Fi Hotspot",
+              pricingUnit: "PER_BOOKING",
+              financialTreatment: "PLATFORM",
+              unitPrice: wifiAddon.unitPrice,
+              quantity: 1,
+              totalPrice: wifiAddon.totalPrice,
+            },
+          ],
+        },
       }),
     });
   });
@@ -398,7 +424,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
@@ -464,7 +490,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",

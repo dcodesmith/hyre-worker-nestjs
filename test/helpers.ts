@@ -247,6 +247,19 @@ export class TestDataFactory {
   }
 
   /**
+   * Convenience method to create an authenticated staff user.
+   * Authenticates the user first, then assigns the staff role.
+   */
+  async createAuthenticatedStaff(email: string): Promise<{
+    cookie: string;
+    user: TestUser;
+  }> {
+    const { cookie, user } = await this.authenticateAndGetUser(email, "user");
+    await this.assignRole(user.id, "staff");
+    return { cookie, user };
+  }
+
+  /**
    * Clear all rate limits from the database.
    * Call this in beforeEach of E2E tests that involve rate-limited endpoints.
    */
@@ -674,8 +687,9 @@ export class TestDataFactory {
 
   /**
    * Create platform rates required for booking calculations.
-   * Creates platform fee rate, fleet owner commission rate, VAT rate, and security detail addon rate.
-   * Must be called before booking creation tests.
+   * Creates platform fee rate, fleet owner commission rate, and VAT rate.
+   * Must be called before booking creation tests. Add-on catalog rows are
+   * created separately via {@link createAddon}.
    */
   async createPlatformRates(): Promise<void> {
     const effectiveSince = new Date("2020-01-01");
@@ -707,18 +721,60 @@ export class TestDataFactory {
         ],
         skipDuplicates: true,
       }),
-      this.prisma.addonRate.createMany({
-        data: [
-          {
-            addonType: "SECURITY_DETAIL",
-            rateAmount: 15000,
-            effectiveSince,
-            description: "Security detail addon",
-          },
-        ],
-        skipDuplicates: true,
-      }),
     ]);
+  }
+
+  /**
+   * Create an add-on catalog item with an optional current price.
+   * BookingAddon snapshots must be deleted (or their bookings deleted) before
+   * the catalog row, because BookingAddon.addonId is Restrict.
+   */
+  async createAddon(
+    actorId: string,
+    options: {
+      code?: string;
+      name?: string;
+      description?: string | null;
+      bookingTypes?: Array<"DAY" | "NIGHT" | "FULL_DAY" | "AIRPORT_PICKUP">;
+      pricingUnit?: "PER_BOOKING" | "PER_LEG";
+      financialTreatment?: "PLATFORM" | "FLEET_OWNER";
+      isActive?: boolean;
+      amount?: number;
+      effectiveSince?: Date;
+      effectiveUntil?: Date | null;
+      skipPrice?: boolean;
+    } = {},
+  ): Promise<{ id: string; code: string }> {
+    const addon = await this.prisma.addon.create({
+      data: {
+        code:
+          options.code ??
+          `ADDON_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        name: options.name ?? "Test Add-on",
+        description: options.description ?? null,
+        bookingTypes: options.bookingTypes ?? ["DAY", "NIGHT", "FULL_DAY", "AIRPORT_PICKUP"],
+        pricingUnit: options.pricingUnit ?? "PER_BOOKING",
+        financialTreatment: options.financialTreatment ?? "PLATFORM",
+        isActive: options.isActive ?? true,
+        createdById: actorId,
+        updatedById: actorId,
+        ...(options.skipPrice
+          ? {}
+          : {
+              prices: {
+                create: {
+                  amount: options.amount ?? 15000,
+                  effectiveSince: options.effectiveSince ?? new Date("2020-01-01"),
+                  effectiveUntil: options.effectiveUntil ?? null,
+                  createdById: actorId,
+                  updatedById: actorId,
+                },
+              },
+            }),
+      },
+      select: { id: true, code: true },
+    });
+    return addon;
   }
 
   /**
