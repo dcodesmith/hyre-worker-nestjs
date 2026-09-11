@@ -2,10 +2,19 @@ import { BadRequestException, HttpStatus, InternalServerErrorException } from "@
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
 import { PinoLogger } from "nestjs-pino";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
+import { captureException } from "../../sentry";
 import { AppException } from "../errors/app.exception";
 import { GlobalExceptionFilter } from "./global-exception.filter";
+
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("../../sentry", () => ({
+  captureException: captureExceptionMock,
+}));
 
 function createHostMocks() {
   const reply = vi.fn();
@@ -29,6 +38,10 @@ function createHostMocks() {
 }
 
 describe("GlobalExceptionFilter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("is constructed by Nest with the PinoLogger injection token", async () => {
     const logger = createMockPinoLogger();
     const moduleRef = await Test.createTestingModule({
@@ -238,6 +251,53 @@ describe("GlobalExceptionFilter", () => {
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
     expect(JSON.stringify(reply.mock.calls[0][1])).not.toContain("sensitive value");
+  });
+
+  it("captures server errors in Sentry", () => {
+    const { reply, getRequestUrl, host } = createHostMocks();
+    const adapterHost = {
+      httpAdapter: {
+        reply,
+        getRequestUrl,
+      },
+    } as unknown as HttpAdapterHost;
+    const filter = new GlobalExceptionFilter(adapterHost, createMockPinoLogger());
+    const exception = new AppException(
+      "PROVIDER_FAILED",
+      "provider token=super-secret",
+      HttpStatus.BAD_GATEWAY,
+    );
+
+    filter.catch(exception, host as unknown as Parameters<GlobalExceptionFilter["catch"]>[1]);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledWith(exception, {
+      message: "HTTP request failed",
+      tags: {
+        "error.source": "http",
+        "http.method": "GET",
+        "http.status_code": HttpStatus.BAD_GATEWAY,
+        "error.code": "PROVIDER_FAILED",
+      },
+    });
+  });
+
+  it("does not capture expected 4xx exceptions in Sentry", () => {
+    const { reply, getRequestUrl, host } = createHostMocks();
+    const adapterHost = {
+      httpAdapter: {
+        reply,
+        getRequestUrl,
+      },
+    } as unknown as HttpAdapterHost;
+    const filter = new GlobalExceptionFilter(adapterHost, createMockPinoLogger());
+
+    filter.catch(
+      new BadRequestException("email already registered"),
+      host as unknown as Parameters<GlobalExceptionFilter["catch"]>[1],
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it("uses a safe fallback for non-string HttpException messages", () => {

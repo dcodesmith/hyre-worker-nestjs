@@ -1,9 +1,14 @@
 import "dotenv/config";
+import { captureException, flushSentry } from "./sentry";
 import otelSdk from "./tracing";
 import "reflect-metadata";
 
 // Surface unhandled rejections during bootstrap (e.g. Redis/DB connection failures)
 process.on("unhandledRejection", (reason, promise) => {
+  captureException(reason, {
+    message: "Unhandled promise rejection",
+    tags: { "error.source": "process" },
+  });
   console.error("[Bootstrap] Unhandled rejection:", reason);
   console.error("Promise:", promise);
 });
@@ -81,6 +86,7 @@ async function bootstrap() {
       } catch (error) {
         logger.error("Error shutting down OpenTelemetry SDK:", error);
       }
+      await flushSentry();
       return closeApp();
     };
 
@@ -94,12 +100,17 @@ async function bootstrap() {
       `Application started successfully on ${host}:${port} (Timezone: ${timezone}, Current time: ${new Date().toLocaleString("en-US", { timeZone: timezone })})`,
     );
   } catch (error) {
+    captureException(error, {
+      message: "Application bootstrap failed",
+      tags: { "error.source": "bootstrap" },
+    });
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
     logger.error(`Failed to start application: ${errorMessage}`);
     // Ensure error is visible even if logger hasn't flushed
     console.error(`[Bootstrap] Failed to start:`, errorMessage);
     if (errorStack) console.error(errorStack);
+    await flushSentry();
     process.exit(1);
   }
 }

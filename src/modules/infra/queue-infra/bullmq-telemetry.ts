@@ -10,6 +10,7 @@ import type {
   Tracer,
 } from "bullmq";
 import { BullMQOtel } from "bullmq-otel";
+import { captureException } from "../../../sentry";
 
 // Processor results and errors can include recipient addresses, tokens, or provider responses.
 const SENSITIVE_ATTRIBUTES = new Set([
@@ -27,7 +28,10 @@ function omitSensitiveAttributes(attributes?: Attributes): Attributes | undefine
 }
 
 class SafeBullMqSpan implements Span<Context> {
-  constructor(private readonly span: Span<Context>) {}
+  constructor(
+    private readonly span: Span<Context>,
+    private readonly operation: string,
+  ) {}
 
   setSpanOnContext(context: Context): Context {
     return this.span.setSpanOnContext(context);
@@ -47,7 +51,14 @@ class SafeBullMqSpan implements Span<Context> {
     this.span.addEvent(name, omitSensitiveAttributes(attributes));
   }
 
-  recordException(_exception: Exception, time?: Time): void {
+  recordException(exception: Exception, time?: Time): void {
+    if (this.operation.startsWith("process ")) {
+      captureException(exception, {
+        message: "BullMQ job failed",
+        tags: { "error.source": "bullmq" },
+      });
+    }
+
     this.span.recordException({ name: "Error", message: "BullMQ job failed" }, time);
   }
 
@@ -60,7 +71,7 @@ class SafeBullMqTracer implements Tracer<Context> {
   constructor(private readonly tracer: Tracer<Context>) {}
 
   startSpan(name: string, options?: SpanOptions, context?: Context): Span<Context> {
-    return new SafeBullMqSpan(this.tracer.startSpan(name, options, context));
+    return new SafeBullMqSpan(this.tracer.startSpan(name, options, context), name);
   }
 }
 

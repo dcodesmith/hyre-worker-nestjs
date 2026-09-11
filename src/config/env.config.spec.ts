@@ -375,3 +375,58 @@ describe("envSchema OTLP exporters", () => {
     }
   });
 });
+
+describe("envSchema SENTRY_DSN", () => {
+  const baseEnv = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+  };
+
+  it("accepts a valid optional Sentry DSN", () => {
+    const omitted = envSchema.safeParse(baseEnv);
+    expect(omitted.success).toBe(true);
+    if (omitted.success) {
+      expect(omitted.data.SENTRY_DSN).toBeUndefined();
+    }
+
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      SENTRY_DSN: "https://abc123@o123.ingest.sentry.io/456",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.SENTRY_DSN).toBe("https://abc123@o123.ingest.sentry.io/456");
+    }
+  });
+
+  it("treats a blank SENTRY_DSN as omitted", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      SENTRY_DSN: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.SENTRY_DSN).toBeUndefined();
+    }
+  });
+
+  it("rejects a malformed SENTRY_DSN", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      SENTRY_DSN: "not-a-url",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["SENTRY_DSN"],
+          }),
+        ]),
+      );
+    }
+  });
+});

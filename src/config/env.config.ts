@@ -153,6 +153,7 @@ export const envSchema = z
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalHttpUrl,
     OTEL_EXPORTER_OTLP_HEADERS: optionalNonEmptyString,
     OTEL_SERVICE_NAME: optionalNonEmptyString,
+    SENTRY_DSN: optionalHttpUrl,
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default("0.0.0.0"),
     TZ: z
