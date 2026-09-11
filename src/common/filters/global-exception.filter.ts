@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { PinoLogger } from "nestjs-pino";
+import { captureException } from "../../sentry";
 import { AppException } from "../errors/app.exception";
 import type { ProblemDetails } from "../errors/problem-details.interface";
 import { stripQueryString } from "../http/request-url.helper";
@@ -235,6 +236,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const errorCodePrefix = errorCode ? `[${errorCode}] ` : "";
 
     if (httpStatus >= 500) {
+      captureException(exception, {
+        message: "HTTP request failed",
+        tags: {
+          "error.source": "http",
+          "http.method": method,
+          "http.status_code": httpStatus,
+          ...(errorCode && { "error.code": errorCode }),
+        },
+      });
+
       const error = toLogError(exception);
       this.logger.error(
         {

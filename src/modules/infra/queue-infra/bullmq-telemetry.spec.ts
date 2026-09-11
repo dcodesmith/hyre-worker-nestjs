@@ -1,6 +1,7 @@
 import { ROOT_CONTEXT } from "@opentelemetry/api";
 import type { Exception } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { captureException } from "../../../sentry";
 import { createBullMqTelemetry } from "./bullmq-telemetry";
 
 const SENSITIVE_KEYS = [
@@ -46,6 +47,14 @@ const { innerSpan, adapter, BullMQOtel } = vi.hoisted(() => {
 
 vi.mock("bullmq-otel", () => ({
   BullMQOtel,
+}));
+
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("../../../sentry", () => ({
+  captureException: captureExceptionMock,
 }));
 
 function startSafeSpan() {
@@ -167,5 +176,41 @@ describe("createBullMqTelemetry", () => {
     expect(recorded).not.toContain("user@example.com");
     expect(recorded).not.toContain("Worker.process");
     expect(recorded).not.toContain("JobError");
+  });
+
+  it("captures processing exceptions in Sentry and still exports a generic OTel exception", () => {
+    const span = startSafeSpan();
+    const error = new Error("Card 4242 declined for user@example.com");
+    const recordedAt = 1_700_000_000_000;
+
+    span.recordException(error, recordedAt);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledWith(error, {
+      message: "BullMQ job failed",
+      tags: { "error.source": "bullmq" },
+    });
+    expect(innerSpan.recordException).toHaveBeenCalledTimes(1);
+    expect(innerSpan.recordException).toHaveBeenCalledWith(
+      { name: "Error", message: "BullMQ job failed" },
+      recordedAt,
+    );
+    expect(JSON.stringify(innerSpan.recordException.mock.calls)).not.toContain("4242");
+  });
+
+  it("does not capture producer exceptions in Sentry", () => {
+    const span = createBullMqTelemetry("hyre-worker-test", "1.2.3").tracer.startSpan(
+      "add orders.probe",
+    );
+    const error = new Error("queue connection secret");
+
+    span.recordException(error);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(innerSpan.recordException).toHaveBeenCalledTimes(1);
+    expect(innerSpan.recordException).toHaveBeenCalledWith(
+      { name: "Error", message: "BullMQ job failed" },
+      undefined,
+    );
   });
 });

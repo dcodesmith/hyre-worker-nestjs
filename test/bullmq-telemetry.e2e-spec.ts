@@ -119,6 +119,12 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
       expect(await job.getState()).toBe("completed");
     });
 
+    await vi.waitFor(() => {
+      const finished = spanExporter.getFinishedSpans();
+      expect(finished.find((span) => span.name.startsWith("add "))).toBeDefined();
+      expect(finished.find((span) => span.name.startsWith("process "))).toBeDefined();
+    });
+
     const spans = spanExporter.getFinishedSpans();
     const producer = spans.find((span) => span.name.startsWith("add "));
     const consumer = spans.find((span) => span.name.startsWith("process "));
@@ -144,6 +150,15 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
     const job = await queue.add("probe", { fail: true }, { attempts: 1 });
     await vi.waitFor(async () => {
       expect(await job.getState()).toBe("failed");
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        spanExporter
+          .getFinishedSpans()
+          .flatMap((span) => span.events)
+          .find((event) => event.name === "job failed"),
+      ).toBeDefined();
     });
 
     const spans = spanExporter.getFinishedSpans();
