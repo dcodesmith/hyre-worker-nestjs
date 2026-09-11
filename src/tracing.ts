@@ -70,6 +70,9 @@ const sdk = new NodeSDK({
       "@opentelemetry/instrumentation-openai": {
         enabled: false,
       },
+      "@opentelemetry/instrumentation-ioredis": {
+        dbStatementSerializer: (commandName) => commandName,
+      },
       "@opentelemetry/instrumentation-pino": {
         disableLogSending: true,
         logKeys: TRACE_LOG_KEYS,

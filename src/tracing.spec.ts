@@ -1,3 +1,4 @@
+import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -7,6 +8,7 @@ const {
   mockOTLPMetricExporter,
   mockPeriodicExportingMetricReader,
   mockBatchSpanProcessor,
+  mockGetNodeAutoInstrumentations,
 } = vi.hoisted(() => {
   const start = vi.fn();
   return {
@@ -19,6 +21,7 @@ const {
     mockOTLPMetricExporter: vi.fn(),
     mockPeriodicExportingMetricReader: vi.fn().mockImplementation((config) => config),
     mockBatchSpanProcessor: vi.fn().mockImplementation((exporter) => ({ exporter })),
+    mockGetNodeAutoInstrumentations: vi.fn((_config?: InstrumentationConfigMap) => []),
   };
 });
 
@@ -42,7 +45,7 @@ vi.mock("@opentelemetry/sdk-trace-base", () => ({
 }));
 
 vi.mock("@opentelemetry/auto-instrumentations-node", () => ({
-  getNodeAutoInstrumentations: vi.fn(() => []),
+  getNodeAutoInstrumentations: mockGetNodeAutoInstrumentations,
 }));
 
 const OTEL_ENV_KEYS = [
@@ -154,6 +157,31 @@ describe("tracing bootstrap", () => {
       headers: undefined,
     });
     expect(mockStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes ioredis statements as the command name without BullMQ arguments", async () => {
+    await loadTracing();
+
+    const serialize =
+      mockGetNodeAutoInstrumentations.mock.calls[0]?.[0]?.["@opentelemetry/instrumentation-ioredis"]
+        ?.dbStatementSerializer;
+
+    expect(typeof serialize).toBe("function");
+    if (typeof serialize !== "function") {
+      throw new Error("expected ioredis dbStatementSerializer");
+    }
+
+    const statement = serialize("EVAL", [
+      "local payload = cjson.decode(ARGV[1])",
+      "1",
+      "bull:notifications:wait",
+      JSON.stringify({ email: "user@example.com", result: "secret-payload" }),
+    ]);
+
+    expect(statement).toBe("EVAL");
+    expect(statement).not.toContain("user@example.com");
+    expect(statement).not.toContain("secret-payload");
+    expect(statement).not.toContain("bull:notifications");
   });
 
   it("does not start the SDK when only a logs endpoint is set", async () => {
