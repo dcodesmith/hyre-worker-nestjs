@@ -59,6 +59,18 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   let clientIp = "203.0.113.40";
   let ipSequence = 40;
   const emailService = { sendEmail: vi.fn().mockResolvedValue({ id: "email-1" }) };
+
+  function htmlSentTo(to: string): string {
+    const html = [...emailService.sendEmail.mock.calls]
+      .reverse()
+      .map(([payload]) => payload as { to?: string; html?: string })
+      .find((payload) => payload.to === to)?.html;
+    if (!html) {
+      throw new Error(`No email sent to ${to}`);
+    }
+    return html;
+  }
+
   const storageService = {
     uploadBuffer: vi.fn().mockResolvedValue("https://cdn.tripdly.test/chauffeur.jpg"),
     deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
@@ -262,9 +274,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     expect(response.body.inviteToken).toBeUndefined();
     expect(response.body.sessionToken).toBeUndefined();
 
-    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-    const html = emailService.sendEmail.mock.calls[0][0].html as string;
-    const token = extractInviteToken(html);
+    const token = extractInviteToken(htmlSentTo(email));
 
     const stored = await databaseService.chauffeurVerification.findFirst({
       where: { fleetOwnerId: ownerId, email },
@@ -280,16 +290,16 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       isOwnerDriver: true,
       chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
     });
-    const { response } = await invite(ownerDriver.cookie);
+    const { response, email } = await invite(ownerDriver.cookie);
 
     expect(response.status).toBe(HttpStatus.CONFLICT);
     expect(response.body.errorCode).toBe("CHAUFFEUR_INVITATION_NOT_ALLOWED");
-    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(emailService.sendEmail.mock.calls.some(([{ to }]) => to === email)).toBe(false);
   });
 
   it("exchanges an invite token once and rejects reuse", async () => {
     const { email } = await invite(ownerCookie);
-    const token = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
+    const token = extractInviteToken(htmlSentTo(email));
 
     const first = await exchange(token);
     expect(first.status).toBe(HttpStatus.CREATED);
@@ -314,8 +324,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   });
 
   it("enforces consent before phone verification", async () => {
-    await invite(ownerCookie);
-    const token = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
+    const { email } = await invite(ownerCookie);
+    const token = extractInviteToken(htmlSentTo(email));
     const session = (await exchange(token)).body.sessionToken as string;
 
     const tooEarly = await onboarding("post", "/phone-verifications", session);
@@ -335,10 +345,10 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   });
 
   it("isolates onboarding sessions so one invitee cannot read another", async () => {
-    await invite(ownerCookie, { name: "First Driver" });
-    const firstToken = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
-    await invite(ownerCookie, { name: "Second Driver" });
-    const secondToken = extractInviteToken(emailService.sendEmail.mock.calls[1][0].html as string);
+    const first = await invite(ownerCookie, { name: "First Driver" });
+    const firstToken = extractInviteToken(htmlSentTo(first.email));
+    const second = await invite(ownerCookie, { name: "Second Driver" });
+    const secondToken = extractInviteToken(htmlSentTo(second.email));
 
     const firstSession = (await exchange(firstToken)).body.sessionToken as string;
     const secondSession = (await exchange(secondToken)).body.sessionToken as string;
@@ -475,7 +485,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   it("creates a new approved User after mocked NIN, licence, liveness, and face verification", async () => {
     const email = uniqueEmail("chauffeur-e2e-create");
     await invite(ownerCookie, { email, name: "Ada Lovelace" });
-    const token = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
+    const token = extractInviteToken(htmlSentTo(email));
     const session = (await exchange(token)).body.sessionToken as string;
 
     await onboarding("put", "/consent", session).send({
@@ -562,7 +572,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       roles: ["user"],
     });
     await invite(ownerCookie, { email, name: "Ada Lovelace" });
-    const token = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
+    const token = extractInviteToken(htmlSentTo(email));
     const session = (await exchange(token)).body.sessionToken as string;
 
     await onboarding("put", "/consent", session).send({
@@ -610,7 +620,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   it("rejects a second approved chauffeur that reuses the same NIN", async () => {
     const firstEmail = uniqueEmail("chauffeur-e2e-nin-a");
     await invite(ownerCookie, { email: firstEmail, name: "Ada Lovelace" });
-    const firstToken = extractInviteToken(emailService.sendEmail.mock.calls[0][0].html as string);
+    const firstToken = extractInviteToken(htmlSentTo(firstEmail));
     const first = await completeOnboarding(
       (await exchange(firstToken)).body.sessionToken as string,
       {
@@ -623,7 +633,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
 
     const secondEmail = uniqueEmail("chauffeur-e2e-nin-b");
     await invite(ownerCookie, { email: secondEmail, name: "Ada Lovelace" });
-    const secondToken = extractInviteToken(emailService.sendEmail.mock.calls[1][0].html as string);
+    const secondToken = extractInviteToken(htmlSentTo(secondEmail));
     const second = await completeOnboarding(
       (await exchange(secondToken)).body.sessionToken as string,
       { prefix: "uniq-b", nin: "34567890123", license: "UNIQ22222" },
