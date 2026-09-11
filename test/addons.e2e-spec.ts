@@ -446,10 +446,11 @@ describe("Add-ons E2E", () => {
           addonId: addon.id,
           code: addon.code,
           name: "Guest Wi-Fi",
-          unitPrice: expect.anything(),
           quantity: 1,
         }),
       ]);
+      expect(stored[0].unitPrice.toNumber()).toBe(10000);
+      expect(stored[0].totalPrice.toNumber()).toBe(10000);
     });
   });
 });

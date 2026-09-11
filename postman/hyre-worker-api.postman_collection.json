@@ -592,11 +592,6 @@
           "name": "End add-on price",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"effectiveUntil\": \"2026-12-31T23:59:59.000Z\"\n}"
-            },
             "url": {
               "raw": "{{baseUrl}}/api/admin/addons/{{addonId}}/prices/{{addonPriceId}}/end",
               "host": ["{{baseUrl}}"],
