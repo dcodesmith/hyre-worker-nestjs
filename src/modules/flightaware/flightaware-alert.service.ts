@@ -306,32 +306,4 @@ export class FlightAwareAlertService {
       );
     }
   }
-
-  async cleanupFlightAlert(flightId: string): Promise<void> {
-    this.logger.info({ flightId }, "Cleaning up flight alert");
-
-    const flight = await this.databaseService.flight.findUnique({
-      where: { id: flightId },
-      select: { alertId: true, alertEnabled: true },
-    });
-
-    if (!flight?.alertId || !flight.alertEnabled) {
-      this.logger.info({ flightId }, "Flight has no active alert to cleanup");
-      return;
-    }
-
-    await this.disableFlightAlert(flight.alertId);
-
-    await this.databaseService.flight.update({
-      where: { id: flightId },
-      data: {
-        alertEnabled: false,
-        alertCreatedAt: null,
-        alertDisabledAt: new Date(),
-        alertProvisioningAt: null,
-      },
-    });
-
-    this.logger.info({ flightId, alertId: flight.alertId }, "Flight alert cleaned up");
-  }
 }
