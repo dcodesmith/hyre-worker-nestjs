@@ -1,3 +1,4 @@
+import "dotenv/config";
 import otelSdk from "./tracing";
 import "reflect-metadata";
 

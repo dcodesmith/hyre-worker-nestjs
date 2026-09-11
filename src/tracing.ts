@@ -1,50 +1,84 @@
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { parseOtlpHeaders, TRACE_LOG_KEYS } from "./config/tracing.config";
+import { metrics, NodeSDK } from "@opentelemetry/sdk-node";
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+  ATTR_SERVICE_INSTANCE_ID,
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from "@opentelemetry/semantic-conventions";
+import { parseOtlpHeaders, resolveOtlpHttpEndpoint, TRACE_LOG_KEYS } from "./config/tracing.config";
 
-const otlpTracesEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+const otlpBaseEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+const otlpTracesEndpoint = resolveOtlpHttpEndpoint(
+  "traces",
+  process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+  otlpBaseEndpoint,
+);
+const otlpMetricsEndpoint = resolveOtlpHttpEndpoint(
+  "metrics",
+  process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+  otlpBaseEndpoint,
+);
+const telemetryEnabled = Boolean(otlpTracesEndpoint || otlpMetricsEndpoint);
 
-if (!otlpTracesEndpoint) {
-  console.warn("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT not set. Tracing disabled.");
+if (!telemetryEnabled) {
+  console.warn("OpenTelemetry endpoint not set. Tracing and metrics disabled.");
 }
 
 const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
 
-// The SDK handles traces, metrics, and logs
 const sdk = new NodeSDK({
   resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || "hyre-worker-nestjs",
+    [ATTR_SERVICE_VERSION]: process.env.DEPLOYMENT_VERSION || "local",
+    "deployment.environment.name": process.env.APP_ENV || process.env.NODE_ENV || "development",
+    ...(process.env.FLY_MACHINE_ID && {
+      [ATTR_SERVICE_INSTANCE_ID]: process.env.FLY_MACHINE_ID,
+    }),
+    ...(process.env.FLY_REGION && { "cloud.region": process.env.FLY_REGION }),
   }),
-  traceExporter: otlpTracesEndpoint
-    ? new OTLPTraceExporter({
-        url: otlpTracesEndpoint,
-        headers: otlpHeaders,
-      })
-    : undefined,
-  // Auto-instruments HTTP, Express, NestJS core, Prisma, ioredis, axios
+  spanProcessors: otlpTracesEndpoint
+    ? [
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({
+            url: otlpTracesEndpoint,
+            headers: otlpHeaders,
+          }),
+        ),
+      ]
+    : [],
+  metricReaders: otlpMetricsEndpoint
+    ? [
+        new metrics.PeriodicExportingMetricReader({
+          exporter: new OTLPMetricExporter({
+            url: otlpMetricsEndpoint,
+            headers: otlpHeaders,
+          }),
+        }),
+      ]
+    : [],
+  // Pino logs use the dedicated transport configured by ObservabilityModule.
+  logRecordProcessors: [],
   instrumentations: [
     getNodeAutoInstrumentations({
-      // Disable fs instrumentation (too noisy for most apps)
       "@opentelemetry/instrumentation-fs": {
         enabled: false,
       },
-      // Disable OpenAI instrumentation - conflicts with LangChain's OpenAI client
       "@opentelemetry/instrumentation-openai": {
         enabled: false,
       },
-    }),
-    new PinoInstrumentation({
-      logKeys: TRACE_LOG_KEYS,
+      "@opentelemetry/instrumentation-pino": {
+        disableLogSending: true,
+        logKeys: TRACE_LOG_KEYS,
+      },
     }),
   ],
 });
 
-// Start the SDK only if tracing is configured
-if (otlpTracesEndpoint) {
+if (telemetryEnabled) {
   sdk.start();
 }
 

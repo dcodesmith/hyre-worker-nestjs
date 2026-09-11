@@ -49,6 +49,13 @@ import { PINO_REDACT_PATHS } from "./pino-redact.const";
                 headers: otlpHeaders,
                 resourceAttributes: {
                   "service.name": process.env.OTEL_SERVICE_NAME || "hyre-worker-nestjs",
+                  "service.version": process.env.DEPLOYMENT_VERSION || "local",
+                  "deployment.environment.name":
+                    process.env.APP_ENV || process.env.NODE_ENV || "development",
+                  ...(process.env.FLY_MACHINE_ID && {
+                    "service.instance.id": process.env.FLY_MACHINE_ID,
+                  }),
+                  ...(process.env.FLY_REGION && { "cloud.region": process.env.FLY_REGION }),
                 },
               },
               level: process.env.LOG_LEVEL || "info",
