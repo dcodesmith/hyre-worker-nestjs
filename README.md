@@ -392,6 +392,19 @@ TZ=Africa/Lagos
 ENABLE_MANUAL_TRIGGERS=false  # Set to 'true' to enable manual trigger endpoints
 ```
 
+### Optional Grafana Cloud OpenTelemetry
+
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp/v1/logs
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64-instance-id-and-token>
+OTEL_SERVICE_NAME=hyre-worker-nestjs
+```
+
+The base endpoint enables traces and metrics. Production log export is deliberately enabled
+separately with `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. Signal-specific traces and metrics endpoints
+override the corresponding URL derived from the base endpoint.
+
 ## Development
 
 ### Prerequisites

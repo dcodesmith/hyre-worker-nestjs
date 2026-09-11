@@ -281,3 +281,97 @@ describe("envSchema deployment metadata", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("envSchema OTLP exporters", () => {
+  const baseEnv = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+  };
+
+  it("accepts optional Grafana Cloud OTLP settings", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://tempo.example.com/v1/traces",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://mimir.example.com/v1/metrics",
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:4318/v1/logs",
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20dGVzdA==",
+      OTEL_SERVICE_NAME: "hyre-worker-nestjs",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(
+        "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
+      );
+      expect(result.data.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT).toBe(
+        "https://tempo.example.com/v1/traces",
+      );
+      expect(result.data.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT).toBe(
+        "https://mimir.example.com/v1/metrics",
+      );
+      expect(result.data.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT).toBe("http://127.0.0.1:4318/v1/logs");
+      expect(result.data.OTEL_EXPORTER_OTLP_HEADERS).toBe("Authorization=Basic%20dGVzdA==");
+      expect(result.data.OTEL_SERVICE_NAME).toBe("hyre-worker-nestjs");
+    }
+  });
+
+  it("treats blank optional OTLP values as omitted", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "",
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "",
+      OTEL_EXPORTER_OTLP_HEADERS: "",
+      OTEL_SERVICE_NAME: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
+      expect(result.data.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT).toBeUndefined();
+      expect(result.data.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT).toBeUndefined();
+      expect(result.data.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT).toBeUndefined();
+      expect(result.data.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
+      expect(result.data.OTEL_SERVICE_NAME).toBeUndefined();
+    }
+  });
+
+  it("rejects a non-URL OTLP endpoint", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "not-a-url",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["OTEL_EXPORTER_OTLP_ENDPOINT"],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects a non-http OTLP endpoint protocol", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "ftp://traces.example.com/v1/traces",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
+            message: "OTLP endpoint must use http:// or https://",
+          }),
+        ]),
+      );
+    }
+  });
+});

@@ -10,6 +10,19 @@ export const TRACE_LOG_KEYS = {
   traceFlags: "trace_flags",
 } as const;
 
+export type OtlpSignal = "logs" | "metrics" | "traces";
+
+export function resolveOtlpHttpEndpoint(
+  signal: OtlpSignal,
+  signalEndpoint: string | undefined,
+  baseEndpoint: string | undefined,
+): string | undefined {
+  return (
+    signalEndpoint ||
+    (baseEndpoint ? `${baseEndpoint.replace(/\/+$/, "")}/v1/${signal}` : undefined)
+  );
+}
+
 /**
  * Parses OTEL_EXPORTER_OTLP_HEADERS environment variable.
  * Format: "key1=value1,key2=value2"
