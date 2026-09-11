@@ -2,7 +2,17 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { CREATE_FLIGHT_ALERT_JOB } from "../../config/constants";
+import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
+
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
 import { FlightAwareAlertService } from "./flightaware-alert.service";
@@ -21,6 +31,7 @@ describe("FlightAlertProcessor", () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FlightAlertProcessor,
@@ -112,6 +123,20 @@ describe("FlightAlertProcessor", () => {
       );
 
       await expect(processor.process(job)).rejects.toThrow("FlightAware API rate limit exceeded");
+    });
+  });
+
+  describe("onFailed", () => {
+    it("delegates a missing-job worker failure to terminal capture", () => {
+      const error = new Error("job lost");
+
+      processor.onFailed(undefined, error);
+
+      expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+        undefined,
+        error,
+        FLIGHT_ALERTS_QUEUE,
+      );
     });
   });
 });

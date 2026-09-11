@@ -2,6 +2,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { NotificationOutboxEventType, NotificationOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { DatabaseService } from "../database/database.service";
 import type { HandlerEvent, OutboxEventHandler } from "./handlers/outbox-event-handler.interface";
 import { NotificationService } from "./notification.service";
@@ -9,6 +10,14 @@ import {
   NotificationOutboxService,
   type NotificationOutboxTransactionClient,
 } from "./notification-outbox.service";
+
+const { reportBackgroundFailureMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+}));
 
 // Shared by both `processPendingEvents` and `concurrent claim contention` —
 // the latter needs a parseable v2 outbox payload to walk the success path.
@@ -447,6 +456,7 @@ describe("NotificationOutboxService", () => {
       const processed = await service.processPendingEvents();
 
       expect(processed).toBe(0);
+      expect(reportBackgroundFailure).not.toHaveBeenCalled();
       expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "evt-3" },
@@ -475,6 +485,10 @@ describe("NotificationOutboxService", () => {
       const processed = await service.processPendingEvents();
 
       expect(processed).toBe(0);
+      expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+      expect(reportBackgroundFailureMock.mock.invocationCallOrder[0]).toBeLessThan(
+        databaseServiceMock.notificationOutboxEvent.update.mock.invocationCallOrder[0],
+      );
       expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "evt-4" },
@@ -535,7 +549,50 @@ describe("NotificationOutboxService", () => {
       expect(dispatchedIds).toEqual(expect.arrayContaining(["evt-ok-1", "evt-ok-2"]));
       // The failing claim must never reach the success-path `update` call.
       expect(dispatchedIds).not.toContain("evt-claim-fail");
+      expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          message: "Failed to process notification outbox events",
+          operation: "NotificationOutboxService.processPendingEvents",
+          source: "scheduler",
+        }),
+      );
     });
+
+    it.each([new Error("connection terminated"), undefined])(
+      "reports the first claim rejection once when multiple events reject",
+      async (first) => {
+        const second = new Error("pool exhausted");
+        const buildCandidate = (id: string) => ({
+          id,
+          bookingId: `booking-${id}`,
+          eventType: NotificationOutboxEventType.BOOKING_ASSIGNMENT,
+          status: NotificationOutboxStatus.PENDING,
+          attempts: 0,
+          nextAttemptAt: new Date(Date.now() - 1000),
+          updatedAt: new Date(),
+          payload: buildJobPayload(`booking-${id}`),
+        });
+        databaseServiceMock.notificationOutboxEvent.findMany.mockResolvedValueOnce([
+          buildCandidate("evt-a"),
+          buildCandidate("evt-b"),
+        ]);
+        databaseServiceMock.notificationOutboxEvent.updateMany
+          .mockRejectedValueOnce(first)
+          .mockRejectedValueOnce(second);
+
+        expect(await service.processPendingEvents()).toBe(0);
+
+        expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+        expect(reportBackgroundFailure).toHaveBeenCalledWith(
+          first,
+          expect.objectContaining({
+            message: "Failed to process notification outbox events",
+          }),
+        );
+      },
+    );
 
     it("does not filter by eventType — handler-driven event types are auto-discovered", async () => {
       // A future event type, registered only by adding a handler. The
@@ -630,6 +687,18 @@ describe("NotificationOutboxService", () => {
 
       await service.processPendingEvents();
 
+      expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
+      expect(reportBackgroundFailure).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          message: "Failed to dispatch notification outbox event",
+          operation: "NotificationOutboxService.processEvent",
+          source: "scheduler",
+        }),
+      );
+      expect(reportBackgroundFailureMock.mock.invocationCallOrder[0]).toBeLessThan(
+        databaseServiceMock.notificationOutboxEvent.update.mock.invocationCallOrder[0],
+      );
       expect(databaseServiceMock.notificationOutboxEvent.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "evt-attempt-7" },

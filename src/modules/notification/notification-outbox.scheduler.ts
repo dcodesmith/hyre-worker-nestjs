@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { PinoLogger } from "nestjs-pino";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { NotificationOutboxService } from "./notification-outbox.service";
 
 @Injectable()
@@ -52,6 +53,11 @@ export class NotificationOutboxScheduler {
         );
       }
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to process notification outbox events",
+        operation: "NotificationOutboxScheduler.processNotificationOutbox",
+        source: "scheduler",
+      });
       this.logger.error(
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to process notification outbox events",

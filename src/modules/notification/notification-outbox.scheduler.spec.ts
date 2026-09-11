@@ -1,14 +1,24 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { NotificationOutboxScheduler } from "./notification-outbox.scheduler";
 import { NotificationOutboxService } from "./notification-outbox.service";
+
+const { reportBackgroundFailureMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+}));
 
 describe("NotificationOutboxScheduler", () => {
   let scheduler: NotificationOutboxScheduler;
   let outboxService: { processPendingEvents: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     outboxService = { processPendingEvents: vi.fn() };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -85,5 +95,11 @@ describe("NotificationOutboxScheduler", () => {
     await scheduler.processNotificationOutbox();
 
     expect(outboxService.processPendingEvents).toHaveBeenCalledTimes(2);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "boom" }),
+      expect.objectContaining({
+        message: "Failed to process notification outbox events",
+      }),
+    );
   });
 });

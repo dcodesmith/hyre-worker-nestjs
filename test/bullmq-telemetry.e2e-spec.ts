@@ -2,6 +2,7 @@ import {
   BullModule,
   getQueueToken,
   getSharedConfigToken,
+  OnWorkerEvent,
   Processor,
   WorkerHost,
 } from "@nestjs/bullmq";
@@ -10,11 +11,34 @@ import { ConfigModule } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { metrics, NodeSDK, tracing } from "@opentelemetry/sdk-node";
 import type { Job, Queue, QueueOptions } from "bullmq";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureTerminalJobFailure } from "../src/modules/infra/queue-infra/bullmq-telemetry";
 import { QueueInfraModule } from "../src/modules/infra/queue-infra/queue-infra.module";
+import { captureException } from "../src/sentry";
+
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("../src/sentry", () => ({
+  captureException: captureExceptionMock,
+  flushSentry: vi.fn().mockResolvedValue(true),
+}));
 
 const QUEUE_NAME = `bullmq-otel-e2e-${process.env.VITEST_WORKER_ID ?? "0"}`;
 const SECRET = "user-email-secret@example.com";
+
+function createDeferred() {
+  let resolve = () => {};
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+let firstFailed = createDeferred();
+let secondFailed = createDeferred();
+let failedEvents = 0;
 
 @Processor(QUEUE_NAME, { concurrency: 1 })
 class TelemetryProbeProcessor extends WorkerHost {
@@ -26,6 +50,18 @@ class TelemetryProbeProcessor extends WorkerHost {
     }
 
     return { ok: true };
+  }
+
+  @OnWorkerEvent("failed")
+  onFailed(job: Job<{ fail?: boolean }> | undefined, error: Error): void {
+    captureTerminalJobFailure(job, error, QUEUE_NAME);
+    failedEvents += 1;
+    if (failedEvents === 1) {
+      firstFailed.resolve();
+    }
+    if (failedEvents === 2) {
+      secondFailed.resolve();
+    }
   }
 }
 
@@ -97,6 +133,13 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
 
     queue = app.get<Queue>(getQueueToken(QUEUE_NAME));
     await queue.drain(true);
+  });
+
+  beforeEach(() => {
+    captureExceptionMock.mockClear();
+    failedEvents = 0;
+    firstFailed = createDeferred();
+    secondFailed = createDeferred();
   });
 
   afterAll(async () => {
@@ -175,5 +218,53 @@ describe("BullMQ OpenTelemetry (e2e)", () => {
     expect(dump).not.toContain("bullmq.job.failed.reason");
     expect(dump).not.toContain("bullmq.job.result");
     expect(dump).not.toContain("bullmq.job.progress");
+  });
+
+  it("captures a terminal failed attempt with the producer trace", async () => {
+    spanExporter.reset();
+
+    const job = await queue.add("probe", { fail: true }, { attempts: 1 });
+    await firstFailed.promise;
+    await vi.waitFor(async () => {
+      expect(await job.getState()).toBe("failed");
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+
+    const producer = spanExporter.getFinishedSpans().find((span) => span.name.startsWith("add "));
+    expect(producer).toBeDefined();
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        message: "BullMQ job failed terminally",
+        tags: expect.objectContaining({
+          "error.source": "bullmq",
+          "job.name": "probe",
+          "queue.name": QUEUE_NAME,
+        }),
+        traceContext: expect.objectContaining({
+          traceId: producer?.spanContext().traceId,
+        }),
+      }),
+    );
+  });
+
+  it("does not capture a retryable failure, then captures the terminal attempt", async () => {
+    const job = await queue.add("probe", { fail: true }, { attempts: 2 });
+    await firstFailed.promise;
+    expect(captureException).not.toHaveBeenCalled();
+
+    await secondFailed.promise;
+    await vi.waitFor(async () => {
+      expect(await job.getState()).toBe("failed");
+    });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        message: "BullMQ job failed terminally",
+      }),
+    );
   });
 });

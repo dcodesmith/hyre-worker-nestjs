@@ -5,6 +5,10 @@ import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import {
+  observeBackgroundOperation,
+  reportBackgroundFailure,
+} from "../../common/observability/background-operation";
+import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
   EVERY_HOUR,
@@ -26,6 +30,14 @@ export class ReminderScheduler {
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingStartReminders() {
+    return observeBackgroundOperation(
+      "ReminderScheduler.scheduleBookingStartReminders",
+      "scheduler",
+      () => this.enqueueBookingStartReminders(),
+    );
+  }
+
+  private async enqueueBookingStartReminders(): Promise<void> {
     this.logger.info("Scheduling booking leg start reminder emails");
 
     try {
@@ -35,12 +47,25 @@ export class ReminderScheduler {
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to schedule booking reminders",
+        operation: "ReminderScheduler.scheduleBookingStartReminders",
+        source: "scheduler",
+      });
       this.logger.error({ err: toLogError(error) }, "Failed to enqueue booking start reminders");
     }
   }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleBookingEndReminders() {
+    return observeBackgroundOperation(
+      "ReminderScheduler.scheduleBookingEndReminders",
+      "scheduler",
+      () => this.enqueueBookingEndReminders(),
+    );
+  }
+
+  private async enqueueBookingEndReminders(): Promise<void> {
     this.logger.info("Scheduling booking leg end reminder emails");
 
     try {
@@ -50,6 +75,11 @@ export class ReminderScheduler {
         { removeOnComplete: true, removeOnFail: 25 },
       );
     } catch (error) {
+      reportBackgroundFailure(error, {
+        message: "Failed to schedule booking reminders",
+        operation: "ReminderScheduler.scheduleBookingEndReminders",
+        source: "scheduler",
+      });
       this.logger.error({ err: toLogError(error) }, "Failed to enqueue booking end reminders");
     }
   }

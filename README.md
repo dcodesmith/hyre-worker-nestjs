@@ -399,6 +399,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp/v1/logs
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64-instance-id-and-token>
 OTEL_SERVICE_NAME=hyre-worker-nestjs
+GRAFANA_TRACES_BASE_URL=https://<your-stack>.grafana.net
 ```
 
 The base endpoint enables traces and metrics. Production log export is deliberately enabled

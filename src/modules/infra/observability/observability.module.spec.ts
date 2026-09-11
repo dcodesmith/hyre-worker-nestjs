@@ -4,6 +4,14 @@ import { PARAMS_PROVIDER_TOKEN } from "nestjs-pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ObservabilityModule } from "./observability.module";
 
+vi.mock("../../../sentry", () => ({
+  flushSentry: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("../../../tracing", () => ({
+  shutdownOpenTelemetry: vi.fn().mockResolvedValue(undefined),
+}));
+
 type PinoHttpParams = {
   pinoHttp: {
     level?: string;

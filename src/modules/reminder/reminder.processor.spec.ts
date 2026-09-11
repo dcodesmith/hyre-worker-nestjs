@@ -1,13 +1,25 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   BOOKING_LEG_END_REMINDER,
   BOOKING_LEG_START_REMINDER,
+  REMINDERS_QUEUE,
   TRIP_END,
   TRIP_START,
 } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
+
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import { ReminderJobData } from "./reminder.interface";
 import { ReminderProcessor } from "./reminder.processor";
 import { ReminderService } from "./reminder.service";
@@ -15,6 +27,7 @@ import { ReminderService } from "./reminder.service";
 describe("ReminderProcessor", () => {
   let processor: ReminderProcessor;
   let reminderService: ReminderService;
+  let logger: PinoLogger;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -34,6 +47,7 @@ describe("ReminderProcessor", () => {
 
     processor = module.get<ReminderProcessor>(ReminderProcessor);
     reminderService = module.get<ReminderService>(ReminderService);
+    logger = module.get<PinoLogger>(PinoLogger);
   });
 
   it("should process BOOKING_LEG_START_REMINDER job and call sendBookingStartReminders", async () => {
@@ -152,5 +166,22 @@ describe("ReminderProcessor", () => {
 
     await expect(processor.process(job)).rejects.toThrow("Database connection failed");
     expect(reminderService.sendBookingEndReminders).toHaveBeenCalled();
+  });
+
+  it("captures a missing-job worker failure without dereferencing the job", () => {
+    vi.clearAllMocks();
+    const error = new Error("job lost");
+
+    expect(() => processor.onFailed(undefined, error)).not.toThrow();
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      error,
+      REMINDERS_QUEUE,
+    );
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      { err: error },
+      "Reminder job failed without context",
+    );
   });
 });

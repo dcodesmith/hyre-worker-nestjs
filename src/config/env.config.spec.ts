@@ -450,3 +450,64 @@ describe("envSchema SENTRY_DSN", () => {
     }
   });
 });
+
+describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
+  const baseEnv = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+  };
+  const grafanaOrigin = "https://gallantcricket1373.grafana.net";
+
+  it("accepts a valid optional Grafana traces URL", () => {
+    const omitted = envSchema.safeParse(baseEnv);
+    expect(omitted.success).toBe(true);
+    if (omitted.success) {
+      expect(omitted.data.GRAFANA_TRACES_BASE_URL).toBeUndefined();
+    }
+
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      GRAFANA_TRACES_BASE_URL: grafanaOrigin,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GRAFANA_TRACES_BASE_URL).toBe(grafanaOrigin);
+    }
+  });
+
+  it("treats a blank GRAFANA_TRACES_BASE_URL as omitted", () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      GRAFANA_TRACES_BASE_URL: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GRAFANA_TRACES_BASE_URL).toBeUndefined();
+    }
+  });
+
+  it.each([
+    "not-a-url",
+    "http://gallantcricket1373.grafana.net",
+    "ftp://gallantcricket1373.grafana.net",
+  ])("rejects %s", (value) => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      GRAFANA_TRACES_BASE_URL: value,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["GRAFANA_TRACES_BASE_URL"],
+            message: "GRAFANA_TRACES_BASE_URL must use https://",
+          }),
+        ]),
+      );
+    }
+  });
+});

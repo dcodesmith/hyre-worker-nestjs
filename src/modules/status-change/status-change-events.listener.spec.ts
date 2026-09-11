@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { observeBackgroundOperation } from "../../common/observability/background-operation";
 import {
   type BookingConfirmedEventPayload,
   type FlightArrivalUpdatedEventPayload,
@@ -8,11 +9,22 @@ import {
 import { StatusChangeEventsListener } from "./status-change-events.listener";
 import { StatusChangeSchedulingService } from "./status-change-scheduling.service";
 
+const { observeBackgroundOperationMock } = vi.hoisted(() => ({
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
+
 describe("StatusChangeEventsListener", () => {
   let listener: StatusChangeEventsListener;
   let schedulingService: StatusChangeSchedulingService;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StatusChangeEventsListener,
@@ -72,6 +84,24 @@ describe("StatusChangeEventsListener", () => {
       "flight-1",
       new Date("2030-01-01T11:40:00.000Z"),
       ["booking-conflict"],
+    );
+  });
+
+  it("captures and rethrows event handler failures", async () => {
+    const error = new Error("redis down");
+    vi.mocked(schedulingService.scheduleAirportActivation).mockRejectedValueOnce(error);
+
+    const payload: BookingConfirmedEventPayload = {
+      bookingId: "booking-1",
+      bookingType: "AIRPORT_PICKUP",
+      activationAt: "2030-01-01T11:40:00.000Z",
+    };
+
+    await expect(listener.onBookingConfirmed(payload)).rejects.toBe(error);
+    expect(observeBackgroundOperation).toHaveBeenCalledWith(
+      "StatusChangeEventsListener.onBookingConfirmed",
+      "event",
+      expect.any(Function),
     );
   });
 });

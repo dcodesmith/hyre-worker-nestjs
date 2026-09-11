@@ -4,6 +4,10 @@ import { Cron } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import {
+  observeBackgroundOperation,
+  reportBackgroundFailure,
+} from "../../common/observability/background-operation";
+import {
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,
   EVERY_HOUR,
@@ -30,6 +34,14 @@ export class StatusChangeScheduler {
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleConfirmedToActiveUpdates() {
+    return observeBackgroundOperation(
+      "StatusChangeScheduler.scheduleConfirmedToActiveUpdates",
+      "scheduler",
+      () => this.enqueueConfirmedToActiveUpdates(),
+    );
+  }
+
+  private async enqueueConfirmedToActiveUpdates(): Promise<void> {
     this.logger.info("Scheduling confirmed to active status updates");
 
     try {
@@ -49,11 +61,24 @@ export class StatusChangeScheduler {
         { error: schedulingError.message },
         "Failed to schedule confirmed to active status updates",
       );
+      reportBackgroundFailure(error, {
+        message: "Failed to schedule status updates",
+        operation: "StatusChangeScheduler.scheduleConfirmedToActiveUpdates",
+        source: "scheduler",
+      });
     }
   }
 
   @Cron(EVERY_HOUR, { timeZone: TIMEZONE })
   async scheduleActiveToCompletedUpdates() {
+    return observeBackgroundOperation(
+      "StatusChangeScheduler.scheduleActiveToCompletedUpdates",
+      "scheduler",
+      () => this.enqueueActiveToCompletedUpdates(),
+    );
+  }
+
+  private async enqueueActiveToCompletedUpdates(): Promise<void> {
     this.logger.info("Scheduling active to completed status updates");
 
     try {
@@ -73,6 +98,11 @@ export class StatusChangeScheduler {
         { error: schedulingError.message },
         "Failed to schedule active to completed status updates",
       );
+      reportBackgroundFailure(error, {
+        message: "Failed to schedule status updates",
+        operation: "StatusChangeScheduler.scheduleActiveToCompletedUpdates",
+        source: "scheduler",
+      });
     }
   }
 }

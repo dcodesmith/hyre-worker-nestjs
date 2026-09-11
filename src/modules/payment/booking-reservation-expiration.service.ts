@@ -2,6 +2,10 @@ import { Injectable } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import {
+  observeBackgroundOperation,
+  reportBackgroundFailure,
+} from "../../common/observability/background-operation";
 import { TIMEZONE } from "../../config/constants";
 import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "../booking/booking.const";
 import { BookingReservationService } from "../booking/booking-reservation.service";
@@ -38,6 +42,14 @@ export class BookingReservationExpirationService {
 
   @Cron(EVERY_MINUTE, { timeZone: TIMEZONE })
   async reconcileExpiredReservations(): Promise<number> {
+    return observeBackgroundOperation(
+      "BookingReservationExpirationService.reconcileExpiredReservations",
+      "scheduler",
+      () => this.reconcileExpiredReservationBatches(),
+    );
+  }
+
+  private async reconcileExpiredReservationBatches(): Promise<number> {
     if (this.reconciliationInProgress) {
       this.logger.warn("Skipping overlapping expired-reservation reconciliation");
       return 0;
@@ -45,8 +57,23 @@ export class BookingReservationExpirationService {
 
     this.reconciliationInProgress = true;
     try {
-      const bookingCount = await this.reconcileExpiredBookingBatch();
-      const extensionCount = await this.reconcileExpiredExtensionBatch();
+      let hasFailure = false;
+      let firstFailure: unknown;
+      const recordFailure = (error: unknown) => {
+        if (!hasFailure) {
+          hasFailure = true;
+          firstFailure = error;
+        }
+      };
+      const bookingCount = await this.reconcileExpiredBookingBatch(recordFailure);
+      const extensionCount = await this.reconcileExpiredExtensionBatch(recordFailure);
+      if (hasFailure) {
+        reportBackgroundFailure(firstFailure, {
+          message: "Failed to reconcile one or more expired reservations",
+          operation: "BookingReservationExpirationService.reconcileExpiredReservations",
+          source: "scheduler",
+        });
+      }
       return bookingCount + extensionCount;
     } finally {
       this.reconciliationInProgress = false;
@@ -105,7 +132,7 @@ export class BookingReservationExpirationService {
     return this.reconcileReservation({ ...reservation, kind: "extension" });
   }
 
-  private async reconcileExpiredBookingBatch(): Promise<number> {
+  private async reconcileExpiredBookingBatch(onFailure: (error: unknown) => void): Promise<number> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservations = await this.databaseService.booking.findMany({
@@ -133,10 +160,13 @@ export class BookingReservationExpirationService {
 
     return this.reconcileBatch(
       reservations.map((reservation) => ({ ...reservation, kind: "booking" })),
+      onFailure,
     );
   }
 
-  private async reconcileExpiredExtensionBatch(): Promise<number> {
+  private async reconcileExpiredExtensionBatch(
+    onFailure: (error: unknown) => void,
+  ): Promise<number> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservations = await this.databaseService.extension.findMany({
@@ -164,22 +194,29 @@ export class BookingReservationExpirationService {
 
     return this.reconcileBatch(
       reservations.map((reservation) => ({ ...reservation, kind: "extension" })),
+      onFailure,
     );
   }
 
-  private async reconcileBatch(reservations: ExpiredReservation[]): Promise<number> {
+  private async reconcileBatch(
+    reservations: ExpiredReservation[],
+    onFailure: (error: unknown) => void,
+  ): Promise<number> {
     let reconciledCount = 0;
     for (let index = 0; index < reservations.length; index += RECONCILIATION_CONCURRENCY) {
       const batch = reservations.slice(index, index + RECONCILIATION_CONCURRENCY);
       const reconciled = await Promise.all(
-        batch.map((reservation) => this.reconcileReservation(reservation)),
+        batch.map((reservation) => this.reconcileReservation(reservation, onFailure)),
       );
       reconciledCount += reconciled.filter(Boolean).length;
     }
     return reconciledCount;
   }
 
-  private async reconcileReservation(reservation: ExpiredReservation): Promise<boolean> {
+  private async reconcileReservation(
+    reservation: ExpiredReservation,
+    onFailure?: (error: unknown) => void,
+  ): Promise<boolean> {
     const paymentReferences = this.paymentReferencesFor(reservation);
 
     try {
@@ -212,6 +249,7 @@ export class BookingReservationExpirationService {
       // retry on the next run rather than risk releasing a successfully paid car.
       return false;
     } catch (error) {
+      onFailure?.(error);
       this.logger.warn(
         {
           reservationId: reservation.id,

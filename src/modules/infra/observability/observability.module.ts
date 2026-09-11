@@ -7,8 +7,10 @@ import { RequestIdMiddleware } from "../../../common/middlewares/request-id.midd
 import { type EnvConfig } from "../../../config/env.config";
 import { parseOtlpHeaders } from "../../../config/tracing.config";
 import { PINO_REDACT_PATHS } from "./pino-redact.const";
+import { TelemetryLifecycleService } from "./telemetry-lifecycle.service";
 
 @Module({
+  providers: [TelemetryLifecycleService],
   imports: [
     LoggerModule.forRootAsync({
       imports: [ConfigModule],

@@ -22,6 +22,7 @@ import {
 import { createBookingCompletionToken } from "../booking/booking-completion-token.helper";
 import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 import {
   CHAUFFEUR_RECIPIENT_TYPE,
   CLIENT_RECIPIENT_TYPE,
@@ -893,7 +894,12 @@ export class NotificationProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent("failed")
-  onFailed(job: Job<NotificationJobData, NotificationResult[]>, error: Error) {
+  onFailed(job: Job<NotificationJobData, NotificationResult[]> | undefined, error: Error) {
+    captureTerminalJobFailure(job, error, NOTIFICATIONS_QUEUE);
+    if (!job) {
+      this.logger.error({ err: toLogError(error) }, "Notification job failed without context");
+      return;
+    }
     const failedChannels =
       error instanceof NotificationDispatchError ? error.failedChannels : undefined;
     const attempt = error instanceof NotificationDispatchError ? error.attempt : job.attemptsMade;

@@ -3,6 +3,7 @@ import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/clie
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { reportBackgroundFailure } from "../../common/observability/background-operation";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
 import { BookingConfirmationService } from "../booking/booking-confirmation.service";
 import { ExtensionConfirmationService } from "../booking/extension-confirmation.service";
@@ -10,6 +11,18 @@ import { DatabaseService } from "../database/database.service";
 import { PaymentService } from "./payment.service";
 import { PaymentReconciliationService } from "./payment-reconciliation.service";
 import { RefundReconciliationService } from "./refund-reconciliation.service";
+
+const { reportBackgroundFailureMock, observeBackgroundOperationMock } = vi.hoisted(() => ({
+  reportBackgroundFailureMock: vi.fn(),
+  observeBackgroundOperationMock: vi.fn(
+    async (_operation: string, _source: string, handler: () => Promise<unknown>) => handler(),
+  ),
+}));
+
+vi.mock("../../common/observability/background-operation", () => ({
+  reportBackgroundFailure: reportBackgroundFailureMock,
+  observeBackgroundOperation: observeBackgroundOperationMock,
+}));
 
 describe("PaymentReconciliationService", () => {
   let service: PaymentReconciliationService;
@@ -20,6 +33,7 @@ describe("PaymentReconciliationService", () => {
   let refundReconciliationService: RefundReconciliationService;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentReconciliationService,
@@ -195,6 +209,12 @@ describe("PaymentReconciliationService", () => {
 
     await expect(service.reconcilePendingPayments()).resolves.toBe(1);
     expect(extensionConfirmationService.confirmFromPayment).toHaveBeenCalledWith(extensionPayment);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "outbox unavailable" }),
+      expect.objectContaining({
+        message: "Failed to reconcile one or more successful payments",
+      }),
+    );
   });
 
   it("returns zero when loading candidates fails", async () => {
@@ -203,6 +223,12 @@ describe("PaymentReconciliationService", () => {
     await expect(service.reconcilePendingPayments()).resolves.toBe(0);
     expect(bookingConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
     expect(extensionConfirmationService.confirmFromPayment).not.toHaveBeenCalled();
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "database down" }),
+      expect.objectContaining({
+        message: "Failed to load payments for reconciliation",
+      }),
+    );
   });
 
   it("reconciles stale processing payouts", async () => {
@@ -219,6 +245,12 @@ describe("PaymentReconciliationService", () => {
     );
 
     await expect(service.reconcileProcessingPayouts()).resolves.toBe(0);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "provider unavailable" }),
+      expect.objectContaining({
+        message: "Failed to reconcile processing payouts",
+      }),
+    );
   });
 
   it("reconciles stale processing refunds", async () => {
@@ -237,5 +269,11 @@ describe("PaymentReconciliationService", () => {
     );
 
     await expect(service.reconcileProcessingRefunds()).resolves.toBe(0);
+    expect(reportBackgroundFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "provider unavailable" }),
+      expect.objectContaining({
+        message: "Failed to reconcile processing refunds",
+      }),
+    );
   });
 });

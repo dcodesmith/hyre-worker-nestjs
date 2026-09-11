@@ -1,12 +1,24 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
+import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
   ACTIVATE_AIRPORT_BOOKING,
   ACTIVE_TO_COMPLETED,
   CONFIRMED_TO_ACTIVE,
+  STATUS_UPDATES_QUEUE,
 } from "../../config/constants";
+import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
+
+const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
+  captureTerminalJobFailureMock: vi.fn(),
+}));
+
+vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
+  captureTerminalJobFailure: captureTerminalJobFailureMock,
+}));
+
 import {
   InvalidStatusUpdateJobPayloadException,
   StatusUpdateJobProcessingFailedException,
@@ -19,6 +31,7 @@ import { StatusChangeService } from "./status-change.service";
 describe("StatusChangeProcessor", () => {
   let processor: StatusChangeProcessor;
   let statusChangeService: StatusChangeService;
+  let logger: PinoLogger;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -39,6 +52,7 @@ describe("StatusChangeProcessor", () => {
 
     processor = module.get<StatusChangeProcessor>(StatusChangeProcessor);
     statusChangeService = module.get<StatusChangeService>(StatusChangeService);
+    logger = module.get<PinoLogger>(PinoLogger);
   });
 
   it("should process CONFIRMED_TO_ACTIVE job and call updateBookingsFromConfirmedToActive", async () => {
@@ -295,5 +309,22 @@ describe("StatusChangeProcessor", () => {
       StatusUpdateJobProcessingFailedException,
     );
     expect(statusChangeService.updateBookingsFromActiveToCompleted).toHaveBeenCalled();
+  });
+
+  it("captures a missing-job worker failure without dereferencing the job", () => {
+    vi.clearAllMocks();
+    const error = new Error("job lost");
+
+    expect(() => processor.onFailed(undefined, error)).not.toThrow();
+
+    expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      error,
+      STATUS_UPDATES_QUEUE,
+    );
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      { error: error.message, stack: error.stack },
+      "Job failed without context",
+    );
   });
 });

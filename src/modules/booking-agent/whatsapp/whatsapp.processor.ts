@@ -12,6 +12,7 @@ import {
   PROCESS_WHATSAPP_OUTBOX_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
+import { captureTerminalJobFailure } from "../../infra/queue-infra/bullmq-telemetry";
 import {
   WHATSAPP_INACTIVITY_CLEAR_DELAY_MS,
   WHATSAPP_INACTIVITY_NUDGE_DELAY_MS,
@@ -404,6 +405,7 @@ export class WhatsAppProcessor extends WorkerHost {
 
   @OnWorkerEvent("failed")
   onFailed(job: Job<WhatsAppAgentJobData> | undefined, error: Error): void {
+    captureTerminalJobFailure(job, error, WHATSAPP_AGENT_QUEUE);
     if (!job) {
       this.logger.error({ err: error }, "WhatsApp agent job failed without context");
       return;
