@@ -17,6 +17,7 @@ export const ChauffeurErrorCode = {
   MINIMUM_AGE_NOT_MET: "CHAUFFEUR_MINIMUM_AGE_NOT_MET",
   IDENTITY_MISMATCH: "CHAUFFEUR_IDENTITY_MISMATCH",
   BIOMETRIC_NOT_VERIFIED: "CHAUFFEUR_BIOMETRIC_NOT_VERIFIED",
+  INVALID_SELFIE: "CHAUFFEUR_INVALID_SELFIE",
   PROVIDER_UNAVAILABLE: "CHAUFFEUR_VERIFICATION_PROVIDER_UNAVAILABLE",
   ACCOUNT_CONFLICT: "CHAUFFEUR_ACCOUNT_CONFLICT",
   NOT_FOUND: "CHAUFFEUR_NOT_FOUND",
@@ -189,6 +190,17 @@ export class ChauffeurBiometricNotVerifiedException extends ChauffeurException {
       "The selfie could not be matched to the driver's licence identity",
       HttpStatus.UNPROCESSABLE_ENTITY,
       { title: "Biometric Verification Failed" },
+    );
+  }
+}
+
+export class ChauffeurInvalidSelfieException extends ChauffeurException {
+  constructor() {
+    super(
+      ChauffeurErrorCode.INVALID_SELFIE,
+      "The selfie image could not be processed. Upload a valid JPEG, PNG, or WebP image.",
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      { title: "Invalid Selfie Image" },
     );
   }
 }

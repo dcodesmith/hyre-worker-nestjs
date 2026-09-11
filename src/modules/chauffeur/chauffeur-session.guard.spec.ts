@@ -61,6 +61,20 @@ describe("ChauffeurSessionGuard", () => {
     expect(context.getRequest()[CHAUFFEUR_VERIFICATION_ID]).toBe("ver-1");
   });
 
+  it("accepts a lowercase bearer scheme and hashes the same token", async () => {
+    databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce({ id: "ver-1" });
+    const context = createContext(`bearer ${TOKEN}`);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(databaseService.chauffeurVerification.findFirst).toHaveBeenCalledWith({
+      where: {
+        sessionTokenHash: hash(TOKEN),
+        sessionExpiresAt: { gt: expect.any(Date) },
+      },
+      select: { id: true },
+    });
+  });
+
   it("rejects a missing bearer token", async () => {
     await expect(guard.canActivate(createContext())).rejects.toBeInstanceOf(
       ChauffeurSessionInvalidException,

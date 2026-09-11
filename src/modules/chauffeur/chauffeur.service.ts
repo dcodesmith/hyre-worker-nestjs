@@ -9,6 +9,7 @@ import {
   ProviderVerificationStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { getErrorMessage } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { getEmailPublicEnv } from "../../email-public-env";
 import { maskEmail } from "../../shared/helper";
@@ -129,42 +130,7 @@ export class ChauffeurService {
       throw new ChauffeurInvitationNotAllowedException();
     }
 
-    const existingInvitation = await this.databaseService.chauffeurVerification.findUnique({
-      where: {
-        fleetOwnerId_email: {
-          fleetOwnerId,
-          email: input.email,
-        },
-      },
-      select: {
-        id: true,
-        status: true,
-        inviteAcceptedAt: true,
-        inviteExpiresAt: true,
-        sessionExpiresAt: true,
-      },
-    });
-    if (existingInvitation) {
-      const now = new Date();
-      const canReplace =
-        existingInvitation.status !== ChauffeurVerificationStatus.APPROVED &&
-        ((!existingInvitation.inviteAcceptedAt && existingInvitation.inviteExpiresAt <= now) ||
-          (existingInvitation.inviteAcceptedAt &&
-            (!existingInvitation.sessionExpiresAt || existingInvitation.sessionExpiresAt <= now)));
-      if (!canReplace) {
-        throw new ChauffeurInvitationExistsException();
-      }
-      const deleted = await this.databaseService.chauffeurVerification.deleteMany({
-        where: {
-          id: existingInvitation.id,
-          status: { not: ChauffeurVerificationStatus.APPROVED },
-        },
-      });
-      if (deleted.count === 0) {
-        throw new ChauffeurInvitationExistsException();
-      }
-    }
-
+    await this.removeReplaceableInvitation(fleetOwnerId, input.email);
     const token = randomBytes(32).toString("base64url");
     let invitation: ChauffeurVerification;
     try {
@@ -181,37 +147,38 @@ export class ChauffeurService {
         },
       });
     } catch (error) {
-      if (isUniqueConstraintError(error)) {
-        const concurrentReplay = await this.databaseService.chauffeurVerification.findUnique({
-          where: {
-            fleetOwnerId_invitationIdempotencyKey: {
-              fleetOwnerId,
-              invitationIdempotencyKey: idempotencyHash,
-            },
-          },
-          include: {
-            chauffeur: { select: { image: true, chauffeurDisabledAt: true } },
-          },
-        });
-        if (concurrentReplay?.invitationRequestHash === requestHash) {
-          return this.toOwnerRecord(concurrentReplay);
-        }
-        throw concurrentReplay
-          ? new ChauffeurIdempotencyKeyReusedException()
-          : new ChauffeurInvitationExistsException();
+      if (!isUniqueConstraintError(error)) {
+        throw error;
       }
-      throw error;
+      const concurrentReplay = await this.databaseService.chauffeurVerification.findUnique({
+        where: {
+          fleetOwnerId_invitationIdempotencyKey: {
+            fleetOwnerId,
+            invitationIdempotencyKey: idempotencyHash,
+          },
+        },
+        include: {
+          chauffeur: { select: { image: true, chauffeurDisabledAt: true } },
+        },
+      });
+      if (concurrentReplay?.invitationRequestHash === requestHash) {
+        return this.toOwnerRecord(concurrentReplay);
+      }
+      throw concurrentReplay
+        ? new ChauffeurIdempotencyKeyReusedException()
+        : new ChauffeurInvitationExistsException();
     }
 
     try {
-      const inviteUrl = `${getEmailPublicEnv().websiteUrl.replace(/\/+$/, "")}/chauffeur/onboarding?token=${encodeURIComponent(token)}`;
+      const inviteUrl = new URL("/chauffeur/onboarding", getEmailPublicEnv().websiteUrl);
+      inviteUrl.searchParams.set("token", token);
       await this.emailService.sendEmail({
         to: invitation.email,
         subject: `${owner.name ?? "Your fleet owner"} invited you to join Tripdly`,
         html: await renderChauffeurInvitationEmail({
           recipientName: invitation.name,
           fleetOwnerName: owner.name ?? "Your fleet owner",
-          inviteUrl,
+          inviteUrl: inviteUrl.toString(),
         }),
       });
     } catch (error) {
@@ -226,6 +193,39 @@ export class ChauffeurService {
       "Sent chauffeur invitation",
     );
     return this.toOwnerRecord(invitation);
+  }
+
+  private async removeReplaceableInvitation(fleetOwnerId: string, email: string): Promise<void> {
+    const existing = await this.databaseService.chauffeurVerification.findUnique({
+      where: { fleetOwnerId_email: { fleetOwnerId, email } },
+      select: {
+        id: true,
+        status: true,
+        inviteAcceptedAt: true,
+        inviteExpiresAt: true,
+        sessionExpiresAt: true,
+      },
+    });
+    if (!existing) {
+      return;
+    }
+
+    const now = new Date();
+    const canReplace =
+      existing.status !== ChauffeurVerificationStatus.APPROVED &&
+      ((!existing.inviteAcceptedAt && existing.inviteExpiresAt <= now) ||
+        (existing.inviteAcceptedAt &&
+          (!existing.sessionExpiresAt || existing.sessionExpiresAt <= now)));
+    if (!canReplace) {
+      throw new ChauffeurInvitationExistsException();
+    }
+
+    const deleted = await this.databaseService.chauffeurVerification.deleteMany({
+      where: { id: existing.id, status: { not: ChauffeurVerificationStatus.APPROVED } },
+    });
+    if (deleted.count === 0) {
+      throw new ChauffeurInvitationExistsException();
+    }
   }
 
   async list(fleetOwnerId: string, query: ListChauffeursQueryDto) {
@@ -766,10 +766,7 @@ export class ChauffeurService {
     if (isUniqueConstraintError(error)) {
       return new ChauffeurAccountConflictException();
     }
-    this.logger.error(
-      { err: error instanceof Error ? error.message : String(error) },
-      "Failed to complete chauffeur verification",
-    );
+    this.logger.error({ err: getErrorMessage(error) }, "Failed to complete chauffeur verification");
     return new ChauffeurOperationFailedException();
   }
 

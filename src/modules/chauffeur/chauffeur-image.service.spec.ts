@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChauffeurBiometricNotVerifiedException } from "./chauffeur.error";
+import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
+import { ChauffeurInvalidSelfieException } from "./chauffeur.error";
 import { ChauffeurImageService } from "./chauffeur-image.service";
 
 const sharpChain = vi.hoisted(() => ({
@@ -15,10 +16,12 @@ vi.mock("sharp", () => ({
 
 describe("ChauffeurImageService", () => {
   let service: ChauffeurImageService;
+  let logger: ReturnType<typeof createMockPinoLogger>;
 
   beforeEach(() => {
     sharpChain.toBuffer.mockReset();
-    service = new ChauffeurImageService();
+    logger = createMockPinoLogger();
+    service = new ChauffeurImageService(logger as never);
   });
 
   it("returns the processed JPEG buffer", async () => {
@@ -37,8 +40,9 @@ describe("ChauffeurImageService", () => {
     });
   });
 
-  it("maps a processing failure to a biometric verification error", async () => {
-    sharpChain.toBuffer.mockRejectedValueOnce(new Error("corrupt"));
+  it("maps a processing failure to an invalid selfie error", async () => {
+    const processingError = new Error("corrupt");
+    sharpChain.toBuffer.mockRejectedValueOnce(processingError);
 
     await expect(
       service.processSelfie({
@@ -46,6 +50,11 @@ describe("ChauffeurImageService", () => {
         size: 4,
         buffer: Buffer.from("bad"),
       }),
-    ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
+    ).rejects.toBeInstanceOf(ChauffeurInvalidSelfieException);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: processingError },
+      "Failed to process chauffeur selfie",
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("bad");
   });
 });

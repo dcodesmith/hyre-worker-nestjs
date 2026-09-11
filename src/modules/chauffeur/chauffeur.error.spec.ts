@@ -5,6 +5,7 @@ import {
   ChauffeurBiometricNotVerifiedException,
   ChauffeurErrorCode,
   ChauffeurIdempotencyKeyReusedException,
+  ChauffeurInvalidSelfieException,
   ChauffeurInvitationInvalidException,
   ChauffeurInvitationNotAllowedException,
   ChauffeurOperationFailedException,
@@ -58,6 +59,10 @@ describe("Chauffeur exceptions", () => {
     );
     expect(new ChauffeurOperationFailedException().getErrorCode()).toBe(
       ChauffeurErrorCode.OPERATION_FAILED,
+    );
+    expect(new ChauffeurInvalidSelfieException().getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(new ChauffeurInvalidSelfieException().getErrorCode()).toBe(
+      ChauffeurErrorCode.INVALID_SELFIE,
     );
   });
 });

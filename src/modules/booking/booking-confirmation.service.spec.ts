@@ -14,6 +14,7 @@ import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import { createBooking, createCar, createUser } from "../../shared/helper.fixtures";
 import type { BookingWithRelations } from "../../types";
@@ -21,6 +22,7 @@ import { DatabaseService } from "../database/database.service";
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
 import { BookingConfirmationService } from "./booking-confirmation.service";
 
 // Helper to create mock Payment objects with required fields for testing
@@ -114,6 +116,7 @@ describe("BookingConfirmationService", () => {
             ]),
             booking: {
               findUnique: vi.fn(),
+              findFirst: vi.fn().mockResolvedValue(null),
               update: vi.fn(),
               updateMany: vi.fn(),
             },
@@ -261,6 +264,59 @@ describe("BookingConfirmationService", () => {
         },
         databaseService,
       );
+    });
+
+    it("confirms without assigning when the owner-driver has an overlapping booking", async () => {
+      const mockPayment = createMockPayment({
+        id: "payment-123",
+        bookingId: "booking-123",
+      });
+      const mockBooking = createMockBookingWithRelations({
+        id: "booking-123",
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        chauffeurId: null,
+      });
+      const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
+        startDate: new Date("2026-08-10T08:00:00.000Z"),
+        endDate: new Date("2026-08-10T18:00:00.000Z"),
+      });
+      vi.mocked(databaseService.car.findUnique).mockResolvedValueOnce({
+        owner: {
+          id: "owner-123",
+          isOwnerDriver: true,
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          chauffeurDisabledAt: null,
+        },
+      } as never);
+      vi.mocked(databaseService.booking.findFirst).mockResolvedValueOnce({
+        id: "overlap-1",
+      } as never);
+      vi.mocked(databaseService.booking.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(mockBooking);
+      vi.mocked(databaseService.car.update).mockResolvedValueOnce(mockBooking.car);
+
+      await expect(service.confirmFromPayment(mockPayment)).resolves.toBe(true);
+      expect(databaseService.booking.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: { not: "booking-123" },
+          chauffeurId: "owner-123",
+          deletedAt: null,
+          status: { in: [...BLOCKING_BOOKING_STATUSES] },
+          startDate: { lt: bufferedEnd },
+          endDate: { gt: bufferedStart },
+        },
+        select: { id: true },
+      });
+      expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "booking-123", status: BookingStatus.PENDING },
+        data: expect.objectContaining({ chauffeurId: null }),
+      });
+      expect(
+        vi
+          .mocked(notificationOutboxService.create)
+          .mock.calls.some(([handler]) => handler === chauffeurAssignedHandler),
+      ).toBe(false);
     });
 
     it("clears a pending owner-driver assignment when the owner is no longer eligible", async () => {

@@ -13,6 +13,7 @@ import {
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService, lockCarRow } from "../database/database.service";
@@ -20,6 +21,7 @@ import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interf
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -84,10 +86,12 @@ export class BookingConfirmationService {
           id: string;
           carId: string;
           status: BookingStatus;
+          startDate: Date;
+          endDate: Date;
         }>
       >(
         Prisma.sql`
-          SELECT id, "carId", status
+          SELECT id, "carId", status, "startDate", "endDate"
           FROM "Booking"
           WHERE id = ${bookingId}
           FOR UPDATE
@@ -113,12 +117,27 @@ export class BookingConfirmationService {
           },
         },
       });
-      const ownerDriverId =
+      const eligibleOwnerDriverId =
         car?.owner.isOwnerDriver &&
         car.owner.chauffeurApprovalStatus === ChauffeurApprovalStatus.APPROVED &&
         !car.owner.chauffeurDisabledAt
           ? car.owner.id
           : undefined;
+      const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval(pendingBooking);
+      const ownerDriverConflict = eligibleOwnerDriverId
+        ? await tx.booking.findFirst({
+            where: {
+              id: { not: pendingBooking.id },
+              chauffeurId: eligibleOwnerDriverId,
+              deletedAt: null,
+              status: { in: [...BLOCKING_BOOKING_STATUSES] },
+              startDate: { lt: bufferedEnd },
+              endDate: { gt: bufferedStart },
+            },
+            select: { id: true },
+          })
+        : null;
+      const ownerDriverId = ownerDriverConflict ? undefined : eligibleOwnerDriverId;
 
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.

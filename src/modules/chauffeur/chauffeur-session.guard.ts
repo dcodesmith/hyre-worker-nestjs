@@ -45,7 +45,7 @@ export class ChauffeurSessionGuard implements CanActivate {
 
   private bearerToken(authorization?: string): string | null {
     const [scheme, token] = authorization?.split(" ") ?? [];
-    return scheme === "Bearer" && token ? token : null;
+    return scheme?.toLowerCase() === "bearer" && token ? token : null;
   }
 
   private hash(value: string): string {
