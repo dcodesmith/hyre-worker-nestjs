@@ -87,20 +87,27 @@ export class PhoneVerificationService {
       const verification = await this.client.verify.v2
         .services(this.serviceSid)
         .verificationChecks.create({ code, to: phoneNumber });
+
       if (verification.status !== "approved") {
         throw new PhoneVerificationCodeInvalidException();
       }
     } catch (error) {
-      if (error instanceof PhoneVerificationCodeInvalidException) throw error;
+      if (error instanceof PhoneVerificationCodeInvalidException) {
+        throw error;
+      }
+
       if (this.isInvalidCodeError(error)) {
         throw new PhoneVerificationCodeInvalidException();
       }
+
       this.logger.warn(
         { subjectId, phone: this.maskPhone(phoneNumber), ...this.twilioErrorContext(error) },
         "Twilio could not check a phone verification code",
       );
+
       throw new PhoneVerificationProviderUnavailableException();
     }
+
     return this.response("VERIFIED", phoneNumber);
   }
 

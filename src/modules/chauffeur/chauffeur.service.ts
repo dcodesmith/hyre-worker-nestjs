@@ -9,7 +9,7 @@ import {
   ProviderVerificationStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { getErrorMessage } from "../../common/logging/error-logging.helper";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { getEmailPublicEnv } from "../../email-public-env";
 import { maskEmail } from "../../shared/helper";
@@ -766,7 +766,7 @@ export class ChauffeurService {
     if (isUniqueConstraintError(error)) {
       return new ChauffeurAccountConflictException();
     }
-    this.logger.error({ err: getErrorMessage(error) }, "Failed to complete chauffeur verification");
+    this.logger.error({ err: toLogError(error) }, "Failed to complete chauffeur verification");
     return new ChauffeurOperationFailedException();
   }
 
