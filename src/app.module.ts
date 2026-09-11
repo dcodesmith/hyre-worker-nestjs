@@ -11,6 +11,7 @@ import { AI_SEARCH_THROTTLE_CONFIG } from "./modules/ai-search/ai-search-throttl
 import { AuthModule } from "./modules/auth/auth.module";
 import { BookingAgentModule } from "./modules/booking-agent/booking-agent.module";
 import { CarModule } from "./modules/car/car.module";
+import { ChauffeurModule } from "./modules/chauffeur/chauffeur.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { DocumentsModule } from "./modules/documents/documents.module";
@@ -113,6 +114,7 @@ import { RootController } from "./root.controller";
     ReviewsModule,
     AuthModule,
     CarModule,
+    ChauffeurModule,
     DashboardModule,
     RatesModule,
     PromotionModule,

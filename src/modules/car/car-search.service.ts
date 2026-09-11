@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import {
   BookingType,
   CarApprovalStatus,
+  ChauffeurApprovalStatus,
   Prisma,
   type ServiceTier,
   Status,
@@ -226,36 +227,37 @@ export class CarSearchService {
     };
   }
 
-  /**
-   * Gets fleet owners who have no chauffeurs or all chauffeurs are busy on a specific date.
-   * Used to exclude their cars from search results for that date.
-   */
-  private async getUnavailableFleetOwners(date: Date): Promise<string[]> {
-    const year = date.getUTCFullYear();
-    const month = date.getUTCMonth();
-    const day = date.getUTCDate();
-
-    const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-    const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
-
+  private async getUnavailableFleetOwners(interval: AvailabilityInterval): Promise<string[]> {
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval(interval);
+    const bookingConflict = {
+      deletedAt: null,
+      status: {
+        in: [...BLOCKING_BOOKING_STATUSES],
+      },
+      startDate: { lt: bufferedEnd },
+      endDate: { gt: bufferedStart },
+    } satisfies Prisma.BookingWhereInput;
     const unavailableOwners = await this.databaseService.user.findMany({
       where: {
         cars: { some: {} },
-        isOwnerDriver: false,
         OR: [
-          { chauffeurs: { none: {} } },
           {
+            isOwnerDriver: true,
+            OR: [
+              { chauffeurApprovalStatus: null },
+              { chauffeurApprovalStatus: { not: ChauffeurApprovalStatus.APPROVED } },
+              { chauffeurDisabledAt: { not: null } },
+              { bookingsAsChauffeur: { some: bookingConflict } },
+            ],
+          },
+          {
+            isOwnerDriver: false,
             chauffeurs: {
-              some: {},
-              every: {
+              none: {
+                chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                chauffeurDisabledAt: null,
                 bookingsAsChauffeur: {
-                  some: {
-                    deletedAt: null,
-                    status: {
-                      in: [...BLOCKING_BOOKING_STATUSES],
-                    },
-                    AND: [{ startDate: { lte: endOfDay } }, { endDate: { gte: startOfDay } }],
-                  },
+                  none: bookingConflict,
                 },
               },
             },
@@ -267,7 +269,11 @@ export class CarSearchService {
     });
 
     this.logger.debug(
-      { unavailableOwners: unavailableOwners.length, date: date.toISOString() },
+      {
+        unavailableOwners: unavailableOwners.length,
+        startDate: interval.startDate.toISOString(),
+        endDate: interval.endDate.toISOString(),
+      },
       "Computed unavailable fleet owners",
     );
 
@@ -344,17 +350,34 @@ export class CarSearchService {
       // so a dated search never disagrees with itself about which promos are active.
       const referenceDate = query.from ?? new Date();
 
-      // Get unavailable fleet owners for the date if provided
-      const fleetOwnersToExclude = query.from
-        ? await this.getUnavailableFleetOwners(query.from)
-        : [];
-
       // Check if we have all required params for exact availability filtering
       const canFilterByAvailability = Boolean(query.from && query.to && query.bookingType);
 
       const availabilityInterval = canFilterByAvailability
         ? this.buildRequestedAvailabilityInterval(query)
         : null;
+      const dayInterval = query.from
+        ? {
+            startDate: new Date(
+              Date.UTC(
+                query.from.getUTCFullYear(),
+                query.from.getUTCMonth(),
+                query.from.getUTCDate(),
+              ),
+            ),
+            endDate: new Date(
+              Date.UTC(
+                query.from.getUTCFullYear(),
+                query.from.getUTCMonth(),
+                query.from.getUTCDate() + 1,
+              ),
+            ),
+          }
+        : null;
+      const chauffeurInterval = availabilityInterval ?? dayInterval;
+      const fleetOwnersToExclude = chauffeurInterval
+        ? await this.getUnavailableFleetOwners(chauffeurInterval)
+        : [];
 
       // Build where clause
       const whereClause = this.buildWhereClause(

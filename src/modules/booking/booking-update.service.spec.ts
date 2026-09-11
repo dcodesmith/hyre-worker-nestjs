@@ -62,6 +62,7 @@ describe("BookingUpdateService", () => {
   };
   const bookingReservationServiceMock = {
     isOverlapConstraintViolation: vi.fn().mockReturnValue(false),
+    isChauffeurOverlapConstraintViolation: vi.fn().mockReturnValue(false),
   };
 
   const notificationOutboxServiceMock = {
@@ -255,6 +256,52 @@ describe("BookingUpdateService", () => {
     );
     expect(bookingModificationPolicyServiceMock.assertCanEdit).toHaveBeenCalledOnce();
     expect(bookingModificationPolicyServiceMock.assertWithinWindow).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a reschedule when the assigned chauffeur already has a conflicting booking", async () => {
+    const startDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    databaseServiceMock.booking.findFirst
+      .mockResolvedValueOnce({
+        id: "booking-1",
+        userId: "user-1",
+        carId: "car-1",
+        chauffeurId: "chauffeur-1",
+        type: "DAY",
+        status: BookingStatus.CONFIRMED,
+        startDate,
+        endDate: new Date(startDate.getTime() + 12 * 60 * 60 * 1000),
+        pickupLocation: "Old pickup",
+        returnLocation: "Old return",
+      })
+      .mockResolvedValueOnce({ id: "booking-busy" });
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupTime: "10:30 AM" }),
+    ).rejects.toThrow("The assigned chauffeur is not available for the updated time");
+    expect(databaseServiceMock.booking.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("maps a chauffeur exclusion race during reschedule before the car overlap", async () => {
+    const startDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      chauffeurId: "chauffeur-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate,
+      endDate: new Date(startDate.getTime() + 12 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    bookingReservationServiceMock.isChauffeurOverlapConstraintViolation.mockReturnValueOnce(true);
+    databaseServiceMock.$transaction.mockRejectedValueOnce(new Error("23P01 chauffeur"));
+
+    await expect(
+      service.updateBooking("booking-1", "user-1", { pickupTime: "10:30 AM" }),
+    ).rejects.toThrow("The assigned chauffeur is not available for the updated time");
+    expect(bookingReservationServiceMock.isOverlapConstraintViolation).not.toHaveBeenCalled();
   });
 
   it("rejects date changes while an extension payment is pending", async () => {
@@ -465,6 +512,11 @@ describe("BookingUpdateService", () => {
   });
 
   describe("assignChauffeur", () => {
+    const bookingWindow = {
+      startDate: new Date("2026-09-20T08:00:00.000Z"),
+      endDate: new Date("2026-09-20T20:00:00.000Z"),
+    };
+
     it("assigns approved chauffeur belonging to fleet owner", async () => {
       const tx = {
         booking: {
@@ -473,6 +525,7 @@ describe("BookingUpdateService", () => {
             chauffeurId: null,
             flightId: "flight-1",
             status: BookingStatus.CONFIRMED,
+            ...bookingWindow,
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           findUniqueOrThrow: vi.fn().mockResolvedValue({
@@ -486,6 +539,7 @@ describe("BookingUpdateService", () => {
             id: "chauffeur-1",
             chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           }),
+          findUnique: vi.fn(),
         },
         $executeRaw: vi.fn().mockResolvedValue(1),
       };
@@ -511,12 +565,21 @@ describe("BookingUpdateService", () => {
           chauffeurId: true,
           flightId: true,
           status: true,
+          startDate: true,
+          endDate: true,
         },
       });
       expect(tx.user.findFirst).toHaveBeenCalledWith({
         where: {
           id: "chauffeur-1",
-          fleetOwnerId: "owner-1",
+          OR: [{ fleetOwnerId: "owner-1" }, { id: "owner-1", isOwnerDriver: true }],
+          chauffeurDisabledAt: null,
+          bookingsAsChauffeur: {
+            none: expect.objectContaining({
+              id: { not: "booking-1" },
+              deletedAt: null,
+            }),
+          },
         },
         select: {
           id: true,
@@ -543,18 +606,69 @@ describe("BookingUpdateService", () => {
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
         chauffeurAssignedHandlerMock,
-        { booking: result, chauffeurId: "chauffeur-1" },
+        { booking: result, chauffeurId: "chauffeur-1", previousChauffeur: null },
         tx,
       );
     });
 
-    it("returns booking details for idempotent chauffeur assignment", async () => {
+    it("allows an approved owner-driver to assign themselves", async () => {
       const tx = {
         booking: {
           findFirst: vi.fn().mockResolvedValue({
             id: "booking-1",
-            chauffeurId: "chauffeur-1",
+            chauffeurId: null,
+            flightId: null,
             status: BookingStatus.CONFIRMED,
+            ...bookingWindow,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "owner-1",
+          }),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "owner-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+          findUnique: vi.fn(),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(service.assignChauffeur("booking-1", "owner-1", "owner-1")).resolves.toEqual({
+        id: "booking-1",
+        chauffeurId: "owner-1",
+      });
+      expect(tx.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "owner-1",
+            OR: [{ fleetOwnerId: "owner-1" }, { id: "owner-1", isOwnerDriver: true }],
+            chauffeurDisabledAt: null,
+          }),
+        }),
+      );
+    });
+
+    it("notifies the previous chauffeur when the assignment changes", async () => {
+      const previousChauffeur = {
+        id: "chauffeur-old",
+        name: "Old Driver",
+        email: "old@example.com",
+        phoneNumber: "+2348011111111",
+      };
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-old",
+            flightId: null,
+            status: BookingStatus.CONFIRMED,
+            ...bookingWindow,
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
           findUniqueOrThrow: vi.fn().mockResolvedValue({
@@ -567,6 +681,49 @@ describe("BookingUpdateService", () => {
             id: "chauffeur-1",
             chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           }),
+          findUnique: vi.fn().mockResolvedValue(previousChauffeur),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      const result = await service.assignChauffeur("booking-1", "owner-1", "chauffeur-1");
+
+      expect(tx.user.findUnique).toHaveBeenCalledWith({
+        where: { id: "chauffeur-old" },
+        select: { id: true, name: true, email: true, phoneNumber: true },
+      });
+      expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
+        chauffeurAssignedHandlerMock,
+        { booking: result, chauffeurId: "chauffeur-1", previousChauffeur },
+        tx,
+      );
+    });
+
+    it("returns booking details for idempotent chauffeur assignment", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+            flightId: null,
+            status: BookingStatus.CONFIRMED,
+            startDate: new Date("2026-09-20T08:00:00.000Z"),
+            endDate: new Date("2026-09-20T20:00:00.000Z"),
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+          }),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+          findUnique: vi.fn(),
         },
       };
       databaseServiceMock.$transaction.mockImplementationOnce(
@@ -602,7 +759,10 @@ describe("BookingUpdateService", () => {
           findFirst: vi.fn().mockResolvedValue({
             id: "booking-1",
             chauffeurId: null,
+            flightId: null,
             status: BookingStatus.CONFIRMED,
+            startDate: new Date("2026-09-20T08:00:00.000Z"),
+            endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 0 }),
           findUniqueOrThrow: vi.fn(),
@@ -612,6 +772,7 @@ describe("BookingUpdateService", () => {
             id: "chauffeur-1",
             chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           }),
+          findUnique: vi.fn(),
         },
       };
       databaseServiceMock.$transaction.mockImplementationOnce(
@@ -672,12 +833,15 @@ describe("BookingUpdateService", () => {
           findFirst: vi.fn().mockResolvedValue({
             id: "booking-1",
             chauffeurId: null,
+            flightId: null,
             status: BookingStatus.CONFIRMED,
+            startDate: new Date("2026-09-20T08:00:00.000Z"),
+            endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
           updateMany: vi.fn(),
           findUniqueOrThrow: vi.fn(),
         },
-        user: { findFirst: vi.fn().mockResolvedValue(null) },
+        user: { findFirst: vi.fn().mockResolvedValue(null), findUnique: vi.fn() },
       };
       databaseServiceMock.$transaction.mockImplementationOnce(
         (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
@@ -695,7 +859,10 @@ describe("BookingUpdateService", () => {
           findFirst: vi.fn().mockResolvedValue({
             id: "booking-1",
             chauffeurId: null,
+            flightId: null,
             status: BookingStatus.CONFIRMED,
+            startDate: new Date("2026-09-20T08:00:00.000Z"),
+            endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
           updateMany: vi.fn(),
           findUniqueOrThrow: vi.fn(),
@@ -705,6 +872,7 @@ describe("BookingUpdateService", () => {
             id: "chauffeur-2",
             chauffeurApprovalStatus: ChauffeurApprovalStatus.PENDING,
           }),
+          findUnique: vi.fn(),
         },
       };
       databaseServiceMock.$transaction.mockImplementationOnce(
@@ -715,6 +883,16 @@ describe("BookingUpdateService", () => {
         service.assignChauffeur("booking-1", "owner-1", "chauffeur-2"),
       ).rejects.toBeInstanceOf(BookingUpdateNotAllowedException);
       expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("maps a concurrent chauffeur exclusion violation during assignment", async () => {
+      bookingReservationServiceMock.isChauffeurOverlapConstraintViolation.mockReturnValueOnce(true);
+      databaseServiceMock.$transaction.mockRejectedValueOnce(new Error("23P01 chauffeur"));
+
+      await expect(service.assignChauffeur("booking-1", "owner-1", "chauffeur-1")).rejects.toThrow(
+        "The selected chauffeur is not available for this booking",
+      );
+      expect(bookingReservationServiceMock.isOverlapConstraintViolation).not.toHaveBeenCalled();
     });
   });
 });

@@ -45,20 +45,24 @@ export class PhoneVerificationService {
     if (await this.isAlreadyVerified(userId, input.phoneNumber)) {
       return this.response("VERIFIED", input.phoneNumber);
     }
-    await this.enforceSendLimits(userId, input.phoneNumber);
+    return this.sendCode(`user:${userId}`, input.phoneNumber);
+  }
+
+  async sendCode(subjectId: string, phoneNumber: string) {
+    await this.enforceSendLimits(subjectId, phoneNumber);
 
     try {
       const verification = await this.client.verify.v2
         .services(this.serviceSid)
-        .verifications.create({ channel: "sms", to: input.phoneNumber });
+        .verifications.create({ channel: "sms", to: phoneNumber });
       if (verification.status !== "pending") {
         throw new PhoneVerificationProviderUnavailableException();
       }
-      return this.response("PENDING", input.phoneNumber);
+      return this.response("PENDING", phoneNumber);
     } catch (error) {
       if (error instanceof PhoneVerificationProviderUnavailableException) throw error;
       this.logger.warn(
-        { userId, phone: this.maskPhone(input.phoneNumber), ...this.twilioErrorContext(error) },
+        { subjectId, phone: this.maskPhone(phoneNumber), ...this.twilioErrorContext(error) },
         "Twilio could not send a phone verification code",
       );
       throw new PhoneVerificationProviderUnavailableException();
@@ -70,30 +74,41 @@ export class PhoneVerificationService {
       return this.response("VERIFIED", input.phoneNumber);
     }
 
-    try {
-      const verification = await this.client.verify.v2
-        .services(this.serviceSid)
-        .verificationChecks.create({ code: input.code, to: input.phoneNumber });
-      if (verification.status !== "approved") {
-        throw new PhoneVerificationCodeInvalidException();
-      }
-    } catch (error) {
-      if (error instanceof PhoneVerificationCodeInvalidException) throw error;
-      if (this.isInvalidCodeError(error)) {
-        throw new PhoneVerificationCodeInvalidException();
-      }
-      this.logger.warn(
-        { userId, phone: this.maskPhone(input.phoneNumber), ...this.twilioErrorContext(error) },
-        "Twilio could not check a phone verification code",
-      );
-      throw new PhoneVerificationProviderUnavailableException();
-    }
-
+    await this.checkCode(`user:${userId}`, input.phoneNumber, input.code);
     await this.databaseService.user.update({
       where: { id: userId },
       data: { phoneNumber: input.phoneNumber, phoneVerifiedAt: new Date() },
     });
     return this.response("VERIFIED", input.phoneNumber);
+  }
+
+  async checkCode(subjectId: string, phoneNumber: string, code: string) {
+    try {
+      const verification = await this.client.verify.v2
+        .services(this.serviceSid)
+        .verificationChecks.create({ code, to: phoneNumber });
+
+      if (verification.status !== "approved") {
+        throw new PhoneVerificationCodeInvalidException();
+      }
+    } catch (error) {
+      if (error instanceof PhoneVerificationCodeInvalidException) {
+        throw error;
+      }
+
+      if (this.isInvalidCodeError(error)) {
+        throw new PhoneVerificationCodeInvalidException();
+      }
+
+      this.logger.warn(
+        { subjectId, phone: this.maskPhone(phoneNumber), ...this.twilioErrorContext(error) },
+        "Twilio could not check a phone verification code",
+      );
+
+      throw new PhoneVerificationProviderUnavailableException();
+    }
+
+    return this.response("VERIFIED", phoneNumber);
   }
 
   private async isAlreadyVerified(userId: string, phoneNumber: string): Promise<boolean> {
@@ -104,10 +119,10 @@ export class PhoneVerificationService {
     return user?.phoneNumber === phoneNumber && user.phoneVerifiedAt !== null;
   }
 
-  private async enforceSendLimits(userId: string, phoneNumber: string): Promise<void> {
+  private async enforceSendLimits(subjectId: string, phoneNumber: string): Promise<void> {
     const destination = createHmac("sha256", this.hashKey).update(phoneNumber).digest("hex");
     const limits = [
-      { key: `phone-verification:user:${userId}`, limit: 5, ttl: 10 * 60_000 },
+      { key: `phone-verification:subject:${subjectId}`, limit: 5, ttl: 10 * 60_000 },
       { key: `phone-verification:destination:${destination}`, limit: 5, ttl: 60 * 60_000 },
     ];
     for (const rule of limits) {

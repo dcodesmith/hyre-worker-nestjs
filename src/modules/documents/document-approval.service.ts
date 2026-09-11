@@ -22,8 +22,6 @@ import {
   DocumentsException,
 } from "./documents.error";
 
-const REQUIRED_CHAUFFEUR_DOCUMENT_TYPES = [DocumentType.NIN, DocumentType.DRIVERS_LICENSE] as const;
-
 @Injectable()
 export class DocumentApprovalService {
   constructor(
@@ -117,22 +115,19 @@ export class DocumentApprovalService {
     await lockUserRow(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
-      select: { fleetOwnerId: true, isOwnerDriver: true },
+      select: { isOwnerDriver: true },
     });
-    if (!user || (!user.fleetOwnerId && !user.isOwnerDriver)) return;
+    if (!user?.isOwnerDriver) return;
 
-    const requiredTypes = user.isOwnerDriver
-      ? [DocumentType.DRIVERS_LICENSE]
-      : [...REQUIRED_CHAUFFEUR_DOCUMENT_TYPES];
     const approvedDocuments = await tx.documentApproval.count({
       where: {
         userId,
-        documentType: { in: requiredTypes },
+        documentType: DocumentType.DRIVERS_LICENSE,
         status: DocumentStatus.APPROVED,
       },
     });
 
-    if (approvedDocuments === requiredTypes.length) {
+    if (approvedDocuments === 1) {
       await tx.user.update({
         where: { id: userId },
         data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
@@ -147,11 +142,9 @@ export class DocumentApprovalService {
   ): Promise<boolean> {
     const user = await tx.user.findUnique({
       where: { id: userId },
-      select: { fleetOwnerId: true, isOwnerDriver: true },
+      select: { isOwnerDriver: true },
     });
-    if (!user || (!user.fleetOwnerId && !user.isOwnerDriver)) return false;
-    if (documentType === DocumentType.DRIVERS_LICENSE) return true;
-    return !user.isOwnerDriver && documentType === DocumentType.NIN;
+    return Boolean(user?.isOwnerDriver && documentType === DocumentType.DRIVERS_LICENSE);
   }
 
   private toApprovalError(

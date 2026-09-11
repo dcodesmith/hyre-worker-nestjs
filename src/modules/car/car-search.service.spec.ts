@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
+import { BookingType, ChauffeurApprovalStatus, ServiceTier, VehicleType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
@@ -258,19 +258,35 @@ describe("CarSearchService", () => {
 
       expect(databaseServiceMock.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            OR: expect.arrayContaining([
-              expect.objectContaining({
-                chauffeurs: expect.objectContaining({
-                  every: expect.objectContaining({
+          where: {
+            cars: { some: {} },
+            OR: [
+              {
+                isOwnerDriver: true,
+                OR: [
+                  { chauffeurApprovalStatus: null },
+                  { chauffeurApprovalStatus: { not: ChauffeurApprovalStatus.APPROVED } },
+                  { chauffeurDisabledAt: { not: null } },
+                  { bookingsAsChauffeur: { some: expect.any(Object) } },
+                ],
+              },
+              {
+                isOwnerDriver: false,
+                chauffeurs: {
+                  none: {
+                    chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                    chauffeurDisabledAt: null,
                     bookingsAsChauffeur: {
-                      some: expect.objectContaining({ deletedAt: null }),
+                      none: expect.objectContaining({
+                        deletedAt: null,
+                        status: { in: [...BLOCKING_BOOKING_STATUSES] },
+                      }),
                     },
-                  }),
-                }),
-              }),
-            ]),
-          }),
+                  },
+                },
+              },
+            ],
+          },
         }),
       );
       expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(

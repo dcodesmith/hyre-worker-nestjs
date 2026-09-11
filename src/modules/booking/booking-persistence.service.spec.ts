@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -35,7 +35,22 @@ describe("BookingPersistenceService", () => {
   });
 
   it("returns car with pricing fields when car exists", async () => {
-    const car = createCar();
+    const car = {
+      id: "car-1",
+      ownerId: "owner-123",
+      dayRate: 15000,
+      nightRate: 20000,
+      fullDayRate: 25000,
+      airportPickupRate: 30000,
+      fuelUpgradeRate: 5000,
+      pricingIncludesFuel: false,
+      owner: {
+        id: "owner-123",
+        isOwnerDriver: false,
+        chauffeurApprovalStatus: null,
+        chauffeurDisabledAt: null,
+      },
+    };
     const databaseService = {
       car: { findUnique: vi.fn().mockResolvedValue(car) },
     };
@@ -49,7 +64,17 @@ describe("BookingPersistenceService", () => {
     }).compile();
 
     const service = module.get<BookingPersistenceService>(BookingPersistenceService);
-    await expect(service.fetchCarWithPricing("car-1")).resolves.toEqual(car);
+    await expect(service.fetchCarWithPricing("car-1")).resolves.toEqual({
+      id: "car-1",
+      ownerId: "owner-123",
+      dayRate: 15000,
+      nightRate: 20000,
+      fullDayRate: 25000,
+      airportPickupRate: 30000,
+      fuelUpgradeRate: 5000,
+      pricingIncludesFuel: false,
+      ownerDriverId: null,
+    });
     expect(databaseService.car.findUnique).toHaveBeenCalledWith({
       where: { id: "car-1" },
       select: {
@@ -61,8 +86,72 @@ describe("BookingPersistenceService", () => {
         airportPickupRate: true,
         fuelUpgradeRate: true,
         pricingIncludesFuel: true,
+        owner: {
+          select: {
+            id: true,
+            isOwnerDriver: true,
+            chauffeurApprovalStatus: true,
+            chauffeurDisabledAt: true,
+          },
+        },
       },
     });
+  });
+
+  it.each([
+    [
+      "an approved active owner-driver",
+      {
+        isOwnerDriver: true,
+        chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+        chauffeurDisabledAt: null,
+      },
+      "owner-123",
+    ],
+    [
+      "a disabled owner-driver",
+      {
+        isOwnerDriver: true,
+        chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+        chauffeurDisabledAt: new Date("2026-09-01T00:00:00Z"),
+      },
+      null,
+    ],
+    [
+      "an unapproved owner-driver",
+      {
+        isOwnerDriver: true,
+        chauffeurApprovalStatus: ChauffeurApprovalStatus.PENDING,
+        chauffeurDisabledAt: null,
+      },
+      null,
+    ],
+  ] as const)("derives ownerDriverId for %s", async (_label, owner, ownerDriverId) => {
+    const databaseService = {
+      car: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "car-1",
+          ownerId: "owner-123",
+          dayRate: 15000,
+          nightRate: 20000,
+          fullDayRate: 25000,
+          airportPickupRate: 30000,
+          fuelUpgradeRate: 5000,
+          pricingIncludesFuel: false,
+          owner: { id: "owner-123", ...owner },
+        }),
+      },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    await expect(service.fetchCarWithPricing("car-1")).resolves.toMatchObject({ ownerDriverId });
   });
 
   it("throws CarNotFoundException when car is missing", async () => {
@@ -282,7 +371,74 @@ describe("BookingPersistenceService", () => {
         status: BookingStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
         paymentSessionExpiresAt: expect.any(Date),
+        chauffeurId: null,
       }),
+    });
+  });
+
+  it("assigns an eligible owner-driver on the pending booking record", async () => {
+    const databaseService = {
+      car: { findUnique: vi.fn() },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    const createBooking = vi.fn().mockResolvedValue({ id: "booking-1" });
+    const tx = { booking: { create: createBooking } } as unknown as Prisma.TransactionClient;
+    const bookingInput: CreateBookingDto = {
+      carId: "car-1",
+      bookingType: "DAY",
+      startDate: new Date("2026-03-03T10:00:00.000Z"),
+      endDate: new Date("2026-03-03T22:00:00.000Z"),
+      pickupAddress: "Airport",
+      pickupTime: "10 AM",
+      sameLocation: true,
+      includeSecurityDetail: false,
+      requiresFullTank: false,
+      useCredits: 0,
+      expectedTotalAmount: "10000",
+    };
+    const financials = createBookingFinancials({
+      numberOfLegs: 1,
+      legPrices: [
+        {
+          legDate: new Date("2026-03-03T00:00:00.000Z"),
+          price: new Decimal(10000),
+          basePrice: new Decimal(10000),
+          promotion: null,
+        },
+      ],
+    });
+
+    await service.createBookingRecord(tx, {
+      bookingReference: "BK-123",
+      car: { ...createCar(), ownerDriverId: "owner-123" },
+      userId: "user-1",
+      guestUser: null,
+      booking: bookingInput,
+      financials,
+      referralEligibility: {
+        eligible: false,
+        referrerUserId: null,
+        discountAmount: new Decimal(0),
+      },
+      flightRecordId: null,
+      legs: [
+        {
+          legDate: new Date("2026-03-03T00:00:00.000Z"),
+          legStartTime: new Date("2026-03-03T10:00:00.000Z"),
+          legEndTime: new Date("2026-03-03T22:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(createBooking).toHaveBeenCalledWith({
+      data: expect.objectContaining({ chauffeurId: "owner-123" }),
     });
   });
 

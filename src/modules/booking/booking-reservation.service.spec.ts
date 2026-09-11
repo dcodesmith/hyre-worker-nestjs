@@ -155,5 +155,34 @@ describe("BookingReservationService", () => {
     );
 
     expect(service.isOverlapConstraintViolation(error)).toBe(true);
+    expect(service.isChauffeurOverlapConstraintViolation(error)).toBe(false);
+  });
+
+  it("recognizes car and chauffeur exclusion constraints from known Prisma errors", () => {
+    const carError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2004",
+      clientVersion: "test",
+      meta: { constraint: "Booking_car_active_window_excl" },
+    });
+    const chauffeurError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { constraint: "Booking_chauffeur_active_window_excl" },
+    });
+
+    expect(service.isOverlapConstraintViolation(carError)).toBe(true);
+    expect(service.isOverlapConstraintViolation(chauffeurError)).toBe(true);
+    expect(service.isChauffeurOverlapConstraintViolation(chauffeurError)).toBe(true);
+    expect(service.isChauffeurOverlapConstraintViolation(carError)).toBe(false);
+  });
+
+  it("recognizes a chauffeur exclusion from an unknown Postgres error", () => {
+    const error = new Prisma.PrismaClientUnknownRequestError(
+      'Database error code: 23P01 constraint "Booking_chauffeur_active_window_excl"',
+      { clientVersion: "test" },
+    );
+
+    expect(service.isChauffeurOverlapConstraintViolation(error)).toBe(true);
+    expect(service.isOverlapConstraintViolation(error)).toBe(true);
   });
 });

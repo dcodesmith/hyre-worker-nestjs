@@ -921,6 +921,79 @@ describe("NotificationService", () => {
     });
   });
 
+  describe("buildChauffeurAssignmentRecipientJobData", () => {
+    it("builds an assigned job for the chauffeur", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      const recipient = createChauffeur({ id: "chauffeur-9", email: "driver@example.com" });
+
+      const jobData = service.buildChauffeurAssignmentRecipientJobData(booking, recipient, true);
+
+      expect(jobData).toMatchObject({
+        type: NotificationType.CHAUFFEUR_ASSIGNED,
+        audience: NotificationAudience.CHAUFFEUR,
+        bookingId: booking.id,
+        recipients: expect.objectContaining({
+          [CHAUFFEUR_RECIPIENT_TYPE]: expect.objectContaining({
+            userId: "chauffeur-9",
+            email: "driver@example.com",
+          }),
+        }),
+        templateData: expect.objectContaining({
+          subject: "You have been assigned a booking",
+          status: "assigned",
+          recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+          recipientName: recipient.name,
+        }),
+      });
+    });
+
+    it("falls back to chauffeur when the recipient has no name", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      const recipient = createChauffeur({
+        id: "chauffeur-anon",
+        name: null,
+        email: "anon@example.com",
+      });
+
+      const jobData = service.buildChauffeurAssignmentRecipientJobData(booking, recipient, true);
+
+      expect(jobData?.templateData).toMatchObject({ recipientName: "chauffeur" });
+    });
+
+    it("builds a removed job when the chauffeur is reassigned away", () => {
+      const booking = createBooking({
+        status: BookingStatus.CONFIRMED,
+        car: createCar({ owner: createOwner() }),
+        chauffeur: createChauffeur(),
+        user: createUser(),
+      });
+      const recipient = createChauffeur({ id: "chauffeur-old", email: "old@example.com" });
+
+      const jobData = service.buildChauffeurAssignmentRecipientJobData(booking, recipient, false);
+
+      expect(jobData).toMatchObject({
+        type: NotificationType.CHAUFFEUR_ASSIGNED,
+        audience: NotificationAudience.CHAUFFEUR,
+        templateData: expect.objectContaining({
+          subject: "Booking reassigned",
+          status: "reassigned",
+          recipientType: CHAUFFEUR_RECIPIENT_TYPE,
+          recipientName: recipient.name,
+        }),
+      });
+    });
+  });
+
   describe("buildBookingCancellationJobData", () => {
     it("builds customer + owner jobs when both recipients have channels", async () => {
       const booking = createBooking({

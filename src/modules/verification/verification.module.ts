@@ -30,5 +30,6 @@ import { VerificationThrottlerGuard } from "./verification-throttler.guard";
     PhoneVerificationService,
     VerificationThrottlerGuard,
   ],
+  exports: [PhoneVerificationService, VerificationThrottlerGuard],
 })
 export class VerificationModule {}

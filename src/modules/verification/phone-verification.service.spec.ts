@@ -98,7 +98,7 @@ describe("PhoneVerificationService", () => {
         to: PHONE,
       });
       expect(throttlerStorage.increment).toHaveBeenCalledWith(
-        `phone-verification:user:${USER_ID}`,
+        `phone-verification:subject:user:${USER_ID}`,
         10 * 60_000,
         5,
         10 * 60_000,
@@ -140,7 +140,7 @@ describe("PhoneVerificationService", () => {
       expect(twilioMocks.createVerification).not.toHaveBeenCalled();
       expect(throttlerStorage.increment).toHaveBeenCalledTimes(1);
       expect(throttlerStorage.increment).toHaveBeenCalledWith(
-        `phone-verification:user:${USER_ID}`,
+        `phone-verification:subject:user:${USER_ID}`,
         10 * 60_000,
         5,
         10 * 60_000,
@@ -199,7 +199,7 @@ describe("PhoneVerificationService", () => {
         PhoneVerificationProviderUnavailableException,
       );
       expect(logger.warn).toHaveBeenCalledWith(
-        { userId: USER_ID, phone: MASKED_PHONE, status: 401, code: 20003 },
+        { subjectId: `user:${USER_ID}`, phone: MASKED_PHONE, status: 401, code: 20003 },
         "Twilio could not send a phone verification code",
       );
     });
@@ -264,8 +264,47 @@ describe("PhoneVerificationService", () => {
         service.check(USER_ID, { phoneNumber: PHONE, code: "123456" }),
       ).rejects.toBeInstanceOf(PhoneVerificationProviderUnavailableException);
       expect(logger.warn).toHaveBeenCalledWith(
-        { userId: USER_ID, phone: MASKED_PHONE, status: 500, code: 20500 },
+        { subjectId: `user:${USER_ID}`, phone: MASKED_PHONE, status: 500, code: 20500 },
         "Twilio could not check a phone verification code",
+      );
+    });
+  });
+
+  describe("sendCode", () => {
+    it("sends an SMS code for a generic subject without writing a user row", async () => {
+      twilioMocks.createVerification.mockResolvedValueOnce({ status: "pending" });
+
+      await expect(service.sendCode("chauffeur:ver-1", PHONE)).resolves.toEqual({
+        status: "PENDING",
+        phoneNumber: MASKED_PHONE,
+      });
+      expect(databaseService.user.findUnique).not.toHaveBeenCalled();
+      expect(throttlerStorage.increment).toHaveBeenCalledWith(
+        "phone-verification:subject:chauffeur:ver-1",
+        10 * 60_000,
+        5,
+        10 * 60_000,
+        "phone-verification",
+      );
+    });
+  });
+
+  describe("checkCode", () => {
+    it("approves a valid code without persisting a user phone number", async () => {
+      twilioMocks.createVerificationCheck.mockResolvedValueOnce({ status: "approved" });
+
+      await expect(service.checkCode("chauffeur:ver-1", PHONE, "123456")).resolves.toEqual({
+        status: "VERIFIED",
+        phoneNumber: MASKED_PHONE,
+      });
+      expect(databaseService.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-approved Twilio check as an invalid or expired code", async () => {
+      twilioMocks.createVerificationCheck.mockResolvedValueOnce({ status: "pending" });
+
+      await expect(service.checkCode("chauffeur:ver-1", PHONE, "000000")).rejects.toBeInstanceOf(
+        PhoneVerificationCodeInvalidException,
       );
     });
   });

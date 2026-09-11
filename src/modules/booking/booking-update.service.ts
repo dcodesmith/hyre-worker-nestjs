@@ -7,11 +7,16 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { DAY_BOOKING_DURATION_HOURS, FULL_DAY_DURATION_HOURS } from "./booking.const";
+import {
+  BLOCKING_BOOKING_STATUSES,
+  DAY_BOOKING_DURATION_HOURS,
+  FULL_DAY_DURATION_HOURS,
+} from "./booking.const";
 import {
   BookingChauffeurNotFoundException,
   BookingException,
@@ -108,6 +113,8 @@ export class BookingUpdateService {
             chauffeurId: true,
             flightId: true,
             status: true,
+            startDate: true,
+            endDate: true,
           },
         });
 
@@ -121,10 +128,24 @@ export class BookingUpdateService {
           );
         }
 
+        const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
+          startDate: booking.startDate,
+          endDate: booking.endDate,
+        });
         const chauffeur = await tx.user.findFirst({
           where: {
             id: chauffeurId,
-            fleetOwnerId: ownerId,
+            OR: [{ fleetOwnerId: ownerId }, { id: ownerId, isOwnerDriver: true }],
+            chauffeurDisabledAt: null,
+            bookingsAsChauffeur: {
+              none: {
+                id: { not: booking.id },
+                deletedAt: null,
+                status: { in: [...BLOCKING_BOOKING_STATUSES] },
+                startDate: { lt: bufferedEnd },
+                endDate: { gt: bufferedStart },
+              },
+            },
           },
           select: {
             id: true,
@@ -141,6 +162,14 @@ export class BookingUpdateService {
             "Only approved chauffeurs can be assigned to a booking",
           );
         }
+
+        const previousChauffeur =
+          booking.chauffeurId && booking.chauffeurId !== chauffeur.id
+            ? await tx.user.findUnique({
+                where: { id: booking.chauffeurId },
+                select: { id: true, name: true, email: true, phoneNumber: true },
+              })
+            : null;
 
         const updated = await tx.booking.updateMany({
           where: {
@@ -170,7 +199,11 @@ export class BookingUpdateService {
         if (booking.chauffeurId !== chauffeur.id) {
           await this.notificationOutboxService.create(
             this.chauffeurAssignedHandler,
-            { booking: updatedBooking, chauffeurId: chauffeur.id },
+            {
+              booking: updatedBooking,
+              chauffeurId: chauffeur.id,
+              previousChauffeur,
+            },
             tx,
           );
         }
@@ -180,6 +213,11 @@ export class BookingUpdateService {
 
       return booking;
     } catch (error) {
+      if (this.bookingReservationService.isChauffeurOverlapConstraintViolation(error)) {
+        throw new BookingUpdateNotAllowedException(
+          "The selected chauffeur is not available for this booking",
+        );
+      }
       if (error instanceof BookingException) {
         throw error;
       }
@@ -271,6 +309,12 @@ export class BookingUpdateService {
             },
             tx,
           );
+          await this.assertAssignedChauffeurAvailability(
+            tx,
+            currentBooking,
+            newStartDate,
+            newEndDate,
+          );
         }
 
         const effectiveStartDate =
@@ -317,6 +361,11 @@ export class BookingUpdateService {
         return this.withModificationEligibility(updatedBooking, responseNow);
       });
     } catch (error) {
+      if (this.bookingReservationService.isChauffeurOverlapConstraintViolation(error)) {
+        throw new BookingUpdateNotAllowedException(
+          "The assigned chauffeur is not available for the updated time",
+        );
+      }
       if (this.bookingReservationService.isOverlapConstraintViolation(error)) {
         throw new CarNotAvailableException(currentBooking.carId);
       }
@@ -415,6 +464,7 @@ export class BookingUpdateService {
         id: true,
         userId: true,
         carId: true,
+        chauffeurId: true,
         type: true,
         status: true,
         paymentStatus: true,
@@ -430,6 +480,37 @@ export class BookingUpdateService {
     }
 
     return currentBooking;
+  }
+
+  private async assertAssignedChauffeurAvailability(
+    tx: Prisma.TransactionClient,
+    booking: CurrentBookingRecord,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<void> {
+    if (!booking.chauffeurId) {
+      return;
+    }
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
+      startDate,
+      endDate,
+    });
+    const conflict = await tx.booking.findFirst({
+      where: {
+        id: { not: booking.id },
+        chauffeurId: booking.chauffeurId,
+        deletedAt: null,
+        status: { in: [...BLOCKING_BOOKING_STATUSES] },
+        startDate: { lt: bufferedEnd },
+        endDate: { gt: bufferedStart },
+      },
+      select: { id: true },
+    });
+    if (conflict) {
+      throw new BookingUpdateNotAllowedException(
+        "The assigned chauffeur is not available for the updated time",
+      );
+    }
   }
 
   private resolveTargetReturnLocation(

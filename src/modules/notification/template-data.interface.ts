@@ -44,6 +44,8 @@ export interface BookingStatusTemplateData extends NormalisedBookingDetails {
   subject: string;
   oldStatus: string;
   newStatus: string;
+  recipientType?: typeof CLIENT_RECIPIENT_TYPE | typeof CHAUFFEUR_RECIPIENT_TYPE;
+  recipientName?: string;
   showReviewRequest?: boolean;
 }
 

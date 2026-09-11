@@ -137,16 +137,25 @@ export function EmailTemplate({ children, previewText, pageTitle }: EmailTemplat
 }
 
 export type BookingStatusUpdateEmailProps = {
-  readonly booking: NormalisedBookingDetails & { showReviewRequest?: boolean };
+  readonly booking: NormalisedBookingDetails & {
+    recipientType?: "client" | "chauffeur";
+    recipientName?: string;
+    showReviewRequest?: boolean;
+  };
 };
 
 export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailProps) {
   const { websiteUrl } = getEmailPublicEnv();
-  const firstName = firstNameFrom(booking.customerName);
-  const bookingUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
+  const isChauffeur = booking.recipientType === "chauffeur";
+  const firstName = firstNameFrom(
+    isChauffeur ? (booking.recipientName ?? "chauffeur") : booking.customerName,
+  );
+  const bookingUrl = isChauffeur ? null : makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}`);
   const reviewUrl = makeWebsiteUrl(websiteUrl, `/bookings/${booking.id}#review`);
-  const previewText = `Your booking has ${booking.title}`;
-  const showReviewRequest = booking.showReviewRequest ?? false;
+  const previewText = isChauffeur
+    ? `Booking ${booking.bookingReference} has ${booking.title}`
+    : `Your booking has ${booking.title}`;
+  const showReviewRequest = !isChauffeur && (booking.showReviewRequest ?? false);
 
   return (
     <EmailTemplate previewText={previewText} pageTitle={`Booking ${booking.status}`}>
@@ -154,16 +163,21 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
         Booking update
       </Text>
       <Heading as="h1" className="text-[26px] leading-[32px] font-extrabold text-[#0B0B0F] m-0">
-        Hi {firstName}, your trip is {booking.status}.
+        Hi {firstName}, {isChauffeur ? `booking ${booking.bookingReference}` : "your trip"} is{" "}
+        {booking.status}.
       </Heading>
       <Text className="text-[15px] leading-[22px] text-[#4A4A52] mt-3 mb-0">
-        Your booking for the <span className="font-semibold">{booking.carName}</span> has{" "}
-        {booking.title}.
+        {isChauffeur ? "The" : "Your"} booking for the{" "}
+        <span className="font-semibold">{booking.carName}</span> has {booking.title}.
       </Text>
 
       <BookingTripCard
         trip={booking}
-        vehicleDescription="We'll keep you posted as your ride progresses."
+        vehicleDescription={
+          isChauffeur
+            ? "Coordinate the pickup details with the fleet owner before the trip."
+            : "We'll keep you posted as your ride progresses."
+        }
       />
 
       {bookingUrl && (
@@ -204,7 +218,7 @@ export function BookingStatusUpdateEmail({ booking }: BookingStatusUpdateEmailPr
 }
 
 export async function renderBookingStatusUpdateEmail(
-  booking: NormalisedBookingDetails & { showReviewRequest?: boolean },
+  booking: BookingStatusUpdateEmailProps["booking"],
 ) {
   return await render(<BookingStatusUpdateEmail booking={booking} />);
 }
@@ -545,6 +559,48 @@ export function AuthOTPEmail({ otp }: AuthOTPEmailProps) {
 
 export async function renderAuthOTPEmail(props: AuthOTPEmailProps) {
   return await render(<AuthOTPEmail {...props} />);
+}
+
+export interface ChauffeurInvitationEmailProps {
+  readonly recipientName: string;
+  readonly fleetOwnerName: string;
+  readonly inviteUrl: string;
+}
+
+export function ChauffeurInvitationEmail({
+  recipientName,
+  fleetOwnerName,
+  inviteUrl,
+}: ChauffeurInvitationEmailProps) {
+  return (
+    <EmailTemplate
+      previewText={`${fleetOwnerName} invited you to join their chauffeur team`}
+      pageTitle="Chauffeur Invitation"
+    >
+      <Heading as="h2" className="text-xl font-semibold mb-4 text-[#0B0B0F]">
+        You have been invited, {firstNameFrom(recipientName)}
+      </Heading>
+      <Text className="mb-4 text-[#6A6A71]">
+        {fleetOwnerName} invited you to join their chauffeur team on Tripdly. Use the secure link
+        below to verify your phone, identity, driver&apos;s licence, and selfie.
+      </Text>
+      <Section className="mt-6 text-center">
+        <Button
+          href={inviteUrl}
+          className="bg-[#0B0B0F] text-white rounded-[10px] px-6 py-3 text-[14px] font-semibold no-underline inline-block"
+        >
+          Start chauffeur verification
+        </Button>
+      </Section>
+      <Text className="text-sm text-[#9A9A9F] text-center mt-6">
+        This link expires in 48 hours. If you were not expecting this invitation, ignore this email.
+      </Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderChauffeurInvitationEmail(props: ChauffeurInvitationEmailProps) {
+  return await render(<ChauffeurInvitationEmail {...props} />);
 }
 
 export function FleetOwnerNewBookingEmail({
