@@ -1,12 +1,4 @@
-export interface ReferralConfig {
-  REFERRAL_ENABLED: boolean;
-  REFERRAL_DISCOUNT_AMOUNT: number;
-  REFERRAL_MIN_BOOKING_AMOUNT: number;
-  REFERRAL_ELIGIBLE_TYPES: string[];
-  REFERRAL_RELEASE_CONDITION: "PAID" | "COMPLETED";
-  REFERRAL_EXPIRY_DAYS: number;
-  REFERRAL_MAX_CREDITS_PER_BOOKING: number;
-}
+export type { ReferralProgramConfig as ReferralConfig } from "./referral-program-config";
 
 export interface ReferralStatsResponse {
   totalReferrals: number;

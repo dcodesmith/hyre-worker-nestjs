@@ -8,13 +8,14 @@ import {
 } from "@prisma/client";
 import { DatabaseService } from "../database/database.service";
 import { ReferralInvalidCodeException, ReferralSelfReferralException } from "./referral.error";
-import type { ReferralConfig, ReferralUserSummaryResponse } from "./referral.interface";
+import type { ReferralUserSummaryResponse } from "./referral.interface";
+import { loadReferralProgramConfig, type ReferralProgramConfig } from "./referral-program-config";
 
 @Injectable()
 export class ReferralApiService {
   private configCache:
     | {
-        value: ReferralConfig;
+        value: ReferralProgramConfig;
         expiresAt: number;
       }
     | undefined;
@@ -48,7 +49,7 @@ export class ReferralApiService {
   async checkReferralEligibility(userId: string, bookingAmount: number, bookingType: string) {
     const config = await this.getReferralConfig();
 
-    if (!config.REFERRAL_ENABLED) {
+    if (!config.enabled) {
       return { eligible: false, reason: "Referral program is disabled", discountAmount: 0 };
     }
 
@@ -94,15 +95,15 @@ export class ReferralApiService {
       };
     }
 
-    if (bookingAmount < config.REFERRAL_MIN_BOOKING_AMOUNT) {
+    if (bookingAmount < config.minBookingAmount) {
       return {
         eligible: false,
-        reason: `Booking amount must be at least ₦${config.REFERRAL_MIN_BOOKING_AMOUNT.toLocaleString()}`,
+        reason: `Booking amount must be at least ₦${config.minBookingAmount.toLocaleString()}`,
         discountAmount: 0,
       };
     }
 
-    if (!config.REFERRAL_ELIGIBLE_TYPES.includes(bookingType)) {
+    if (!config.eligibleTypes.includes(bookingType)) {
       return {
         eligible: false,
         reason: "Booking type is not eligible for referral discount",
@@ -110,9 +111,9 @@ export class ReferralApiService {
       };
     }
 
-    if (config.REFERRAL_EXPIRY_DAYS > 0 && user.referralSignupAt) {
+    if (config.expiryDays > 0 && user.referralSignupAt) {
       const expiryDate = new Date(user.referralSignupAt);
-      expiryDate.setDate(expiryDate.getDate() + config.REFERRAL_EXPIRY_DAYS);
+      expiryDate.setDate(expiryDate.getDate() + config.expiryDays);
 
       if (new Date() > expiryDate) {
         return { eligible: false, reason: "Referral discount has expired", discountAmount: 0 };
@@ -121,7 +122,7 @@ export class ReferralApiService {
 
     return {
       eligible: true,
-      discountAmount: Math.min(config.REFERRAL_DISCOUNT_AMOUNT, bookingAmount),
+      discountAmount: Math.min(config.discountAmount, bookingAmount),
       reason: undefined,
     };
   }
@@ -182,8 +183,8 @@ export class ReferralApiService {
     return {
       referralCode: referralInfo.referralCode,
       shareLink,
-      programEnabled: config.REFERRAL_ENABLED,
-      discountAmount: config.REFERRAL_DISCOUNT_AMOUNT,
+      programEnabled: config.enabled,
+      discountAmount: config.discountAmount,
       hasUsedDiscount: referralInfo.referralDiscountUsed,
       referredBy: referralInfo.referredByUserId,
       signupDate: referralInfo.referralSignupAt,
@@ -195,7 +196,7 @@ export class ReferralApiService {
         totalEarned: bookingCredits.totalEarned,
         totalUsed: bookingCredits.totalUsed,
         availableCredits: bookingCredits.availableCredits,
-        maxCreditsPerBooking: config.REFERRAL_MAX_CREDITS_PER_BOOKING,
+        maxCreditsPerBooking: config.maxCreditsPerBooking,
       },
       referrals: referralInfo.referrals,
       rewards: referralInfo.referralRewardsEarned.map((reward) => ({
@@ -209,31 +210,13 @@ export class ReferralApiService {
     };
   }
 
-  private async getReferralConfig(): Promise<ReferralConfig> {
+  private async getReferralConfig(): Promise<ReferralProgramConfig> {
     const now = Date.now();
     if (this.configCache && this.configCache.expiresAt > now) {
       return this.configCache.value;
     }
 
-    const rows = await this.databaseService.referralProgramConfig.findMany();
-    const map = rows.reduce<Record<string, unknown>>((acc, row) => {
-      acc[row.key] = row.value;
-      return acc;
-    }, {});
-
-    const config: ReferralConfig = {
-      REFERRAL_ENABLED: Boolean(map.REFERRAL_ENABLED ?? true),
-      REFERRAL_DISCOUNT_AMOUNT: Number(map.REFERRAL_DISCOUNT_AMOUNT ?? 10000),
-      REFERRAL_MIN_BOOKING_AMOUNT: Number(map.REFERRAL_MIN_BOOKING_AMOUNT ?? 20000),
-      REFERRAL_ELIGIBLE_TYPES: this.asStringArray(map.REFERRAL_ELIGIBLE_TYPES, [
-        "DAY",
-        "NIGHT",
-        "FULL_DAY",
-      ]),
-      REFERRAL_RELEASE_CONDITION: map.REFERRAL_RELEASE_CONDITION === "PAID" ? "PAID" : "COMPLETED",
-      REFERRAL_EXPIRY_DAYS: Number(map.REFERRAL_EXPIRY_DAYS ?? 30),
-      REFERRAL_MAX_CREDITS_PER_BOOKING: Number(map.REFERRAL_MAX_CREDITS_PER_BOOKING ?? 30000),
-    };
+    const config = await loadReferralProgramConfig(this.databaseService.referralProgramConfig);
 
     this.configCache = {
       value: config,
@@ -317,13 +300,5 @@ export class ReferralApiService {
       return value;
     }
     return value.toNumber();
-  }
-
-  private asStringArray(value: unknown, fallback: string[]): string[] {
-    if (!Array.isArray(value)) {
-      return fallback;
-    }
-    const strings = value.filter((item): item is string => typeof item === "string");
-    return strings.length > 0 ? strings : fallback;
   }
 }
