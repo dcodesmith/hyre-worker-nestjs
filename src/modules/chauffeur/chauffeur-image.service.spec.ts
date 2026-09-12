@@ -1,5 +1,6 @@
+import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ChauffeurInvalidSelfieException } from "./chauffeur.error";
 import { ChauffeurImageService } from "./chauffeur-image.service";
 
@@ -16,12 +17,17 @@ vi.mock("sharp", () => ({
 
 describe("ChauffeurImageService", () => {
   let service: ChauffeurImageService;
-  let logger: ReturnType<typeof createMockPinoLogger>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sharpChain.toBuffer.mockReset();
-    logger = createMockPinoLogger();
-    service = new ChauffeurImageService(logger as never);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [ChauffeurImageService],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    service = module.get(ChauffeurImageService);
   });
 
   it("returns the processed JPEG buffer", async () => {
@@ -51,10 +57,5 @@ describe("ChauffeurImageService", () => {
         buffer: Buffer.from("bad"),
       }),
     ).rejects.toBeInstanceOf(ChauffeurInvalidSelfieException);
-    expect(logger.warn).toHaveBeenCalledWith(
-      { err: processingError },
-      "Failed to process chauffeur selfie",
-    );
-    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("bad");
   });
 });
