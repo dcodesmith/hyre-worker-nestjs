@@ -198,7 +198,7 @@ describe("BookingPersistenceService", () => {
           dropOffAddress: "Victoria Island, Lagos",
           flightNumber: "BA74",
           sameLocation: false,
-          includeSecurityDetail: false,
+          addonIds: [],
           requiresFullTank: false,
           useCredits: 0,
           expectedTotalAmount: "10000",
@@ -265,7 +265,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
@@ -322,14 +322,26 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: ["addon-wifi"],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
     };
 
+    const wifiAddon = {
+      id: "addon-wifi",
+      code: "WIFI_HOTSPOT",
+      name: "Wi-Fi Hotspot",
+      pricingUnit: "PER_BOOKING" as const,
+      financialTreatment: "PLATFORM" as const,
+      unitPrice: new Decimal(10000),
+      quantity: 1,
+      totalPrice: new Decimal(10000),
+    };
     const financials = createBookingFinancials({
       numberOfLegs: 1,
+      addons: [wifiAddon],
+      addonTotal: new Decimal(10000),
       legPrices: [
         {
           legDate: new Date("2026-03-03T00:00:00.000Z"),
@@ -372,8 +384,136 @@ describe("BookingPersistenceService", () => {
         paymentStatus: PaymentStatus.UNPAID,
         paymentSessionExpiresAt: expect.any(Date),
         chauffeurId: null,
+        addons: {
+          create: [
+            {
+              addonId: "addon-wifi",
+              code: "WIFI_HOTSPOT",
+              name: "Wi-Fi Hotspot",
+              pricingUnit: "PER_BOOKING",
+              financialTreatment: "PLATFORM",
+              unitPrice: wifiAddon.unitPrice,
+              quantity: 1,
+              totalPrice: wifiAddon.totalPrice,
+            },
+          ],
+        },
       }),
     });
+  });
+
+  it("allocates FLEET_OWNER add-ons onto each leg earning", async () => {
+    const databaseService = {
+      car: { findUnique: vi.fn() },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BookingPersistenceService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
+      ],
+    }).compile();
+    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
+    const createBooking = vi.fn().mockResolvedValue({ id: "booking-1" });
+    const tx = { booking: { create: createBooking } } as unknown as Prisma.TransactionClient;
+
+    const perBooking = {
+      id: "addon-protocol",
+      code: "PROTOCOL",
+      name: "Protocol Service",
+      pricingUnit: "PER_BOOKING" as const,
+      financialTreatment: "FLEET_OWNER" as const,
+      unitPrice: new Decimal(8000),
+      quantity: 1,
+      totalPrice: new Decimal(8000),
+    };
+    const perLeg = {
+      id: "addon-security",
+      code: "SECURITY",
+      name: "Security Detail",
+      pricingUnit: "PER_LEG" as const,
+      financialTreatment: "FLEET_OWNER" as const,
+      unitPrice: new Decimal(3000),
+      quantity: 2,
+      totalPrice: new Decimal(6000),
+    };
+    const platformAddon = {
+      id: "addon-wifi",
+      code: "WIFI",
+      name: "Wi-Fi",
+      pricingUnit: "PER_BOOKING" as const,
+      financialTreatment: "PLATFORM" as const,
+      unitPrice: new Decimal(10000),
+      quantity: 1,
+      totalPrice: new Decimal(10000),
+    };
+
+    const firstLeg = {
+      legDate: new Date("2026-03-03T00:00:00.000Z"),
+      legStartTime: new Date("2026-03-03T10:00:00.000Z"),
+      legEndTime: new Date("2026-03-03T22:00:00.000Z"),
+    };
+    const secondLeg = {
+      legDate: new Date("2026-03-04T00:00:00.000Z"),
+      legStartTime: new Date("2026-03-04T10:00:00.000Z"),
+      legEndTime: new Date("2026-03-04T22:00:00.000Z"),
+    };
+
+    await service.createBookingRecord(tx, {
+      bookingReference: "BK-123",
+      car: createCar(),
+      userId: "user-1",
+      guestUser: null,
+      booking: {
+        carId: "car-1",
+        bookingType: "DAY",
+        startDate: new Date("2026-03-03T10:00:00.000Z"),
+        endDate: new Date("2026-03-04T22:00:00.000Z"),
+        pickupAddress: "Airport",
+        pickupTime: "10 AM",
+        sameLocation: true,
+        addonIds: [perBooking.id, perLeg.id, platformAddon.id],
+        requiresFullTank: false,
+        useCredits: 0,
+        expectedTotalAmount: "10000",
+      },
+      financials: createBookingFinancials({
+        numberOfLegs: 2,
+        netTotal: new Decimal(100000),
+        platformFleetOwnerCommissionAmount: new Decimal(10000),
+        fleetOwnerPayoutAmountNet: new Decimal(104000),
+        addons: [perBooking, perLeg, platformAddon],
+        addonTotal: new Decimal(24000),
+        legPrices: [
+          {
+            legDate: firstLeg.legDate,
+            price: new Decimal(50000),
+            basePrice: new Decimal(50000),
+            promotion: null,
+          },
+          {
+            legDate: secondLeg.legDate,
+            price: new Decimal(50000),
+            basePrice: new Decimal(50000),
+            promotion: null,
+          },
+        ],
+      }),
+      referralEligibility: {
+        eligible: false,
+        referrerUserId: null,
+        discountAmount: new Decimal(0),
+      },
+      flightRecordId: null,
+      legs: [firstLeg, secondLeg],
+    });
+
+    const created = createBooking.mock.calls[0]?.[0].data;
+    expect(created.fleetOwnerPayoutAmountNet.equals(new Decimal(104000))).toBe(true);
+    expect(created.legs.create).toHaveLength(2);
+    for (const leg of created.legs.create) {
+      expect(leg.fleetOwnerEarningForLeg.equals(new Decimal(52000))).toBe(true);
+    }
   });
 
   it("assigns an eligible owner-driver on the pending booking record", async () => {
@@ -398,7 +538,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",
@@ -464,7 +604,7 @@ describe("BookingPersistenceService", () => {
       pickupAddress: "Airport",
       pickupTime: "10 AM",
       sameLocation: true,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       expectedTotalAmount: "10000",

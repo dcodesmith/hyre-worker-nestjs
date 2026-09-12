@@ -1,21 +1,13 @@
 import { Injectable } from "@nestjs/common";
-import type { AddonType, PlatformFeeType } from "@prisma/client";
+import type { PlatformFeeType } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
-import type {
-  CreateAddonRateDto,
-  CreatePlatformFeeDto,
-  CreateVatRateDto,
-} from "./dto/rates-admin.dto";
+import type { CreatePlatformFeeDto, CreateVatRateDto } from "./dto/rates-admin.dto";
 import {
-  RateAlreadyEndedException,
   RateCreateFailedException,
   RateDateOverlapException,
-  RateNotFoundException,
-  RateNotYetActiveException,
   RatesException,
   RatesFetchFailedException,
-  RateUpdateFailedException,
 } from "./rates.error";
 import { buildOverlapWindowWhere, isRateActive } from "./rates.helper";
 import { RatesService } from "./rates.service";
@@ -34,15 +26,12 @@ export class RatesAdminService {
 
   async getAllRates() {
     try {
-      const [platformFeeRates, taxRates, addonRates] = await Promise.all([
+      const [platformFeeRates, taxRates] = await Promise.all([
         this.databaseService.platformFeeRate.findMany({
           orderBy: [{ feeType: "asc" }, { effectiveSince: "desc" }],
         }),
         this.databaseService.taxRate.findMany({
           orderBy: { effectiveSince: "desc" },
-        }),
-        this.databaseService.addonRate.findMany({
-          orderBy: [{ addonType: "asc" }, { effectiveSince: "desc" }],
         }),
       ]);
 
@@ -57,11 +46,6 @@ export class RatesAdminService {
         taxRates: taxRates.map((rate) => ({
           ...rate,
           ratePercent: rate.ratePercent.toNumber(),
-          active: isRateActive(rate, now),
-        })),
-        addonRates: addonRates.map((rate) => ({
-          ...rate,
-          rateAmount: rate.rateAmount.toNumber(),
           active: isRateActive(rate, now),
         })),
       };
@@ -155,93 +139,6 @@ export class RatesAdminService {
     }
   }
 
-  async createAddonRate(dto: CreateAddonRateDto) {
-    try {
-      const rate = await this.databaseService.$transaction(
-        async (tx) => {
-          await this.assertNoAddonRateOverlap(
-            dto.addonType,
-            dto.effectiveSince,
-            dto.effectiveUntil,
-            tx,
-          );
-
-          return tx.addonRate.create({
-            data: {
-              addonType: dto.addonType,
-              rateAmount: dto.rateAmount,
-              effectiveSince: dto.effectiveSince,
-              effectiveUntil: dto.effectiveUntil,
-              description: dto.description,
-            },
-          });
-        },
-        { isolationLevel: this.serializableIsolationLevel },
-      );
-
-      this.ratesService.clearCache();
-      return { ...rate, rateAmount: rate.rateAmount.toNumber() };
-    } catch (error) {
-      if (error instanceof RatesException) {
-        throw error;
-      }
-      this.logger.error(
-        {
-          dto,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to create addon rate",
-      );
-      throw new RateCreateFailedException();
-    }
-  }
-
-  async endAddonRate(addonRateId: string) {
-    try {
-      const now = new Date();
-      const rate = await this.databaseService.$transaction(
-        async (tx) => {
-          const existing = await tx.addonRate.findUnique({
-            where: { id: addonRateId },
-          });
-
-          if (!existing) {
-            throw new RateNotFoundException();
-          }
-
-          if (existing.effectiveUntil !== null) {
-            throw new RateAlreadyEndedException();
-          }
-
-          if (existing.effectiveSince > now) {
-            throw new RateNotYetActiveException();
-          }
-
-          return tx.addonRate.update({
-            where: { id: addonRateId },
-            data: { effectiveUntil: now },
-          });
-        },
-        { isolationLevel: this.serializableIsolationLevel },
-      );
-
-      this.ratesService.clearCache();
-      return { ...rate, rateAmount: rate.rateAmount.toNumber() };
-    } catch (error) {
-      if (error instanceof RatesException) {
-        throw error;
-      }
-      this.logger.error(
-        {
-          addonRateId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to end addon rate",
-      );
-      throw new RateUpdateFailedException();
-    }
-  }
-
   private async assertNoPlatformFeeOverlap(
     feeType: PlatformFeeType,
     effectiveSince: Date,
@@ -276,26 +173,6 @@ export class RatesAdminService {
     if (overlapping) {
       throw new RateDateOverlapException(
         "A VAT rate already exists that overlaps with this date range",
-      );
-    }
-  }
-
-  private async assertNoAddonRateOverlap(
-    addonType: AddonType,
-    effectiveSince: Date,
-    effectiveUntil?: Date,
-    tx: Pick<DatabaseService, "addonRate"> = this.databaseService,
-  ): Promise<void> {
-    const overlapping = await tx.addonRate.findFirst({
-      where: {
-        addonType,
-        ...buildOverlapWindowWhere(effectiveSince, effectiveUntil),
-      },
-    });
-
-    if (overlapping) {
-      throw new RateDateOverlapException(
-        `A ${addonType} addon rate already exists that overlaps with this date range`,
       );
     }
   }

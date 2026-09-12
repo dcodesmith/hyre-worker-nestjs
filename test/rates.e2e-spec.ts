@@ -51,8 +51,8 @@ describe("Rates E2E Tests", () => {
       expect(response.body).toEqual({
         platformCustomerServiceFeeRatePercent: 10,
         vatRatePercent: 7.5,
-        securityDetailRate: 15000,
       });
+      expect(response.body).not.toHaveProperty("securityDetailRate");
       expect(response.body).not.toHaveProperty("platformFleetOwnerCommissionRatePercent");
       expect(response.body).not.toHaveProperty("platformFeeRates");
       expect(response.body).not.toHaveProperty("taxRates");
@@ -67,7 +67,6 @@ describe("Rates E2E Tests", () => {
       expect(response.body).toEqual({
         platformCustomerServiceFeeRatePercent: 10,
         vatRatePercent: 7.5,
-        securityDetailRate: 15000,
       });
     });
   });
@@ -93,10 +92,9 @@ describe("Rates E2E Tests", () => {
       expect(response.status).toBe(HttpStatus.OK);
       expect(response.body).toHaveProperty("platformFeeRates");
       expect(response.body).toHaveProperty("taxRates");
-      expect(response.body).toHaveProperty("addonRates");
+      expect(response.body).not.toHaveProperty("addonRates");
       expect(response.body.platformFeeRates.length).toBeGreaterThanOrEqual(2);
       expect(response.body.taxRates.length).toBeGreaterThanOrEqual(1);
-      expect(response.body.addonRates.length).toBeGreaterThanOrEqual(1);
 
       const activeServiceFee = response.body.platformFeeRates.find(
         (r: { feeType: string; active: boolean }) =>
@@ -199,112 +197,6 @@ describe("Rates E2E Tests", () => {
 
       expect(response.status).toBe(HttpStatus.CREATED);
       expect(response.body.ratePercent).toBe(10);
-    });
-  });
-
-  describe("POST /api/rates/addon", () => {
-    it("should reject overlapping addon rates", async () => {
-      const response = await request(app.getHttpServer())
-        .post("/api/rates/addon")
-        .set("Cookie", adminCookie)
-        .send({
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 20000,
-          effectiveSince: "2021-01-01",
-        });
-      expect(response.status).toBe(HttpStatus.CONFLICT);
-    });
-
-    it("should create a new addon rate for a future window", async () => {
-      await databaseService.addonRate.updateMany({
-        where: { addonType: "SECURITY_DETAIL", effectiveUntil: null },
-        data: { effectiveUntil: new Date("2041-12-31") },
-      });
-
-      const response = await request(app.getHttpServer())
-        .post("/api/rates/addon")
-        .set("Cookie", adminCookie)
-        .send({
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 20000,
-          effectiveSince: "2042-01-01",
-          effectiveUntil: "2042-12-31",
-          description: "New security detail rate",
-        });
-
-      expect(response.status).toBe(HttpStatus.CREATED);
-      expect(response.body.rateAmount).toBe(20000);
-      expect(response.body.addonType).toBe("SECURITY_DETAIL");
-    });
-  });
-
-  describe("PATCH /api/rates/addon/:addonRateId/end", () => {
-    it("should reject non-admin users", async () => {
-      const response = await request(app.getHttpServer())
-        .patch("/api/rates/addon/nonexistent/end")
-        .set("Cookie", nonAdminCookie);
-      expect([HttpStatus.FORBIDDEN, HttpStatus.UNAUTHORIZED]).toContain(response.status);
-    });
-
-    it("should return 404 for non-existent addon rate", async () => {
-      const fakeId = "cm00000000000000000000000";
-      const response = await request(app.getHttpServer())
-        .patch(`/api/rates/addon/${fakeId}/end`)
-        .set("Cookie", adminCookie);
-      expect(response.status).toBe(HttpStatus.NOT_FOUND);
-    });
-
-    it("should end an active addon rate", async () => {
-      const activeSince = new Date(Date.now() - 60 * 60 * 1000);
-      const addonRate = await databaseService.addonRate.create({
-        data: {
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 25000,
-          effectiveSince: activeSince,
-          effectiveUntil: null,
-        },
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/api/rates/addon/${addonRate.id}/end`)
-        .set("Cookie", adminCookie);
-
-      expect(response.status).toBe(HttpStatus.OK);
-      expect(response.body.effectiveUntil).toBeDefined();
-    });
-
-    it("should reject ending a future addon rate", async () => {
-      const addonRate = await databaseService.addonRate.create({
-        data: {
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 26000,
-          effectiveSince: new Date("2099-01-01"),
-          effectiveUntil: null,
-        },
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/api/rates/addon/${addonRate.id}/end`)
-        .set("Cookie", adminCookie);
-
-      expect(response.status).toBe(HttpStatus.CONFLICT);
-    });
-
-    it("should reject ending an already-ended addon rate", async () => {
-      const addonRate = await databaseService.addonRate.create({
-        data: {
-          addonType: "SECURITY_DETAIL",
-          rateAmount: 30000,
-          effectiveSince: new Date("2044-01-01"),
-          effectiveUntil: new Date("2044-06-01"),
-        },
-      });
-
-      const response = await request(app.getHttpServer())
-        .patch(`/api/rates/addon/${addonRate.id}/end`)
-        .set("Cookie", adminCookie);
-
-      expect(response.status).toBe(HttpStatus.CONFLICT);
     });
   });
 });

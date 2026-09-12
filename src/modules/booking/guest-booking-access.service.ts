@@ -91,6 +91,17 @@ export class GuestBookingAccessService {
         flightNumber: true,
         totalAmount: true,
         guestAccessTokenExpiresAt: true,
+        addons: {
+          orderBy: { name: "asc" },
+          select: {
+            code: true,
+            name: true,
+            pricingUnit: true,
+            unitPrice: true,
+            quantity: true,
+            totalPrice: true,
+          },
+        },
         car: {
           select: {
             make: true,
@@ -147,6 +158,11 @@ export class GuestBookingAccessService {
       totalAmount: booking.totalAmount.toNumber(),
       currency: "NGN",
       accessExpiresAt: booking.guestAccessTokenExpiresAt.toISOString(),
+      addons: booking.addons.map((addon) => ({
+        ...addon,
+        unitPrice: addon.unitPrice.toNumber(),
+        totalPrice: addon.totalPrice.toNumber(),
+      })),
       car: {
         make: booking.car.make,
         model: booking.car.model,

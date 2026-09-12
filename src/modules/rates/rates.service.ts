@@ -6,7 +6,7 @@ import { buildActiveWindowWhere } from "./rates.helper";
 import type { PlatformRates } from "./rates.interface";
 
 /**
- * Service for fetching platform rates (fees, VAT, addon rates).
+ * Service for fetching platform fee and VAT rates.
  *
  * Implements in-memory caching with 5-minute TTL to reduce database load
  * since rates change infrequently.
@@ -50,7 +50,7 @@ export class RatesService {
     const reader = tx ?? this.databaseService;
 
     // Run all rate queries in parallel for better performance
-    const [platformRates, vatRate, securityDetailAddonRate] = await Promise.all([
+    const [platformRates, vatRate] = await Promise.all([
       // Get both platform fee rates in a single query
       reader.platformFeeRate.findMany({
         where: {
@@ -62,14 +62,6 @@ export class RatesService {
       // Get VAT rate
       reader.taxRate.findFirst({
         where: {
-          ...buildActiveWindowWhere(currentDate),
-        },
-        orderBy: { effectiveSince: "desc" },
-      }),
-      // Get security detail addon rate
-      reader.addonRate.findFirst({
-        where: {
-          addonType: "SECURITY_DETAIL",
           ...buildActiveWindowWhere(currentDate),
         },
         orderBy: { effectiveSince: "desc" },
@@ -95,15 +87,10 @@ export class RatesService {
       throw new Error("No active VAT rate found");
     }
 
-    if (!securityDetailAddonRate) {
-      throw new Error("No active security detail rate found");
-    }
-
     const result: PlatformRates = {
       platformCustomerServiceFeeRatePercent: platformFeeRate.ratePercent,
       platformFleetOwnerCommissionRatePercent: fleetOwnerCommissionRate.ratePercent,
       vatRatePercent: vatRate.ratePercent,
-      securityDetailRate: securityDetailAddonRate.rateAmount,
     };
 
     if (!tx) {
@@ -116,7 +103,6 @@ export class RatesService {
         platformFee: platformFeeRate.ratePercent.toString(),
         fleetOwnerCommission: fleetOwnerCommissionRate.ratePercent.toString(),
         vat: vatRate.ratePercent.toString(),
-        securityDetail: securityDetailAddonRate.rateAmount.toString(),
       },
       tx ? "Rates fetched without caching" : "Rates fetched and cached",
     );

@@ -3,6 +3,7 @@ import { BookingType } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { AddonsService } from "../addons/addons.service";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
@@ -12,6 +13,7 @@ import { BookingPricingPreviewService } from "./booking-pricing-preview.service"
 
 describe("BookingPricingPreviewService", () => {
   let service: BookingPricingPreviewService;
+  let addonsService: AddonsService;
   let bookingPersistenceService: BookingPersistenceService;
   let bookingLegService: BookingLegService;
   let bookingCalculationService: BookingCalculationService;
@@ -21,6 +23,12 @@ describe("BookingPricingPreviewService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingPricingPreviewService,
+        {
+          provide: AddonsService,
+          useValue: {
+            resolveBookingAddons: vi.fn().mockResolvedValue([]),
+          },
+        },
         {
           provide: BookingPersistenceService,
           useValue: {
@@ -52,6 +60,7 @@ describe("BookingPricingPreviewService", () => {
       .compile();
 
     service = module.get<BookingPricingPreviewService>(BookingPricingPreviewService);
+    addonsService = module.get<AddonsService>(AddonsService);
     bookingPersistenceService = module.get<BookingPersistenceService>(BookingPersistenceService);
     bookingLegService = module.get<BookingLegService>(BookingLegService);
     bookingCalculationService = module.get<BookingCalculationService>(BookingCalculationService);
@@ -126,7 +135,8 @@ describe("BookingPricingPreviewService", () => {
       netTotal: new Decimal(140000),
       compareAtNetTotal: new Decimal(150000),
       appliedPromotion: null,
-      securityDetailCost: new Decimal(0),
+      addons: [],
+      addonTotal: new Decimal(0),
       fuelUpgradeCost: new Decimal(0),
       netTotalWithAddons: new Decimal(140000),
       platformFeeBase: new Decimal(140000),
@@ -151,7 +161,7 @@ describe("BookingPricingPreviewService", () => {
       startDate: new Date("2026-05-01T00:00:00.000Z"),
       endDate: new Date("2026-05-03T23:59:00.000Z"),
       pickupTime: "9:00 AM",
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
     });
@@ -217,7 +227,8 @@ describe("BookingPricingPreviewService", () => {
       netTotal: new Decimal(60000),
       compareAtNetTotal: new Decimal(60000),
       appliedPromotion: null,
-      securityDetailCost: new Decimal(0),
+      addons: [],
+      addonTotal: new Decimal(0),
       fuelUpgradeCost: new Decimal(0),
       netTotalWithAddons: new Decimal(60000),
       platformFeeBase: new Decimal(60000),
@@ -242,7 +253,7 @@ describe("BookingPricingPreviewService", () => {
       startDate: new Date("2026-05-01T00:00:00.000Z"),
       endDate: new Date("2026-05-01T03:00:00.000Z"),
       pickupTime: "10:00 AM",
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
     });
@@ -294,7 +305,8 @@ describe("BookingPricingPreviewService", () => {
       netTotal: new Decimal(50000),
       compareAtNetTotal: new Decimal(50000),
       appliedPromotion: null,
-      securityDetailCost: new Decimal(0),
+      addons: [],
+      addonTotal: new Decimal(0),
       fuelUpgradeCost: new Decimal(0),
       netTotalWithAddons: new Decimal(50000),
       platformFeeBase: new Decimal(50000),
@@ -349,7 +361,7 @@ describe("BookingPricingPreviewService", () => {
         startDate: new Date("2026-05-01T00:00:00.000Z"),
         endDate: new Date("2026-05-01T23:59:00.000Z"),
         pickupTime: "9:00 AM",
-        includeSecurityDetail: false,
+        addonIds: [],
         requiresFullTank: false,
         useCredits: 2000,
       },
@@ -372,5 +384,101 @@ describe("BookingPricingPreviewService", () => {
     expect(result.creditsUsed).toBe(2000);
     expect(result.subtotalAfterDiscounts).toBe(45500);
     expect(result.totalAmount).toBe(48912.5);
+  });
+
+  it("resolves selected add-ons and maps them onto the preview response", async () => {
+    const resolvedAddons = [
+      {
+        id: "addon-wifi",
+        code: "WIFI_HOTSPOT",
+        name: "Wi-Fi Hotspot",
+        pricingUnit: "PER_BOOKING" as const,
+        financialTreatment: "PLATFORM" as const,
+        unitPrice: new Decimal(10000),
+        quantity: 1,
+        totalPrice: new Decimal(10000),
+      },
+    ];
+    vi.mocked(addonsService.resolveBookingAddons).mockResolvedValue(resolvedAddons);
+    vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
+      id: "car-1",
+      ownerId: "owner-1",
+      dayRate: 50000,
+      nightRate: 45000,
+      fullDayRate: 80000,
+      airportPickupRate: 60000,
+      fuelUpgradeRate: 0,
+      pricingIncludesFuel: false,
+    });
+    vi.mocked(bookingLegService.generateLegs).mockReturnValue([
+      {
+        legDate: new Date("2026-05-01T00:00:00.000Z"),
+        legStartTime: new Date("2026-05-01T09:00:00.000Z"),
+        legEndTime: new Date("2026-05-01T21:00:00.000Z"),
+      },
+    ]);
+    vi.mocked(bookingCalculationService.calculateBookingCost).mockResolvedValue({
+      legPrices: [
+        {
+          legDate: new Date("2026-05-01T00:00:00.000Z"),
+          price: new Decimal(50000),
+          basePrice: new Decimal(50000),
+          promotion: null,
+        },
+      ],
+      numberOfLegs: 1,
+      netTotal: new Decimal(50000),
+      compareAtNetTotal: new Decimal(50000),
+      appliedPromotion: null,
+      addons: resolvedAddons,
+      addonTotal: new Decimal(10000),
+      fuelUpgradeCost: new Decimal(0),
+      netTotalWithAddons: new Decimal(60000),
+      platformFeeBase: new Decimal(50000),
+      platformCustomerServiceFeeRatePercent: new Decimal(10),
+      platformCustomerServiceFeeAmount: new Decimal(5000),
+      subtotalBeforeDiscounts: new Decimal(65000),
+      referralDiscountAmount: new Decimal(0),
+      creditsUsed: new Decimal(0),
+      subtotalAfterDiscounts: new Decimal(65000),
+      vatRatePercent: new Decimal(7.5),
+      vatAmount: new Decimal(4875),
+      totalAmount: new Decimal(69875),
+      platformFleetOwnerCommissionRatePercent: new Decimal(15),
+      platformFleetOwnerCommissionAmount: new Decimal(7500),
+      fleetOwnerPayoutAmountNet: new Decimal(42500),
+    });
+
+    const result = await service.preview({
+      carId: "car-1",
+      bookingType: BookingType.DAY,
+      startDate: new Date("2026-05-01T00:00:00.000Z"),
+      endDate: new Date("2026-05-01T23:59:00.000Z"),
+      pickupTime: "9:00 AM",
+      addonIds: ["addon-wifi"],
+      requiresFullTank: false,
+      useCredits: 0,
+    });
+
+    expect(addonsService.resolveBookingAddons).toHaveBeenCalledWith(
+      ["addon-wifi"],
+      BookingType.DAY,
+      1,
+    );
+    expect(bookingCalculationService.calculateBookingCost).toHaveBeenCalledWith(
+      expect.objectContaining({ addons: resolvedAddons }),
+    );
+    expect(result.addons).toEqual([
+      {
+        id: "addon-wifi",
+        code: "WIFI_HOTSPOT",
+        name: "Wi-Fi Hotspot",
+        pricingUnit: "PER_BOOKING",
+        unitPrice: 10000,
+        quantity: 1,
+        totalPrice: 10000,
+      },
+    ]);
+    expect(result.addonTotal).toBe(10000);
   });
 });

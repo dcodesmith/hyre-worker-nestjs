@@ -106,7 +106,7 @@ export class CreateBookingNode {
           startDate: bookingInput.startDate,
           endDate: bookingInput.endDate,
           pickupTime: bookingInput.pickupTime,
-          includeSecurityDetail: bookingInput.includeSecurityDetail,
+          addonIds: bookingInput.addonIds,
           requiresFullTank: bookingInput.requiresFullTank,
           useCredits: 0,
         },

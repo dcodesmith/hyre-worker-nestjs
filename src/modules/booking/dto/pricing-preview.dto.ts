@@ -1,6 +1,6 @@
 import { BookingType } from "@prisma/client";
 import { z } from "zod";
-import { bookingCreditsSchema } from "./create-booking.dto";
+import { bookingAddonIdsSchema, bookingCreditsSchema } from "./create-booking.dto";
 import { pickupTimeRegex } from "./pickup-time.regex";
 
 export const pricingPreviewBodySchema = z
@@ -10,7 +10,7 @@ export const pricingPreviewBodySchema = z
     startDate: z.coerce.date("Invalid start date format"),
     endDate: z.coerce.date("Invalid end date format"),
     pickupTime: z.string().min(1, "Pickup time is required"),
-    includeSecurityDetail: z.boolean().default(false),
+    addonIds: bookingAddonIdsSchema,
     requiresFullTank: z.boolean().default(false),
     useCredits: bookingCreditsSchema,
   })
@@ -47,6 +47,16 @@ export interface PricingPreviewSegmentDto {
   promotion: PricingPreviewPromotionDto | null;
 }
 
+export interface PricingPreviewAddonDto {
+  id: string;
+  code: string;
+  name: string;
+  pricingUnit: "PER_BOOKING" | "PER_LEG";
+  unitPrice: number;
+  quantity: number;
+  totalPrice: number;
+}
+
 export interface BookingPricingPreviewResponseDto {
   currency: "NGN";
   numberOfLegs: number;
@@ -54,7 +64,8 @@ export interface BookingPricingPreviewResponseDto {
   segments: PricingPreviewSegmentDto[];
   baseTotal: number;
   compareAtBaseTotal: number;
-  securityDetailCost: number;
+  addons: PricingPreviewAddonDto[];
+  addonTotal: number;
   fuelUpgradeCost: number;
   platformFeeRatePercent: number;
   platformFeeAmount: number;

@@ -17,8 +17,6 @@ describe("RatesController", () => {
     getAllRates: ReturnType<typeof vi.fn>;
     createPlatformFeeRate: ReturnType<typeof vi.fn>;
     createVatRate: ReturnType<typeof vi.fn>;
-    createAddonRate: ReturnType<typeof vi.fn>;
-    endAddonRate: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -30,8 +28,6 @@ describe("RatesController", () => {
       getAllRates: vi.fn(),
       createPlatformFeeRate: vi.fn(),
       createVatRate: vi.fn(),
-      createAddonRate: vi.fn(),
-      endAddonRate: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -64,7 +60,6 @@ describe("RatesController", () => {
         platformCustomerServiceFeeRatePercent: new Decimal("10"),
         platformFleetOwnerCommissionRatePercent: new Decimal("5"),
         vatRatePercent: new Decimal("7.5"),
-        securityDetailRate: new Decimal("5000"),
       });
 
       const result = await controller.getPublicRates();
@@ -72,7 +67,6 @@ describe("RatesController", () => {
       expect(result).toEqual({
         platformCustomerServiceFeeRatePercent: 10,
         vatRatePercent: 7.5,
-        securityDetailRate: 5000,
       });
       expect(ratesService.getRates).toHaveBeenCalledOnce();
     });
@@ -80,7 +74,7 @@ describe("RatesController", () => {
 
   describe("getAllRates", () => {
     it("should delegate to admin service", async () => {
-      const mockResult = { platformFeeRates: [], taxRates: [], addonRates: [] };
+      const mockResult = { platformFeeRates: [], taxRates: [] };
       adminService.getAllRates.mockResolvedValue(mockResult);
 
       const result = await controller.getAllRates();
@@ -117,35 +111,6 @@ describe("RatesController", () => {
 
       expect(result).toEqual(mockResult);
       expect(adminService.createVatRate).toHaveBeenCalledWith(dto);
-    });
-  });
-
-  describe("createAddonRate", () => {
-    it("should delegate to admin service with dto", async () => {
-      const dto = {
-        addonType: "SECURITY_DETAIL" as const,
-        rateAmount: 5000,
-        effectiveSince: new Date(),
-      };
-      const mockResult = { id: "addon-1", ...dto };
-      adminService.createAddonRate.mockResolvedValue(mockResult);
-
-      const result = await controller.createAddonRate(dto);
-
-      expect(result).toEqual(mockResult);
-      expect(adminService.createAddonRate).toHaveBeenCalledWith(dto);
-    });
-  });
-
-  describe("endAddonRate", () => {
-    it("should delegate to admin service with rate id", async () => {
-      const mockResult = { id: "addon-1", effectiveUntil: new Date() };
-      adminService.endAddonRate.mockResolvedValue(mockResult);
-
-      const result = await controller.endAddonRate("addon-1");
-
-      expect(result).toEqual(mockResult);
-      expect(adminService.endAddonRate).toHaveBeenCalledWith("addon-1");
     });
   });
 });

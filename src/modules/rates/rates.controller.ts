@@ -1,15 +1,12 @@
-import { Controller, Get, HttpCode, HttpStatus, Patch, Post, UseGuards } from "@nestjs/common";
-import { ZodBody, ZodParam } from "../../common/decorators/zod-validation.decorator";
+import { Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { ADMIN } from "../auth/auth.const";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import {
-  addonRateIdParamSchema,
-  type CreateAddonRateDto,
   type CreatePlatformFeeDto,
   type CreateVatRateDto,
-  createAddonRateSchema,
   createPlatformFeeSchema,
   createVatRateSchema,
 } from "./dto/rates-admin.dto";
@@ -29,7 +26,6 @@ export class RatesController {
     return {
       platformCustomerServiceFeeRatePercent: rates.platformCustomerServiceFeeRatePercent.toNumber(),
       vatRatePercent: rates.vatRatePercent.toNumber(),
-      securityDetailRate: rates.securityDetailRate.toNumber(),
     };
   }
 
@@ -54,20 +50,5 @@ export class RatesController {
   @Roles(ADMIN)
   async createVatRate(@ZodBody(createVatRateSchema) dto: CreateVatRateDto) {
     return this.ratesAdminService.createVatRate(dto);
-  }
-
-  @Post("addon")
-  @UseGuards(SessionGuard, RoleGuard)
-  @Roles(ADMIN)
-  @HttpCode(HttpStatus.CREATED)
-  async createAddonRate(@ZodBody(createAddonRateSchema) dto: CreateAddonRateDto) {
-    return this.ratesAdminService.createAddonRate(dto);
-  }
-
-  @Patch("addon/:addonRateId/end")
-  @UseGuards(SessionGuard, RoleGuard)
-  @Roles(ADMIN)
-  async endAddonRate(@ZodParam("addonRateId", addonRateIdParamSchema) addonRateId: string) {
-    return this.ratesAdminService.endAddonRate(addonRateId);
   }
 }

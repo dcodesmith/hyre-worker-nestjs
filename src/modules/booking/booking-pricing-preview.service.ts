@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
+import { AddonsService } from "../addons/addons.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import type { BookingFinancials, LegPrice } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
@@ -24,6 +25,7 @@ type MutableSegment = Omit<PricingPreviewSegmentDto, "promotion"> & {
 @Injectable()
 export class BookingPricingPreviewService {
   constructor(
+    private readonly addonsService: AddonsService,
     private readonly bookingPersistenceService: BookingPersistenceService,
     private readonly bookingLegService: BookingLegService,
     private readonly bookingCalculationService: BookingCalculationService,
@@ -44,7 +46,7 @@ export class BookingPricingPreviewService {
         startDate: input.startDate.toISOString(),
         endDate: input.endDate.toISOString(),
         pickupTime: input.pickupTime ?? null,
-        includeSecurityDetail: input.includeSecurityDetail,
+        addonIds: input.addonIds,
         requiresFullTank: input.requiresFullTank,
         useCredits: input.useCredits,
       },
@@ -77,12 +79,17 @@ export class BookingPricingPreviewService {
         pickupTime: input.pickupTime,
       }),
     );
+    const addons = await this.addonsService.resolveBookingAddons(
+      input.addonIds,
+      input.bookingType,
+      legs.length,
+    );
 
     const baseFinancials = await this.bookingCalculationService.calculateBookingCost({
       bookingType: input.bookingType,
       legs,
       car,
-      includeSecurityDetail: input.includeSecurityDetail,
+      addons,
       requiresFullTank: input.requiresFullTank,
       userCreditsBalance: new Decimal(0),
       creditsToUse: new Decimal(0),
@@ -106,7 +113,7 @@ export class BookingPricingPreviewService {
             bookingType: input.bookingType,
             legs,
             car,
-            includeSecurityDetail: input.includeSecurityDetail,
+            addons,
             requiresFullTank: input.requiresFullTank,
             userCreditsBalance: referralCreditBalance,
             creditsToUse: new Decimal(input.useCredits),
@@ -139,7 +146,7 @@ export class BookingPricingPreviewService {
       .div(100);
 
     const compareAtSubtotalBeforeDiscounts = financials.compareAtNetTotal
-      .add(financials.securityDetailCost)
+      .add(financials.addonTotal)
       .add(financials.fuelUpgradeCost)
       .add(compareAtPlatformFeeAmount);
 
@@ -159,7 +166,16 @@ export class BookingPricingPreviewService {
       segments,
       baseTotal: financials.netTotal.toNumber(),
       compareAtBaseTotal: financials.compareAtNetTotal.toNumber(),
-      securityDetailCost: financials.securityDetailCost.toNumber(),
+      addons: financials.addons.map((addon) => ({
+        id: addon.id,
+        code: addon.code,
+        name: addon.name,
+        pricingUnit: addon.pricingUnit,
+        unitPrice: addon.unitPrice.toNumber(),
+        quantity: addon.quantity,
+        totalPrice: addon.totalPrice.toNumber(),
+      })),
+      addonTotal: financials.addonTotal.toNumber(),
       fuelUpgradeCost: financials.fuelUpgradeCost.toNumber(),
       platformFeeRatePercent: financials.platformCustomerServiceFeeRatePercent.toNumber(),
       platformFeeAmount: financials.platformCustomerServiceFeeAmount.toNumber(),

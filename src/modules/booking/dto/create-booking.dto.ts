@@ -9,6 +9,13 @@ export const bookingCreditsSchema = z
   .max(99_999_999.99)
   .multipleOf(0.01)
   .default(0);
+export const bookingAddonIdsSchema = z
+  .array(z.cuid())
+  .max(10, "A booking cannot have more than 10 add-ons")
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "Add-on IDs must be unique",
+  })
+  .default([]);
 
 /**
  * Booking type enum values matching Prisma schema
@@ -19,25 +26,27 @@ export type BookingType = (typeof BOOKING_TYPES)[number];
 /**
  * Core booking fields shared between logged-in and guest bookings
  */
-const coreBookingFields = z.object({
-  carId: z.string().min(1, "Car ID is required"),
-  startDate: z.coerce.date("Invalid start date format"),
-  endDate: z.coerce.date("Invalid end date format"),
-  pickupAddress: z.string().min(1, "Pickup address is required"),
-  callbackUrl: callbackUrlSchema.optional(),
-  bookingType: z.enum(BOOKING_TYPES, {
-    message: "Booking type must be DAY, NIGHT, FULL_DAY, or AIRPORT_PICKUP",
-  }),
-  pickupTime: z.string().min(1, "Pickup time is required"),
-  flightNumber: z.string().optional(),
-  includeSecurityDetail: z.boolean().default(false),
-  requiresFullTank: z.boolean().default(false),
-  specialRequests: z.string().optional(),
-  useCredits: bookingCreditsSchema,
-  expectedTotalAmount: z
-    .string()
-    .regex(nonNegativeDecimalStringRegex, "Expected total amount must be a non-negative decimal"),
-});
+const coreBookingFields = z
+  .object({
+    carId: z.string().min(1, "Car ID is required"),
+    startDate: z.coerce.date("Invalid start date format"),
+    endDate: z.coerce.date("Invalid end date format"),
+    pickupAddress: z.string().min(1, "Pickup address is required"),
+    callbackUrl: callbackUrlSchema.optional(),
+    bookingType: z.enum(BOOKING_TYPES, {
+      message: "Booking type must be DAY, NIGHT, FULL_DAY, or AIRPORT_PICKUP",
+    }),
+    pickupTime: z.string().min(1, "Pickup time is required"),
+    flightNumber: z.string().optional(),
+    addonIds: bookingAddonIdsSchema,
+    requiresFullTank: z.boolean().default(false),
+    specialRequests: z.string().optional(),
+    useCredits: bookingCreditsSchema,
+    expectedTotalAmount: z
+      .string()
+      .regex(nonNegativeDecimalStringRegex, "Expected total amount must be a non-negative decimal"),
+  })
+  .strict();
 
 /**
  * Drop-off address schema (required when sameLocation is false)

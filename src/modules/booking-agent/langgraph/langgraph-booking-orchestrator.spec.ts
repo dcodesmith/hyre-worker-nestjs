@@ -40,6 +40,7 @@ describe("buildBookingInputFromDraft", () => {
 
     expect(input.bookingType).toBe("DAY");
     expect(input.pickupTime).toBe("10 AM");
+    expect(input.addonIds).toEqual([]);
     expect(normalizedStartDate.getHours()).toBe(10);
     expect(normalizedEndDate.getTime() - normalizedStartDate.getTime()).toBe(TWELVE_HOURS);
   });
@@ -58,6 +59,7 @@ describe("buildBookingInputFromDraft", () => {
     );
 
     expect(input.pickupTime).toBe("7:00 AM");
+    expect(input.addonIds).toEqual([]);
 
     expect(normalizedStartDate.getHours()).toBe(7);
     expect(normalizedEndDate.getHours()).toBe(19);

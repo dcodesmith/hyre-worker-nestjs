@@ -6,6 +6,7 @@ import type { ActivePromotion } from "../promotion/promotion.interface";
 import { PromotionService } from "../promotion/promotion.service";
 import { RatesService } from "../rates/rates.service";
 import { MAX_LEGS_FOR_FUEL_UPGRADE } from "./booking.const";
+import { BookingValidationException } from "./booking.error";
 import type { GeneratedLeg } from "./booking.interface";
 import type {
   BookingCalculationInput,
@@ -16,13 +17,14 @@ import type {
 } from "./booking-calculation.interface";
 
 const MINIMUM_PAYABLE_SUBTOTAL = new Decimal(1);
+const MAX_STORABLE_MONEY_AMOUNT = new Decimal("99999999.99");
 
 /**
  * Service for calculating booking financials.
  *
  * Handles the complete financial breakdown including:
  * - Leg pricing based on booking type (with per-leg promotion resolution)
- * - Add-ons (security detail, fuel upgrade)
+ * - Platform add-ons and the vehicle-specific fuel upgrade
  * - Platform fees
  * - Discounts (referral, credits)
  * - VAT
@@ -59,7 +61,7 @@ export class BookingCalculationService {
       bookingType,
       legs,
       car,
-      includeSecurityDetail,
+      addons,
       requiresFullTank,
       userCreditsBalance,
       creditsToUse,
@@ -78,13 +80,10 @@ export class BookingCalculationService {
     );
     const appliedPromotion = this.firstPromotion(legPrices, overlappingPromotions);
 
-    const securityDetailCost = includeSecurityDetail
-      ? rates.securityDetailRate.mul(numberOfLegs)
-      : new Decimal(0);
-
+    const addonTotal = addons.reduce((sum, addon) => sum.add(addon.totalPrice), new Decimal(0));
     const fuelUpgradeCost = this.calculateFuelUpgradeCost(car, requiresFullTank, numberOfLegs);
 
-    const netTotalWithAddons = netTotal.add(securityDetailCost).add(fuelUpgradeCost);
+    const netTotalWithAddons = netTotal.add(addonTotal).add(fuelUpgradeCost);
 
     const platformFeeBase = netTotal.add(fuelUpgradeCost);
     const platformCustomerServiceFeeRatePercent = rates.platformCustomerServiceFeeRatePercent;
@@ -116,17 +115,37 @@ export class BookingCalculationService {
 
     // Commission is calculated on netTotal only (the rental earnings the fleet owner receives).
     // Fuel upgrade is excluded because it goes to refueling, not the fleet owner.
-    // Security detail is excluded because it's a pass-through cost.
     const platformFleetOwnerCommissionRatePercent = rates.platformFleetOwnerCommissionRatePercent;
     const platformFleetOwnerCommissionAmount = netTotal
       .mul(platformFleetOwnerCommissionRatePercent)
       .div(100);
 
-    // Fleet owner gets: netTotal + securityDetail - commission
-    // (fuel upgrade goes to refueling, not fleet owner; security is pass-through)
+    const fleetOwnerAddonTotal = addons
+      .filter((addon) => addon.financialTreatment === "FLEET_OWNER")
+      .reduce((sum, addon) => sum.add(addon.totalPrice), new Decimal(0));
+
+    // Fuel upgrade and platform-fulfilled add-ons are excluded from fleet-owner payout.
     const fleetOwnerPayoutAmountNet = netTotal
-      .add(securityDetailCost)
+      .add(fleetOwnerAddonTotal)
       .sub(platformFleetOwnerCommissionAmount);
+
+    this.assertAmountsFitDatabase([
+      ...addons.map((addon) => addon.totalPrice),
+      netTotal,
+      compareAtNetTotal,
+      addonTotal,
+      fuelUpgradeCost,
+      netTotalWithAddons,
+      platformCustomerServiceFeeAmount,
+      subtotalBeforeDiscounts,
+      effectiveReferralDiscount,
+      effectiveCredits,
+      subtotalAfterDiscounts,
+      vatAmount,
+      totalAmount,
+      platformFleetOwnerCommissionAmount,
+      fleetOwnerPayoutAmountNet,
+    ]);
 
     return {
       legPrices,
@@ -135,7 +154,8 @@ export class BookingCalculationService {
       compareAtNetTotal,
       appliedPromotion,
 
-      securityDetailCost,
+      addons,
+      addonTotal,
       fuelUpgradeCost,
       netTotalWithAddons,
 
@@ -157,6 +177,21 @@ export class BookingCalculationService {
       platformFleetOwnerCommissionAmount,
       fleetOwnerPayoutAmountNet,
     };
+  }
+
+  private assertAmountsFitDatabase(amounts: Decimal[]): void {
+    if (amounts.some((amount) => amount.gt(MAX_STORABLE_MONEY_AMOUNT))) {
+      throw new BookingValidationException(
+        [
+          {
+            field: "booking",
+            code: "AMOUNT_TOO_LARGE",
+            message: "The selected booking exceeds the maximum supported amount",
+          },
+        ],
+        "The selected booking exceeds the maximum supported amount",
+      );
+    }
   }
 
   /**

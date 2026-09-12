@@ -51,7 +51,7 @@ export function buildBookingInputFromDraft(
       bookingType,
       pickupTime: normalizePickupTimeTo12Hour(pickupTime),
       flightNumber: draft.flightNumber,
-      includeSecurityDetail: false,
+      addonIds: [],
       requiresFullTank: false,
       useCredits: 0,
       // Placeholder required by CreateBookingInput. CreateBookingNode replaces it

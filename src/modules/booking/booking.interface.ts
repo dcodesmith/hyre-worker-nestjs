@@ -109,6 +109,14 @@ export interface GuestBookingDetailsResponse {
   totalAmount: number;
   currency: "NGN";
   accessExpiresAt: string;
+  addons: Array<{
+    code: string;
+    name: string;
+    pricingUnit: "PER_BOOKING" | "PER_LEG";
+    unitPrice: number;
+    quantity: number;
+    totalPrice: number;
+  }>;
   car: {
     make: string;
     model: string;

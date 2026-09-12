@@ -32,6 +32,29 @@ function getQueryText(query: unknown): string {
   return String(query);
 }
 
+const bookingAddonProjection = {
+  orderBy: { name: "asc" as const },
+  select: {
+    code: true,
+    name: true,
+    pricingUnit: true,
+    unitPrice: true,
+    quantity: true,
+    totalPrice: true,
+  },
+};
+
+const selectedAddons = [
+  {
+    code: "WIFI_HOTSPOT",
+    name: "Wi-Fi Hotspot",
+    pricingUnit: "PER_BOOKING" as const,
+    unitPrice: 10000,
+    quantity: 1,
+    totalPrice: 10000,
+  },
+];
+
 describe("BookingUpdateService", () => {
   let service: BookingUpdateService;
 
@@ -511,6 +534,41 @@ describe("BookingUpdateService", () => {
     });
   });
 
+  it("includes selected add-ons in the update response projection", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-1",
+      userId: "user-1",
+      carId: "car-1",
+      type: "DAY",
+      status: BookingStatus.CONFIRMED,
+      startDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 36 * 60 * 60 * 1000),
+      pickupLocation: "Old pickup",
+      returnLocation: "Old return",
+    });
+    databaseServiceMock.booking.findUniqueOrThrow.mockResolvedValueOnce({
+      id: "booking-1",
+      addons: selectedAddons,
+    });
+
+    const result = await service.updateBooking("booking-1", "user-1", {
+      pickupAddress: "New pickup",
+    });
+
+    expect(databaseServiceMock.booking.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      include: expect.objectContaining({ addons: bookingAddonProjection }),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: "booking-1",
+        addons: selectedAddons,
+        canEdit: true,
+        canCancel: true,
+      }),
+    );
+  });
+
   describe("assignChauffeur", () => {
     const bookingWindow = {
       startDate: new Date("2026-09-20T08:00:00.000Z"),
@@ -532,6 +590,7 @@ describe("BookingUpdateService", () => {
             id: "booking-1",
             chauffeurId: "chauffeur-1",
             status: BookingStatus.CONFIRMED,
+            addons: selectedAddons,
           }),
         },
         user: {
@@ -553,6 +612,7 @@ describe("BookingUpdateService", () => {
         id: "booking-1",
         chauffeurId: "chauffeur-1",
         status: BookingStatus.CONFIRMED,
+        addons: selectedAddons,
       });
       expect(tx.booking.findFirst).toHaveBeenCalledWith({
         where: {
@@ -598,11 +658,10 @@ describe("BookingUpdateService", () => {
           data: { chauffeurId: "chauffeur-1" },
         }),
       );
-      expect(tx.booking.findUniqueOrThrow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "booking-1" },
-        }),
-      );
+      expect(tx.booking.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { id: "booking-1" },
+        include: expect.objectContaining({ addons: bookingAddonProjection }),
+      });
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(notificationOutboxServiceMock.create).toHaveBeenCalledWith(
         chauffeurAssignedHandlerMock,

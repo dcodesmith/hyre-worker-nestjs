@@ -11,6 +11,7 @@ export async function resetAndSeedDb() {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SEED_LOCK_KEY});`;
 
       await tx.booking.deleteMany();
+      await tx.addon.deleteMany();
       await tx.car.deleteMany();
       await tx.user.deleteMany();
 

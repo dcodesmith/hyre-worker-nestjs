@@ -11,8 +11,6 @@ export interface PlatformRates {
   platformFleetOwnerCommissionRatePercent: Decimal;
   /** VAT rate applied to bookings (percentage) */
   vatRatePercent: Decimal;
-  /** Security detail addon rate (flat amount per leg) */
-  securityDetailRate: Decimal;
 }
 
 export interface EffectiveWindowRate {

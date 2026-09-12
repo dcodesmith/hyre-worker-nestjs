@@ -243,6 +243,57 @@ describe("BookingReadService", () => {
     );
   });
 
+  it("serializes add-on snapshots and loads them ordered by name", async () => {
+    const booking = {
+      id: "booking-123",
+      userId: "user-1",
+      status: "CONFIRMED",
+      totalAmount: { toNumber: () => 12000 },
+      addons: [
+        {
+          code: "WIFI_HOTSPOT",
+          name: "Wi-Fi Hotspot",
+          pricingUnit: "PER_BOOKING",
+          unitPrice: { toNumber: () => 10000 },
+          quantity: 1,
+          totalPrice: { toNumber: () => 10000 },
+        },
+      ],
+      legs: [{ id: "leg-1", extensions: [] }],
+    };
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce(booking);
+
+    const result = await service.getBookingById("booking-123", customerSessionUser);
+
+    expect(result.addons).toEqual([
+      {
+        code: "WIFI_HOTSPOT",
+        name: "Wi-Fi Hotspot",
+        pricingUnit: "PER_BOOKING",
+        unitPrice: 10000,
+        quantity: 1,
+        totalPrice: 10000,
+      },
+    ]);
+    expect(databaseServiceMock.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          addons: {
+            orderBy: { name: "asc" },
+            select: {
+              code: true,
+              name: true,
+              pricingUnit: true,
+              unitPrice: true,
+              quantity: true,
+              totalPrice: true,
+            },
+          },
+        }),
+      }),
+    );
+  });
+
   it("returns booking details for the fleet owner that owns the booked car", async () => {
     const booking = {
       id: "booking-123",

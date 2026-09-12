@@ -29,6 +29,17 @@ export class BookingReadService {
     user: true,
     chauffeur: true,
     flight: true,
+    addons: {
+      orderBy: { name: "asc" },
+      select: {
+        code: true,
+        name: true,
+        pricingUnit: true,
+        unitPrice: true,
+        quantity: true,
+        totalPrice: true,
+      },
+    },
     review: {
       include: {
         user: {

@@ -13,7 +13,6 @@ describe("RatesService", () => {
   let databaseService: {
     platformFeeRate: { findMany: ReturnType<typeof vi.fn> };
     taxRate: { findFirst: ReturnType<typeof vi.fn> };
-    addonRate: { findFirst: ReturnType<typeof vi.fn> };
   };
 
   const mockPlatformRates = [
@@ -41,19 +40,10 @@ describe("RatesService", () => {
     description: "Nigerian VAT",
   };
 
-  const mockSecurityDetailRate = {
-    id: "addon-1",
-    addonType: "SECURITY_DETAIL",
-    rateAmount: new Decimal("5000.00"),
-    effectiveSince: new Date("2024-01-01"),
-    effectiveUntil: null,
-  };
-
   beforeEach(async () => {
     databaseService = {
       platformFeeRate: { findMany: vi.fn() },
       taxRate: { findFirst: vi.fn() },
-      addonRate: { findFirst: vi.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -68,7 +58,6 @@ describe("RatesService", () => {
     // Reset mocks to default successful responses
     databaseService.platformFeeRate.findMany.mockResolvedValue(mockPlatformRates);
     databaseService.taxRate.findFirst.mockResolvedValue(mockVatRate);
-    databaseService.addonRate.findFirst.mockResolvedValue(mockSecurityDetailRate);
   });
   describe("getRates", () => {
     it("should fetch and return all platform rates", async () => {
@@ -78,12 +67,10 @@ describe("RatesService", () => {
         platformCustomerServiceFeeRatePercent: new Decimal("10.00"),
         platformFleetOwnerCommissionRatePercent: new Decimal("5.00"),
         vatRatePercent: new Decimal("7.50"),
-        securityDetailRate: new Decimal("5000.00"),
       });
 
       expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
       expect(databaseService.taxRate.findFirst).toHaveBeenCalledTimes(1);
-      expect(databaseService.addonRate.findFirst).toHaveBeenCalledTimes(1);
     });
 
     it("should cache rates and return cached data on subsequent calls", async () => {
@@ -96,7 +83,6 @@ describe("RatesService", () => {
       expect(rates1).toEqual(rates2);
       expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
       expect(databaseService.taxRate.findFirst).toHaveBeenCalledTimes(1);
-      expect(databaseService.addonRate.findFirst).toHaveBeenCalledTimes(1);
     });
 
     it("should identify transaction-scoped reads as uncached", async () => {
@@ -106,16 +92,13 @@ describe("RatesService", () => {
       const transactionClient = {
         platformFeeRate: { findMany: vi.fn().mockResolvedValue(mockPlatformRates) },
         taxRate: { findFirst: vi.fn().mockResolvedValue(mockVatRate) },
-        addonRate: { findFirst: vi.fn().mockResolvedValue(mockSecurityDetailRate) },
       };
       await service.getRates(transactionClient as unknown as Prisma.TransactionClient);
 
       expect(transactionClient.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
       expect(transactionClient.taxRate.findFirst).toHaveBeenCalledTimes(1);
-      expect(transactionClient.addonRate.findFirst).toHaveBeenCalledTimes(1);
       expect(databaseService.platformFeeRate.findMany).not.toHaveBeenCalled();
       expect(databaseService.taxRate.findFirst).not.toHaveBeenCalled();
-      expect(databaseService.addonRate.findFirst).not.toHaveBeenCalled();
       expect(logger.debug).toHaveBeenCalledWith(
         expect.any(Object),
         "Rates fetched without caching",
@@ -144,12 +127,6 @@ describe("RatesService", () => {
       databaseService.taxRate.findFirst.mockResolvedValue(null);
 
       await expect(service.getRates()).rejects.toThrow("No active VAT rate found");
-    });
-
-    it("should throw error when security detail rate is not found", async () => {
-      databaseService.addonRate.findFirst.mockResolvedValue(null);
-
-      await expect(service.getRates()).rejects.toThrow("No active security detail rate found");
     });
 
     it("should query with correct effective date filters", async () => {
