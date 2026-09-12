@@ -8,7 +8,11 @@ import {
 } from "../../../shared/booking-time-window.helper";
 import { calculateLegCount } from "../../booking/booking.helper";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
-import { LANGGRAPH_BUTTON_ID, LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
+import {
+  LANGGRAPH_ABUSE_RESPONSE,
+  LANGGRAPH_BUTTON_ID,
+  LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./langgraph.const";
 import { LangGraphResponseFailedException } from "./langgraph.error";
 import type {
   AgentResponse,
@@ -118,6 +122,7 @@ export class LangGraphResponderService {
     } = state;
 
     return (
+      this.buildAbuseResponse(extraction?.intent) ??
       this.buildResetResponse(extraction?.intent) ??
       this.buildGreetingErrorResponse(stage, availableOptions, error) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
@@ -125,6 +130,13 @@ export class LangGraphResponderService {
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
       this.buildAwaitingPaymentResponse(stage, paymentLink, selectedOption, draft)
     );
+  }
+
+  private buildAbuseResponse(intent?: string): AgentResponse | null {
+    if (intent === "abuse") {
+      return { text: LANGGRAPH_ABUSE_RESPONSE };
+    }
+    return null;
   }
 
   private buildResetResponse(intent?: string): AgentResponse | null {

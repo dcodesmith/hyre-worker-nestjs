@@ -347,6 +347,18 @@ describe("LangGraphResponderService", () => {
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 
+    it("returns a fixed refusal for abuse without calling Claude", async () => {
+      const state = buildState({
+        stage: "collecting",
+        extraction: { intent: "abuse", draftPatch: {}, confidence: 0.99 },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("keep this chat respectful");
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("prepends availability fallback message when presenting refreshed options", async () => {
       const options = [buildVehicleOption({ id: "2", make: "Lexus", model: "LX570" })];
 

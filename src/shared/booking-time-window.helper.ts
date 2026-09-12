@@ -51,6 +51,51 @@ export function getDefaultPickupTime(bookingType: BookingType): string {
   }
 }
 
+/** Convert extractor 24h times to the H[:MM] AM/PM format public booking/search DTOs require. */
+export function toApiPickupTime(pickupTime: string): string {
+  const trimmed = pickupTime.trim();
+  if (API_PICKUP_TIME_PATTERN.test(trimmed)) {
+    return trimmed;
+  }
+
+  const parsed = parse24HourTime(trimmed);
+  if (!parsed) {
+    return trimmed;
+  }
+
+  return to12HourTime(parsed.hours24, parsed.minutes);
+}
+
+const API_PICKUP_TIME_PATTERN = /^(1[0-2]|[1-9])(:[0-5]\d)?\s?(AM|PM)$/i;
+
+function parse24HourTime(value: string): { hours24: number; minutes: number } | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const hours24 = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (hours24 < 0 || hours24 > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return { hours24, minutes };
+}
+
+function to12HourTime(hours24: number, minutes: number): string {
+  let hours12 = hours24;
+  const period = hours24 >= 12 ? "PM" : "AM";
+  if (hours12 === 0) {
+    hours12 = 12;
+  } else if (hours12 > 12) {
+    hours12 -= 12;
+  }
+
+  const minuteStr = minutes > 0 ? `:${minutes.toString().padStart(2, "0")}` : "";
+  return `${hours12}${minuteStr} ${period}`;
+}
+
 function parseAndApplyPickupTime(date: Date, pickupTime: string): void {
   const time24Match = /^(\d{1,2}):(\d{2})$/.exec(pickupTime);
   if (time24Match) {

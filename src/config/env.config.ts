@@ -197,6 +197,8 @@ export const envSchema = z
     TWILIO_FLIGHT_OPERATIONAL_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_PAYOUT_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_REFUND_SUCCEEDED_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_VEHICLE_CARD_CONTENT_SID: optionalTwilioContentSidSchema,
+    TWILIO_CHECKOUT_LINK_CONTENT_SID: optionalTwilioContentSidSchema,
 
     FLUTTERWAVE_SECRET_KEY: z.string().min(1, "FLUTTERWAVE_SECRET_KEY is required"),
     FLUTTERWAVE_PUBLIC_KEY: z.string().min(1, "FLUTTERWAVE_PUBLIC_KEY is required"),
@@ -278,6 +280,8 @@ export const envSchema = z
 
     // LangGraph Agent configuration
     ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
+    LANGGRAPH_EXTRACTION_MODEL: optionalNonEmptyString,
+    LANGGRAPH_RESPONSE_MODEL: optionalNonEmptyString,
     LANGGRAPH_HISTORY_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
     LANGGRAPH_HISTORY_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   })
