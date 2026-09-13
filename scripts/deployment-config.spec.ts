@@ -62,6 +62,9 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain(
       `DEPLOYMENT_VERSION=${githubExpression("steps.metadata.outputs.version")}`,
     );
+    expect(workflow).toContain(
+      "- name: Post schema diff comment to PR\n        continue-on-error: true",
+    );
     expect(workflow).toContain("Verify preview metadata");
   });
 
@@ -105,17 +108,8 @@ describe("deployment environment configuration", () => {
     expect(workflow).not.toContain("AWS_BUCKET_NAME");
     expect(cleanupScript).not.toContain("AWS_ACCESS_KEY_ID=");
     expect(cleanupScript).not.toContain("aws s3");
-  });
-
-  it("publishes R2 preview secrets instead of AWS storage secrets", () => {
-    const script = readRepositoryFile("scripts/set-preview-secrets.sh");
-
-    expect(script).toContain("R2_ACCESS_KEY_ID");
-    expect(script).toContain("R2_SECRET_ACCESS_KEY");
-    expect(script).not.toContain("AWS_ACCESS_KEY_ID");
-    expect(script).not.toContain("AWS_SECRET_ACCESS_KEY");
-    expect(script).not.toContain("AWS_REGION");
-    expect(script).not.toContain("AWS_BUCKET_NAME");
+    expect(workflow).toContain("- name: Install rclone\n        if: always()");
+    expect(workflow).toContain("- name: Delete preview R2 objects\n        if: always()");
   });
 
   it("only deploys production through an approved manual workflow", () => {

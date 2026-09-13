@@ -41,9 +41,11 @@ jobs:
           node-version: 22
 
       - name: Install rclone
+        if: always()
         run: sudo apt-get update && sudo apt-get install -y rclone
 
       - name: Delete preview R2 objects
+        if: always()
         env:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

@@ -995,6 +995,7 @@ async function readManifest(
   path: string,
   config: Config,
   database: PrismaClient,
+  includeDestinationHistory = false,
 ): Promise<ManifestEntry[]> {
   const contents = await readFile(path, "utf8");
   if (contents.length > 0 && !contents.endsWith("\n")) {
@@ -1051,7 +1052,11 @@ async function readManifest(
       }
       throw error;
     }
-    unique.set(`${entry.table}:${entry.id}`, entry);
+    const rowKey = `${entry.table}:${entry.id}`;
+    const key = includeDestinationHistory
+      ? `${rowKey}:${entry.destinationBucket}:${entry.destinationKey}`
+      : rowKey;
+    unique.set(key, entry);
   }
   return [...unique.values()];
 }
@@ -1076,6 +1081,11 @@ async function relocate(
         summary.processed += 1;
         continue;
       }
+      const relocatedEntry = {
+        ...entry,
+        destinationKey: nextKey,
+        destinationValue: nextValue,
+      };
 
       const body = await fetchObject(
         config.destinationClient,
@@ -1117,13 +1127,10 @@ async function relocate(
       if (changed === 0) {
         const current = await currentValue(database, entry);
         if (current !== nextValue) throw new MigrationItemError("ConcurrentRowChange");
+        await appendManifest(config.manifestPath, relocatedEntry);
         summary.skipped += 1;
       } else {
-        await appendManifest(config.manifestPath, {
-          ...entry,
-          destinationKey: nextKey,
-          destinationValue: nextValue,
-        });
+        await appendManifest(config.manifestPath, relocatedEntry);
         summary.changed += 1;
       }
       summary.processed += 1;
@@ -1187,23 +1194,35 @@ async function cleanupR2(
   entries: ManifestEntry[],
 ): Promise<Summary> {
   const summary = emptySummary(entries.length);
-  for (const [index, entry] of entries.entries()) {
+  const groups = new Map<string, ManifestEntry[]>();
+  for (const entry of entries) {
+    const key = `${entry.destinationBucket}:${entry.destinationKey}`;
+    const group = groups.get(key) ?? [];
+    group.push(entry);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
     try {
-      if ((await currentValue(database, entry)) === entry.destinationValue) {
-        summary.skipped += 1;
+      const referenced = (
+        await Promise.all(group.map((entry) => currentValue(database, entry)))
+      ).some((value, index) => value === group[index]?.destinationValue);
+      if (referenced) {
+        summary.skipped += group.length;
       } else {
+        const destination = group[0];
+        if (!destination) continue;
         await config.destinationClient.send(
           new DeleteObjectCommand({
-            Bucket: entry.destinationBucket,
-            Key: entry.destinationKey,
+            Bucket: destination.destinationBucket,
+            Key: destination.destinationKey,
           }),
         );
         summary.changed += 1;
+        summary.skipped += group.length - 1;
       }
-      summary.processed += 1;
+      summary.processed += group.length;
     } catch (error) {
-      summary.failed += 1;
-      console.error(`${entry.table} item ${index + 1} failed (${errorName(error)}).`);
+      recordGroupOutcome(group, summary, error);
     }
   }
   return summary;
@@ -1370,7 +1389,9 @@ async function main(): Promise<void> {
     } else {
       const status = await inspectManifestFile(config.manifestPath, false);
       const entries =
-        status === "empty" ? [] : await readManifest(config.manifestPath, config, database);
+        status === "empty"
+          ? []
+          : await readManifest(config.manifestPath, config, database, mode === "cleanup-r2");
       summary =
         mode === "rollback"
           ? await rollback(database, config, entries)

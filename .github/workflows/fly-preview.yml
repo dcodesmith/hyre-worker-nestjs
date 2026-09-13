@@ -162,6 +162,7 @@ jobs:
           expires_at: ${{ env.EXPIRES_AT }}
 
       - name: Post schema diff comment to PR
+        continue-on-error: true
         uses: neondatabase/schema-diff-action@80cfa8521628e890015b60f5291a7738926617dc
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}

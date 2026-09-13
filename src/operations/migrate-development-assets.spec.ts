@@ -790,6 +790,69 @@ describe("migrate-development-assets", () => {
     expect(summary()).toMatchObject({ changed: 1, skipped: 1, failed: 0 });
   });
 
+  it("cleans up superseded destinations after relocation", async () => {
+    const body = pdfBuffer();
+    const oldKey = "r2-migration/documents/doc-1.pdf";
+    const liveKey = "owner/car/documents/file.pdf";
+    put(DOCS_BUCKET, oldKey, body);
+    put(DOCS_BUCKET, liveKey, body);
+    const path = manifestPath();
+    await writeSecureManifest(path, [
+      r2ImagesManifestEntry({ ...destinationProof(body) }),
+      r2ImagesManifestEntry({
+        destinationKey: liveKey,
+        destinationValue: liveKey,
+        ...destinationProof(body),
+      }),
+    ]);
+    db.documentApproval.findUnique.mockResolvedValue({
+      documentUrl: liveKey,
+      userId: null,
+      carId: "car",
+      car: { ownerId: "owner" },
+    });
+
+    await runCli(["--cleanup-r2", `--manifest=${path}`]);
+
+    expect(s3.objects.has(s3.id(DOCS_BUCKET, oldKey))).toBe(false);
+    expect(s3.objects.has(s3.id(DOCS_BUCKET, liveKey))).toBe(true);
+    expect(summary()).toMatchObject({ changed: 1, skipped: 1, failed: 0, processed: 2 });
+  });
+
+  it("keeps a shared destination while any manifest row still references it", async () => {
+    const body = pdfBuffer();
+    const liveKey = "owner/car/documents/file.pdf";
+    put(DOCS_BUCKET, liveKey, body);
+    const path = manifestPath();
+    await writeSecureManifest(path, [
+      r2ImagesManifestEntry({
+        destinationKey: liveKey,
+        destinationValue: liveKey,
+        ...destinationProof(body),
+      }),
+      r2ImagesManifestEntry({
+        id: "doc-2",
+        destinationKey: liveKey,
+        destinationValue: liveKey,
+        ...destinationProof(body),
+      }),
+    ]);
+    db.documentApproval.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+      Promise.resolve({
+        documentUrl: where.id === "doc-1" ? publicUrl("owner/car/documents/file.pdf") : liveKey,
+        userId: null,
+        carId: "car",
+        car: { ownerId: "owner" },
+      }),
+    );
+
+    await runCli(["--cleanup-r2", `--manifest=${path}`]);
+
+    expect(s3.objects.has(s3.id(DOCS_BUCKET, liveKey))).toBe(true);
+    expect(s3.calls.some((call) => call.command === "DeleteObjectCommand")).toBe(false);
+    expect(summary()).toMatchObject({ changed: 0, skipped: 2, failed: 0, processed: 2 });
+  });
+
   it("writes depth-2 vehicle images to the live owner/car/images key", async () => {
     const key = "owner/car-1700000000000-photo.jpeg";
     put(SOURCE_BUCKET, key, await raster("jpeg"));
@@ -1212,6 +1275,35 @@ describe("migrate-development-assets", () => {
       data: { documentUrl: "owner/car/documents/file.pdf" },
     });
     expect(summary()).toMatchObject({ mode: "relocate", changed: 1, failed: 0, processed: 1 });
+  });
+
+  it("repairs the manifest when relocation already changed the database", async () => {
+    const body = pdfBuffer();
+    const path = manifestPath();
+    const liveKey = "owner/car/documents/file.pdf";
+    put(DOCS_BUCKET, "r2-migration/documents/doc-1.pdf", body, "application/pdf");
+    put(DOCS_BUCKET, liveKey, body, "application/pdf");
+    await writeSecureManifest(path, [r2ImagesManifestEntry({ ...destinationProof(body) })]);
+    db.documentApproval.findUnique.mockResolvedValue({
+      documentUrl: liveKey,
+      userId: null,
+      carId: "car",
+      car: { ownerId: "owner" },
+    });
+    db.documentApproval.updateMany.mockResolvedValue({ count: 0 });
+
+    await runCli(["--relocate", `--manifest=${path}`]);
+
+    const entries = (await readFile(path, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries).toHaveLength(2);
+    expect(entries.at(-1)).toMatchObject({
+      destinationKey: liveKey,
+      destinationValue: liveKey,
+    });
+    expect(summary()).toMatchObject({ changed: 0, skipped: 1, failed: 0, processed: 1 });
   });
 
   it("fails relocate when the recorded destination digest does not match R2", async () => {
