@@ -71,7 +71,7 @@ describe("deployment environment configuration", () => {
   it("deploys Fly previews onto isolated R2 prefixes without AWS storage secrets", () => {
     const workflow = readRepositoryFile(".github/workflows/fly-preview.yml");
 
-    expect(workflow).toContain("STORAGE_DRIVER: r2");
+    expect(workflow).not.toContain("STORAGE_DRIVER");
     expect(workflow).toContain(
       `STORAGE_WRITE_PREFIX: previews/pr-${githubExpression("github.event.number")}`,
     );

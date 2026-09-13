@@ -24,38 +24,20 @@ function stripTrailingSlashes(value: string): string {
 export function resolveStorageSettings(configService: ConfigService<EnvConfig>): StorageSettings {
   const get = <K extends keyof EnvConfig>(key: K) =>
     configService.get(key, { infer: true }) as NonNullable<EnvConfig[K]>;
-  const driver = get("STORAGE_DRIVER") ?? "s3";
 
-  if (driver === "r2") {
-    return {
-      clientConfig: {
-        region: "auto",
-        endpoint: `https://${get("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
-        credentials: {
-          accessKeyId: get("R2_ACCESS_KEY_ID"),
-          secretAccessKey: get("R2_SECRET_ACCESS_KEY"),
-        },
-      },
-      bucketName: get("R2_IMAGES_BUCKET_NAME"),
-      docsBucketName: get("R2_DOCS_BUCKET_NAME"),
-      publicObjectUrlPrefix: stripTrailingSlashes(get("ASSET_PUBLIC_BASE_URL")),
-      writePrefix: get("STORAGE_WRITE_PREFIX"),
-    };
-  }
-
-  const region = get("AWS_REGION");
-  const bucketName = get("AWS_BUCKET_NAME");
   return {
     clientConfig: {
-      region,
+      region: "auto",
+      endpoint: `https://${get("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
       credentials: {
-        accessKeyId: get("AWS_ACCESS_KEY_ID"),
-        secretAccessKey: get("AWS_SECRET_ACCESS_KEY"),
+        accessKeyId: get("R2_ACCESS_KEY_ID"),
+        secretAccessKey: get("R2_SECRET_ACCESS_KEY"),
       },
     },
-    bucketName,
-    docsBucketName: bucketName,
-    publicObjectUrlPrefix: `https://${bucketName}.s3.${region}.amazonaws.com`,
+    bucketName: get("R2_IMAGES_BUCKET_NAME"),
+    docsBucketName: get("R2_DOCS_BUCKET_NAME"),
+    publicObjectUrlPrefix: stripTrailingSlashes(get("ASSET_PUBLIC_BASE_URL")),
+    writePrefix: get("STORAGE_WRITE_PREFIX"),
   };
 }
 

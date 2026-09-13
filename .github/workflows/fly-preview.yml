@@ -18,7 +18,6 @@ env:
   APP_ENV: preview
   APP_NAME: Tripdly API Preview
   SENDER_NAME: Yomide
-  STORAGE_DRIVER: r2
   R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
   R2_IMAGES_BUCKET_NAME: hyre-assets-images-development
   R2_DOCS_BUCKET_NAME: hyre-assets-docs-development
@@ -463,7 +462,6 @@ jobs:
             AUTH_BASE_URL=${{ needs.setup.outputs.preview_url }}
             TRUSTED_ORIGINS=${{ needs.setup.outputs.preview_url }}
             SENDER_NAME=${{ env.SENDER_NAME }}
-            STORAGE_DRIVER=${{ env.STORAGE_DRIVER }}
             R2_ACCOUNT_ID=${{ env.R2_ACCOUNT_ID }}
             R2_ACCESS_KEY_ID=${{ env.R2_ACCESS_KEY_ID }}
             R2_SECRET_ACCESS_KEY=${{ env.R2_SECRET_ACCESS_KEY }}

@@ -60,29 +60,8 @@ function requireEnvKeys(
 }
 
 function validateStorageConfiguration(env: Record<string, unknown>, ctx: EnvIssueContext): void {
-  if (env.STORAGE_DRIVER === "r2") {
-    requireEnvKeys(
-      env,
-      ctx,
-      [
-        "R2_ACCOUNT_ID",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY",
-        "R2_IMAGES_BUCKET_NAME",
-        "R2_DOCS_BUCKET_NAME",
-        "ASSET_PUBLIC_BASE_URL",
-      ],
-      "when STORAGE_DRIVER=r2",
-    );
-    if (env.APP_ENV === "preview") {
-      requireEnvKeys(env, ctx, ["STORAGE_WRITE_PREFIX"], "for isolated R2 preview writes");
-    } else if (env.STORAGE_WRITE_PREFIX) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["STORAGE_WRITE_PREFIX"],
-        message: "STORAGE_WRITE_PREFIX is only allowed when APP_ENV=preview",
-      });
-    }
+  if (env.APP_ENV === "preview") {
+    requireEnvKeys(env, ctx, ["STORAGE_WRITE_PREFIX"], "for isolated R2 preview writes");
     return;
   }
 
@@ -90,15 +69,9 @@ function validateStorageConfiguration(env: Record<string, unknown>, ctx: EnvIssu
     ctx.addIssue({
       code: "custom",
       path: ["STORAGE_WRITE_PREFIX"],
-      message: "STORAGE_WRITE_PREFIX requires STORAGE_DRIVER=r2",
+      message: "STORAGE_WRITE_PREFIX is only allowed when APP_ENV=preview",
     });
   }
-  requireEnvKeys(
-    env,
-    ctx,
-    ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_BUCKET_NAME"],
-    "when STORAGE_DRIVER=s3",
-  );
 }
 
 function validateProductionConfiguration(env: Record<string, unknown>, ctx: EnvIssueContext): void {
@@ -273,20 +246,12 @@ export const envSchema = z
       ),
     SENDER_NAME: z.string().min(2, "SENDER_NAME is required"),
 
-    // Object storage (S3 today; set STORAGE_DRIVER=r2 to use Cloudflare R2)
-    STORAGE_DRIVER: z.preprocess(
-      (value) => (value === "" ? undefined : value),
-      z.enum(["s3", "r2"]).default("s3"),
-    ),
-    AWS_REGION: optionalNonEmptyString,
-    AWS_ACCESS_KEY_ID: optionalNonEmptyString,
-    AWS_SECRET_ACCESS_KEY: optionalNonEmptyString,
-    AWS_BUCKET_NAME: optionalNonEmptyString,
-    R2_ACCOUNT_ID: optionalNonEmptyString,
-    R2_ACCESS_KEY_ID: optionalNonEmptyString,
-    R2_SECRET_ACCESS_KEY: optionalNonEmptyString,
-    R2_IMAGES_BUCKET_NAME: optionalNonEmptyString,
-    R2_DOCS_BUCKET_NAME: optionalNonEmptyString,
+    // Cloudflare R2 object storage
+    R2_ACCOUNT_ID: z.string().min(1, "R2_ACCOUNT_ID is required"),
+    R2_ACCESS_KEY_ID: z.string().min(1, "R2_ACCESS_KEY_ID is required"),
+    R2_SECRET_ACCESS_KEY: z.string().min(1, "R2_SECRET_ACCESS_KEY is required"),
+    R2_IMAGES_BUCKET_NAME: z.string().min(1, "R2_IMAGES_BUCKET_NAME is required"),
+    R2_DOCS_BUCKET_NAME: z.string().min(1, "R2_DOCS_BUCKET_NAME is required"),
     STORAGE_WRITE_PREFIX: z.preprocess(
       (value) => (value === "" ? undefined : value),
       z
@@ -294,10 +259,7 @@ export const envSchema = z
         .regex(/^previews\/pr-[1-9][0-9]*$/, "STORAGE_WRITE_PREFIX must use previews/pr-<number>")
         .optional(),
     ),
-    ASSET_PUBLIC_BASE_URL: z.preprocess(
-      (value) => (value === "" ? undefined : value),
-      z.url("ASSET_PUBLIC_BASE_URL must be a valid URL").optional(),
-    ),
+    ASSET_PUBLIC_BASE_URL: z.url("ASSET_PUBLIC_BASE_URL must be a valid URL"),
 
     // LangGraph Agent configuration
     ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
