@@ -506,8 +506,8 @@ export class ChauffeurService {
       ) {
         throw new ChauffeurBiometricNotVerifiedException();
       }
-      const imageKey = `${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/selfie.jpg`;
-      const selfieObjectKey = await this.storageService.uploadBuffer(
+      const imageKey = `${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/selfie.webp`;
+      const { key: selfieObjectKey } = await this.storageService.uploadBuffer(
         processedSelfie,
         imageKey,
         "image/jpeg",
@@ -523,7 +523,7 @@ export class ChauffeurService {
           licenseNumber: input.driversLicenseNumber,
         });
       } catch (error) {
-        await this.storageService.deleteObjectByKey(imageKey).catch(() => undefined);
+        await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
         throw error;
       }
       return this.getOnboarding(verificationId);

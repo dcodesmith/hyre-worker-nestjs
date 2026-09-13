@@ -74,9 +74,25 @@ function validateStorageConfiguration(env: Record<string, unknown>, ctx: EnvIssu
       ],
       "when STORAGE_DRIVER=r2",
     );
+    if (env.APP_ENV === "preview") {
+      requireEnvKeys(env, ctx, ["STORAGE_WRITE_PREFIX"], "for isolated R2 preview writes");
+    } else if (env.STORAGE_WRITE_PREFIX) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["STORAGE_WRITE_PREFIX"],
+        message: "STORAGE_WRITE_PREFIX is only allowed when APP_ENV=preview",
+      });
+    }
     return;
   }
 
+  if (env.STORAGE_WRITE_PREFIX) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["STORAGE_WRITE_PREFIX"],
+      message: "STORAGE_WRITE_PREFIX requires STORAGE_DRIVER=r2",
+    });
+  }
   requireEnvKeys(
     env,
     ctx,
@@ -271,6 +287,13 @@ export const envSchema = z
     R2_SECRET_ACCESS_KEY: optionalNonEmptyString,
     R2_IMAGES_BUCKET_NAME: optionalNonEmptyString,
     R2_DOCS_BUCKET_NAME: optionalNonEmptyString,
+    STORAGE_WRITE_PREFIX: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z
+        .string()
+        .regex(/^previews\/pr-[1-9][0-9]*$/, "STORAGE_WRITE_PREFIX must use previews/pr-<number>")
+        .optional(),
+    ),
     ASSET_PUBLIC_BASE_URL: z.preprocess(
       (value) => (value === "" ? undefined : value),
       z.url("ASSET_PUBLIC_BASE_URL must be a valid URL").optional(),

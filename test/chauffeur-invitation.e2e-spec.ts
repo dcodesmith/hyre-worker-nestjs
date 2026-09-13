@@ -72,7 +72,19 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   }
 
   const storageService = {
-    uploadBuffer: vi.fn().mockResolvedValue("https://cdn.tripdly.test/chauffeur.jpg"),
+    uploadBuffer: vi
+      .fn()
+      .mockImplementation(async (_buffer: Buffer, key: string, contentType = "") => {
+        const canonicalKey = contentType.startsWith("image/")
+          ? `${key.replace(/\.[^./]+$/, "")}.webp`
+          : key;
+        return {
+          key: canonicalKey,
+          url: canonicalKey.includes("/documents/")
+            ? canonicalKey
+            : `https://cdn.tripdly.test/${canonicalKey}`,
+        };
+      }),
     deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
   };
   const premblyService = {
@@ -534,7 +546,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     expect(verification?.selfieObjectKey).not.toEqual(user?.image);
     expect(storageService.uploadBuffer).toHaveBeenCalledWith(
       expect.any(Buffer),
-      `${ownerId}/chauffeurs/${verification?.id}/documents/selfie.jpg`,
+      `${ownerId}/chauffeurs/${verification?.id}/documents/selfie.webp`,
       "image/jpeg",
     );
 

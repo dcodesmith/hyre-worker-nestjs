@@ -380,7 +380,12 @@ describe("AccountVerificationService", () => {
     storageService = {
       uploadBuffer: vi
         .fn()
-        .mockImplementation(async (_buffer: Buffer, key: string) => `https://cdn.test/${key}`),
+        .mockImplementation(async (_buffer: Buffer, key: string, contentType = "") => {
+          const canonicalKey = contentType.startsWith("image/")
+            ? `${key.replace(/\.[^./]+$/, "")}.webp`
+            : key;
+          return { key: `stored/${canonicalKey}`, url: `stored/${canonicalKey}` };
+        }),
       deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -679,6 +684,15 @@ describe("AccountVerificationService", () => {
         licence.buffer,
         expect.stringContaining("drivers_license"),
         "application/pdf",
+      );
+      const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
+        url: string;
+      };
+      expect(databaseService.documentApproval.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ documentUrl: stored.url }),
+          update: expect.objectContaining({ documentUrl: stored.url }),
+        }),
       );
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1196,8 +1210,16 @@ describe("AccountVerificationService", () => {
           },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(
-        expect.stringContaining("drivers_license"),
+      const requestedKey = storageService.uploadBuffer.mock.calls[0]?.[1] as string;
+      const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
+        key: string;
+        url: string;
+      };
+      expect(stored.key).not.toBe(requestedKey);
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(stored.key);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(requestedKey);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(
+        `https://cdn.test/${requestedKey}`,
       );
     });
 
@@ -2011,16 +2033,25 @@ describe("AccountVerificationService", () => {
         documents: { driversLicense: "PENDING" },
       });
 
-      const uploadedKey = storageService.uploadBuffer.mock.calls[0]?.[1] as string;
-      expect(uploadedKey).toMatch(
+      const requestedKey = storageService.uploadBuffer.mock.calls[0]?.[1] as string;
+      const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
+        key: string;
+        url: string;
+      };
+      expect(requestedKey).toMatch(
         new RegExp(
           `^${USER_ID}/${VERIFICATION_ID}/documents/drivers_license-[0-9a-f-]{36}-license\\.pdf$`,
         ),
       );
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-license-key");
-      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(
-        `https://cdn.test/${uploadedKey}`,
+      expect(databaseService.documentApproval.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ documentUrl: stored.url }),
+          update: expect.objectContaining({ documentUrl: stored.url }),
+        }),
       );
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-license-key");
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(requestedKey);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(stored.key);
     });
 
     it("rejects driving before payout is complete", async () => {
@@ -3053,10 +3084,13 @@ describe("AccountVerificationService", () => {
         }),
       );
       expect(databaseService.$transaction).toHaveBeenCalled();
+      const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
+        url: string;
+      };
       expect(databaseService.documentApproval.update).toHaveBeenCalledWith({
         where: expect.objectContaining({ status: DocumentStatus.REJECTED }),
         data: expect.objectContaining({
-          documentUrl: expect.any(String),
+          documentUrl: stored.url,
           status: DocumentStatus.PENDING,
           notes: null,
           approvedAt: null,
@@ -3114,9 +3148,12 @@ describe("AccountVerificationService", () => {
         AccountVerificationOperationFailedException,
       );
       expect(storageService.uploadBuffer).toHaveBeenCalled();
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(
-        expect.stringContaining("drivers_license"),
-      );
+      const requestedKey = storageService.uploadBuffer.mock.calls[0]?.[1] as string;
+      const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
+        key: string;
+      };
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(stored.key);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(requestedKey);
     });
 
     it("still returns the updated document when old object cleanup fails", async () => {

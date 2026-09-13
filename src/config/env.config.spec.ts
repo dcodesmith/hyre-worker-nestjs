@@ -215,6 +215,107 @@ describe("envSchema storage driver", () => {
       expect(result.data.ASSET_PUBLIC_BASE_URL).toBeUndefined();
     }
   });
+
+  it("accepts a safe preview write prefix for isolated R2 writes", () => {
+    const result = envSchema.safeParse({
+      ...r2Env,
+      APP_ENV: "preview",
+      STORAGE_WRITE_PREFIX: "previews/pr-185",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.STORAGE_WRITE_PREFIX).toBe("previews/pr-185");
+    }
+  });
+
+  it.each([
+    "previews/pr-0",
+    "previews/pr-01",
+    "previews/pr-1/",
+    "previews/pr-1/../x",
+    "../previews/pr-1",
+    "previews/../pr-1",
+    "previews/pr-1/extra",
+    "previews/PR-1",
+  ])("rejects unsafe or malformed write prefix %s", (prefix) => {
+    const result = envSchema.safeParse({
+      ...r2Env,
+      APP_ENV: "preview",
+      STORAGE_WRITE_PREFIX: prefix,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["STORAGE_WRITE_PREFIX"],
+            message: "STORAGE_WRITE_PREFIX must use previews/pr-<number>",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("requires a write prefix when APP_ENV is preview", () => {
+    const result = envSchema.safeParse({
+      ...r2Env,
+      APP_ENV: "preview",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["STORAGE_WRITE_PREFIX"],
+            message: "STORAGE_WRITE_PREFIX is required for isolated R2 preview writes",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects a write prefix outside preview", () => {
+    const result = envSchema.safeParse({
+      ...r2Env,
+      STORAGE_WRITE_PREFIX: "previews/pr-1",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["STORAGE_WRITE_PREFIX"],
+            message: "STORAGE_WRITE_PREFIX is only allowed when APP_ENV=preview",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects a write prefix when STORAGE_DRIVER is s3", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      APP_ENV: "preview",
+      STORAGE_WRITE_PREFIX: "previews/pr-1",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["STORAGE_WRITE_PREFIX"],
+            message: "STORAGE_WRITE_PREFIX requires STORAGE_DRIVER=r2",
+          }),
+        ]),
+      );
+    }
+  });
 });
 
 describe("envSchema APP_ENV", () => {

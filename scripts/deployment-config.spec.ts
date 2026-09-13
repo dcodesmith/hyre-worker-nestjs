@@ -65,6 +65,43 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain("Verify preview metadata");
   });
 
+  it("deploys Fly previews onto isolated R2 prefixes without AWS storage secrets", () => {
+    const workflow = readRepositoryFile(".github/workflows/fly-preview.yml");
+
+    expect(workflow).toContain("STORAGE_DRIVER: r2");
+    expect(workflow).toContain(
+      `STORAGE_WRITE_PREFIX: previews/pr-${githubExpression("github.event.number")}`,
+    );
+    expect(workflow).toContain("R2_IMAGES_BUCKET_NAME: hyre-assets-images-development");
+    expect(workflow).toContain("R2_DOCS_BUCKET_NAME: hyre-assets-docs-development");
+    expect(workflow).toContain(`R2_ACCESS_KEY_ID: ${githubExpression("secrets.R2_ACCESS_KEY_ID")}`);
+    expect(workflow).not.toContain("secrets.AWS_ACCESS_KEY_ID");
+    expect(workflow).not.toContain("secrets.AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("AWS_BUCKET_NAME");
+    expect(workflow).not.toContain(
+      `AWS_ACCESS_KEY_ID: ${githubExpression("secrets.AWS_ACCESS_KEY_ID")}`,
+    );
+  });
+
+  it("scopes preview R2 cleanup to the exact PR prefix in both buckets", () => {
+    const workflow = readRepositoryFile(".github/workflows/fly-preview-cleanup.yml");
+
+    expect(workflow).toContain(
+      `PREVIEW_PREFIX: previews/pr-${githubExpression("github.event.number")}/`,
+    );
+    expect(workflow).toContain("^previews/pr-[1-9][0-9]*/$");
+    expect(workflow).toContain("R2_IMAGES_BUCKET_NAME: hyre-assets-images-development");
+    expect(workflow).toContain("R2_DOCS_BUCKET_NAME: hyre-assets-docs-development");
+    expect(workflow).toContain(
+      ['aws s3 rm "s3://', "${", "bucket}/", "${", 'PREVIEW_PREFIX}"'].join(""),
+    );
+    expect(workflow).toContain("secrets.R2_ACCESS_KEY_ID");
+    expect(workflow).toContain("secrets.R2_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("secrets.AWS_ACCESS_KEY_ID");
+    expect(workflow).not.toContain("secrets.AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("AWS_BUCKET_NAME");
+  });
+
   it("only deploys production through an approved manual workflow", () => {
     const workflow = readRepositoryFile(".github/workflows/fly-production.yml");
 

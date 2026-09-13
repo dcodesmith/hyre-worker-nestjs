@@ -150,7 +150,8 @@ const selfie = {
   buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
 };
 
-const SELFIE_OBJECT_KEY = `${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.jpg`;
+const REQUESTED_SELFIE_KEY = `${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.webp`;
+const STORED_SELFIE_KEY = `stored/${REQUESTED_SELFIE_KEY}`;
 
 const eligibleLicense = {
   licenseNumber: "ABC12345",
@@ -234,7 +235,7 @@ describe("ChauffeurService", () => {
     };
     imageService = { processSelfie: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")) };
     storageService = {
-      uploadBuffer: vi.fn().mockResolvedValue(SELFIE_OBJECT_KEY),
+      uploadBuffer: vi.fn().mockResolvedValue({ key: STORED_SELFIE_KEY, url: STORED_SELFIE_KEY }),
       deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -1017,14 +1018,14 @@ describe("ChauffeurService", () => {
       expect(databaseService.user.create.mock.calls[0][0].data).not.toHaveProperty("image");
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         expect.any(Buffer),
-        SELFIE_OBJECT_KEY,
+        REQUESTED_SELFIE_KEY,
         "image/jpeg",
       );
       expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
         data: expect.objectContaining({
           chauffeurId: "new-user",
-          selfieObjectKey: SELFIE_OBJECT_KEY,
+          selfieObjectKey: STORED_SELFIE_KEY,
           status: ChauffeurVerificationStatus.APPROVED,
         }),
       });
@@ -1113,7 +1114,8 @@ describe("ChauffeurService", () => {
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_OBJECT_KEY);
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(REQUESTED_SELFIE_KEY);
       expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
         where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
         data: {
