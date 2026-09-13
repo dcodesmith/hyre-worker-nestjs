@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { mkdir, open, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, open, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   DeleteObjectCommand,
@@ -19,8 +20,12 @@ const EXPECTED_PUBLIC_BASE_URL = "https://pub-7f459f6039f54e9b896f12bc832985f5.r
 const EXPECTED_DATABASE_HOSTNAME = "ep-red-water-a53rrmcm-pooler.us-east-2.aws.neon.tech";
 const DEFAULT_MANIFEST = resolve("tmp/r2-development-assets.jsonl");
 const PDF_HEADER = Buffer.from("%PDF-");
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp"]);
+const DOCUMENT_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png", "webp"]);
+const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-type Mode = "apply" | "cleanup-r2" | "dry-run" | "rollback";
+type Mode = "apply" | "cleanup-public-sources" | "cleanup-r2" | "dry-run" | "rollback";
+const MODE_FLAGS = ["--apply", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const;
 type AssetTable = "DocumentApproval" | "VehicleImage";
 
 type Config = {
@@ -35,19 +40,36 @@ type Config = {
   destinationClient: S3Client;
 };
 
+const MANIFEST_VERSION = 3;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
 type AssetRecord = {
   table: AssetTable;
   id: string;
   sourceValue: string;
+  ownerId?: string | null;
+  carId?: string | null;
+  userId?: string | null;
 };
 
-type ManifestEntry = AssetRecord & {
-  version: 1;
-  sourceStore: "r2" | "s3";
+type BindingFields = {
+  ownerId: string | null;
+  carId: string | null;
+  userId: string | null;
+};
+
+type ManifestEntry = BindingFields & {
+  version: typeof MANIFEST_VERSION;
+  table: AssetTable;
+  id: string;
+  sourceValue: string;
+  sourceStore: "r2" | "r2-images" | "s3";
   sourceKey: string;
   destinationBucket: string;
   destinationKey: string;
   destinationValue: string;
+  destinationDigest: string;
+  destinationSize: number;
 };
 
 type Summary = {
@@ -81,25 +103,29 @@ function parseArguments(): { mode: Mode; manifestPath: string } {
   if (args.includes("--help")) {
     console.log(
       [
-        "Usage: pnpm assets:migrate:development [--apply|--rollback|--cleanup-r2]",
+        "Usage: pnpm assets:migrate:development [--apply|--rollback|--cleanup-r2|--cleanup-public-sources]",
         "       [--manifest=/path/to/manifest.jsonl]",
         "",
         "No mode flag performs a read-only dry run.",
-        "--apply uploads to R2 and conditionally rewrites legacy S3 rows.",
+        "Order: --apply, verify private destinations, then --cleanup-public-sources.",
+        "--apply uploads to R2 and conditionally rewrites legacy rows. Public image-bucket document sources are kept for rollback.",
         "--rollback restores DB values after confirming each source object still exists.",
+        "After --cleanup-public-sources, r2-images rollback fails closed and does not restore public URLs.",
         "--cleanup-r2 deletes only destination objects no longer referenced by their row.",
+        "--cleanup-public-sources deletes only verified public r2-images sources. This is irreversible.",
       ].join("\n"),
     );
     process.exit(0);
   }
 
-  const modeFlags = args.filter((arg) => ["--apply", "--cleanup-r2", "--rollback"].includes(arg));
+  const modeFlags = args.filter((arg) => (MODE_FLAGS as readonly string[]).includes(arg));
   if (modeFlags.length > 1) {
-    throw new ConfigurationError("Choose only one of --apply, --rollback, or --cleanup-r2.");
+    throw new ConfigurationError(
+      "Choose only one of --apply, --rollback, --cleanup-r2, or --cleanup-public-sources.",
+    );
   }
   const unknown = args.filter(
-    (arg) =>
-      !["--apply", "--cleanup-r2", "--rollback"].includes(arg) && !arg.startsWith("--manifest="),
+    (arg) => !(MODE_FLAGS as readonly string[]).includes(arg) && !arg.startsWith("--manifest="),
   );
   if (unknown.length > 0) throw new ConfigurationError(`Unknown argument: ${unknown[0]}`);
 
@@ -180,79 +206,272 @@ function createDatabase(databaseUrl: string): PrismaClient {
   });
 }
 
-function legacyS3UrlKey(sourceValue: string, config: Config): string {
-  const sourceUrl = new URL(sourceValue);
-  const hostPattern = new RegExp(
-    `^${config.sourceBucket.replaceAll(".", "\\.")}\\.s3(?:\\.[a-z0-9-]+)?\\.amazonaws\\.com$`,
+function sourceHostPattern(bucket: string): RegExp {
+  return new RegExp(`^${bucket.replaceAll(".", "\\.")}\\.s3(?:\\.[a-z0-9-]+)?\\.amazonaws\\.com$`);
+}
+
+function isSafeSegment(segment: string): boolean {
+  return segment.length > 0 && segment !== "." && segment !== ".." && SAFE_SEGMENT.test(segment);
+}
+
+function isDecodedSafePath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 1024 &&
+    !value.startsWith("/") &&
+    !value.includes("\\") &&
+    !value.includes("://") &&
+    !value.includes("%") &&
+    value.split("/").every(isSafeSegment)
   );
+}
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+function hasExactHttpsHost(sourceValue: string, hostname: string): boolean {
+  try {
+    const sourceUrl = new URL(sourceValue);
+    return (
+      sourceUrl.protocol === "https:" &&
+      sourceUrl.hostname === hostname &&
+      !sourceUrl.username &&
+      !sourceUrl.password &&
+      !sourceUrl.port &&
+      !sourceUrl.search &&
+      !sourceUrl.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExactHostLegacyS3Url(sourceValue: string, config: Config): boolean {
+  try {
+    const sourceUrl = new URL(sourceValue);
+    return (
+      sourceUrl.protocol === "https:" &&
+      sourceHostPattern(config.sourceBucket).test(sourceUrl.hostname) &&
+      !sourceUrl.username &&
+      !sourceUrl.password &&
+      !sourceUrl.port &&
+      !sourceUrl.search &&
+      !sourceUrl.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExactHostPublicAssetUrl(sourceValue: string, config: Config): boolean {
+  try {
+    return hasExactHttpsHost(sourceValue, new URL(config.publicBaseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function extractPublicAssetKey(sourceValue: string, config: Config): string {
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(sourceValue);
+  } catch {
+    throw new MigrationItemError("InvalidLegacyKey");
+  }
+  if (!isExactHostPublicAssetUrl(sourceValue, config)) {
+    throw new MigrationItemError("InvalidLegacyKey");
+  }
   const key = sourceUrl.pathname.replace(/^\/+/, "");
+  if (!isDecodedSafePath(key)) throw new MigrationItemError("InvalidLegacyKey");
+  return key;
+}
+
+function isExactHostPublicDocumentUrl(sourceValue: string, config: Config): boolean {
+  if (!isExactHostPublicAssetUrl(sourceValue, config)) return false;
+  try {
+    const key = new URL(sourceValue).pathname.replace(/^\/+/, "");
+    return (
+      isSafeDocumentKey(key) && DOCUMENT_EXTENSIONS.has(fileExtension(key.split("/").at(-1) ?? ""))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolvedPublicDocumentSourceKey(sourceValue: string, config: Config): string | undefined {
+  if (!isExactHostPublicDocumentUrl(sourceValue, config)) return undefined;
+  try {
+    return extractPublicAssetKey(sourceValue, config);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractLegacyS3Key(sourceValue: string, config: Config): string {
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(sourceValue);
+  } catch {
+    throw new MigrationItemError("InvalidLegacyS3Url");
+  }
   if (
     sourceUrl.protocol !== "https:" ||
-    !hostPattern.test(sourceUrl.hostname) ||
+    !sourceHostPattern(config.sourceBucket).test(sourceUrl.hostname) ||
     sourceUrl.username ||
     sourceUrl.password ||
     sourceUrl.port ||
     sourceUrl.search ||
-    sourceUrl.hash ||
-    (!isSafeStorageKey(key, "/documents/") && !isSafeStorageKey(key, "/images/"))
+    sourceUrl.hash
   ) {
     throw new MigrationItemError("InvalidLegacyS3Url");
   }
+  const key = sourceUrl.pathname.replace(/^\/+/, "");
+  if (!isDecodedSafePath(key)) throw new MigrationItemError("InvalidLegacyKey");
   return key;
 }
 
 function isSafeStorageKey(value: string, marker: "/documents/" | "/images/"): boolean {
-  if (
-    value.length > 1024 ||
-    value.startsWith("/") ||
-    value.includes("\\") ||
-    value.includes("://") ||
-    !value.includes(marker)
-  ) {
-    return false;
-  }
-  return value
-    .split("/")
-    .every(
-      (segment) =>
-        segment.length > 0 &&
-        segment !== "." &&
-        segment !== ".." &&
-        /^[A-Za-z0-9._-]+$/.test(segment),
-    );
+  return value.includes(marker) && isDecodedSafePath(value);
 }
 
 function isSafeDocumentKey(value: string): boolean {
   return isSafeStorageKey(value, "/documents/");
 }
 
+function isStructurallyValidVehicleImageKey(key: string): boolean {
+  const parts = key.split("/");
+  if (!IMAGE_EXTENSIONS.has(fileExtension(parts.at(-1) ?? ""))) return false;
+  return (
+    parts.length === 2 || (parts.length === 4 && parts[2] === "images" && isDecodedSafePath(key))
+  );
+}
+
+function isStructurallyValidDocumentS3Key(key: string): boolean {
+  const parts = key.split("/");
+  if (!DOCUMENT_EXTENSIONS.has(fileExtension(parts.at(-1) ?? ""))) return false;
+  return parts.length === 2 || isSafeStorageKey(key, "/documents/");
+}
+
+function unsupportedOrInvalidKey(
+  key: string,
+  allowed: Set<string>,
+): "InvalidLegacyKey" | "UnsupportedLegacyExtension" {
+  return allowed.has(fileExtension(key.split("/").at(-1) ?? ""))
+    ? "InvalidLegacyKey"
+    : "UnsupportedLegacyExtension";
+}
+
+function canonicalCliDestinationKeys(table: AssetTable, id: string): string[] {
+  if (table === "VehicleImage") {
+    return [
+      `r2-migration/vehicle-images/${id}.webp`,
+      `r2-migration/vehicle-images/${id}-copy.webp`,
+    ];
+  }
+  return [".pdf", ".webp"].flatMap((extension) => [
+    `r2-migration/documents/${id}${extension}`,
+    `r2-migration/documents/${id}-copy${extension}`,
+  ]);
+}
+
+function isCanonicalCliDestinationKey(record: Pick<AssetRecord, "table" | "id">, key: string) {
+  return canonicalCliDestinationKeys(record.table, record.id).includes(key);
+}
+
 function recordSourceKey(record: AssetRecord, config: Config): string {
   if (record.table === "DocumentApproval" && isSafeDocumentKey(record.sourceValue)) {
     return record.sourceValue;
   }
-  const key = legacyS3UrlKey(record.sourceValue, config);
-  const safeForRecord =
-    record.table === "DocumentApproval"
-      ? isSafeDocumentKey(key)
-      : isSafeStorageKey(key, "/images/");
-  if (!safeForRecord) throw new MigrationItemError("InvalidLegacyS3Url");
+  if (
+    record.table === "DocumentApproval" &&
+    isExactHostPublicDocumentUrl(record.sourceValue, config)
+  ) {
+    const key = extractPublicAssetKey(record.sourceValue, config);
+    if (!isStructurallyValidDocumentS3Key(key)) {
+      throw new MigrationItemError(unsupportedOrInvalidKey(key, DOCUMENT_EXTENSIONS));
+    }
+    return key;
+  }
+  const key = extractLegacyS3Key(record.sourceValue, config);
+  if (record.table === "VehicleImage") {
+    if (!isStructurallyValidVehicleImageKey(key)) {
+      throw new MigrationItemError(unsupportedOrInvalidKey(key, IMAGE_EXTENSIONS));
+    }
+    return key;
+  }
+  if (!isStructurallyValidDocumentS3Key(key)) {
+    throw new MigrationItemError(unsupportedOrInvalidKey(key, DOCUMENT_EXTENSIONS));
+  }
   return key;
 }
 
-function isEligibleDocumentValue(value: string, config: Config): boolean {
-  if (isSafeDocumentKey(value)) return true;
-  try {
-    return isSafeDocumentKey(legacyS3UrlKey(value, config));
-  } catch {
-    return false;
+function bindingOf(record: Pick<AssetRecord, "ownerId" | "carId" | "userId">): BindingFields {
+  return {
+    ownerId: record.ownerId ?? null,
+    carId: record.carId ?? null,
+    userId: record.userId ?? null,
+  };
+}
+
+function sameBinding(left: BindingFields, right: BindingFields): boolean {
+  return (
+    left.ownerId === right.ownerId && left.carId === right.carId && left.userId === right.userId
+  );
+}
+
+function assertBoundLegacyKey(record: AssetRecord, key: string): void {
+  if (!isDecodedSafePath(key)) throw new MigrationItemError("InvalidLegacyKey");
+  if (isCanonicalCliDestinationKey(record, key)) return;
+  const parts = key.split("/");
+  if (record.table === "VehicleImage") {
+    if (!record.ownerId || !record.carId) throw new MigrationItemError("LegacyKeyOwnerMismatch");
+    const boundDepth2 =
+      parts.length === 2 &&
+      parts[0] === record.ownerId &&
+      (parts[1]?.startsWith(`${record.carId}-`) ?? false);
+    const boundCanonical =
+      parts.length === 4 &&
+      parts[0] === record.ownerId &&
+      parts[1] === record.carId &&
+      parts[2] === "images";
+    if (!boundDepth2 && !boundCanonical) throw new MigrationItemError("LegacyKeyOwnerMismatch");
+    return;
   }
+  if (record.userId && !record.carId) {
+    if (parts[0] !== record.userId) throw new MigrationItemError("LegacyKeyOwnerMismatch");
+    return;
+  }
+  if (record.carId && record.ownerId && !record.userId) {
+    const boundDepth2 =
+      parts.length === 2 &&
+      parts[0] === record.ownerId &&
+      (parts[1]?.startsWith(`${record.carId}-`) ?? false);
+    const boundCanonical =
+      parts.length === 4 &&
+      parts[0] === record.ownerId &&
+      parts[1] === record.carId &&
+      parts[2] === "documents";
+    if (!boundDepth2 && !boundCanonical) throw new MigrationItemError("LegacyKeyOwnerMismatch");
+    return;
+  }
+  throw new MigrationItemError("LegacyKeyOwnerMismatch");
+}
+
+function isEligibleDocumentValue(value: string, config: Config): boolean {
+  return (
+    isSafeDocumentKey(value) ||
+    isExactHostLegacyS3Url(value, config) ||
+    isExactHostPublicDocumentUrl(value, config)
+  );
 }
 
 async function loadLegacyRecords(database: PrismaClient, config: Config): Promise<AssetRecord[]> {
   const [images, documents] = await Promise.all([
     database.vehicleImage.findMany({
       where: { url: { contains: ".amazonaws.com" } },
-      select: { id: true, url: true },
+      select: { id: true, url: true, carId: true, car: { select: { ownerId: true } } },
       orderBy: { id: "asc" },
     }),
     database.documentApproval.findMany({
@@ -262,18 +481,34 @@ async function loadLegacyRecords(database: PrismaClient, config: Config): Promis
           { documentUrl: { contains: "/documents/" } },
         ],
       },
-      select: { id: true, documentUrl: true },
+      select: {
+        id: true,
+        documentUrl: true,
+        userId: true,
+        carId: true,
+        car: { select: { ownerId: true } },
+      },
       orderBy: { id: "asc" },
     }),
   ]);
   return [
-    ...images.map(({ id, url }) => ({ table: "VehicleImage" as const, id, sourceValue: url })),
+    ...images.map(({ id, url, carId, car }) => ({
+      table: "VehicleImage" as const,
+      id,
+      sourceValue: url,
+      ownerId: car.ownerId,
+      carId,
+      userId: null,
+    })),
     ...documents
       .filter(({ documentUrl }) => isEligibleDocumentValue(documentUrl, config))
-      .map(({ id, documentUrl }) => ({
+      .map(({ id, documentUrl, userId, carId, car }) => ({
         table: "DocumentApproval" as const,
         id,
         sourceValue: documentUrl,
+        ownerId: car?.ownerId ?? null,
+        carId,
+        userId,
       })),
   ];
 }
@@ -299,8 +534,88 @@ async function fetchObject(client: S3Client, bucket: string, key: string) {
   }
 }
 
+async function headObject(client: S3Client, bucket: string, key: string) {
+  try {
+    const response = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return { contentType: response.ContentType };
+  } catch (error) {
+    if (isMissingObject(error)) return undefined;
+    throw error;
+  }
+}
+
+function expectedDestinationContentType(destinationKey: string): string {
+  return fileExtension(destinationKey) === "pdf" ? "application/pdf" : "image/webp";
+}
+
+function destinationProof(body: Buffer): { destinationDigest: string; destinationSize: number } {
+  return {
+    destinationDigest: createHash("sha256").update(body).digest("hex"),
+    destinationSize: body.byteLength,
+  };
+}
+
+function isEnoent(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+async function inspectManifestFile(
+  path: string,
+  allowMissing: boolean,
+): Promise<"empty" | "missing" | "ready"> {
+  let fileStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    fileStat = await lstat(path);
+  } catch (error) {
+    if (isEnoent(error)) {
+      if (allowMissing) return "missing";
+      throw new ConfigurationError("Manifest is missing.");
+    }
+    throw new ConfigurationError("Manifest path is not readable.");
+  }
+  if (fileStat.isSymbolicLink()) {
+    throw new ConfigurationError("Manifest path must not be a symlink.");
+  }
+  if (!fileStat.isFile()) {
+    throw new ConfigurationError("Manifest path is not a regular file.");
+  }
+  if ((fileStat.mode & 0o777) !== 0o600) {
+    throw new ConfigurationError("Manifest permissions are unsafe.");
+  }
+  return fileStat.size === 0 ? "empty" : "ready";
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UnknownError";
+}
+
+function classifyItemError(error: unknown): string {
+  if (error instanceof MigrationItemError) return error.name;
+  const message = error instanceof Error ? error.message : "";
+  if (/pixel limit|limitInputPixels|exceeded pixel/i.test(message)) {
+    return "SourceImagePixelLimit";
+  }
+  if (
+    /corrupt|unrecognised|unrecognized|unsupported image|input buffer|vipsjpeg|vipswebp|vipspng|pngcrc|invalid/i.test(
+      message,
+    )
+  ) {
+    return "SourceImageDecodeError";
+  }
+  return errorName(error);
+}
+
 async function fetchSource(record: AssetRecord, config: Config) {
   const key = recordSourceKey(record, config);
+  assertBoundLegacyKey(record, key);
+  if (
+    record.table === "DocumentApproval" &&
+    isExactHostPublicDocumentUrl(record.sourceValue, config)
+  ) {
+    const imagesBuffer = await fetchObject(config.destinationClient, config.imagesBucket, key);
+    if (!imagesBuffer) throw new MigrationItemError("SourceObjectNotFound");
+    return { key, buffer: imagesBuffer, sourceStore: "r2-images" as const };
+  }
   if (record.table === "DocumentApproval" && isSafeDocumentKey(record.sourceValue)) {
     const r2Buffer = await fetchObject(config.destinationClient, config.docsBucket, key);
     if (r2Buffer) return { key, buffer: r2Buffer, sourceStore: "r2" as const };
@@ -361,11 +676,16 @@ async function prepareEntry(
     source.key === defaultDestinationKey
       ? defaultDestinationKey.replace(/\.[^./]+$/, `-copy.${documentPdf ? "pdf" : "source"}`)
       : defaultDestinationKey.replace(/\.webp$/, ".source");
-  const prepared = await prepareStorageObject(
-    source.buffer,
-    requestedKey,
-    documentPdf ? "application/pdf" : "image/jpeg",
-  );
+  let prepared: Awaited<ReturnType<typeof prepareStorageObject>>;
+  try {
+    prepared = await prepareStorageObject(
+      source.buffer,
+      requestedKey,
+      documentPdf ? "application/pdf" : "image/jpeg",
+    );
+  } catch (error) {
+    throw new MigrationItemError(classifyItemError(error));
+  }
   const destinationBucket =
     record.table === "VehicleImage" ? config.imagesBucket : config.docsBucket;
   const destinationValue =
@@ -373,13 +693,17 @@ async function prepareEntry(
 
   return {
     entry: {
-      version: 1,
-      ...record,
+      version: MANIFEST_VERSION,
+      table: record.table,
+      id: record.id,
+      sourceValue: record.sourceValue,
+      ...bindingOf(record),
       sourceStore: source.sourceStore,
       sourceKey: source.key,
       destinationBucket,
       destinationKey: prepared.key,
       destinationValue,
+      ...destinationProof(prepared.buffer),
     },
     body: prepared.buffer,
     contentType: prepared.contentType,
@@ -438,12 +762,17 @@ async function replaceValue(
   ).count;
 }
 
-function errorName(error: unknown): string {
-  return error instanceof Error && error.name ? error.name : "UnknownError";
-}
-
 function emptySummary(discovered: number): Summary {
   return { discovered, processed: 0, changed: 0, skipped: 0, failed: 0 };
+}
+
+async function preflightApplyManifest(
+  path: string,
+  config: Config,
+  database: PrismaClient,
+): Promise<void> {
+  const status = await inspectManifestFile(path, true);
+  if (status === "ready") await readManifest(path, config, database);
 }
 
 async function migrate(
@@ -451,6 +780,9 @@ async function migrate(
   config: Config,
   mode: "apply" | "dry-run",
 ): Promise<Summary> {
+  if (mode === "apply") {
+    await preflightApplyManifest(config.manifestPath, config, database);
+  }
   const records = await loadLegacyRecords(database, config);
   const summary = emptySummary(records.length);
 
@@ -494,17 +826,21 @@ async function migrate(
       summary.processed += 1;
     } catch (error) {
       summary.failed += 1;
-      console.error(`${record.table} item ${index + 1} failed (${errorName(error)}).`);
+      console.error(`${record.table} item ${index + 1} failed (${classifyItemError(error)}).`);
     }
   }
   return summary;
+}
+
+function isBindingId(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && value.length > 0);
 }
 
 function isManifestEntry(value: unknown): value is ManifestEntry {
   if (!value || typeof value !== "object") return false;
   const entry = value as Record<string, unknown>;
   return (
-    entry.version === 1 &&
+    entry.version === MANIFEST_VERSION &&
     (entry.table === "VehicleImage" || entry.table === "DocumentApproval") &&
     [
       "id",
@@ -515,32 +851,87 @@ function isManifestEntry(value: unknown): value is ManifestEntry {
       "destinationKey",
       "destinationValue",
     ].every((key) => typeof entry[key] === "string" && entry[key].length > 0) &&
-    (entry.sourceStore === "r2" || entry.sourceStore === "s3")
+    isBindingId(entry.ownerId) &&
+    isBindingId(entry.carId) &&
+    isBindingId(entry.userId) &&
+    typeof entry.destinationDigest === "string" &&
+    SHA256_HEX.test(entry.destinationDigest) &&
+    typeof entry.destinationSize === "number" &&
+    Number.isInteger(entry.destinationSize) &&
+    entry.destinationSize > 0 &&
+    (entry.sourceStore === "r2" || entry.sourceStore === "r2-images" || entry.sourceStore === "s3")
   );
 }
 
-async function readManifest(path: string, config: Config): Promise<ManifestEntry[]> {
+function isAllowedManifestSourceStore(entry: ManifestEntry, config: Config): boolean {
+  if (entry.sourceStore === "r2") {
+    return entry.table === "DocumentApproval" && isSafeDocumentKey(entry.sourceValue);
+  }
+  if (entry.sourceStore === "r2-images") {
+    return (
+      entry.table === "DocumentApproval" && isExactHostPublicDocumentUrl(entry.sourceValue, config)
+    );
+  }
+  return (
+    isExactHostLegacyS3Url(entry.sourceValue, config) ||
+    (entry.table === "DocumentApproval" && isSafeDocumentKey(entry.sourceValue))
+  );
+}
+
+async function loadCurrentBinding(
+  database: PrismaClient,
+  table: AssetTable,
+  id: string,
+): Promise<BindingFields> {
+  if (table === "VehicleImage") {
+    const row = await database.vehicleImage.findUnique({
+      where: { id },
+      select: { carId: true, car: { select: { ownerId: true } } },
+    });
+    if (!row?.carId || !row.car?.ownerId) {
+      throw new ConfigurationError("Manifest row is missing current ownership relationships.");
+    }
+    return { ownerId: row.car.ownerId, carId: row.carId, userId: null };
+  }
+  const row = await database.documentApproval.findUnique({
+    where: { id },
+    select: { userId: true, carId: true, car: { select: { ownerId: true } } },
+  });
+  if (!row) {
+    throw new ConfigurationError("Manifest row is missing current ownership relationships.");
+  }
+  return {
+    ownerId: row.car?.ownerId ?? null,
+    carId: row.carId,
+    userId: row.userId,
+  };
+}
+
+async function readManifest(
+  path: string,
+  config: Config,
+  database: PrismaClient,
+): Promise<ManifestEntry[]> {
   const contents = await readFile(path, "utf8");
+  if (contents.length > 0 && !contents.endsWith("\n")) {
+    throw new ConfigurationError("Manifest is missing a trailing newline.");
+  }
   const entries = contents
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as unknown);
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        throw new ConfigurationError("Manifest is invalid.");
+      }
+    });
   if (!entries.every(isManifestEntry)) throw new ConfigurationError("Manifest is invalid.");
 
   const unique = new Map<string, ManifestEntry>();
   for (const entry of entries) {
     const expectedBucket = entry.table === "VehicleImage" ? config.imagesBucket : config.docsBucket;
     const expectedSourceKey = recordSourceKey(entry, config);
-    const expectedDestinationKeys =
-      entry.table === "VehicleImage"
-        ? [
-            `r2-migration/vehicle-images/${entry.id}.webp`,
-            `r2-migration/vehicle-images/${entry.id}-copy.webp`,
-          ]
-        : [".pdf", ".webp"].flatMap((extension) => [
-            `r2-migration/documents/${entry.id}${extension}`,
-            `r2-migration/documents/${entry.id}-copy${extension}`,
-          ]);
     const expectedDestinationValue =
       entry.table === "VehicleImage"
         ? `${config.publicBaseUrl}/${entry.destinationKey}`
@@ -548,12 +939,33 @@ async function readManifest(path: string, config: Config): Promise<ManifestEntry
     if (
       entry.destinationBucket !== expectedBucket ||
       entry.sourceKey !== expectedSourceKey ||
-      (entry.sourceStore === "r2" &&
-        (entry.table !== "DocumentApproval" || !isSafeDocumentKey(entry.sourceValue))) ||
-      !expectedDestinationKeys.includes(entry.destinationKey) ||
+      !isAllowedManifestSourceStore(entry, config) ||
+      !canonicalCliDestinationKeys(entry.table, entry.id).includes(entry.destinationKey) ||
       entry.destinationValue !== expectedDestinationValue
     ) {
       throw new ConfigurationError("Manifest entry does not match the development migration.");
+    }
+    const currentBinding = await loadCurrentBinding(database, entry.table, entry.id);
+    if (!sameBinding(bindingOf(entry), currentBinding)) {
+      throw new ConfigurationError("Manifest binding does not match current row relationships.");
+    }
+    try {
+      assertBoundLegacyKey(
+        {
+          table: entry.table,
+          id: entry.id,
+          sourceValue: entry.sourceValue,
+          ...currentBinding,
+        },
+        entry.sourceKey,
+      );
+    } catch (error) {
+      if (error instanceof MigrationItemError) {
+        throw new ConfigurationError(
+          "Manifest source key is not bound to current row relationships.",
+        );
+      }
+      throw error;
     }
     unique.set(`${entry.table}:${entry.id}`, entry);
   }
@@ -573,11 +985,16 @@ async function rollback(
         summary.skipped += 1;
       } else if (current === entry.destinationValue) {
         const sourceClient =
-          entry.sourceStore === "r2" ? config.destinationClient : config.sourceClient;
-        const sourceBucket = entry.sourceStore === "r2" ? config.docsBucket : config.sourceBucket;
-        await sourceClient.send(
-          new HeadObjectCommand({ Bucket: sourceBucket, Key: entry.sourceKey }),
-        );
+          entry.sourceStore === "s3" ? config.sourceClient : config.destinationClient;
+        const sourceBucket =
+          entry.sourceStore === "r2-images"
+            ? config.imagesBucket
+            : entry.sourceStore === "r2"
+              ? config.docsBucket
+              : config.sourceBucket;
+        if (!(await headObject(sourceClient, sourceBucket, entry.sourceKey))) {
+          throw new MigrationItemError("SourceObjectNotFound");
+        }
         const changed = await replaceValue(
           database,
           entry,
@@ -629,6 +1046,154 @@ async function cleanupR2(
   return summary;
 }
 
+async function assertPrivateDestination(config: Config, entry: ManifestEntry): Promise<void> {
+  const destination = await headObject(
+    config.destinationClient,
+    config.docsBucket,
+    entry.destinationKey,
+  );
+  if (!destination) throw new MigrationItemError("DestinationObjectNotFound");
+  if (destination.contentType !== expectedDestinationContentType(entry.destinationKey)) {
+    throw new MigrationItemError("DestinationContentTypeMismatch");
+  }
+  const destinationBody = await fetchObject(
+    config.destinationClient,
+    config.docsBucket,
+    entry.destinationKey,
+  );
+  if (!destinationBody) throw new MigrationItemError("DestinationObjectNotFound");
+  const proof = destinationProof(destinationBody);
+  if (
+    proof.destinationSize !== entry.destinationSize ||
+    proof.destinationDigest !== entry.destinationDigest
+  ) {
+    throw new MigrationItemError("DestinationIntegrityMismatch");
+  }
+}
+
+async function assertCleanupEntryReady(
+  database: PrismaClient,
+  config: Config,
+  entry: ManifestEntry,
+): Promise<void> {
+  const currentBinding = await loadCurrentBinding(database, entry.table, entry.id);
+  if (!sameBinding(bindingOf(entry), currentBinding)) {
+    throw new MigrationItemError("BindingMismatch");
+  }
+  assertBoundLegacyKey(
+    {
+      table: entry.table,
+      id: entry.id,
+      sourceValue: entry.sourceValue,
+      ...currentBinding,
+    },
+    entry.sourceKey,
+  );
+  if ((await currentValue(database, entry)) !== entry.destinationValue) {
+    throw new MigrationItemError("DestinationNotInUse");
+  }
+  await assertPrivateDestination(config, entry);
+}
+
+async function hasLivePublicSourceReference(
+  database: PrismaClient,
+  config: Config,
+  sourceKey: string,
+): Promise<boolean> {
+  const candidates = await database.documentApproval.findMany({
+    where: { documentUrl: { contains: sourceKey } },
+    select: { documentUrl: true },
+  });
+  return candidates.some(
+    (row) => resolvedPublicDocumentSourceKey(row.documentUrl, config) === sourceKey,
+  );
+}
+
+function recordGroupOutcome(group: ManifestEntry[], summary: Summary, error: unknown): void {
+  for (const entry of group) {
+    summary.failed += 1;
+    summary.processed += 1;
+    console.error(`${entry.table} item failed (${classifyItemError(error)}).`);
+  }
+}
+
+async function cleanupPublicSourceGroup(
+  database: PrismaClient,
+  config: Config,
+  group: ManifestEntry[],
+  summary: Summary,
+): Promise<void> {
+  const failures = new Map<string, unknown>();
+  for (const entry of group) {
+    try {
+      await assertCleanupEntryReady(database, config, entry);
+    } catch (error) {
+      failures.set(entry.id, error);
+    }
+  }
+  if (failures.size > 0) {
+    for (const entry of group) {
+      summary.failed += 1;
+      summary.processed += 1;
+      const error = failures.get(entry.id) ?? new MigrationItemError("SourceGroupInvalid");
+      console.error(`${entry.table} item failed (${classifyItemError(error)}).`);
+    }
+    return;
+  }
+  const representative = group[0];
+  if (!representative) return;
+  try {
+    if (await hasLivePublicSourceReference(database, config, representative.sourceKey)) {
+      throw new MigrationItemError("SourceStillReferenced");
+    }
+    const source = await headObject(
+      config.destinationClient,
+      config.imagesBucket,
+      representative.sourceKey,
+    );
+    if (!source) {
+      summary.skipped += group.length;
+      summary.processed += group.length;
+      return;
+    }
+    await config.destinationClient.send(
+      new DeleteObjectCommand({
+        Bucket: config.imagesBucket,
+        Key: representative.sourceKey,
+      }),
+    );
+    summary.changed += 1;
+    summary.skipped += group.length - 1;
+    summary.processed += group.length;
+  } catch (error) {
+    recordGroupOutcome(group, summary, error);
+  }
+}
+
+async function cleanupPublicSources(
+  database: PrismaClient,
+  config: Config,
+  entries: ManifestEntry[],
+): Promise<Summary> {
+  const summary = emptySummary(entries.length);
+  const groups = new Map<string, ManifestEntry[]>();
+  for (const entry of entries) {
+    if (entry.sourceStore !== "r2-images" || entry.table !== "DocumentApproval") {
+      summary.skipped += 1;
+      summary.processed += 1;
+      continue;
+    }
+    const groupKey = `${config.imagesBucket}:${entry.sourceKey}`;
+    const group = groups.get(groupKey) ?? [];
+    group.push(entry);
+    groups.set(groupKey, group);
+  }
+  for (const group of groups.values()) {
+    await cleanupPublicSourceGroup(database, config, group, summary);
+  }
+  return summary;
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const { mode, manifestPath } = parseArguments();
@@ -640,11 +1205,15 @@ async function main(): Promise<void> {
     if (mode === "apply" || mode === "dry-run") {
       summary = await migrate(database, config, mode);
     } else {
-      const entries = await readManifest(config.manifestPath, config);
+      const status = await inspectManifestFile(config.manifestPath, false);
+      const entries =
+        status === "empty" ? [] : await readManifest(config.manifestPath, config, database);
       summary =
         mode === "rollback"
           ? await rollback(database, config, entries)
-          : await cleanupR2(database, config, entries);
+          : mode === "cleanup-r2"
+            ? await cleanupR2(database, config, entries)
+            : await cleanupPublicSources(database, config, entries);
     }
   } finally {
     await database.$disconnect();
@@ -660,6 +1229,9 @@ async function main(): Promise<void> {
       manifest: mode === "dry-run" ? "not-written" : mode === "apply" ? "updated" : "read",
     }),
   );
+  if (mode === "cleanup-public-sources") {
+    console.error("Public image-bucket sources removed by this mode cannot be rolled back.");
+  }
   if (summary.failed > 0) process.exitCode = 1;
 }
 
