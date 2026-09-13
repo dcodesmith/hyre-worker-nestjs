@@ -26,16 +26,7 @@ function solidImage(format: "jpeg" | "png", background: { r: number; g: number; 
     .toBuffer();
 }
 
-const s3Env = {
-  STORAGE_DRIVER: "s3",
-  AWS_REGION: "eu-west-2",
-  AWS_ACCESS_KEY_ID: "aws-access-key",
-  AWS_SECRET_ACCESS_KEY: "aws-secret-key",
-  AWS_BUCKET_NAME: "s3-car-rentals-dev-bucket",
-} as const;
-
 const r2Env = {
-  STORAGE_DRIVER: "r2",
   R2_ACCOUNT_ID: "ea5151b6637ce5379c9fea75e7e52aaa",
   R2_ACCESS_KEY_ID: "r2-access-key",
   R2_SECRET_ACCESS_KEY: "r2-secret-key",
@@ -51,23 +42,6 @@ function mockConfigService(config: Record<string, string>): ConfigService<EnvCon
 }
 
 describe("resolveStorageSettings", () => {
-  it("builds AWS virtual-host settings for the s3 driver", () => {
-    const settings = resolveStorageSettings(mockConfigService(s3Env));
-
-    expect(settings.bucketName).toBe("s3-car-rentals-dev-bucket");
-    expect(settings.docsBucketName).toBe("s3-car-rentals-dev-bucket");
-    expect(settings.publicObjectUrlPrefix).toBe(
-      "https://s3-car-rentals-dev-bucket.s3.eu-west-2.amazonaws.com",
-    );
-    expect(settings.clientConfig).toEqual({
-      region: "eu-west-2",
-      credentials: {
-        accessKeyId: "aws-access-key",
-        secretAccessKey: "aws-secret-key",
-      },
-    });
-  });
-
   it("builds the R2 account endpoint and strips a trailing slash from the public base URL", () => {
     const settings = resolveStorageSettings(mockConfigService(r2Env));
 
