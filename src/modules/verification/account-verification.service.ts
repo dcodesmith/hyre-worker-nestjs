@@ -1687,8 +1687,10 @@ export class AccountVerificationService {
   }) {
     const safeName = file.originalname.replaceAll(/[^a-zA-Z0-9.-]/g, "_");
     const key = `${userId}/${verificationId}/documents/${type.toLowerCase()}-${randomUUID()}-${safeName}`;
-    const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
-    return { type, key, url };
+    return {
+      type,
+      ...(await this.storageService.uploadBuffer(file.buffer, key, file.mimetype)),
+    };
   }
 
   private async deleteUploaded(uploaded: Array<{ key: string }>): Promise<void> {

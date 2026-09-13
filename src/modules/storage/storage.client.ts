@@ -10,6 +10,7 @@ export type StorageSettings = {
   bucketName: string;
   docsBucketName: string;
   publicObjectUrlPrefix: string;
+  writePrefix?: string;
 };
 
 function stripTrailingSlashes(value: string): string {
@@ -38,6 +39,7 @@ export function resolveStorageSettings(configService: ConfigService<EnvConfig>):
       bucketName: get("R2_IMAGES_BUCKET_NAME"),
       docsBucketName: get("R2_DOCS_BUCKET_NAME"),
       publicObjectUrlPrefix: stripTrailingSlashes(get("ASSET_PUBLIC_BASE_URL")),
+      writePrefix: get("STORAGE_WRITE_PREFIX"),
     };
   }
 

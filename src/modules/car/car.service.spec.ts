@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import {
   CarApprovalStatus,
   DocumentStatus,
+  DocumentType,
   Prisma,
   ProviderVerificationStatus,
   ServiceTier,
@@ -366,16 +367,20 @@ describe("CarService", () => {
     const rejectedImage = {
       id: "img-1",
       status: DocumentStatus.REJECTED,
-      url: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/images/old.jpg",
+      url: "https://images-dev.tripdly.com/owner-1/car-1/images/old.jpg",
+    };
+    const uploadedImage = {
+      key: "owner-1/car-1/images/new.webp",
+      url: "https://cdn.test/owner-1/car-1/images/new.webp",
     };
 
     it("replaces a rejected image and resets it to PENDING", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
       databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({
         id: "img-1",
-        url: "https://cdn.test/new.jpg",
+        url: uploadedImage.url,
         status: DocumentStatus.PENDING,
       });
 
@@ -390,7 +395,7 @@ describe("CarService", () => {
       expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith({
         where: { id: "img-1", status: DocumentStatus.REJECTED },
         data: {
-          url: "https://cdn.test/new.jpg",
+          url: uploadedImage.url,
           status: DocumentStatus.PENDING,
           notes: null,
           approvedById: null,
@@ -445,10 +450,10 @@ describe("CarService", () => {
       expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
     });
 
-    it("does not fail the replacement when old S3 object cleanup fails", async () => {
+    it("does not fail the replacement when old object cleanup fails", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
       databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1" });
       storageServiceMock.deleteObjectByKey.mockRejectedValueOnce(new Error("s3 down"));
 
@@ -465,22 +470,21 @@ describe("CarService", () => {
     it("deletes the newly uploaded object when the DB update fails", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
       databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(new Error("db down"));
 
       await expect(
         service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
       ).rejects.toBeInstanceOf(CarUpdateFailedException);
 
-      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
-        expect.stringContaining("owner-1/car-1/images/"),
-      );
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(uploadedImage.key);
+      expect(storageServiceMock.deleteObjectByKey).not.toHaveBeenCalledWith(uploadedImage.url);
     });
 
     it("throws FileNotRejectedException when the status changes between check and write", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.jpg");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
       // Prisma throws P2025 when the guarded update matches no record
       databaseServiceMock.vehicleImage.update.mockRejectedValueOnce(recordNotFoundError());
 
@@ -488,9 +492,8 @@ describe("CarService", () => {
         service.replaceCarImage("car-1", "owner-1", "img-1", createMockFile("a.jpg", "image/jpeg")),
       ).rejects.toBeInstanceOf(FileNotRejectedException);
 
-      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
-        expect.stringContaining("owner-1/car-1/images/"),
-      );
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(uploadedImage.key);
+      expect(storageServiceMock.deleteObjectByKey).not.toHaveBeenCalledWith(uploadedImage.url);
     });
   });
 
@@ -498,13 +501,17 @@ describe("CarService", () => {
     const rejectedDocument = {
       id: "doc-1",
       status: DocumentStatus.REJECTED,
-      documentUrl: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/documents/old.pdf",
+      documentUrl: "owner-1/car-1/documents/old.pdf",
+    };
+    const uploadedDocument = {
+      key: "owner-1/car-1/documents/new.pdf",
+      url: "owner-1/car-1/documents/new.pdf",
     };
 
     it("replaces a rejected document and resets it to PENDING", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/documents/new.pdf");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedDocument);
       databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
         id: "doc-1",
         documentUrl: "owner-1/car-1/documents/new.pdf",
@@ -576,7 +583,7 @@ describe("CarService", () => {
     it("deletes the newly uploaded object when the DB update fails", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("https://cdn.test/new.pdf");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedDocument);
       databaseServiceMock.documentApproval.update.mockRejectedValueOnce(new Error("db down"));
 
       await expect(
@@ -588,9 +595,7 @@ describe("CarService", () => {
         ),
       ).rejects.toBeInstanceOf(CarUpdateFailedException);
 
-      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(
-        expect.stringContaining("owner-1/car-1/documents/"),
-      );
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(uploadedDocument.key);
     });
 
     it("deletes a replaced document stored as an object key", async () => {
@@ -599,10 +604,10 @@ describe("CarService", () => {
         ...rejectedDocument,
         documentUrl: "owner-1/car-1/documents/old.pdf",
       });
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/documents/new.pdf");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedDocument);
       databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
         id: "doc-1",
-        documentUrl: "owner-1/car-1/documents/new.pdf",
+        documentUrl: uploadedDocument.url,
         status: DocumentStatus.PENDING,
       });
 
@@ -953,8 +958,14 @@ describe("CarService", () => {
         .mockResolvedValueOnce({ id: "car-1" })
         .mockResolvedValueOnce({ id: "car-1", documents: [] });
       storageServiceMock.uploadBuffer
-        .mockResolvedValueOnce("owner-1/car-1/documents/mot.pdf")
-        .mockResolvedValueOnce("owner-1/car-1/documents/insurance.pdf");
+        .mockResolvedValueOnce({
+          key: "owner-1/car-1/documents/mot.pdf",
+          url: "owner-1/car-1/documents/mot.pdf",
+        })
+        .mockResolvedValueOnce({
+          key: "owner-1/car-1/documents/insurance.pdf",
+          url: "owner-1/car-1/documents/insurance.pdf",
+        });
       databaseServiceMock.documentApproval.createMany.mockResolvedValueOnce({ count: 2 });
       databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1" });
 
@@ -964,7 +975,41 @@ describe("CarService", () => {
       });
 
       expect(result).toMatchObject({ id: "car-1" });
-      expect(databaseServiceMock.documentApproval.createMany).toHaveBeenCalled();
+      expect(databaseServiceMock.documentApproval.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            documentType: DocumentType.MOT_CERTIFICATE,
+            documentUrl: "owner-1/car-1/documents/mot.pdf",
+            carId: "car-1",
+          },
+          {
+            documentType: DocumentType.INSURANCE_CERTIFICATE,
+            documentUrl: "owner-1/car-1/documents/insurance.pdf",
+            carId: "car-1",
+          },
+        ],
+      });
+    });
+
+    it("cleans up returned keys when a later draft document upload fails", async () => {
+      const uploaded = {
+        key: "stored/owner-1/car-1/documents/mot.pdf",
+        url: "https://cdn.test/stored/mot.pdf",
+      };
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+      storageServiceMock.uploadBuffer
+        .mockResolvedValueOnce(uploaded)
+        .mockRejectedValueOnce(new Error("upload failed"));
+
+      await expect(
+        service.uploadDraftCarDocuments("car-1", "owner-1", {
+          motCertificate: createMockFile("mot.pdf", "application/pdf"),
+          insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
+        }),
+      ).rejects.toThrow("upload failed");
+      expect(storageServiceMock.deleteObjectByKey).toHaveBeenCalledWith(uploaded.key);
+      expect(storageServiceMock.deleteObjectByKey).not.toHaveBeenCalledWith(uploaded.url);
     });
 
     it("rejects a second document upload for the same car", async () => {
@@ -983,7 +1028,10 @@ describe("CarService", () => {
       databaseServiceMock.car.findFirst
         .mockResolvedValueOnce({ id: "car-1" })
         .mockResolvedValueOnce({ id: "car-1", images: [] });
-      storageServiceMock.uploadBuffer.mockResolvedValueOnce("owner-1/car-1/images/a.jpg");
+      storageServiceMock.uploadBuffer.mockResolvedValueOnce({
+        key: "owner-1/car-1/images/a.webp",
+        url: "https://cdn.test/owner-1/car-1/images/a.webp",
+      });
       databaseServiceMock.vehicleImage.createMany.mockResolvedValueOnce({ count: 1 });
       databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1" });
 
@@ -992,7 +1040,9 @@ describe("CarService", () => {
       ]);
 
       expect(result).toMatchObject({ id: "car-1" });
-      expect(databaseServiceMock.vehicleImage.createMany).toHaveBeenCalled();
+      expect(databaseServiceMock.vehicleImage.createMany).toHaveBeenCalledWith({
+        data: [{ url: "https://cdn.test/owner-1/car-1/images/a.webp", carId: "car-1" }],
+      });
     });
 
     it("updates draft pricing through the shared car update path", async () => {

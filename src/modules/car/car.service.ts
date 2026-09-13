@@ -562,7 +562,7 @@ export class CarService {
 
       const category = isImage ? CAR_S3_CATEGORY_IMAGES : CAR_S3_CATEGORY_DOCUMENTS;
       const key = this.getObjectKey(ownerId, carId, file.originalname, category);
-      const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
+      const uploaded = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
 
       const resetData = {
         status: DocumentStatus.PENDING,
@@ -583,11 +583,11 @@ export class CarService {
           const updated = isImage
             ? await tx.vehicleImage.update({
                 where: { id: fileId, status: DocumentStatus.REJECTED },
-                data: { url, ...resetData },
+                data: { url: uploaded.url, ...resetData },
               })
             : await tx.documentApproval.update({
                 where: { id: fileId, status: DocumentStatus.REJECTED },
-                data: { documentUrl: url, ...resetData },
+                data: { documentUrl: uploaded.url, ...resetData },
               });
           // Serialize with concurrent approval so this demotion can't be overwritten.
           await lockCarRow(tx, carId);
@@ -601,7 +601,7 @@ export class CarService {
           return updated;
         });
       } catch (updateError) {
-        await this.storageService.deleteObjectByKey(key).catch(() => undefined);
+        await this.storageService.deleteObjectByKey(uploaded.key).catch(() => undefined);
         if (isRecordNotFoundError(updateError)) {
           throw new FileNotRejectedException(kind);
         }
@@ -648,8 +648,7 @@ export class CarService {
     try {
       for (const file of files) {
         const key = this.getObjectKey(ownerId, carId, file.originalname, category);
-        const url = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
-        uploaded.push({ key, url });
+        uploaded.push(await this.storageService.uploadBuffer(file.buffer, key, file.mimetype));
       }
       return uploaded;
     } catch (error) {

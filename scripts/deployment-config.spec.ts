@@ -62,7 +62,54 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain(
       `DEPLOYMENT_VERSION=${githubExpression("steps.metadata.outputs.version")}`,
     );
+    expect(workflow).toContain(
+      "- name: Post schema diff comment to PR\n        continue-on-error: true",
+    );
     expect(workflow).toContain("Verify preview metadata");
+  });
+
+  it("deploys Fly previews onto isolated R2 prefixes without AWS storage secrets", () => {
+    const workflow = readRepositoryFile(".github/workflows/fly-preview.yml");
+
+    expect(workflow).toContain("STORAGE_DRIVER: r2");
+    expect(workflow).toContain(
+      `STORAGE_WRITE_PREFIX: previews/pr-${githubExpression("github.event.number")}`,
+    );
+    expect(workflow).toContain("R2_IMAGES_BUCKET_NAME: hyre-assets-images-development");
+    expect(workflow).toContain("R2_DOCS_BUCKET_NAME: hyre-assets-docs-development");
+    expect(workflow).toContain(`R2_ACCESS_KEY_ID: ${githubExpression("secrets.R2_ACCESS_KEY_ID")}`);
+    expect(workflow).not.toContain("secrets.AWS_ACCESS_KEY_ID");
+    expect(workflow).not.toContain("secrets.AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("AWS_BUCKET_NAME");
+    expect(workflow).not.toContain(
+      `AWS_ACCESS_KEY_ID: ${githubExpression("secrets.AWS_ACCESS_KEY_ID")}`,
+    );
+  });
+
+  it("scopes preview R2 cleanup to the exact PR prefix in both buckets", () => {
+    const workflow = readRepositoryFile(".github/workflows/fly-preview-cleanup.yml");
+    const cleanupScript = readRepositoryFile("scripts/cleanup-preview-r2-objects.sh");
+
+    expect(workflow).toContain(
+      `PREVIEW_PREFIX: previews/pr-${githubExpression("github.event.number")}/`,
+    );
+    expect(cleanupScript).toContain("^previews/pr-[1-9][0-9]*/$");
+    expect(workflow).toContain("R2_IMAGES_BUCKET_NAME: hyre-assets-images-development");
+    expect(workflow).toContain("R2_DOCS_BUCKET_NAME: hyre-assets-docs-development");
+    expect(workflow).toContain("bash scripts/cleanup-preview-r2-objects.sh");
+    expect(workflow).toContain(`R2_ACCESS_KEY_ID: ${githubExpression("secrets.R2_ACCESS_KEY_ID")}`);
+    expect(workflow).toContain(
+      `R2_SECRET_ACCESS_KEY: ${githubExpression("secrets.R2_SECRET_ACCESS_KEY")}`,
+    );
+    expect(workflow).not.toContain("aws s3");
+    expect(workflow).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(workflow).not.toContain("AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("AWS_REGION");
+    expect(workflow).not.toContain("AWS_BUCKET_NAME");
+    expect(cleanupScript).not.toContain("AWS_ACCESS_KEY_ID=");
+    expect(cleanupScript).not.toContain("aws s3");
+    expect(workflow).toContain("- name: Install rclone\n        if: always()");
+    expect(workflow).toContain("- name: Delete preview R2 objects\n        if: always()");
   });
 
   it("only deploys production through an approved manual workflow", () => {

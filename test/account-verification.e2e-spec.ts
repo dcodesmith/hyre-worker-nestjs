@@ -243,9 +243,19 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .useValue({ sendOTPEmail: vi.fn().mockResolvedValue(undefined) })
       .overrideProvider(StorageService)
       .useValue({
-        uploadBuffer: vi.fn().mockImplementation(async (_buffer: Buffer, key: string) => {
-          return `https://cdn.tripdly.test/${key}`;
-        }),
+        uploadBuffer: vi
+          .fn()
+          .mockImplementation(async (_buffer: Buffer, key: string, contentType = "") => {
+            const canonicalKey = contentType.startsWith("image/")
+              ? `${key.replace(/\.[^./]+$/, "")}.webp`
+              : key;
+            return {
+              key: canonicalKey,
+              url: canonicalKey.includes("/documents/")
+                ? canonicalKey
+                : `https://cdn.tripdly.test/${canonicalKey}`,
+            };
+          }),
         deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
       })
       .overrideProvider(PremblyService)
