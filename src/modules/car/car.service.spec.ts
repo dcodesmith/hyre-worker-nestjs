@@ -367,7 +367,7 @@ describe("CarService", () => {
     const rejectedImage = {
       id: "img-1",
       status: DocumentStatus.REJECTED,
-      url: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/images/old.jpg",
+      url: "https://images-dev.tripdly.com/owner-1/car-1/images/old.jpg",
     };
     const uploadedImage = {
       key: "owner-1/car-1/images/new.webp",
@@ -450,7 +450,7 @@ describe("CarService", () => {
       expect(storageServiceMock.uploadBuffer).not.toHaveBeenCalled();
     });
 
-    it("does not fail the replacement when old S3 object cleanup fails", async () => {
+    it("does not fail the replacement when old object cleanup fails", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
       storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
@@ -501,7 +501,7 @@ describe("CarService", () => {
     const rejectedDocument = {
       id: "doc-1",
       status: DocumentStatus.REJECTED,
-      documentUrl: "https://bucket.s3.eu-west-1.amazonaws.com/owner-1/car-1/documents/old.pdf",
+      documentUrl: "owner-1/car-1/documents/old.pdf",
     };
     const uploadedDocument = {
       key: "owner-1/car-1/documents/new.pdf",

@@ -85,21 +85,37 @@ describe("deployment environment configuration", () => {
 
   it("scopes preview R2 cleanup to the exact PR prefix in both buckets", () => {
     const workflow = readRepositoryFile(".github/workflows/fly-preview-cleanup.yml");
+    const cleanupScript = readRepositoryFile("scripts/cleanup-preview-r2-objects.sh");
 
     expect(workflow).toContain(
       `PREVIEW_PREFIX: previews/pr-${githubExpression("github.event.number")}/`,
     );
-    expect(workflow).toContain("^previews/pr-[1-9][0-9]*/$");
+    expect(cleanupScript).toContain("^previews/pr-[1-9][0-9]*/$");
     expect(workflow).toContain("R2_IMAGES_BUCKET_NAME: hyre-assets-images-development");
     expect(workflow).toContain("R2_DOCS_BUCKET_NAME: hyre-assets-docs-development");
+    expect(workflow).toContain("bash scripts/cleanup-preview-r2-objects.sh");
+    expect(workflow).toContain(`R2_ACCESS_KEY_ID: ${githubExpression("secrets.R2_ACCESS_KEY_ID")}`);
     expect(workflow).toContain(
-      ['aws s3 rm "s3://', "${", "bucket}/", "${", 'PREVIEW_PREFIX}"'].join(""),
+      `R2_SECRET_ACCESS_KEY: ${githubExpression("secrets.R2_SECRET_ACCESS_KEY")}`,
     );
-    expect(workflow).toContain("secrets.R2_ACCESS_KEY_ID");
-    expect(workflow).toContain("secrets.R2_SECRET_ACCESS_KEY");
-    expect(workflow).not.toContain("secrets.AWS_ACCESS_KEY_ID");
-    expect(workflow).not.toContain("secrets.AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("aws s3");
+    expect(workflow).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(workflow).not.toContain("AWS_SECRET_ACCESS_KEY");
+    expect(workflow).not.toContain("AWS_REGION");
     expect(workflow).not.toContain("AWS_BUCKET_NAME");
+    expect(cleanupScript).not.toContain("AWS_ACCESS_KEY_ID=");
+    expect(cleanupScript).not.toContain("aws s3");
+  });
+
+  it("publishes R2 preview secrets instead of AWS storage secrets", () => {
+    const script = readRepositoryFile("scripts/set-preview-secrets.sh");
+
+    expect(script).toContain("R2_ACCESS_KEY_ID");
+    expect(script).toContain("R2_SECRET_ACCESS_KEY");
+    expect(script).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(script).not.toContain("AWS_SECRET_ACCESS_KEY");
+    expect(script).not.toContain("AWS_REGION");
+    expect(script).not.toContain("AWS_BUCKET_NAME");
   });
 
   it("only deploys production through an approved manual workflow", () => {

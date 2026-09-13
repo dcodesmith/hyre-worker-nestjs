@@ -98,10 +98,10 @@ describe("StorageService", () => {
   let service: StorageService;
   let send: ReturnType<typeof vi.fn>;
   const settings: StorageSettings = {
-    clientConfig: { region: "eu-west-2" },
-    bucketName: "s3-car-rentals-dev-bucket",
+    clientConfig: { region: "auto" },
+    bucketName: "hyre-assets-images-development",
     docsBucketName: "hyre-assets-docs-development",
-    publicObjectUrlPrefix: "https://s3-car-rentals-dev-bucket.s3.eu-west-2.amazonaws.com",
+    publicObjectUrlPrefix: "https://images-dev.tripdly.com",
   };
 
   beforeEach(async () => {
@@ -134,7 +134,7 @@ describe("StorageService", () => {
       );
 
       const put = send.mock.calls[0][0].input;
-      expect(put.Bucket).toBe("s3-car-rentals-dev-bucket");
+      expect(put.Bucket).toBe("hyre-assets-images-development");
       expect(put.Key).toBe("owner/car/images/file.webp");
       expect(put.ContentType).toBe("image/webp");
       expect(put.CacheControl).toBe("public, max-age=31536000, immutable");
@@ -143,7 +143,7 @@ describe("StorageService", () => {
       await expect(sharp(put.Body).metadata()).resolves.toMatchObject({ format: "webp" });
       expect(stored).toEqual({
         key: "owner/car/images/file.webp",
-        url: "https://s3-car-rentals-dev-bucket.s3.eu-west-2.amazonaws.com/owner/car/images/file.webp",
+        url: "https://images-dev.tripdly.com/owner/car/images/file.webp",
       });
     },
   );
@@ -175,7 +175,7 @@ describe("StorageService", () => {
     await service.deleteObjectByKey("owner/car/images/file.jpg");
 
     expect(send.mock.calls[0][0].input).toEqual({
-      Bucket: "s3-car-rentals-dev-bucket",
+      Bucket: "hyre-assets-images-development",
       Key: "owner/car/images/file.jpg",
     });
   });

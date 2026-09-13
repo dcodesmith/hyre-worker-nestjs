@@ -500,13 +500,13 @@ describe("migrate-development-assets", () => {
 
     await runCli(["--apply", `--manifest=${manifestPath()}`]);
 
-    const destination = s3.objects.get(s3.id(DOCS_BUCKET, "r2-migration/documents/doc-1.webp"));
+    const destination = s3.objects.get(s3.id(DOCS_BUCKET, "owner/car/documents/scan.webp"));
     expect(destination).toBeDefined();
     expect(destination?.subarray(12, 16).toString("ascii")).toBe("VP8L");
     expect(s3.calls.some((call) => call.store === "s3")).toBe(false);
     expect(db.documentApproval.updateMany).toHaveBeenCalledWith({
       where: { id: "doc-1", documentUrl: "owner/car/documents/scan.png" },
-      data: { documentUrl: "r2-migration/documents/doc-1.webp" },
+      data: { documentUrl: "owner/car/documents/scan.webp" },
     });
     expect(summary()).toMatchObject({ changed: 1, failed: 0 });
   });
@@ -562,13 +562,13 @@ describe("migrate-development-assets", () => {
     expect(putCall).toMatchObject({
       store: "r2",
       bucket: IMAGES_BUCKET,
-      key: "r2-migration/vehicle-images/img-1.webp",
+      key: "owner/car/images/hero.webp",
       contentType: "image/webp",
       cacheControl: "public, max-age=31536000, immutable",
     });
     expect(db.vehicleImage.updateMany).toHaveBeenCalledWith({
       where: { id: "img-1", url: s3Url(key) },
-      data: { url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp` },
+      data: { url: `${PUBLIC_BASE}/owner/car/images/hero.webp` },
     });
   });
 
@@ -583,13 +583,11 @@ describe("migrate-development-assets", () => {
     const putCall = s3.calls.find((call) => call.command === "PutObjectCommand");
     expect(putCall).toMatchObject({
       bucket: DOCS_BUCKET,
-      key: "r2-migration/documents/doc-1.pdf",
+      key: "owner/car/documents/file.pdf",
       contentType: "application/pdf",
     });
     expect(putCall?.cacheControl).toBeUndefined();
-    expect(s3.objects.get(s3.id(DOCS_BUCKET, "r2-migration/documents/doc-1.pdf"))).toEqual(
-      pdfBuffer(),
-    );
+    expect(s3.objects.get(s3.id(DOCS_BUCKET, "owner/car/documents/file.pdf"))).toEqual(pdfBuffer());
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const [entry] = (await readFile(path, "utf8"))
       .trim()
@@ -598,7 +596,7 @@ describe("migrate-development-assets", () => {
     expect(entry).toMatchObject({
       version: 3,
       sourceStore: "s3",
-      destinationKey: "r2-migration/documents/doc-1.pdf",
+      destinationKey: "owner/car/documents/file.pdf",
       ...bindingFields(),
       ...destinationProof(pdfBuffer()),
     });
@@ -624,7 +622,7 @@ describe("migrate-development-assets", () => {
     db.vehicleImage.findMany.mockResolvedValueOnce([imageRow("img-1", s3Url(key))]);
     db.vehicleImage.updateMany.mockResolvedValueOnce({ count: 0 });
     db.vehicleImage.findUnique.mockResolvedValueOnce({
-      url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp`,
+      url: `${PUBLIC_BASE}/owner/car/images/photo.webp`,
     });
 
     await runCli(["--apply", `--manifest=${manifestPath("first.jsonl")}`]);
@@ -655,7 +653,7 @@ describe("migrate-development-assets", () => {
     expect(summary()).toMatchObject({ discovered: 2, changed: 1, failed: 1, processed: 1 });
     expect(db.vehicleImage.updateMany).toHaveBeenCalledWith({
       where: { id: "img-ok", url: s3Url("owner/car/images/ok.jpg") },
-      data: { url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-ok.webp` },
+      data: { url: `${PUBLIC_BASE}/owner/car/images/ok.webp` },
     });
     expect(process.exitCode).toBe(1);
   });
@@ -790,6 +788,22 @@ describe("migrate-development-assets", () => {
     expect(s3.objects.has(s3.id(DOCS_BUCKET, referenced))).toBe(true);
     expect(s3.objects.has(s3.id(DOCS_BUCKET, "unrelated/keep.webp"))).toBe(true);
     expect(summary()).toMatchObject({ changed: 1, skipped: 1, failed: 0 });
+  });
+
+  it("writes depth-2 vehicle images to the live owner/car/images key", async () => {
+    const key = "owner/car-1700000000000-photo.jpeg";
+    put(SOURCE_BUCKET, key, await raster("jpeg"));
+    db.vehicleImage.findMany.mockResolvedValueOnce([imageRow("img-1", s3Url(key))]);
+
+    await runCli(["--apply", `--manifest=${manifestPath()}`]);
+
+    expect(s3.calls.find((call) => call.command === "PutObjectCommand")).toMatchObject({
+      key: "owner/car/images/1700000000000-photo.webp",
+    });
+    expect(db.vehicleImage.updateMany).toHaveBeenCalledWith({
+      where: { id: "img-1", url: s3Url(key) },
+      data: { url: `${PUBLIC_BASE}/owner/car/images/1700000000000-photo.webp` },
+    });
   });
 
   it("migrates hireApp depth-2 vehicle keys bound to ownerId and carId", async () => {
@@ -980,19 +994,19 @@ describe("migrate-development-assets", () => {
           id: "img-1",
           sourceValue: s3Url(sourceKey),
           sourceKey,
-          destinationKey: "r2-migration/vehicle-images/img-1.webp",
-          destinationValue: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp`,
+          destinationKey: "owner/car/images/1700000000000-photo.webp",
+          destinationValue: `${PUBLIC_BASE}/owner/car/images/1700000000000-photo.webp`,
           sourceStore: "s3" as const,
           sourceBucket: SOURCE_BUCKET,
           updateModel: db.vehicleImage,
           currentRow: {
-            url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp`,
+            url: `${PUBLIC_BASE}/owner/car/images/1700000000000-photo.webp`,
             carId: "car",
             car: { ownerId: "owner" },
           },
           restoreWhere: {
             id: "img-1",
-            url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp`,
+            url: `${PUBLIC_BASE}/owner/car/images/1700000000000-photo.webp`,
           },
           restoreData: { url: s3Url(sourceKey) },
           binding: bindingFields(),
@@ -1010,20 +1024,20 @@ describe("migrate-development-assets", () => {
           id: "mot-1",
           sourceValue: s3Url(sourceKey),
           sourceKey,
-          destinationKey: "r2-migration/documents/mot-1.pdf",
-          destinationValue: "r2-migration/documents/mot-1.pdf",
+          destinationKey: "owner/car/documents/1700000000000-mot.pdf",
+          destinationValue: "owner/car/documents/1700000000000-mot.pdf",
           sourceStore: "s3" as const,
           sourceBucket: SOURCE_BUCKET,
           updateModel: db.documentApproval,
           currentRow: {
-            documentUrl: "r2-migration/documents/mot-1.pdf",
+            documentUrl: "owner/car/documents/1700000000000-mot.pdf",
             userId: null,
             carId: "car",
             car: { ownerId: "owner" },
           },
           restoreWhere: {
             id: "mot-1",
-            documentUrl: "r2-migration/documents/mot-1.pdf",
+            documentUrl: "owner/car/documents/1700000000000-mot.pdf",
           },
           restoreData: { documentUrl: s3Url(sourceKey) },
           binding: bindingFields(),
@@ -1041,20 +1055,20 @@ describe("migrate-development-assets", () => {
           id: "nin-1",
           sourceValue: s3Url(sourceKey),
           sourceKey,
-          destinationKey: "r2-migration/documents/nin-1.webp",
-          destinationValue: "r2-migration/documents/nin-1.webp",
+          destinationKey: "user-1/documents/1700000000000-nin.webp",
+          destinationValue: "user-1/documents/1700000000000-nin.webp",
           sourceStore: "s3" as const,
           sourceBucket: SOURCE_BUCKET,
           updateModel: db.documentApproval,
           currentRow: {
-            documentUrl: "r2-migration/documents/nin-1.webp",
+            documentUrl: "user-1/documents/1700000000000-nin.webp",
             userId: "user-1",
             carId: null,
             car: null,
           },
           restoreWhere: {
             id: "nin-1",
-            documentUrl: "r2-migration/documents/nin-1.webp",
+            documentUrl: "user-1/documents/1700000000000-nin.webp",
           },
           restoreData: { documentUrl: s3Url(sourceKey) },
           binding: bindingFields(null, null, "user-1"),
@@ -1152,16 +1166,14 @@ describe("migrate-development-assets", () => {
     expect(s3.calls.find((call) => call.command === "PutObjectCommand")).toMatchObject({
       store: "r2",
       bucket: DOCS_BUCKET,
-      key: "r2-migration/documents/doc-1.pdf",
+      key: "owner/car/documents/file.pdf",
       contentType: "application/pdf",
     });
     expect(s3.objects.get(s3.id(IMAGES_BUCKET, sourceKey))).toEqual(pdfBuffer());
-    expect(s3.objects.get(s3.id(DOCS_BUCKET, "r2-migration/documents/doc-1.pdf"))).toEqual(
-      pdfBuffer(),
-    );
+    expect(s3.objects.get(s3.id(DOCS_BUCKET, "owner/car/documents/file.pdf"))).toEqual(pdfBuffer());
     expect(db.documentApproval.updateMany).toHaveBeenCalledWith({
       where: { id: "doc-1", documentUrl: publicUrl(sourceKey) },
-      data: { documentUrl: "r2-migration/documents/doc-1.pdf" },
+      data: { documentUrl: "owner/car/documents/file.pdf" },
     });
     const [entry] = (await readFile(path, "utf8"))
       .trim()
@@ -1172,12 +1184,58 @@ describe("migrate-development-assets", () => {
       sourceStore: "r2-images",
       sourceKey,
       destinationBucket: DOCS_BUCKET,
-      destinationKey: "r2-migration/documents/doc-1.pdf",
-      destinationValue: "r2-migration/documents/doc-1.pdf",
+      destinationKey: "owner/car/documents/file.pdf",
+      destinationValue: "owner/car/documents/file.pdf",
       ...bindingFields(),
       ...destinationProof(pdfBuffer()),
     });
     expect(summary()).toMatchObject({ discovered: 1, changed: 1, failed: 0 });
+  });
+
+  it("relocates a legacy CLI destination onto the live upload key", async () => {
+    const body = pdfBuffer();
+    const path = manifestPath();
+    put(DOCS_BUCKET, "r2-migration/documents/doc-1.pdf", body, "application/pdf");
+    await writeSecureManifest(path, [r2ImagesManifestEntry({ ...destinationProof(body) })]);
+    db.documentApproval.findUnique.mockResolvedValue({
+      documentUrl: "r2-migration/documents/doc-1.pdf",
+      userId: null,
+      carId: "car",
+      car: { ownerId: "owner" },
+    });
+
+    await runCli(["--relocate", `--manifest=${path}`]);
+
+    expect(s3.objects.get(s3.id(DOCS_BUCKET, "owner/car/documents/file.pdf"))).toEqual(body);
+    expect(db.documentApproval.updateMany).toHaveBeenCalledWith({
+      where: { id: "doc-1", documentUrl: "r2-migration/documents/doc-1.pdf" },
+      data: { documentUrl: "owner/car/documents/file.pdf" },
+    });
+    expect(summary()).toMatchObject({ mode: "relocate", changed: 1, failed: 0, processed: 1 });
+  });
+
+  it("fails relocate when the recorded destination digest does not match R2", async () => {
+    const path = manifestPath();
+    put(
+      DOCS_BUCKET,
+      "r2-migration/documents/doc-1.pdf",
+      Buffer.from("%PDF-tampered"),
+      "application/pdf",
+    );
+    await writeSecureManifest(path, [r2ImagesManifestEntry()]);
+    db.documentApproval.findUnique.mockResolvedValue({
+      documentUrl: "r2-migration/documents/doc-1.pdf",
+      userId: null,
+      carId: "car",
+      car: { ownerId: "owner" },
+    });
+
+    await runCli(["--relocate", `--manifest=${path}`]);
+
+    expect(s3.objects.has(s3.id(DOCS_BUCKET, "owner/car/documents/file.pdf"))).toBe(false);
+    expect(db.documentApproval.updateMany).not.toHaveBeenCalled();
+    expect(summary()).toMatchObject({ failed: 1, changed: 0 });
+    expect(failureCategories()).toEqual({ DestinationIntegrityMismatch: 1 });
   });
 
   it("does not discover a document URL on another r2.dev host", async () => {
@@ -1594,7 +1652,7 @@ describe("migrate-development-assets", () => {
     expect(s3.calls.some((call) => call.command === "PutObjectCommand")).toBe(true);
     expect(db.vehicleImage.updateMany).toHaveBeenCalledWith({
       where: { id: "img-1", url: s3Url(key) },
-      data: { url: `${PUBLIC_BASE}/r2-migration/vehicle-images/img-1.webp` },
+      data: { url: `${PUBLIC_BASE}/owner/car/images/photo.webp` },
     });
     const written = await readFile(path, "utf8");
     expect(written.endsWith("\n")).toBe(true);
@@ -1898,34 +1956,37 @@ describe("migrate-development-assets", () => {
     expect(db.documentApproval.updateMany).not.toHaveBeenCalled();
   });
 
-  it.each(["--apply", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
-    "rejects a symlink manifest for %s before storage or DB mutation",
-    async (flag) => {
-      const realPath = manifestPath("real.jsonl");
-      await writeSecureManifest(realPath, [r2ImagesManifestEntry()]);
-      const linkPath = manifestPath("link.jsonl");
-      await symlink(realPath, linkPath);
-      db.documentApproval.findMany.mockResolvedValueOnce([
-        carDocRow("doc-1", publicUrl("owner/car/documents/file.pdf")),
-      ]);
-      db.documentApproval.findUnique.mockResolvedValue({
-        documentUrl: "r2-migration/documents/doc-1.pdf",
-        userId: null,
-        carId: "car",
-        car: { ownerId: "owner" },
-      });
+  it.each([
+    "--apply",
+    "--relocate",
+    "--rollback",
+    "--cleanup-r2",
+    "--cleanup-public-sources",
+  ] as const)("rejects a symlink manifest for %s before storage or DB mutation", async (flag) => {
+    const realPath = manifestPath("real.jsonl");
+    await writeSecureManifest(realPath, [r2ImagesManifestEntry()]);
+    const linkPath = manifestPath("link.jsonl");
+    await symlink(realPath, linkPath);
+    db.documentApproval.findMany.mockResolvedValueOnce([
+      carDocRow("doc-1", publicUrl("owner/car/documents/file.pdf")),
+    ]);
+    db.documentApproval.findUnique.mockResolvedValue({
+      documentUrl: "r2-migration/documents/doc-1.pdf",
+      userId: null,
+      carId: "car",
+      car: { ownerId: "owner" },
+    });
 
-      await runCli([flag, `--manifest=${linkPath}`]);
+    await runCli([flag, `--manifest=${linkPath}`]);
 
-      expect(configError()).toContain("Manifest path must not be a symlink.");
-      expect(s3.calls.length).toBe(0);
-      expect(db.vehicleImage.updateMany).not.toHaveBeenCalled();
-      expect(db.documentApproval.updateMany).not.toHaveBeenCalled();
-      expect(db.documentApproval.findUnique).not.toHaveBeenCalled();
-    },
-  );
+    expect(configError()).toContain("Manifest path must not be a symlink.");
+    expect(s3.calls.length).toBe(0);
+    expect(db.vehicleImage.updateMany).not.toHaveBeenCalled();
+    expect(db.documentApproval.updateMany).not.toHaveBeenCalled();
+    expect(db.documentApproval.findUnique).not.toHaveBeenCalled();
+  });
 
-  it.each(["--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
+  it.each(["--relocate", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
     "rejects a world-readable manifest for %s before storage or DB mutation",
     async (flag) => {
       const path = manifestPath();
@@ -1957,7 +2018,7 @@ describe("migrate-development-assets", () => {
     expect(db.documentApproval.updateMany).not.toHaveBeenCalled();
   });
 
-  it.each(["--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
+  it.each(["--relocate", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
     "fails %s when the manifest file is missing",
     async (flag) => {
       await runCli([flag, `--manifest=${manifestPath("missing.jsonl")}`]);
@@ -1969,7 +2030,7 @@ describe("migrate-development-assets", () => {
     },
   );
 
-  it.each(["--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
+  it.each(["--relocate", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const)(
     "no-ops %s when the manifest file is empty",
     async (flag) => {
       const path = manifestPath();

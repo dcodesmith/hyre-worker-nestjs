@@ -24,8 +24,14 @@ const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp"]);
 const DOCUMENT_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png", "webp"]);
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-type Mode = "apply" | "cleanup-public-sources" | "cleanup-r2" | "dry-run" | "rollback";
-const MODE_FLAGS = ["--apply", "--rollback", "--cleanup-r2", "--cleanup-public-sources"] as const;
+type Mode = "apply" | "cleanup-public-sources" | "cleanup-r2" | "dry-run" | "relocate" | "rollback";
+const MODE_FLAGS = [
+  "--apply",
+  "--rollback",
+  "--relocate",
+  "--cleanup-r2",
+  "--cleanup-public-sources",
+] as const;
 type AssetTable = "DocumentApproval" | "VehicleImage";
 
 type Config = {
@@ -103,12 +109,13 @@ function parseArguments(): { mode: Mode; manifestPath: string } {
   if (args.includes("--help")) {
     console.log(
       [
-        "Usage: pnpm assets:migrate:development [--apply|--rollback|--cleanup-r2|--cleanup-public-sources]",
+        "Usage: pnpm assets:migrate:development [--apply|--relocate|--rollback|--cleanup-r2|--cleanup-public-sources]",
         "       [--manifest=/path/to/manifest.jsonl]",
         "",
         "No mode flag performs a read-only dry run.",
         "Order: --apply, verify private destinations, then --cleanup-public-sources.",
         "--apply uploads to R2 and conditionally rewrites legacy rows. Public image-bucket document sources are kept for rollback.",
+        "--relocate copies existing destinations onto the live upload key layout and rewrites DB values.",
         "--rollback restores DB values after confirming each source object still exists.",
         "After --cleanup-public-sources, r2-images rollback fails closed and does not restore public URLs.",
         "--cleanup-r2 deletes only destination objects no longer referenced by their row.",
@@ -121,7 +128,7 @@ function parseArguments(): { mode: Mode; manifestPath: string } {
   const modeFlags = args.filter((arg) => (MODE_FLAGS as readonly string[]).includes(arg));
   if (modeFlags.length > 1) {
     throw new ConfigurationError(
-      "Choose only one of --apply, --rollback, --cleanup-r2, or --cleanup-public-sources.",
+      "Choose only one of --apply, --relocate, --rollback, --cleanup-r2, or --cleanup-public-sources.",
     );
   }
   const unknown = args.filter(
@@ -363,7 +370,7 @@ function unsupportedOrInvalidKey(
     : "UnsupportedLegacyExtension";
 }
 
-function canonicalCliDestinationKeys(table: AssetTable, id: string): string[] {
+function legacyCliDestinationKeys(table: AssetTable, id: string): string[] {
   if (table === "VehicleImage") {
     return [
       `r2-migration/vehicle-images/${id}.webp`,
@@ -376,8 +383,92 @@ function canonicalCliDestinationKeys(table: AssetTable, id: string): string[] {
   ]);
 }
 
-function isCanonicalCliDestinationKey(record: Pick<AssetRecord, "table" | "id">, key: string) {
-  return canonicalCliDestinationKeys(record.table, record.id).includes(key);
+function isLegacyCliDestinationKey(record: Pick<AssetRecord, "table" | "id">, key: string) {
+  return legacyCliDestinationKeys(record.table, record.id).includes(key);
+}
+
+function replaceExtension(name: string, ext: "pdf" | "webp"): string {
+  return `${name.replace(/\.[^./]+$/, "")}.${ext}`;
+}
+
+function withCopySuffix(key: string): string {
+  return key.replace(/(\.[^./]+)$/, "-copy$1");
+}
+
+function liveDestinationKey(
+  record: Pick<AssetRecord, "table" | "ownerId" | "carId" | "userId">,
+  sourceKey: string,
+  ext: "pdf" | "webp",
+): string {
+  const parts = sourceKey.split("/");
+  const file = parts.at(-1);
+  if (!file) throw new MigrationItemError("InvalidLegacyKey");
+  const renamed = replaceExtension(file, ext);
+
+  if (parts.includes("documents") || parts.includes("images")) {
+    return [...parts.slice(0, -1), renamed].join("/");
+  }
+
+  if (
+    record.table === "VehicleImage" &&
+    record.ownerId &&
+    record.carId &&
+    parts.length === 2 &&
+    parts[0] === record.ownerId &&
+    (parts[1]?.startsWith(`${record.carId}-`) ?? false)
+  ) {
+    return `${record.ownerId}/${record.carId}/images/${replaceExtension(
+      parts[1].slice(record.carId.length + 1),
+      ext,
+    )}`;
+  }
+
+  if (
+    record.table === "DocumentApproval" &&
+    record.ownerId &&
+    record.carId &&
+    !record.userId &&
+    parts.length === 2 &&
+    parts[0] === record.ownerId &&
+    (parts[1]?.startsWith(`${record.carId}-`) ?? false)
+  ) {
+    return `${record.ownerId}/${record.carId}/documents/${replaceExtension(
+      parts[1].slice(record.carId.length + 1),
+      ext,
+    )}`;
+  }
+
+  if (
+    record.table === "DocumentApproval" &&
+    record.userId &&
+    !record.carId &&
+    parts.length === 2 &&
+    parts[0] === record.userId
+  ) {
+    return `${record.userId}/documents/${renamed}`;
+  }
+
+  throw new MigrationItemError("InvalidLegacyKey");
+}
+
+function destinationExtension(key: string): "pdf" | "webp" {
+  return fileExtension(key) === "pdf" ? "pdf" : "webp";
+}
+
+function isAllowedDestinationKey(entry: ManifestEntry): boolean {
+  if (legacyCliDestinationKeys(entry.table, entry.id).includes(entry.destinationKey)) {
+    return true;
+  }
+  try {
+    const live = liveDestinationKey(
+      entry,
+      entry.sourceKey,
+      destinationExtension(entry.destinationKey),
+    );
+    return entry.destinationKey === live || entry.destinationKey === withCopySuffix(live);
+  } catch {
+    return false;
+  }
 }
 
 function recordSourceKey(record: AssetRecord, config: Config): string {
@@ -423,7 +514,7 @@ function sameBinding(left: BindingFields, right: BindingFields): boolean {
 
 function assertBoundLegacyKey(record: AssetRecord, key: string): void {
   if (!isDecodedSafePath(key)) throw new MigrationItemError("InvalidLegacyKey");
-  if (isCanonicalCliDestinationKey(record, key)) return;
+  if (isLegacyCliDestinationKey(record, key)) return;
   const parts = key.split("/");
   if (record.table === "VehicleImage") {
     if (!record.ownerId || !record.carId) throw new MigrationItemError("LegacyKeyOwnerMismatch");
@@ -668,19 +759,12 @@ async function prepareEntry(
     return undefined;
   }
 
-  const defaultDestinationKey =
-    record.table === "VehicleImage"
-      ? `r2-migration/vehicle-images/${record.id}.webp`
-      : `r2-migration/documents/${record.id}.${documentPdf ? "pdf" : "webp"}`;
-  const requestedKey =
-    source.key === defaultDestinationKey
-      ? defaultDestinationKey.replace(/\.[^./]+$/, `-copy.${documentPdf ? "pdf" : "source"}`)
-      : defaultDestinationKey.replace(/\.webp$/, ".source");
+  const destinationKey = liveDestinationKey(record, source.key, documentPdf ? "pdf" : "webp");
   let prepared: Awaited<ReturnType<typeof prepareStorageObject>>;
   try {
     prepared = await prepareStorageObject(
       source.buffer,
-      requestedKey,
+      destinationKey,
       documentPdf ? "application/pdf" : "image/jpeg",
     );
   } catch (error) {
@@ -940,7 +1024,7 @@ async function readManifest(
       entry.destinationBucket !== expectedBucket ||
       entry.sourceKey !== expectedSourceKey ||
       !isAllowedManifestSourceStore(entry, config) ||
-      !canonicalCliDestinationKeys(entry.table, entry.id).includes(entry.destinationKey) ||
+      !isAllowedDestinationKey(entry) ||
       entry.destinationValue !== expectedDestinationValue
     ) {
       throw new ConfigurationError("Manifest entry does not match the development migration.");
@@ -970,6 +1054,85 @@ async function readManifest(
     unique.set(`${entry.table}:${entry.id}`, entry);
   }
   return [...unique.values()];
+}
+
+async function relocate(
+  database: PrismaClient,
+  config: Config,
+  entries: ManifestEntry[],
+): Promise<Summary> {
+  const summary = emptySummary(entries.length);
+  for (const [index, entry] of entries.entries()) {
+    try {
+      const nextKey = liveDestinationKey(
+        entry,
+        entry.sourceKey,
+        destinationExtension(entry.destinationKey),
+      );
+      const nextValue =
+        entry.table === "VehicleImage" ? `${config.publicBaseUrl}/${nextKey}` : nextKey;
+      if (nextKey === entry.destinationKey) {
+        summary.skipped += 1;
+        summary.processed += 1;
+        continue;
+      }
+
+      const body = await fetchObject(
+        config.destinationClient,
+        entry.destinationBucket,
+        entry.destinationKey,
+      );
+      if (!body) throw new MigrationItemError("SourceObjectNotFound");
+      if (
+        body.byteLength !== entry.destinationSize ||
+        createHash("sha256").update(body).digest("hex") !== entry.destinationDigest
+      ) {
+        throw new MigrationItemError("DestinationIntegrityMismatch");
+      }
+
+      const existing = await fetchObject(
+        config.destinationClient,
+        entry.destinationBucket,
+        nextKey,
+      );
+      if (existing) {
+        if (createHash("sha256").update(existing).digest("hex") !== entry.destinationDigest) {
+          throw new MigrationItemError("DestinationIntegrityMismatch");
+        }
+      } else {
+        await config.destinationClient.send(
+          new PutObjectCommand({
+            Bucket: entry.destinationBucket,
+            Key: nextKey,
+            Body: body,
+            ContentType: expectedDestinationContentType(nextKey),
+            ...(entry.table === "VehicleImage"
+              ? { CacheControl: "public, max-age=31536000, immutable" }
+              : {}),
+          }),
+        );
+      }
+
+      const changed = await replaceValue(database, entry, entry.destinationValue, nextValue);
+      if (changed === 0) {
+        const current = await currentValue(database, entry);
+        if (current !== nextValue) throw new MigrationItemError("ConcurrentRowChange");
+        summary.skipped += 1;
+      } else {
+        await appendManifest(config.manifestPath, {
+          ...entry,
+          destinationKey: nextKey,
+          destinationValue: nextValue,
+        });
+        summary.changed += 1;
+      }
+      summary.processed += 1;
+    } catch (error) {
+      summary.failed += 1;
+      console.error(`${entry.table} item ${index + 1} failed (${classifyItemError(error)}).`);
+    }
+  }
+  return summary;
 }
 
 async function rollback(
@@ -1211,9 +1374,11 @@ async function main(): Promise<void> {
       summary =
         mode === "rollback"
           ? await rollback(database, config, entries)
-          : mode === "cleanup-r2"
-            ? await cleanupR2(database, config, entries)
-            : await cleanupPublicSources(database, config, entries);
+          : mode === "relocate"
+            ? await relocate(database, config, entries)
+            : mode === "cleanup-r2"
+              ? await cleanupR2(database, config, entries)
+              : await cleanupPublicSources(database, config, entries);
     }
   } finally {
     await database.$disconnect();
@@ -1226,7 +1391,12 @@ async function main(): Promise<void> {
       mode,
       ...summary,
       durationMs: Date.now() - startedAt,
-      manifest: mode === "dry-run" ? "not-written" : mode === "apply" ? "updated" : "read",
+      manifest:
+        mode === "dry-run"
+          ? "not-written"
+          : mode === "apply" || mode === "relocate"
+            ? "updated"
+            : "read",
     }),
   );
   if (mode === "cleanup-public-sources") {
