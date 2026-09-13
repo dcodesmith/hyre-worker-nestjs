@@ -57,6 +57,10 @@ function createFetchedRefund(
   };
 }
 
+function uniqueFlutterwaveTransactionId(): number {
+  return Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 12), 16);
+}
+
 describe("Payments E2E Tests", () => {
   let app: INestApplication;
   let databaseService: DatabaseService;
@@ -995,7 +999,7 @@ describe("Payments E2E Tests", () => {
 
       it("should update payment status to REFUNDED when refund is completed", async () => {
         // Use a unique numeric transaction ID since Flutterwave sends TransactionId as a number
-        const flwTransactionId = Date.now();
+        const flwTransactionId = uniqueFlutterwaveTransactionId();
         await databaseService.booking.update({
           where: { id: testBookingId },
           data: { paymentStatus: "REFUND_PROCESSING" },
@@ -1070,7 +1074,7 @@ describe("Payments E2E Tests", () => {
       });
 
       it("should atomically record an operations notification when a refund fails", async () => {
-        const flwTransactionId = Date.now();
+        const flwTransactionId = uniqueFlutterwaveTransactionId();
         const refundId = flwTransactionId + 1;
         await databaseService.booking.update({
           where: { id: testBookingId },
@@ -1144,7 +1148,7 @@ describe("Payments E2E Tests", () => {
 
   describe("refund reconciliation", () => {
     it("hands a refund past its provider SLA to operations exactly once", async () => {
-      const flwTransactionId = Date.now().toString();
+      const flwTransactionId = uniqueFlutterwaveTransactionId().toString();
       const refundId = flwTransactionId;
       await databaseService.booking.update({
         where: { id: testBookingId },
