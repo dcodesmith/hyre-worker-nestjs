@@ -400,7 +400,7 @@ CREATE TABLE "Flight" (
     "id" UUID NOT NULL,
     "flightNumber" TEXT NOT NULL,
     "flightDate" DATE NOT NULL,
-    "faFlightId" TEXT,
+    "flightAwareFlightId" TEXT,
     "originCode" TEXT NOT NULL,
     "originCodeIATA" TEXT,
     "originTimezone" TEXT,
@@ -1264,6 +1264,9 @@ CREATE INDEX "DomainOutboxEvent_aggregateId_idx" ON "DomainOutboxEvent"("aggrega
 CREATE UNIQUE INDEX "Role_name_key" ON "Role"("name");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Flight_flightAwareFlightId_key" ON "Flight"("flightAwareFlightId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Flight_alertId_key" ON "Flight"("alertId");
 
 -- CreateIndex
@@ -1959,6 +1962,10 @@ CHECK (
     AND ("pricingIncludesFuel" OR COALESCE("fuelUpgradeRate" > 0, false))
   )
 );
+
+ALTER TABLE "Car"
+ADD CONSTRAINT "Car_public_ref_format_check"
+CHECK ("publicRef" ~ '^[0-9a-f]{16}$');
 
 ALTER TABLE "Promotion"
 ADD CONSTRAINT "Promotion_discount_nonnegative"

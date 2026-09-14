@@ -142,7 +142,7 @@ describe("ChauffeurAssignedHandler", () => {
       id: "flight-1",
       flightNumber: "BA74",
       flightDate: new Date("2030-01-01"),
-      faFlightId: "fa-1",
+      flightAwareFlightId: "fa-1",
       originCode: "EGLL",
       originCodeIATA: "LHR",
       originTimezone: "Europe/London",

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createBookingSchema, createGuestBookingSchema } from "./create-booking.dto";
 import { pricingPreviewBodySchema } from "./pricing-preview.dto";
 
+const CAR_ID = "01994a1d-4263-7000-8000-000000000000";
+
 function expectRejectedUnknownField(
   result: { success: boolean; error?: { issues: unknown } },
   field: string,
@@ -12,7 +14,7 @@ function expectRejectedUnknownField(
 
 describe("CreateBookingSchema", () => {
   const validBaseBooking = {
-    carId: "car-123",
+    carId: CAR_ID,
     startDate: new Date("2025-02-01T09:00:00Z"),
     endDate: new Date("2025-02-01T21:00:00Z"),
     pickupAddress: "Lagos Airport",
@@ -133,6 +135,17 @@ describe("CreateBookingSchema", () => {
     });
   });
 
+  describe("carId validation", () => {
+    it("rejects non-UUID car IDs", () => {
+      expect(
+        createBookingSchema.safeParse({
+          ...validBaseBooking,
+          carId: "not-a-uuid",
+        }).success,
+      ).toBe(false);
+    });
+  });
+
   describe("callbackUrl validation", () => {
     it("rejects unsafe callback URL protocols", () => {
       const booking = {
@@ -194,7 +207,7 @@ describe("CreateBookingSchema", () => {
       ).toBe(false);
       expect(
         pricingPreviewBodySchema.safeParse({
-          carId: "car-123",
+          carId: CAR_ID,
           bookingType: "DAY",
           startDate: validBaseBooking.startDate,
           endDate: validBaseBooking.endDate,
@@ -290,7 +303,7 @@ describe("CreateBookingSchema", () => {
   describe("pricing preview extra fields", () => {
     it("tolerates extra full-form fields such as pickupAddress and sameLocation", () => {
       const result = pricingPreviewBodySchema.safeParse({
-        carId: "car-123",
+        carId: CAR_ID,
         bookingType: "DAY",
         startDate: validBaseBooking.startDate,
         endDate: validBaseBooking.endDate,
@@ -306,7 +319,7 @@ describe("CreateBookingSchema", () => {
 
 describe("CreateGuestBookingSchema", () => {
   const validGuestBooking = {
-    carId: "car-123",
+    carId: CAR_ID,
     startDate: new Date("2025-02-01T09:00:00Z"),
     endDate: new Date("2025-02-01T21:00:00Z"),
     pickupAddress: "Lagos Airport",

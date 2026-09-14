@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const confirmExtensionPaymentSchema = z.object({
-  extensionId: z.string().min(1, "Extension ID is required"),
+  extensionId: z.uuid("Extension ID must be a valid UUID"),
   txRef: z.string().min(1, "Transaction reference is required"),
   transactionId: z
     .string()

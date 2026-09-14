@@ -334,7 +334,7 @@ model Flight {
   id                  String              @id @default(uuid(7)) @db.Uuid
   flightNumber        String
   flightDate          DateTime            @db.Date
-  faFlightId          String?
+  flightAwareFlightId String?             @unique
   originCode          String
   originCodeIATA      String?
   originTimezone      String?

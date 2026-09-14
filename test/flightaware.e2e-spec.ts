@@ -238,7 +238,7 @@ describe("FlightAware E2E Tests", () => {
       data: {
         flightNumber: "BA74",
         flightDate: new Date("2030-01-01"),
-        faFlightId: "fa-1",
+        flightAwareFlightId: "fa-1",
         originCode: "EGLL",
         originCodeIATA: "LHR",
         destinationCode: "DNMM",
@@ -344,7 +344,7 @@ describe("FlightAware E2E Tests", () => {
       id: `flight-arrived-${storedEvent?.id}-${booking.id}-fleet-owner-${owner.id}`,
       type: "flight-arrived",
       audience: "fleet-owner",
-      channels: ["email"],
+      channels: ["email", "whatsapp"],
       bookingId: booking.id,
       recipients: {
         fleetOwner: {

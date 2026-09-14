@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const reconcileBookingExpirationSchema = z.object({
-  bookingId: z.string().min(1, "Booking ID is required"),
+  bookingId: z.uuid("Booking ID must be a valid UUID"),
   txRef: z.string().min(1, "Transaction reference is required"),
 });
 

@@ -171,8 +171,9 @@ describe("BookingPersistenceService", () => {
     await expect(service.fetchCarWithPricing("car-404")).rejects.toThrow(CarNotFoundException);
   });
 
-  it("persists the departure date and origin timezone used by FlightAware alerts", async () => {
-    const upsert = vi.fn().mockResolvedValue({ id: "flight-1" });
+  it("uses the external flight ID for lookup while preserving a UUID primary key", async () => {
+    const flightRecordId = "0198f0d0-21e8-7000-8000-000000000001";
+    const upsert = vi.fn().mockResolvedValue({ id: flightRecordId });
     const updateMany = vi.fn().mockResolvedValue({ count: 0 });
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -204,7 +205,7 @@ describe("BookingPersistenceService", () => {
           expectedTotalAmount: "10000",
         },
         {
-          flightId: "flight-1",
+          flightId: "fa-flight-1",
           flightNumber: "BA74",
           departureTime,
           arrivalTime,
@@ -218,10 +219,11 @@ describe("BookingPersistenceService", () => {
           destinationCity: "Lagos",
         },
       ),
-    ).resolves.toBe("flight-1");
+    ).resolves.toBe(flightRecordId);
     expect(upsert).toHaveBeenCalledWith({
-      where: { id: "flight-1" },
+      where: { flightAwareFlightId: "fa-flight-1" },
       create: expect.objectContaining({
+        flightAwareFlightId: "fa-flight-1",
         flightDate: departureTime,
         scheduledDeparture: departureTime,
         scheduledArrival: arrivalTime,
@@ -230,9 +232,10 @@ describe("BookingPersistenceService", () => {
       update: {},
       select: { id: true },
     });
+    expect(upsert.mock.calls[0]?.[0].create).not.toHaveProperty("id");
     expect(updateMany).toHaveBeenCalledWith({
       where: {
-        id: "flight-1",
+        id: flightRecordId,
         scheduledDeparture: null,
       },
       data: {

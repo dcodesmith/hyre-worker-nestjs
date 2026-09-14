@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createExtensionBodySchema } from "./create-extension.dto";
+import { bookingIdParamSchema, createExtensionBodySchema } from "./create-extension.dto";
 
 describe("createExtensionBodySchema", () => {
+  const bookingLegId = "01994a1d-4263-7000-8000-000000000001";
   const validBody = {
     hours: 2,
     callbackUrl: "https://example.com/callback",
@@ -12,9 +13,9 @@ describe("createExtensionBodySchema", () => {
   });
 
   it("accepts an optional bookingLegId", () => {
-    expect(
-      createExtensionBodySchema.parse({ ...validBody, bookingLegId: "leg-future" }).bookingLegId,
-    ).toBe("leg-future");
+    expect(createExtensionBodySchema.parse({ ...validBody, bookingLegId }).bookingLegId).toBe(
+      bookingLegId,
+    );
   });
 
   it("rejects an empty bookingLegId", () => {
@@ -24,5 +25,23 @@ describe("createExtensionBodySchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-UUID bookingLegId", () => {
+    expect(
+      createExtensionBodySchema.safeParse({
+        ...validBody,
+        bookingLegId: "not-a-uuid",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("bookingIdParamSchema", () => {
+  it("accepts UUID booking IDs and rejects malformed IDs", () => {
+    expect(bookingIdParamSchema.safeParse("01994a1d-4263-7000-8000-000000000001").success).toBe(
+      true,
+    );
+    expect(bookingIdParamSchema.safeParse("not-a-uuid").success).toBe(false);
   });
 });
