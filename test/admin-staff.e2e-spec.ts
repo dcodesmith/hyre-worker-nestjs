@@ -356,7 +356,7 @@ describe("Admin staff E2E Tests", () => {
     expect(invalidLimit.status).toBe(HttpStatus.BAD_REQUEST);
 
     const invalidId = await request(app.getHttpServer())
-      .post("/api/admin/staff/not-a-cuid/revoke")
+      .post("/api/admin/staff/not-a-uuid/revoke")
       .set("Cookie", adminCookie);
     expect(invalidId.status).toBe(HttpStatus.BAD_REQUEST);
   });

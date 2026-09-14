@@ -10,7 +10,7 @@ export const bookingCreditsSchema = z
   .multipleOf(0.01)
   .default(0);
 export const bookingAddonIdsSchema = z
-  .array(z.cuid())
+  .array(z.uuid())
   .max(10, "A booking cannot have more than 10 add-ons")
   .refine((ids) => new Set(ids).size === ids.length, {
     message: "Add-on IDs must be unique",
@@ -28,7 +28,7 @@ export type BookingType = (typeof BOOKING_TYPES)[number];
  */
 const coreBookingFields = z
   .object({
-    carId: z.string().min(1, "Car ID is required"),
+    carId: z.uuid("Car ID must be a valid UUID"),
     startDate: z.coerce.date("Invalid start date format"),
     endDate: z.coerce.date("Invalid end date format"),
     pickupAddress: z.string().min(1, "Pickup address is required"),

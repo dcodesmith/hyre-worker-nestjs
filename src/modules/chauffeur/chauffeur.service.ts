@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -506,7 +506,7 @@ export class ChauffeurService {
       ) {
         throw new ChauffeurBiometricNotVerifiedException();
       }
-      const imageKey = `${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/selfie.webp`;
+      const imageKey = `fleet-owners/${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/${randomUUID()}.webp`;
       const { key: selfieObjectKey } = await this.storageService.uploadBuffer(
         processedSelfie,
         imageKey,

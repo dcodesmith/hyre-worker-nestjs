@@ -31,7 +31,7 @@ export const adminPayoutListQuerySchema = z.object({
   status: z.enum(PayoutTransactionStatus).optional(),
 });
 
-export const financialOperationIdSchema = z.cuid();
+export const financialOperationIdSchema = z.uuid();
 
 export const reconcileRefundBodySchema = z.object({
   refundProviderId: z.string().trim().min(1).optional(),

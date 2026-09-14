@@ -8,13 +8,13 @@ import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { CarApprovalService } from "./car-approval.service";
 import {
-  cuidParamSchema,
   type ListCarsForReviewQueryDto,
   listCarsForReviewQuerySchema,
   type RejectBodyDto,
   rejectBodySchema,
   type SetCoverBodyDto,
   setCoverBodySchema,
+  uuidParamSchema,
 } from "./dto/car-approval.dto";
 import { carIdParamSchema } from "./dto/update-car.dto";
 
@@ -56,7 +56,7 @@ export class AdminCarController {
   @Roles(ADMIN, STAFF)
   async approveImage(
     @ZodParam("carId", carIdParamSchema) carId: string,
-    @ZodParam("imageId", cuidParamSchema) imageId: string,
+    @ZodParam("imageId", uuidParamSchema) imageId: string,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {
     return this.carApprovalService.approveImage(carId, imageId, sessionUser.id);
@@ -66,7 +66,7 @@ export class AdminCarController {
   @Roles(ADMIN, STAFF)
   async rejectImage(
     @ZodParam("carId", carIdParamSchema) carId: string,
-    @ZodParam("imageId", cuidParamSchema) imageId: string,
+    @ZodParam("imageId", uuidParamSchema) imageId: string,
     @ZodBody(rejectBodySchema) body: RejectBodyDto,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {

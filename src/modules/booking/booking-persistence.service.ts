@@ -98,12 +98,11 @@ export class BookingPersistenceService {
     const defaultDestinationCode =
       this.configService.get("DEFAULT_DESTINATION_CODE", { infer: true }) ?? "DNMM";
     const flightRecord = await tx.flight.upsert({
-      where: { id: flightData.flightId },
+      where: { flightAwareFlightId: flightData.flightId },
       create: {
-        id: flightData.flightId,
         flightNumber: flightData.flightNumber.toUpperCase(),
         flightDate: flightData.departureTime,
-        faFlightId: flightData.flightId,
+        flightAwareFlightId: flightData.flightId,
         originCode: flightData.originCode ?? "UNKNOWN",
         originCodeIATA: flightData.originCodeIATA,
         originTimezone: flightData.originTimezone,

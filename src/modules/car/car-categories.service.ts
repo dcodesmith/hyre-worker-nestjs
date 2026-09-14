@@ -64,10 +64,12 @@ export class CarCategoriesService {
         },
         select: {
           id: true,
+          publicRef: true,
           ownerId: true,
           make: true,
           model: true,
           year: true,
+          color: true,
           dayRate: true,
           passengerCapacity: true,
           pricingIncludesFuel: true,

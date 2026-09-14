@@ -1,7 +1,7 @@
 import { CarApprovalStatus } from "@prisma/client";
 import { z } from "zod";
 
-export const cuidParamSchema = z.cuid();
+export const uuidParamSchema = z.uuid();
 
 export const listCarsForReviewQuerySchema = z.object({
   approvalStatus: z.enum(CarApprovalStatus).optional(),
@@ -16,6 +16,6 @@ export const rejectBodySchema = z.object({
 export type RejectBodyDto = z.infer<typeof rejectBodySchema>;
 
 export const setCoverBodySchema = z.object({
-  imageId: cuidParamSchema,
+  imageId: uuidParamSchema,
 });
 export type SetCoverBodyDto = z.infer<typeof setCoverBodySchema>;

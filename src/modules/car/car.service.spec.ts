@@ -22,6 +22,7 @@ import {
   CarDocumentNotFoundException,
   CarFetchFailedException,
   CarNotFoundException,
+  CarRelistingRequiredException,
   CarStatusUpdateNotAllowedException,
   CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
@@ -267,6 +268,70 @@ describe("CarService", () => {
     );
   });
 
+  it("requires relisting to change an approved car's public identity", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.AVAILABLE,
+      approvalStatus: CarApprovalStatus.APPROVED,
+      make: "Toyota",
+      model: "Camry",
+      year: 2022,
+      color: "Black",
+    });
+
+    await expect(service.updateCar("car-1", "owner-1", { color: "Blue" })).rejects.toBeInstanceOf(
+      CarRelistingRequiredException,
+    );
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
+  it("allows public identity changes before approval", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.HOLD,
+      approvalStatus: CarApprovalStatus.PENDING,
+      make: "Toyota",
+      model: "Camry",
+      year: 2022,
+      color: "Black",
+    });
+    databaseServiceMock.car.update.mockResolvedValueOnce({
+      id: "car-1",
+      ownerId: "owner-1",
+      color: "Blue",
+    });
+
+    await expect(service.updateCar("car-1", "owner-1", { color: "Blue" })).resolves.toMatchObject({
+      color: "Blue",
+    });
+  });
+
+  it("allows unrelated edits to an approved car", async () => {
+    databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+      id: "car-1",
+      registrationNumber: "ABC-123XY",
+      status: Status.AVAILABLE,
+      approvalStatus: CarApprovalStatus.APPROVED,
+      make: "Toyota",
+      model: "Camry",
+      year: 2022,
+      color: "Black",
+    });
+    databaseServiceMock.car.update.mockResolvedValueOnce({
+      id: "car-1",
+      ownerId: "owner-1",
+      dayRate: 55_000,
+    });
+
+    await expect(service.updateCar("car-1", "owner-1", { dayRate: 55_000 })).resolves.toMatchObject(
+      {
+        dayRate: 55_000,
+      },
+    );
+  });
+
   it("rejects update when registration number conflicts after normalization", async () => {
     databaseServiceMock.car.findFirst
       .mockResolvedValueOnce({
@@ -375,7 +440,10 @@ describe("CarService", () => {
     };
 
     it("replaces a rejected image and resets it to PENDING", async () => {
-      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        id: "car-1",
+        publicRef: "0123456789abcdef",
+      });
       databaseServiceMock.vehicleImage.findFirst.mockResolvedValueOnce(rejectedImage);
       storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedImage);
       databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({
@@ -392,6 +460,11 @@ describe("CarService", () => {
       );
 
       expect(result.success).toBe(true);
+      expect(storageServiceMock.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.stringMatching(/^cars\/0123456789abcdef\/images\/[0-9a-f-]{36}\.webp$/),
+        "image/jpeg",
+      );
       expect(databaseServiceMock.vehicleImage.update).toHaveBeenCalledWith({
         where: { id: "img-1", status: DocumentStatus.REJECTED },
         data: {
@@ -509,7 +582,10 @@ describe("CarService", () => {
     };
 
     it("replaces a rejected document and resets it to PENDING", async () => {
-      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        id: "car-1",
+        publicRef: "0123456789abcdef",
+      });
       databaseServiceMock.documentApproval.findFirst.mockResolvedValueOnce(rejectedDocument);
       storageServiceMock.uploadBuffer.mockResolvedValueOnce(uploadedDocument);
       databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
@@ -526,6 +602,13 @@ describe("CarService", () => {
       );
 
       expect(result.success).toBe(true);
+      expect(storageServiceMock.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.stringMatching(
+          /^fleet-owners\/owner-1\/cars\/car-1\/documents\/[0-9a-f-]{36}\.pdf$/,
+        ),
+        "application/pdf",
+      );
       expect(databaseServiceMock.documentApproval.update).toHaveBeenCalledWith({
         where: { id: "doc-1", status: DocumentStatus.REJECTED },
         data: {
@@ -662,6 +745,7 @@ describe("CarService", () => {
       expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            publicRef: expect.stringMatching(/^[0-9a-f]{16}$/),
             ownerId: "owner-1",
             registrationNumber: "KJA123AB",
             chassisNumber: verification.chassisNumber,
@@ -955,7 +1039,7 @@ describe("CarService", () => {
         Array.isArray(arg) ? Promise.all(arg) : arg(databaseServiceMock),
       );
       databaseServiceMock.car.findFirst
-        .mockResolvedValueOnce({ id: "car-1" })
+        .mockResolvedValueOnce({ id: "car-1", publicRef: "0123456789abcdef" })
         .mockResolvedValueOnce({ id: "car-1", documents: [] });
       storageServiceMock.uploadBuffer
         .mockResolvedValueOnce({
@@ -975,6 +1059,14 @@ describe("CarService", () => {
       });
 
       expect(result).toMatchObject({ id: "car-1" });
+      expect(storageServiceMock.uploadBuffer).toHaveBeenNthCalledWith(
+        1,
+        expect.any(Buffer),
+        expect.stringMatching(
+          /^fleet-owners\/owner-1\/cars\/car-1\/documents\/[0-9a-f-]{36}\.pdf$/,
+        ),
+        "application/pdf",
+      );
       expect(databaseServiceMock.documentApproval.createMany).toHaveBeenCalledWith({
         data: [
           {
@@ -1026,7 +1118,7 @@ describe("CarService", () => {
 
     it("uploads draft images once", async () => {
       databaseServiceMock.car.findFirst
-        .mockResolvedValueOnce({ id: "car-1" })
+        .mockResolvedValueOnce({ id: "car-1", publicRef: "0123456789abcdef" })
         .mockResolvedValueOnce({ id: "car-1", images: [] });
       storageServiceMock.uploadBuffer.mockResolvedValueOnce({
         key: "owner-1/car-1/images/a.webp",
@@ -1040,6 +1132,11 @@ describe("CarService", () => {
       ]);
 
       expect(result).toMatchObject({ id: "car-1" });
+      expect(storageServiceMock.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.stringMatching(/^cars\/0123456789abcdef\/images\/[0-9a-f-]{36}\.webp$/),
+        "image/jpeg",
+      );
       expect(databaseServiceMock.vehicleImage.createMany).toHaveBeenCalledWith({
         data: [{ url: "https://cdn.test/owner-1/car-1/images/a.webp", carId: "car-1" }],
       });

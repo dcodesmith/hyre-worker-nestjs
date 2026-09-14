@@ -34,6 +34,7 @@ describe("BookingAgentSearchService", () => {
 
   const buildCar = (id: string, overrides?: Partial<SearchCarDto>): SearchCarDto => ({
     id,
+    publicRef: "0123456789abcdef",
     make: "Toyota",
     model: "Prado",
     year: 2022,

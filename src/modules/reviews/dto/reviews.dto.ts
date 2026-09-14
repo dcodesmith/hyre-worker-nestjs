@@ -1,11 +1,9 @@
 import { z } from "zod";
 
-const cuidPattern = /^c[a-z0-9]{24}$/;
-
 const ratingSchema = z.number().int().min(1).max(5);
 
 export const createReviewSchema = z.object({
-  bookingId: z.string().regex(cuidPattern, "Invalid booking ID format"),
+  bookingId: z.uuid("Invalid booking ID format"),
   overallRating: ratingSchema,
   carRating: ratingSchema,
   chauffeurRating: ratingSchema,
@@ -43,10 +41,10 @@ export const hideReviewSchema = z.object({
 
 export type HideReviewDto = z.infer<typeof hideReviewSchema>;
 
-export const reviewIdParamSchema = z.string().regex(cuidPattern, "Invalid review ID format");
-export const bookingIdParamSchema = z.string().regex(cuidPattern, "Invalid booking ID format");
-export const carIdParamSchema = z.string().regex(cuidPattern, "Invalid car ID format");
-export const chauffeurIdParamSchema = z.string().regex(cuidPattern, "Invalid chauffeur ID format");
+export const reviewIdParamSchema = z.uuid("Invalid review ID format");
+export const bookingIdParamSchema = z.uuid("Invalid booking ID format");
+export const carIdParamSchema = z.uuid("Invalid car ID format");
+export const chauffeurIdParamSchema = z.uuid("Invalid chauffeur ID format");
 
 export const reviewQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

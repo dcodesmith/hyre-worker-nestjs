@@ -97,7 +97,7 @@ describe("ReviewsController", () => {
     vi.mocked(reviewsWriteService.createReview).mockResolvedValueOnce(mockCreatedReview);
 
     const body = new ZodValidationPipe(createReviewSchema).transform({
-      bookingId: "c123456789012345678901234",
+      bookingId: "01994a1d-4263-7000-8000-000000000001",
       overallRating: 5,
       carRating: 4,
       chauffeurRating: 5,
@@ -114,7 +114,7 @@ describe("ReviewsController", () => {
     vi.mocked(reviewsWriteService.updateReview).mockResolvedValueOnce(mockUpdatedReview);
 
     const reviewId = new ZodValidationPipe(reviewIdParamSchema).transform(
-      "c123456789012345678901234",
+      "01994a1d-4263-7000-8000-000000000001",
     );
     const body = new ZodValidationPipe(updateReviewSchema).transform({
       overallRating: 4,
@@ -144,7 +144,7 @@ describe("ReviewsController", () => {
     });
 
     const result = await controller.getCarReviews(
-      "c123456789012345678901234",
+      "01994a1d-4263-7000-8000-000000000001",
       new ZodValidationPipe(reviewQuerySchema).transform({}),
     );
 
@@ -156,7 +156,7 @@ describe("ReviewsController", () => {
     vi.mocked(reviewsModerationService.hideReview).mockResolvedValueOnce(mockHiddenReview);
 
     const result = await controller.hideReview(
-      "c123456789012345678901234",
+      "01994a1d-4263-7000-8000-000000000001",
       { moderationNotes: "Spam" },
       mockAdminUser,
     );

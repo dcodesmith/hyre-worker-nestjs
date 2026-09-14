@@ -1685,8 +1685,8 @@ export class AccountVerificationService {
     type: DocumentType;
     file: UploadedAccountDocument;
   }) {
-    const safeName = file.originalname.replaceAll(/[^a-zA-Z0-9.-]/g, "_");
-    const key = `${userId}/${verificationId}/documents/${type.toLowerCase()}-${randomUUID()}-${safeName}`;
+    const extension = file.mimetype.startsWith("image/") ? "webp" : "pdf";
+    const key = `fleet-owners/${userId}/account-verifications/${verificationId}/documents/${randomUUID()}.${extension}`;
     return {
       type,
       ...(await this.storageService.uploadBuffer(file.buffer, key, file.mimetype)),

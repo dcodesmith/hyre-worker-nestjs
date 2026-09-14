@@ -45,6 +45,8 @@ function validateBookingInput(rawBody: unknown, isAuthenticated: boolean): Creat
   return pipe.transform(rawBody);
 }
 
+const CAR_ID = "01994a1d-4263-7000-8000-000000000001";
+
 describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
@@ -103,7 +105,7 @@ describe("BookingController", () => {
     id: "booking-123",
     status: "CONFIRMED",
     userId: "user-123",
-    carId: "car-123",
+    carId: CAR_ID,
   };
 
   const mockSessionUser = {
@@ -118,7 +120,7 @@ describe("BookingController", () => {
   };
 
   const createValidBookingDto = (): CreateBookingDto => ({
-    carId: "car-123",
+    carId: CAR_ID,
     startDate: new Date("2025-02-01T09:00:00Z"),
     endDate: new Date("2025-02-01T21:00:00Z"),
     pickupAddress: "123 Main St, Lagos",
@@ -235,7 +237,7 @@ describe("BookingController", () => {
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
           expect.objectContaining({
             input: expect.objectContaining({
-              carId: "car-123",
+              carId: CAR_ID,
               bookingType: "DAY",
             }),
             sessionUser: {
@@ -285,7 +287,7 @@ describe("BookingController", () => {
         expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
           expect.objectContaining({
             input: expect.objectContaining({
-              carId: "car-123",
+              carId: CAR_ID,
               guestEmail: "guest@example.com",
               guestName: "Guest User",
               guestPhone: "08098765432",
@@ -491,7 +493,7 @@ describe("BookingController", () => {
   describe("getPricingPreview", () => {
     it("returns pricing preview for the requested booking window", async () => {
       const body = {
-        carId: "car-123",
+        carId: CAR_ID,
         bookingType: "DAY" as const,
         startDate: new Date("2025-02-01T00:00:00.000Z"),
         endDate: new Date("2025-02-03T00:00:00.000Z"),

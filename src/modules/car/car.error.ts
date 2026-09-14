@@ -9,6 +9,7 @@ export const CarErrorCode = {
   CAR_CREATE_FAILED: "CAR_CREATE_FAILED",
   CAR_UPDATE_FAILED: "CAR_UPDATE_FAILED",
   CAR_STATUS_UPDATE_NOT_ALLOWED: "CAR_STATUS_UPDATE_NOT_ALLOWED",
+  CAR_RELISTING_REQUIRED: "CAR_RELISTING_REQUIRED",
   OWNER_DRIVER_CAR_LIMIT_REACHED: "OWNER_DRIVER_CAR_LIMIT_REACHED",
   REGISTRATION_NUMBER_ALREADY_EXISTS: "REGISTRATION_NUMBER_ALREADY_EXISTS",
   CHASSIS_NUMBER_ALREADY_EXISTS: "CHASSIS_NUMBER_ALREADY_EXISTS",
@@ -93,6 +94,17 @@ export class CarStatusUpdateNotAllowedException extends CarException {
       "A booked car's status cannot be changed manually",
       HttpStatus.CONFLICT,
       { title: "Car Status Update Not Allowed" },
+    );
+  }
+}
+
+export class CarRelistingRequiredException extends CarException {
+  constructor() {
+    super(
+      CarErrorCode.CAR_RELISTING_REQUIRED,
+      "Approved cars must be relisted to change make, model, year, or color",
+      HttpStatus.CONFLICT,
+      { title: "Car Relisting Required" },
     );
   }
 }

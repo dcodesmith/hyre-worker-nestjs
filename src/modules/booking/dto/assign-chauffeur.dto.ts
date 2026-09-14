@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const assignBookingChauffeurBodySchema = z.object({
-  chauffeurId: z.string().min(1, "Chauffeur ID is required"),
+  chauffeurId: z.uuid("Chauffeur ID must be a valid UUID"),
 });
 
 export type AssignBookingChauffeurBodyDto = z.infer<typeof assignBookingChauffeurBodySchema>;

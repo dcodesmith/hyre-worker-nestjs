@@ -221,14 +221,14 @@ describe("LangGraphExtractorService", () => {
 
     it("handles raw vehicle ID button from Content Template", async () => {
       const vehicle = buildVehicleOption({
-        id: "cmawmf8wl000hk8l2uhtjb9rr",
+        id: "01994a1d-4263-7000-8000-000000000001",
         make: "Land Rover",
         model: "Range Rover",
         color: "white",
       });
       const interactive: InteractiveReply = {
         type: "button",
-        buttonId: "cmawmf8wl000hk8l2uhtjb9rr",
+        buttonId: "01994a1d-4263-7000-8000-000000000001",
         title: "Select",
       };
       const state = buildState({
@@ -239,7 +239,7 @@ describe("LangGraphExtractorService", () => {
       const result = await service.extract(state);
 
       expect(result.intent).toBe("select_option");
-      expect(result.selectionHint).toBe("cmawmf8wl000hk8l2uhtjb9rr");
+      expect(result.selectionHint).toBe("01994a1d-4263-7000-8000-000000000001");
       expect(result.draftPatch.make).toBe("Land Rover");
       expect(result.draftPatch.model).toBe("Range Rover");
       expect(result.draftPatch.color).toBe("white");

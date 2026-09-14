@@ -546,7 +546,11 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     expect(verification?.selfieObjectKey).not.toEqual(user?.image);
     expect(storageService.uploadBuffer).toHaveBeenCalledWith(
       expect.any(Buffer),
-      `${ownerId}/chauffeurs/${verification?.id}/documents/selfie.webp`,
+      expect.stringMatching(
+        new RegExp(
+          `^fleet-owners/${ownerId}/chauffeurs/${verification?.id}/documents/[0-9a-f-]{36}\\.webp$`,
+        ),
+      ),
       "image/jpeg",
     );
 

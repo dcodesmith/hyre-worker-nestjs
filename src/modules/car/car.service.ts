@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   CarApprovalStatus,
@@ -33,6 +33,7 @@ import {
   CarException,
   CarFetchFailedException,
   CarNotFoundException,
+  CarRelistingRequiredException,
   CarStatusUpdateNotAllowedException,
   CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
@@ -43,6 +44,7 @@ import {
   RegistrationNumberAlreadyExistsException,
   VehicleImageNotFoundException,
 } from "./car.error";
+import { generateCarPublicRef } from "./car.helpers";
 import type { CarDocumentFiles, UploadedCarFile } from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import type { UpdateCarBodyDto } from "./dto/update-car.dto";
@@ -98,10 +100,20 @@ export class CarService {
     this.logger.setContext(CarService.name);
   }
 
-  private getObjectKey(ownerId: string, carId: string, fileName: string, category: string): string {
-    const timestamp = Date.now();
-    const safeFilename = `${timestamp}-${fileName.replaceAll(/[^a-zA-Z0-9.-]/g, "_")}`;
-    return `${ownerId}/${carId}/${category}/${safeFilename}`;
+  private getObjectKey(
+    ownerId: string,
+    carId: string,
+    publicRef: string,
+    contentType: string,
+    category: string,
+  ): string {
+    const objectId = randomUUID();
+    if (category === CAR_S3_CATEGORY_IMAGES) {
+      return `cars/${publicRef}/images/${objectId}.webp`;
+    }
+
+    const extension = contentType.startsWith("image/") ? "webp" : "pdf";
+    return `fleet-owners/${ownerId}/cars/${carId}/documents/${objectId}.${extension}`;
   }
 
   private normalizeRegistrationNumber(registrationNumber: string): string {
@@ -221,6 +233,7 @@ export class CarService {
 
         const car = await tx.car.create({
           data: {
+            publicRef: generateCarPublicRef(),
             ownerId,
             registrationNumber: this.normalizeRegistrationNumber(verification.plateNumber),
             chassisNumber: verification.chassisNumber,
@@ -275,6 +288,9 @@ export class CarService {
         if (target.includes("chassisNumber")) {
           throw new ChassisNumberAlreadyExistsException();
         }
+        if (target.includes("publicRef")) {
+          throw new CarCreateFailedException();
+        }
         throw new RegistrationNumberAlreadyExistsException("this registration number");
       }
       this.logger.error(
@@ -290,7 +306,7 @@ export class CarService {
   }
 
   async uploadDraftCarDocuments(carId: string, ownerId: string, files: CarDocumentFiles) {
-    await this.assertCarBelongsToOwner(carId, ownerId);
+    const { publicRef } = await this.assertCarBelongsToOwner(carId, ownerId);
     const existing = await this.databaseService.documentApproval.count({
       where: { carId, documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] } },
     });
@@ -301,6 +317,7 @@ export class CarService {
     const uploaded = await this.uploadFilesSequentially(
       ownerId,
       carId,
+      publicRef,
       [files.motCertificate, files.insuranceCertificate],
       CAR_S3_CATEGORY_DOCUMENTS,
     );
@@ -336,7 +353,7 @@ export class CarService {
   }
 
   async uploadDraftCarImages(carId: string, ownerId: string, images: UploadedCarFile[]) {
-    await this.assertCarBelongsToOwner(carId, ownerId);
+    const { publicRef } = await this.assertCarBelongsToOwner(carId, ownerId);
     const existing = await this.databaseService.vehicleImage.count({ where: { carId } });
     if (existing > 0 || existing + images.length > MAX_IMAGE_COUNT) {
       throw new CarAssetsAlreadyUploadedException("images");
@@ -345,6 +362,7 @@ export class CarService {
     const uploaded = await this.uploadFilesSequentially(
       ownerId,
       carId,
+      publicRef,
       images,
       CAR_S3_CATEGORY_IMAGES,
     );
@@ -458,7 +476,16 @@ export class CarService {
   private async applyCarUpdate(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
     const existingCar = await this.databaseService.car.findFirst({
       where: { id: carId, ownerId },
-      select: { id: true, registrationNumber: true, status: true },
+      select: {
+        id: true,
+        registrationNumber: true,
+        status: true,
+        approvalStatus: true,
+        make: true,
+        model: true,
+        year: true,
+        color: true,
+      },
     });
 
     if (!existingCar) {
@@ -467,6 +494,13 @@ export class CarService {
 
     if (existingCar.status === Status.BOOKED && dto.status !== undefined) {
       throw new CarStatusUpdateNotAllowedException();
+    }
+
+    const changesPublishedIdentity = (["make", "model", "year", "color"] as const).some(
+      (field) => dto[field] !== undefined && dto[field] !== existingCar[field],
+    );
+    if (existingCar.approvalStatus === CarApprovalStatus.APPROVED && changesPublishedIdentity) {
+      throw new CarRelistingRequiredException();
     }
 
     const normalizedRegistrationNumber = dto.registrationNumber
@@ -540,7 +574,7 @@ export class CarService {
   ): Promise<VehicleImage | DocumentApproval> {
     const isImage = kind === "image";
     try {
-      await this.assertCarBelongsToOwner(carId, ownerId);
+      const { publicRef } = await this.assertCarBelongsToOwner(carId, ownerId);
 
       const existing = isImage
         ? await this.databaseService.vehicleImage.findFirst({
@@ -561,7 +595,7 @@ export class CarService {
       }
 
       const category = isImage ? CAR_S3_CATEGORY_IMAGES : CAR_S3_CATEGORY_DOCUMENTS;
-      const key = this.getObjectKey(ownerId, carId, file.originalname, category);
+      const key = this.getObjectKey(ownerId, carId, publicRef, file.mimetype, category);
       const uploaded = await this.storageService.uploadBuffer(file.buffer, key, file.mimetype);
 
       const resetData = {
@@ -628,26 +662,31 @@ export class CarService {
     }
   }
 
-  private async assertCarBelongsToOwner(carId: string, ownerId: string): Promise<void> {
+  private async assertCarBelongsToOwner(
+    carId: string,
+    ownerId: string,
+  ): Promise<{ publicRef: string }> {
     const car = await this.databaseService.car.findFirst({
       where: { id: carId, ownerId },
-      select: { id: true },
+      select: { publicRef: true },
     });
     if (!car) {
       throw new CarNotFoundException();
     }
+    return car;
   }
 
   private async uploadFilesSequentially(
     ownerId: string,
     carId: string,
+    publicRef: string,
     files: UploadedCarFile[],
     category: string,
   ): Promise<Array<{ key: string; url: string }>> {
     const uploaded: Array<{ key: string; url: string }> = [];
     try {
       for (const file of files) {
-        const key = this.getObjectKey(ownerId, carId, file.originalname, category);
+        const key = this.getObjectKey(ownerId, carId, publicRef, file.mimetype, category);
         uploaded.push(await this.storageService.uploadBuffer(file.buffer, key, file.mimetype));
       }
       return uploaded;

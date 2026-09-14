@@ -5,7 +5,11 @@ import { CarController } from "./car.controller";
 import { CarCategoriesService } from "./car-categories.service";
 import { CarSearchService } from "./car-search.service";
 import type { CarCategoriesResponseDto, PublicCarDto } from "./dto/car-categories.dto";
-import type { CarSearchResponseDto, SearchCarDto } from "./dto/car-search.dto";
+import {
+  type CarSearchResponseDto,
+  publicCarRefParamSchema,
+  type SearchCarDto,
+} from "./dto/car-search.dto";
 
 describe("CarController", () => {
   let controller: CarController;
@@ -14,9 +18,11 @@ describe("CarController", () => {
 
   const createMockCar = (overrides: Partial<PublicCarDto> = {}): PublicCarDto => ({
     id: `car-${Math.random().toString(36).slice(2, 9)}`,
+    publicRef: "0123456789abcdef",
     make: "Toyota",
     model: "Camry",
     year: 2022,
+    color: "Black",
     dayRate: 50000,
     passengerCapacity: 4,
     pricingIncludesFuel: true,
@@ -32,6 +38,7 @@ describe("CarController", () => {
 
   const createMockSearchCar = (overrides: Partial<SearchCarDto> = {}): SearchCarDto => ({
     id: `car-${Math.random().toString(36).slice(2, 9)}`,
+    publicRef: "0123456789abcdef",
     make: "Toyota",
     model: "Camry",
     year: 2022,
@@ -68,6 +75,7 @@ describe("CarController", () => {
           useValue: {
             searchCars: vi.fn(),
             getPublicCarById: vi.fn(),
+            getPublicCarByRef: vi.fn(),
           },
         },
       ],
@@ -249,6 +257,29 @@ describe("CarController", () => {
       await controller.getPublicCarById("car-123", { from });
 
       expect(carSearchService.getPublicCarById).toHaveBeenCalledWith("car-123", from);
+    });
+  });
+
+  describe("getPublicCarByRef", () => {
+    it("returns a public car by immutable reference", async () => {
+      const mockCar = {
+        ...createMockSearchCar(),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      vi.mocked(carSearchService.getPublicCarByRef).mockResolvedValueOnce(mockCar);
+
+      await expect(controller.getPublicCarByRef("0123456789abcdef")).resolves.toEqual(mockCar);
+      expect(carSearchService.getPublicCarByRef).toHaveBeenCalledWith(
+        "0123456789abcdef",
+        undefined,
+      );
+    });
+
+    it("accepts only 16-character lowercase hexadecimal references", () => {
+      expect(publicCarRefParamSchema.safeParse("0123456789abcdef").success).toBe(true);
+      expect(publicCarRefParamSchema.safeParse("0123456789ABCDEf").success).toBe(false);
+      expect(publicCarRefParamSchema.safeParse("short").success).toBe(false);
     });
   });
 });

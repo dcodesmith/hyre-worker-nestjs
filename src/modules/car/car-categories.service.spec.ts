@@ -30,10 +30,12 @@ describe("CarCategoriesService", () => {
     overrides: Partial<PublicCarDto & { ownerId: string }> = {},
   ): PublicCarDto & { ownerId: string } => ({
     id: `car-${Math.random().toString(36).slice(2, 9)}`,
+    publicRef: "0123456789abcdef",
     ownerId: "owner-1",
     make: "Toyota",
     model: "Camry",
     year: 2022,
+    color: "Black",
     dayRate: 50000,
     passengerCapacity: 4,
     pricingIncludesFuel: true,
@@ -321,7 +323,7 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]).not.toHaveProperty("ownerId");
     });
 
-    it("includes createdAt on public cars for New-badge clients", async () => {
+    it("includes canonical URL fields and createdAt on public cars", async () => {
       const createdAt = new Date("2026-08-11T09:00:00.000Z");
       databaseServiceMock.car.findMany.mockResolvedValueOnce([
         createMockCar({ id: "car-1", createdAt }),
@@ -332,7 +334,11 @@ describe("CarCategoriesService", () => {
       expect(result.allCars[0]?.createdAt).toEqual(createdAt);
       expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          select: expect.objectContaining({ createdAt: true }),
+          select: expect.objectContaining({
+            publicRef: true,
+            color: true,
+            createdAt: true,
+          }),
         }),
       );
     });

@@ -19,6 +19,7 @@ describe("Cars E2E Tests", () => {
   let userCookie: string;
   let userId: string;
   let publicCarId: string;
+  let publicCarRef: string;
   let ownerCarId: string;
 
   beforeAll(async () => {
@@ -89,6 +90,7 @@ describe("Cars E2E Tests", () => {
       status: "AVAILABLE",
     });
     publicCarId = publicCar.id;
+    publicCarRef = publicCar.publicRef;
     ownerCarId = (
       await factory.createCar(ownerId, {
         registrationNumber: "KJA-123AB",
@@ -212,9 +214,13 @@ describe("Cars E2E Tests", () => {
       expect(["vehicleType", "serviceTier", "make"]).toContain(cat.type);
     }
     for (const car of response.body.allCars as {
+      publicRef?: string;
+      color?: string;
       averageRating?: number;
       totalReviews?: number;
     }[]) {
+      expect(car.publicRef).toMatch(/^[0-9a-f]{16}$/);
+      expect(typeof car.color).toBe("string");
       expect(typeof car.averageRating).toBe("number");
       expect(typeof car.totalReviews).toBe("number");
     }
@@ -229,9 +235,13 @@ describe("Cars E2E Tests", () => {
     expect(response.body.pagination.limit).toBe(12);
     expect(response.body.pagination.total).toBeGreaterThanOrEqual(1);
     for (const car of response.body.cars as {
+      publicRef?: string;
+      color?: string;
       averageRating?: number;
       totalReviews?: number;
     }[]) {
+      expect(car.publicRef).toMatch(/^[0-9a-f]{16}$/);
+      expect(typeof car.color).toBe("string");
       expect(typeof car.averageRating).toBe("number");
       expect(typeof car.totalReviews).toBe("number");
     }
@@ -282,6 +292,24 @@ describe("Cars E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(response.body.id).toBe(publicCarId);
+  });
+
+  it("GET /api/cars/by-ref/:publicRef returns the canonical public car detail", async () => {
+    expect(publicCarRef).toMatch(/^[0-9a-f]{16}$/);
+    const response = await request(app.getHttpServer()).get(`/api/cars/by-ref/${publicCarRef}`);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(HttpStatus.OK);
+    expect(response.body).toMatchObject({
+      id: publicCarId,
+      publicRef: publicCarRef,
+      color: "Black",
+    });
+  });
+
+  it("GET /api/cars/by-ref/:publicRef rejects malformed references", async () => {
+    const response = await request(app.getHttpServer()).get("/api/cars/by-ref/not-a-reference");
+
+    expect(response.status).toBe(HttpStatus.BAD_REQUEST);
   });
 
   it("GET /api/cars/:carId returns 404 for non-approved car", async () => {

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import type { Prisma, PrismaClient, ReferralAttributionSource } from "@prisma/client";
 import request from "supertest";
@@ -326,9 +327,13 @@ export class TestDataFactory {
   /**
    * Create a test car in the database.
    */
-  async createCar(ownerId: string, options: CreateCarOptions = {}): Promise<{ id: string }> {
+  async createCar(
+    ownerId: string,
+    options: CreateCarOptions = {},
+  ): Promise<{ id: string; publicRef: string }> {
     const car = await this.prisma.car.create({
       data: {
+        publicRef: options.publicRef ?? randomBytes(8).toString("hex"),
         make: options.make ?? "Toyota",
         model: options.model ?? "Camry",
         year: options.year ?? 2022,
@@ -346,7 +351,7 @@ export class TestDataFactory {
         fullDayRate: options.fullDayRate ?? 100000,
         airportPickupRate: options.airportPickupRate ?? 30000,
       },
-      select: { id: true },
+      select: { id: true, publicRef: true },
     });
     return car;
   }

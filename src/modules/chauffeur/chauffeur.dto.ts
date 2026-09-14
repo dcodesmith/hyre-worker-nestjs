@@ -50,7 +50,7 @@ export const updateChauffeurSchema = z.object({
   isActive: z.boolean(),
 });
 
-export const chauffeurIdParamSchema = z.cuid();
+export const chauffeurIdParamSchema = z.uuid();
 
 export type CreateChauffeurInvitationDto = z.infer<typeof createChauffeurInvitationSchema>;
 export type ExchangeChauffeurInvitationDto = z.infer<typeof exchangeChauffeurInvitationSchema>;

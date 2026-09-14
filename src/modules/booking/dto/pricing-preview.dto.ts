@@ -5,7 +5,7 @@ import { pickupTimeRegex } from "./pickup-time.regex";
 
 export const pricingPreviewBodySchema = z
   .object({
-    carId: z.string().min(1, "Car ID is required"),
+    carId: z.uuid("Car ID must be a valid UUID"),
     bookingType: z.enum(Object.values(BookingType) as [BookingType, ...BookingType[]]),
     startDate: z.coerce.date("Invalid start date format"),
     endDate: z.coerce.date("Invalid end date format"),

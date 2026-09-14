@@ -129,7 +129,9 @@ describe("updateChauffeurSchema", () => {
 });
 
 describe("chauffeurIdParamSchema", () => {
-  it("accepts a cuid", () => {
-    expect(chauffeurIdParamSchema.safeParse("ckx7b9q1e0000qwertyuiopas").success).toBe(true);
+  it("accepts a UUID", () => {
+    expect(chauffeurIdParamSchema.safeParse("01994a1d-4263-7000-8000-000000000001").success).toBe(
+      true,
+    );
   });
 });

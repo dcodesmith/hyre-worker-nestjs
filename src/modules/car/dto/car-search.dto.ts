@@ -1,5 +1,6 @@
 import { BookingType, ServiceTier, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import { CAR_PUBLIC_REF_PATTERN } from "../car.helpers";
 import type { CarPromotionDto } from "./car-promotion.dto";
 
 /**
@@ -107,6 +108,10 @@ export const publicCarDetailQuerySchema = z.object({
   from: z.coerce.date().optional(),
 });
 
+export const publicCarRefParamSchema = z
+  .string()
+  .regex(CAR_PUBLIC_REF_PATTERN, "Invalid car public reference");
+
 export type PublicCarDetailQueryDto = z.infer<typeof publicCarDetailQuerySchema>;
 
 /**
@@ -122,10 +127,11 @@ export interface CarOwnerDto {
  */
 export interface SearchCarDto {
   id: string;
+  publicRef: string;
   make: string;
   model: string;
   year: number;
-  color: string | null;
+  color: string;
   dayRate: number;
   nightRate: number | null;
   fullDayRate: number | null;

@@ -22,7 +22,7 @@ export const createPromotionBodySchema = z
   .object({
     name: z.string().trim().min(1).optional(),
     scope: z.enum(PROMOTION_SCOPES),
-    carId: z.cuid().optional(),
+    carId: z.uuid().optional(),
     discountValue: z
       .number()
       .min(MIN_PROMOTION_PERCENTAGE, `Discount must be at least ${MIN_PROMOTION_PERCENTAGE}%`)
@@ -54,4 +54,4 @@ export const createPromotionBodySchema = z
 
 export type CreatePromotionBodyDto = z.infer<typeof createPromotionBodySchema>;
 
-export const promotionIdParamSchema = z.cuid();
+export const promotionIdParamSchema = z.uuid();

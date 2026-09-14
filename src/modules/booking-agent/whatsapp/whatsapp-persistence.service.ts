@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   Prisma,
@@ -87,7 +86,6 @@ export class WhatsAppPersistenceService {
       input;
     return this.databaseService.whatsAppMessage.create({
       data: {
-        id: randomUUID(),
         providerMessageSid: payload.MessageSid ?? null,
         dedupeKey,
         direction: "INBOUND",
@@ -118,7 +116,6 @@ export class WhatsAppPersistenceService {
     const now = new Date();
     return this.databaseService.whatsAppOutbox.create({
       data: {
-        id: randomUUID(),
         dedupeKey: input.dedupeKey,
         mode: input.mode,
         textBody: input.textBody ?? null,
@@ -237,7 +234,6 @@ export class WhatsAppPersistenceService {
 
       await tx.whatsAppMessage.create({
         data: {
-          id: randomUUID(),
           providerMessageSid: providerMessage.sid,
           dedupeKey: `outbox:${outboxId}`,
           direction: "OUTBOUND",

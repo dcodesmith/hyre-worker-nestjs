@@ -9,4 +9,4 @@ export const listStaffQuerySchema = z.object({
 });
 export type ListStaffQueryDto = z.infer<typeof listStaffQuerySchema>;
 
-export const staffIdParamSchema = z.cuid();
+export const staffIdParamSchema = z.uuid();

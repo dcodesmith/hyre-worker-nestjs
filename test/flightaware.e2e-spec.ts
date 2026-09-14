@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -237,7 +238,7 @@ describe("FlightAware E2E Tests", () => {
       data: {
         flightNumber: "BA74",
         flightDate: new Date("2030-01-01"),
-        faFlightId: "fa-1",
+        flightAwareFlightId: "fa-1",
         originCode: "EGLL",
         originCodeIATA: "LHR",
         destinationCode: "DNMM",
@@ -282,7 +283,7 @@ describe("FlightAware E2E Tests", () => {
       },
     };
     const mismatchedResponse = await request(app.getHttpServer())
-      .post(buildWebhookPath("another-flight"))
+      .post(buildWebhookPath(randomUUID()))
       .send(payload);
     expect(mismatchedResponse.status).toBe(HttpStatus.NOT_FOUND);
 
@@ -343,7 +344,7 @@ describe("FlightAware E2E Tests", () => {
       id: `flight-arrived-${storedEvent?.id}-${booking.id}-fleet-owner-${owner.id}`,
       type: "flight-arrived",
       audience: "fleet-owner",
-      channels: ["email"],
+      channels: ["email", "whatsapp"],
       bookingId: booking.id,
       recipients: {
         fleetOwner: {

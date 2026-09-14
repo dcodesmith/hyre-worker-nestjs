@@ -371,7 +371,7 @@ describe("Bookings E2E Tests", () => {
       });
 
       it("should return 404 for non-existent car", async () => {
-        const payload = await createValidBookingPayload("non-existent-car-id", testUserCookie, {
+        const payload = await createValidBookingPayload(randomUUID(), testUserCookie, {
           allowPreviewFailure: true,
         });
 
@@ -663,7 +663,7 @@ describe("Bookings E2E Tests", () => {
 
     it("should return 404 for non-existent booking", async () => {
       const response = await request(app.getHttpServer())
-        .get("/api/bookings/non-existent-id")
+        .get(`/api/bookings/${randomUUID()}`)
         .set("Cookie", testUserCookie);
 
       expect(response.status).toBe(HttpStatus.NOT_FOUND);
