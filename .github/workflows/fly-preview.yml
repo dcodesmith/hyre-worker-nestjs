@@ -353,7 +353,7 @@ jobs:
         if: contains(github.event.pull_request.labels.*.name, 'database-reset')
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
-        run: pnpm exec prisma migrate reset --force --skip-seed
+        run: pnpm exec prisma migrate reset --force
 
       - name: Run Prisma migrations on preview branch
         env:
