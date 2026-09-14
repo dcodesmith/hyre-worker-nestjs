@@ -65,6 +65,10 @@ describe("deployment environment configuration", () => {
     expect(workflow).toContain(
       "- name: Post schema diff comment to PR\n        continue-on-error: true",
     );
+    expect(workflow).toContain(
+      "if: contains(github.event.pull_request.labels.*.name, 'database-reset')",
+    );
+    expect(workflow).toContain("pnpm exec prisma migrate reset --force --skip-seed");
     expect(workflow).toContain("Verify preview metadata");
   });
 

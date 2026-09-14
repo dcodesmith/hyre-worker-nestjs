@@ -349,6 +349,12 @@ jobs:
             exit 1
           fi
 
+      - name: Reset disposable preview database for clean-break migrations
+        if: contains(github.event.pull_request.labels.*.name, 'database-reset')
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
+        run: pnpm exec prisma migrate reset --force --skip-seed
+
       - name: Run Prisma migrations on preview branch
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
