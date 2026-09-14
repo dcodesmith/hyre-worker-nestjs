@@ -218,6 +218,9 @@ importers:
       twilio:
         specifier: ^5.11.1
         version: 5.13.1
+      uuid:
+        specifier: ^11.1.0
+        version: 11.1.0
       zod:
         specifier: ^4.1.5
         version: 4.3.6

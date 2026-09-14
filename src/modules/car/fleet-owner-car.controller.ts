@@ -25,7 +25,7 @@ import { CarService } from "./car.service";
 import { CarDocumentsPipe } from "./car-documents.pipe";
 import { CarImagesPipe } from "./car-images.pipe";
 import { CarReplaceFilePipe } from "./car-replace-file.pipe";
-import { cuidParamSchema } from "./dto/car-approval.dto";
+import { uuidParamSchema } from "./dto/car-approval.dto";
 import { carIdParamSchema, type UpdateCarBodyDto, updateCarBodySchema } from "./dto/update-car.dto";
 import { type UpdateCarPricingDto, updateCarPricingSchema } from "./dto/update-car-pricing.dto";
 
@@ -105,7 +105,7 @@ export class FleetOwnerCarController {
   @UseInterceptors(FileInterceptor("file"))
   async replaceCarImage(
     @ZodParam("carId", carIdParamSchema) carId: string,
-    @ZodParam("imageId", cuidParamSchema) imageId: string,
+    @ZodParam("imageId", uuidParamSchema) imageId: string,
     @UploadedFile(new CarReplaceFilePipe("image")) file: UploadedCarFile,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {
@@ -116,7 +116,7 @@ export class FleetOwnerCarController {
   @UseInterceptors(FileInterceptor("file"))
   async replaceCarDocument(
     @ZodParam("carId", carIdParamSchema) carId: string,
-    @ZodParam("documentId", cuidParamSchema) documentId: string,
+    @ZodParam("documentId", uuidParamSchema) documentId: string,
     @UploadedFile(new CarReplaceFilePipe("document")) file: UploadedCarFile,
     @CurrentUser() sessionUser: AuthSession["user"],
   ) {

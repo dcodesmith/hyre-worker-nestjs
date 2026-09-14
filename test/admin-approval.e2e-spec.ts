@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
@@ -180,7 +181,7 @@ describe("Admin Approval E2E Tests", () => {
 
     it("returns 404 for an unknown car", async () => {
       const response = await request(app.getHttpServer())
-        .get("/api/admin/cars/cunknowncarid0000000000000")
+        .get(`/api/admin/cars/${randomUUID()}`)
         .set("Cookie", adminCookie);
 
       expect(response.status).toBe(HttpStatus.NOT_FOUND);
@@ -402,7 +403,9 @@ describe("Admin Approval E2E Tests", () => {
       });
       expect(documentRow?.status).toBe("PENDING");
       expect(documentRow?.notes).toBeNull();
-      expect(documentRow?.documentUrl).toContain("mot-v2");
+      expect(documentRow?.documentUrl).toMatch(
+        new RegExp(`^fleet-owners/${ownerId}/cars/${car.id}/documents/[0-9a-f-]{36}\\.pdf$`),
+      );
       // Re-upload demotes the car so it cannot stay publicly searchable
       const pendingCar = await factory.getCarById(car.id);
       expect(pendingCar?.approvalStatus).toBe("PENDING");
@@ -441,7 +444,9 @@ describe("Admin Approval E2E Tests", () => {
       const imageRow = await databaseService.vehicleImage.findUnique({ where: { id: image.id } });
       expect(imageRow?.status).toBe("PENDING");
       expect(imageRow?.notes).toBeNull();
-      expect(imageRow?.url).toContain("photo-v2");
+      expect(imageRow?.url).toMatch(
+        /^https:\/\/cdn\.tripdly\.test\/cars\/[0-9a-f]{16}\/images\/[0-9a-f-]{36}\.webp$/,
+      );
       // The previous stored file is cleaned up
       expect(deleteObjectByKey).toHaveBeenCalledWith(`${ownerId}/${car.id}/images/photo.jpg`);
     });

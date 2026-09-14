@@ -44,6 +44,7 @@ describe("CarSearchService", () => {
     overrides: Partial<SearchCarDto & { ownerId: string }> = {},
   ): SearchCarDto & { ownerId: string } => ({
     id: `car-${mockCarIdCounter++}`,
+    publicRef: "0123456789abcdef",
     ownerId: "owner-1",
     make: "Toyota",
     model: "Camry",
@@ -777,6 +778,30 @@ describe("CarSearchService", () => {
 
       expect(result.id).toBe("car-123");
       expect(result.promotion).toBeNull();
+    });
+  });
+
+  describe("getPublicCarByRef", () => {
+    it("uses the public reference as the authoritative lookup key", async () => {
+      const mockCar = {
+        ...createMockCar({ id: "car-123", publicRef: "0123456789abcdef" }),
+        hourlyRate: 5000,
+        fuelUpgradeRate: 10000,
+      };
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce(mockCar);
+
+      const result = await service.getPublicCarByRef("0123456789abcdef");
+
+      expect(result.publicRef).toBe("0123456789abcdef");
+      expect(databaseServiceMock.car.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            publicRef: "0123456789abcdef",
+            approvalStatus: "APPROVED",
+          }),
+          select: expect.objectContaining({ publicRef: true }),
+        }),
+      );
     });
   });
 });

@@ -140,6 +140,7 @@ export function createCar(
 
   return {
     id: "car-123",
+    publicRef: "0123456789abcdef",
     make: "BMW",
     model: "X5",
     year: 2023,

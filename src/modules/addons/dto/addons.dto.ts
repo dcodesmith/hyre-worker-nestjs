@@ -12,8 +12,8 @@ export const listPublicAddonsQuerySchema = z.object({
   bookingType: z.enum(BookingType),
 });
 
-export const addonIdParamSchema = z.cuid();
-export const addonPriceIdParamSchema = z.cuid();
+export const addonIdParamSchema = z.uuid();
+export const addonPriceIdParamSchema = z.uuid();
 
 export const createAddonSchema = z
   .object({

@@ -437,6 +437,7 @@ export class CarSearchService {
           where: searchWhereClause,
           select: {
             id: true,
+            publicRef: true,
             ownerId: true,
             make: true,
             model: true,
@@ -527,16 +528,29 @@ export class CarSearchService {
    * Only returns approved cars from approved fleet owners.
    */
   async getPublicCarById(carId: string, referenceDate?: Date): Promise<PublicCarDetailDto> {
+    return this.getPublicCar({ id: carId }, referenceDate, { carId });
+  }
+
+  async getPublicCarByRef(publicRef: string, referenceDate?: Date): Promise<PublicCarDetailDto> {
+    return this.getPublicCar({ publicRef }, referenceDate, { publicRef });
+  }
+
+  private async getPublicCar(
+    identity: Pick<Prisma.CarWhereInput, "id" | "publicRef">,
+    referenceDate: Date | undefined,
+    logContext: { carId: string } | { publicRef: string },
+  ): Promise<PublicCarDetailDto> {
     try {
       const car = await this.databaseService.car.findFirst({
         where: {
-          id: carId,
+          ...identity,
           status: { in: [Status.AVAILABLE, Status.BOOKED] },
           approvalStatus: CarApprovalStatus.APPROVED,
           owner: { fleetOwnerStatus: "APPROVED", hasOnboarded: true },
         },
         select: {
           id: true,
+          publicRef: true,
           ownerId: true,
           make: true,
           model: true,
@@ -585,7 +599,7 @@ export class CarSearchService {
       }
       this.logger.error(
         {
-          carId,
+          ...logContext,
           error: error instanceof Error ? error.message : String(error),
         },
         "Failed to fetch public car",

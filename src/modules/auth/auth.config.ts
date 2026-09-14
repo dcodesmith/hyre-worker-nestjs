@@ -3,8 +3,11 @@ import { APIError, betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP } from "better-auth/plugins";
+import { v7 as uuidv7 } from "uuid";
 import { isValidRole, MOBILE, USER } from "./auth.const";
 import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.interface";
+
+export const generateAuthId = (): string => uuidv7();
 
 /**
  * Role validation callbacks that integrate with AuthService methods.
@@ -384,6 +387,9 @@ export function createAuth(options: AuthConfigOptions) {
       },
     },
     advanced: {
+      database: {
+        generateId: generateAuthId,
+      },
       // Use __Host- prefix in production for enhanced security (prevents subdomain attacks)
       // In development, use no prefix since __Host- requires HTTPS
       cookiePrefix: secureCookies ? "__Host-" : "",

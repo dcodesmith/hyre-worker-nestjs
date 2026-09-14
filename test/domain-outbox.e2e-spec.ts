@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { INestApplication } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
@@ -107,7 +108,7 @@ describe("Domain outbox round-trip (e2e)", () => {
   });
 
   it("retries one failed fan-out without repeating its successful sibling", async () => {
-    const aggregateId = `partial-fanout-${Date.now()}`;
+    const aggregateId = randomUUID();
     await databaseService.$transaction((tx) =>
       domainOutboxService.createMany(
         [
@@ -177,7 +178,7 @@ describe("Domain outbox round-trip (e2e)", () => {
   });
 
   it("marks a delivery completed only after its business handler succeeds", async () => {
-    const aggregateId = `completed-command-${Date.now()}`;
+    const aggregateId = randomUUID();
     await databaseService.$transaction((tx) =>
       domainOutboxService.createMany(
         [{ eventType: DomainOutboxEventType.REFERRAL_COMPLETION, aggregateId }],

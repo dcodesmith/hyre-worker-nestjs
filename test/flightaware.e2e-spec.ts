@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -282,7 +283,7 @@ describe("FlightAware E2E Tests", () => {
       },
     };
     const mismatchedResponse = await request(app.getHttpServer())
-      .post(buildWebhookPath("another-flight"))
+      .post(buildWebhookPath(randomUUID()))
       .send(payload);
     expect(mismatchedResponse.status).toBe(HttpStatus.NOT_FOUND);
 

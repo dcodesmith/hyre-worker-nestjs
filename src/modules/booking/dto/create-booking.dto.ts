@@ -10,7 +10,7 @@ export const bookingCreditsSchema = z
   .multipleOf(0.01)
   .default(0);
 export const bookingAddonIdsSchema = z
-  .array(z.cuid())
+  .array(z.uuid())
   .max(10, "A booking cannot have more than 10 add-ons")
   .refine((ids) => new Set(ids).size === ids.length, {
     message: "Add-on IDs must be unique",

@@ -75,7 +75,7 @@ describe("FleetOwnerPromotionController", () => {
       const body = {
         name: "Easter Special",
         scope: "CAR" as const,
-        carId: "ckv123car0000000000000000",
+        carId: "01994a1d-4263-7000-8000-000000000001",
         discountValue: 20,
         startDate: "2026-04-10",
         endDate: "2026-04-12",

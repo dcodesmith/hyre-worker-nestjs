@@ -8,6 +8,7 @@ import {
   carSearchQuerySchema,
   type PublicCarDetailQueryDto,
   publicCarDetailQuerySchema,
+  publicCarRefParamSchema,
 } from "./dto/car-search.dto";
 import { carIdParamSchema } from "./dto/update-car.dto";
 
@@ -28,6 +29,15 @@ export class CarController {
   @Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
   async searchCars(@ZodQuery(carSearchQuerySchema) query: CarSearchQueryDto) {
     return this.carSearchService.searchCars(query);
+  }
+
+  @Get("by-ref/:publicRef")
+  @Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
+  async getPublicCarByRef(
+    @ZodParam("publicRef", publicCarRefParamSchema) publicRef: string,
+    @ZodQuery(publicCarDetailQuerySchema) query: PublicCarDetailQueryDto = {},
+  ) {
+    return this.carSearchService.getPublicCarByRef(publicRef, query.from);
   }
 
   @Get(":carId")

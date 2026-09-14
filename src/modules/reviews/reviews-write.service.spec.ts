@@ -80,7 +80,7 @@ describe("ReviewsWriteService", () => {
 
   describe("createReview", () => {
     const input = {
-      bookingId: "c123456789012345678901234",
+      bookingId: "01994a1d-4263-7000-8000-000000000001",
       overallRating: 5,
       carRating: 5,
       chauffeurRating: 5,

@@ -169,5 +169,6 @@ describe("WhatsAppPersistenceService", () => {
         }),
       }),
     );
+    expect(tx.whatsAppMessage.create.mock.calls[0]?.[0].data).not.toHaveProperty("id");
   });
 });

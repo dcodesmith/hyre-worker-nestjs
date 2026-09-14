@@ -2,11 +2,13 @@ import { Status } from "@prisma/client";
 import { z } from "zod";
 import { carBaseBodySchema, validateFuelUpgradeRate } from "./create-car.dto";
 
-export const carIdParamSchema = z.cuid();
+export const carIdParamSchema = z.uuid();
 
 export const updateCarBodySchema = carBaseBodySchema
+  .omit({ color: true })
   .partial()
   .extend({
+    color: z.string().trim().optional(),
     status: z.enum([Status.AVAILABLE, Status.HOLD, Status.IN_SERVICE]).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

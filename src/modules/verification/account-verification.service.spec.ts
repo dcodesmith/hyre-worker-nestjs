@@ -682,7 +682,11 @@ describe("AccountVerificationService", () => {
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         licence.buffer,
-        expect.stringContaining("drivers_license"),
+        expect.stringMatching(
+          new RegExp(
+            `^fleet-owners/${USER_ID}/account-verifications/${VERIFICATION_ID}/documents/[0-9a-f-]{36}\\.pdf$`,
+          ),
+        ),
         "application/pdf",
       );
       const stored = (await storageService.uploadBuffer.mock.results[0]?.value) as {
@@ -2040,7 +2044,7 @@ describe("AccountVerificationService", () => {
       };
       expect(requestedKey).toMatch(
         new RegExp(
-          `^${USER_ID}/${VERIFICATION_ID}/documents/drivers_license-[0-9a-f-]{36}-license\\.pdf$`,
+          `^fleet-owners/${USER_ID}/account-verifications/${VERIFICATION_ID}/documents/[0-9a-f-]{36}\\.pdf$`,
         ),
       );
       expect(databaseService.documentApproval.upsert).toHaveBeenCalledWith(
@@ -3065,7 +3069,11 @@ describe("AccountVerificationService", () => {
       expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         licence.buffer,
-        expect.stringContaining("drivers_license"),
+        expect.stringMatching(
+          new RegExp(
+            `^fleet-owners/${USER_ID}/account-verifications/${VERIFICATION_ID}/documents/[0-9a-f-]{36}\\.pdf$`,
+          ),
+        ),
         "application/pdf",
       );
       expect(databaseService.documentApproval.findUnique).toHaveBeenCalledWith(

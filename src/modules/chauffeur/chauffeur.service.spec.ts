@@ -150,8 +150,10 @@ const selfie = {
   buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
 };
 
-const REQUESTED_SELFIE_KEY = `${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.webp`;
-const STORED_SELFIE_KEY = `stored/${REQUESTED_SELFIE_KEY}`;
+const REQUESTED_SELFIE_KEY_PATTERN = new RegExp(
+  `^fleet-owners/${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/[0-9a-f-]{36}\\.webp$`,
+);
+const STORED_SELFIE_KEY = `stored/fleet-owners/${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.webp`;
 
 const eligibleLicense = {
   licenseNumber: "ABC12345",
@@ -1018,7 +1020,7 @@ describe("ChauffeurService", () => {
       expect(databaseService.user.create.mock.calls[0][0].data).not.toHaveProperty("image");
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         expect.any(Buffer),
-        REQUESTED_SELFIE_KEY,
+        expect.stringMatching(REQUESTED_SELFIE_KEY_PATTERN),
         "image/jpeg",
       );
       expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
@@ -1115,7 +1117,9 @@ describe("ChauffeurService", () => {
         ),
       ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
-      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(REQUESTED_SELFIE_KEY);
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(
+        expect.stringMatching(REQUESTED_SELFIE_KEY_PATTERN),
+      );
       expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
         where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
         data: {

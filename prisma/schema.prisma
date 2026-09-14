@@ -7,14 +7,15 @@ datasource db {
 }
 
 model Car {
-  id                     String                  @id @default(cuid())
+  id                     String                  @id @default(uuid(7)) @db.Uuid
+  publicRef              String                  @unique @db.VarChar(16)
   make                   String
   model                  String
   year                   Int
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   color                  String
-  ownerId                String
+  ownerId                String                  @db.Uuid
   registrationNumber     String                  @unique
   chassisNumber          String?                 @unique
   status                 Status
@@ -51,8 +52,8 @@ model Car {
 }
 
 model VehicleVerification {
-  id                       String                     @id @default(cuid())
-  ownerId                  String
+  id                       String                     @id @default(uuid(7)) @db.Uuid
+  ownerId                  String                     @db.Uuid
   idempotencyKey           String
   requestHash              String
   plateNumber              String
@@ -71,7 +72,7 @@ model VehicleVerification {
   status                   ProviderVerificationStatus @default(PROCESSING)
   failureReason            String?
   expiresAt                DateTime
-  carId                    String?                    @unique
+  carId                    String?                    @unique @db.Uuid
   createdAt                DateTime                   @default(now())
   updatedAt                DateTime                   @updatedAt
   owner                    User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -83,9 +84,9 @@ model VehicleVerification {
 }
 
 model InsuranceVerification {
-  id              String                     @id @default(cuid())
-  carId           String
-  ownerId         String
+  id              String                     @id @default(uuid(7)) @db.Uuid
+  carId           String                     @db.Uuid
+  ownerId         String                     @db.Uuid
   idempotencyKey  String
   requestHash     String
   policyNumber    String
@@ -104,9 +105,9 @@ model InsuranceVerification {
 }
 
 model ChauffeurVerification {
-  id                        String                              @id @default(cuid())
-  fleetOwnerId              String
-  chauffeurId               String?                             @unique
+  id                        String                              @id @default(uuid(7)) @db.Uuid
+  fleetOwnerId              String                              @db.Uuid
+  chauffeurId               String?                             @unique @db.Uuid
   name                      String
   email                     String
   phoneNumber               String
@@ -148,8 +149,8 @@ model ChauffeurVerification {
 }
 
 model ChauffeurVerificationStageRequest {
-  id                  String                     @id @default(cuid())
-  verificationId      String
+  id                  String                     @id @default(uuid(7)) @db.Uuid
+  verificationId      String                     @db.Uuid
   stage               ChauffeurVerificationStage
   idempotencyKey      String
   requestHash         String
@@ -165,14 +166,14 @@ model ChauffeurVerificationStageRequest {
 }
 
 model User {
-  id                           String                          @id @default(cuid())
+  id                           String                          @id @default(uuid(7)) @db.Uuid
   email                        String                          @unique
   username                     String?                         @unique
   createdAt                    DateTime                        @default(now())
   updatedAt                    DateTime                        @updatedAt
   address                      String?
   city                         String?
-  fleetOwnerId                 String?
+  fleetOwnerId                 String?                         @db.Uuid
   name                         String?
   phoneNumber                  String?
   fleetOwnerStatus             FleetOwnerStatus?               @default(PROCESSING)
@@ -182,7 +183,7 @@ model User {
   referralCode                 String?                         @unique
   referralDiscountUsed         Boolean                         @default(false)
   referralSignupAt             DateTime?
-  referredByUserId             String?
+  referredByUserId             String?                         @db.Uuid
   isOwnerDriver                Boolean                         @default(false)
   emailVerified                Boolean                         @default(false)
   phoneVerifiedAt              DateTime?
@@ -244,8 +245,8 @@ model User {
 }
 
 model UserPushToken {
-  id        String       @id @default(cuid())
-  userId    String
+  id        String       @id @default(uuid(7)) @db.Uuid
+  userId    String       @db.Uuid
   token     String       @unique
   platform  PushPlatform
   revokedAt DateTime?
@@ -261,8 +262,8 @@ model UserPushToken {
 /// `CREATE INDEX CONCURRENTLY` in a dedicated single-statement migration (plain
 /// `CREATE INDEX` blocks writes for the duration of the build on hot tables).
 model NotificationInbox {
-  id        String                @id @default(cuid())
-  userId    String
+  id        String                @id @default(uuid(7)) @db.Uuid
+  userId    String                @db.Uuid
   type      NotificationInboxType
   title     String
   body      String
@@ -280,14 +281,14 @@ model NotificationInbox {
 }
 
 model NotificationOutboxEvent {
-  id            String                      @id @default(cuid())
-  userId        String?
+  id            String                      @id @default(uuid(7)) @db.Uuid
+  userId        String?                     @db.Uuid
   eventType     NotificationOutboxEventType
   status        NotificationOutboxStatus    @default(PENDING)
   dedupeKey     String                      @unique
   /// Intentionally not a relation to Booking. Outbox rows must remain durable
   /// for retry/audit purposes even if a booking is deleted.
-  bookingId     String
+  bookingId     String                      @db.Uuid
   payload       Json?
   attempts      Int                         @default(0)
   nextAttemptAt DateTime                    @default(now())
@@ -303,10 +304,10 @@ model NotificationOutboxEvent {
 }
 
 model DomainOutboxEvent {
-  id            String                @id @default(cuid())
+  id            String                @id @default(uuid(7)) @db.Uuid
   eventType     DomainOutboxEventType
   status        DomainOutboxStatus    @default(PENDING)
-  aggregateId   String
+  aggregateId   String                @db.Uuid
   dedupeKey     String                @unique
   attempts      Int                   @default(0)
   nextAttemptAt DateTime              @default(now())
@@ -321,7 +322,7 @@ model DomainOutboxEvent {
 }
 
 model Role {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid(7)) @db.Uuid
   name        String   @unique
   description String   @default("")
   createdAt   DateTime @default(now())
@@ -330,7 +331,7 @@ model Role {
 }
 
 model Flight {
-  id                  String              @id @default(cuid())
+  id                  String              @id @default(uuid(7)) @db.Uuid
   flightNumber        String
   flightDate          DateTime            @db.Date
   faFlightId          String?
@@ -379,9 +380,9 @@ model Flight {
 }
 
 model FlightStatusEvent {
-  id                String        @id @default(cuid())
+  id                String        @id @default(uuid(7)) @db.Uuid
   eventKey          String?       @unique
-  flightId          String
+  flightId          String        @db.Uuid
   eventType         String
   eventTime         DateTime
   eventData         Json
@@ -401,7 +402,7 @@ model FlightStatusEvent {
 }
 
 model Booking {
-  id                                      String                      @id @default(cuid())
+  id                                      String                      @id @default(uuid(7)) @db.Uuid
   createdAt                               DateTime                    @default(now())
   updatedAt                               DateTime                    @updatedAt
   status                                  BookingStatus               @default(PENDING)
@@ -410,14 +411,14 @@ model Booking {
   totalAmount                             Decimal                     @db.Decimal(10, 2)
   paymentStatus                           PaymentStatus               @default(UNPAID)
   paymentId                               String?
-  carId                                   String
-  userId                                  String?
+  carId                                   String                      @db.Uuid
+  userId                                  String?                     @db.Uuid
   pickupLocation                          String
   returnLocation                          String
   specialRequests                         String?
-  chauffeurId                             String?
+  chauffeurId                             String?                     @db.Uuid
   completedAt                             DateTime?
-  completedByUserId                       String?
+  completedByUserId                       String?                     @db.Uuid
   completionSource                        BookingCompletionSource?
   completionTokenHash                     String?
   completionTokenExpiresAt                DateTime?
@@ -445,16 +446,16 @@ model Booking {
   bookingReference                        String                      @unique
   fuelUpgradeCost                         Decimal?                    @db.Decimal(10, 2)
   referralDiscountAmount                  Decimal                     @default(0) @db.Decimal(10, 2)
-  referralReferrerUserId                  String?
+  referralReferrerUserId                  String?                     @db.Uuid
   referralStatus                          BookingReferralStatus       @default(NONE)
   referralCreditsUsed                     Decimal                     @default(0) @db.Decimal(10, 2)
   referralCreditsReserved                 Decimal                     @default(0) @db.Decimal(10, 2)
   flightNumber                            String?
   estimatedDuration                       Int?
-  flightId                                String?
+  flightId                                String?                     @db.Uuid
   deletedAt                               DateTime?
   acquisitionChannel                      BookingAcquisitionChannel   @default(GLOBAL)
-  acquisitionPartnerOwnerId               String?
+  acquisitionPartnerOwnerId               String?                     @db.Uuid
   acquisitionPartnerSlug                  String?
   acquisitionPartnerOwner                 User?                       @relation("BookingAcquisitionPartner", fields: [acquisitionPartnerOwnerId], references: [id])
   car                                     Car                         @relation(fields: [carId], references: [id])
@@ -499,12 +500,12 @@ model Booking {
 }
 
 model BookingCreationIdempotency {
-  id             String                          @id @default(cuid())
+  id             String                          @id @default(uuid(7)) @db.Uuid
   idempotencyKey String
   customerScope  String
   requestHash    String
   state          BookingCreationIdempotencyState @default(PROCESSING)
-  bookingId      String?                         @unique
+  bookingId      String?                         @unique @db.Uuid
   response       Json?
   createdAt      DateTime                        @default(now())
   updatedAt      DateTime                        @updatedAt
@@ -515,8 +516,8 @@ model BookingCreationIdempotency {
 }
 
 model BookingLeg {
-  id                            String      @id @default(cuid())
-  bookingId                     String
+  id                            String      @id @default(uuid(7)) @db.Uuid
+  bookingId                     String      @db.Uuid
   legDate                       DateTime    @db.Date
   totalDailyPrice               Decimal     @db.Decimal(10, 2)
   notes                         String?
@@ -539,7 +540,7 @@ model BookingLeg {
 }
 
 model Extension {
-  id                                      String                        @id @default(cuid())
+  id                                      String                        @id @default(uuid(7)) @db.Uuid
   createdAt                               DateTime                      @default(now())
   updatedAt                               DateTime                      @updatedAt
   totalAmount                             Decimal                       @db.Decimal(10, 2)
@@ -549,7 +550,7 @@ model Extension {
   paymentSessionExpiresAt                 DateTime?
   paymentReconciliationCheckedAt          DateTime?
   status                                  String                        @default("PENDING")
-  bookingLegId                            String
+  bookingLegId                            String                        @db.Uuid
   eventType                               ExtensionEventType
   extendedDurationHours                   Int
   extensionEndTime                        DateTime
@@ -578,13 +579,13 @@ model Extension {
 }
 
 model ExtensionCreationIdempotency {
-  id                   String                            @id @default(cuid())
+  id                   String                            @id @default(uuid(7)) @db.Uuid
   idempotencyKey       String
   customerScope        String
   requestHash          String
-  resolvedBookingLegId String
+  resolvedBookingLegId String                            @db.Uuid
   state                ExtensionCreationIdempotencyState @default(PROCESSING)
-  extensionId          String?                           @unique
+  extensionId          String?                           @unique @db.Uuid
   response             Json?
   createdAt            DateTime                          @default(now())
   updatedAt            DateTime                          @updatedAt
@@ -595,9 +596,9 @@ model ExtensionCreationIdempotency {
 }
 
 model Payment {
-  id                           String               @id @default(cuid())
-  bookingId                    String?
-  extensionId                  String?
+  id                           String               @id @default(uuid(7)) @db.Uuid
+  bookingId                    String?              @db.Uuid
+  extensionId                  String?              @db.Uuid
   txRef                        String               @unique
   flutterwaveTransactionId     String?              @unique
   flutterwaveReference         String?              @unique
@@ -636,10 +637,10 @@ model Payment {
 }
 
 model PayoutTransaction {
-  id                       String                  @id @default(cuid())
-  fleetOwnerId             String
-  bookingId                String?                 @unique(map: "PayoutTransaction_bookingId_key")
-  extensionId              String?
+  id                       String                  @id @default(uuid(7)) @db.Uuid
+  fleetOwnerId             String                  @db.Uuid
+  bookingId                String?                 @unique(map: "PayoutTransaction_bookingId_key") @db.Uuid
+  extensionId              String?                 @db.Uuid
   amountToPay              Decimal                 @db.Decimal(10, 2)
   amountPaid               Decimal?                @db.Decimal(10, 2)
   currency                 String
@@ -665,10 +666,10 @@ model PayoutTransaction {
 }
 
 model FinancialReconciliationAudit {
-  id                String                              @id @default(cuid())
+  id                String                              @id @default(uuid(7)) @db.Uuid
   resourceType      FinancialReconciliationResourceType
-  resourceId        String
-  actorUserId       String
+  resourceId        String                              @db.Uuid
+  actorUserId       String                              @db.Uuid
   outcome           FinancialReconciliationOutcome      @default(STARTED)
   providerReference String?
   providerStatus    String?
@@ -680,17 +681,17 @@ model FinancialReconciliationAudit {
 }
 
 model DocumentApproval {
-  id           String         @id @default(cuid())
+  id           String         @id @default(uuid(7)) @db.Uuid
   documentType DocumentType
   status       DocumentStatus @default(PENDING)
   documentUrl  String
   notes        String?
-  approvedById String?
+  approvedById String?        @db.Uuid
   approvedAt   DateTime?
-  carId        String?
+  carId        String?        @db.Uuid
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  userId       String?
+  userId       String?        @db.Uuid
   approvedBy   User?          @relation("ApprovedBy", fields: [approvedById], references: [id])
   car          Car?           @relation("CarDocuments", fields: [carId], references: [id], onDelete: Cascade)
   user         User?          @relation("UserDocuments", fields: [userId], references: [id], onDelete: Cascade)
@@ -702,13 +703,13 @@ model DocumentApproval {
 }
 
 model VehicleImage {
-  id           String         @id @default(cuid())
+  id           String         @id @default(uuid(7)) @db.Uuid
   url          String
-  carId        String
+  carId        String         @db.Uuid
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   approvedAt   DateTime?
-  approvedById String?
+  approvedById String?        @db.Uuid
   notes        String?
   status       DocumentStatus @default(PENDING)
   isPrimary    Boolean        @default(false)
@@ -721,9 +722,9 @@ model VehicleImage {
 }
 
 model Review {
-  id              String    @id @default(cuid())
-  bookingId       String    @unique
-  userId          String
+  id              String    @id @default(uuid(7)) @db.Uuid
+  bookingId       String    @unique @db.Uuid
+  userId          String    @db.Uuid
   overallRating   Int
   carRating       Int
   chauffeurRating Int
@@ -731,7 +732,7 @@ model Review {
   comment         String?
   isVisible       Boolean   @default(true)
   moderatedAt     DateTime?
-  moderatedBy     String?
+  moderatedBy     String?   @db.Uuid
   moderationNotes String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -750,7 +751,7 @@ model Review {
 }
 
 model TaxRate {
-  id             String    @id @default(cuid())
+  id             String    @id @default(uuid(7)) @db.Uuid
   ratePercent    Decimal   @db.Decimal(5, 2)
   effectiveSince DateTime  @unique
   effectiveUntil DateTime?
@@ -762,7 +763,7 @@ model TaxRate {
 }
 
 model PlatformFeeRate {
-  id             String          @id @default(cuid())
+  id             String          @id @default(uuid(7)) @db.Uuid
   feeType        PlatformFeeType
   ratePercent    Decimal         @db.Decimal(5, 2)
   effectiveSince DateTime
@@ -776,7 +777,7 @@ model PlatformFeeRate {
 }
 
 model Addon {
-  id                 String                  @id @default(cuid())
+  id                 String                  @id @default(uuid(7)) @db.Uuid
   code               String                  @unique
   name               String
   description        String?
@@ -784,8 +785,8 @@ model Addon {
   pricingUnit        AddonPricingUnit
   financialTreatment AddonFinancialTreatment
   isActive           Boolean                 @default(true)
-  createdById        String
-  updatedById        String
+  createdById        String                  @db.Uuid
+  updatedById        String                  @db.Uuid
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
   createdBy          User                    @relation("AddonCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -797,13 +798,13 @@ model Addon {
 }
 
 model AddonPrice {
-  id             String    @id @default(cuid())
-  addonId        String
+  id             String    @id @default(uuid(7)) @db.Uuid
+  addonId        String    @db.Uuid
   amount         Decimal   @db.Decimal(10, 2)
   effectiveSince DateTime
   effectiveUntil DateTime?
-  createdById    String
-  updatedById    String
+  createdById    String    @db.Uuid
+  updatedById    String    @db.Uuid
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   addon          Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
@@ -815,9 +816,9 @@ model AddonPrice {
 }
 
 model BookingAddon {
-  id                 String                  @id @default(cuid())
-  bookingId          String
-  addonId            String
+  id                 String                  @id @default(uuid(7)) @db.Uuid
+  bookingId          String                  @db.Uuid
+  addonId            String                  @db.Uuid
   code               String
   name               String
   pricingUnit        AddonPricingUnit
@@ -835,9 +836,9 @@ model BookingAddon {
 }
 
 model Promotion {
-  id            String   @id @default(cuid())
-  ownerId       String
-  carId         String?
+  id            String   @id @default(uuid(7)) @db.Uuid
+  ownerId       String   @db.Uuid
+  carId         String?  @db.Uuid
   name          String?
   discountValue Decimal  @db.Decimal(10, 2)
   startDate     DateTime
@@ -855,8 +856,8 @@ model Promotion {
 }
 
 model BankDetails {
-  id                   String    @id @default(cuid())
-  userId               String    @unique
+  id                   String    @id @default(uuid(7)) @db.Uuid
+  userId               String    @unique @db.Uuid
   bankName             String
   bankCode             String
   accountNumber        String
@@ -870,8 +871,8 @@ model BankDetails {
 }
 
 model FleetOwnerAccountVerification {
-  id                      String                                      @id @default(cuid())
-  userId                  String
+  id                      String                                      @id @default(uuid(7)) @db.Uuid
+  userId                  String                                      @db.Uuid
   idempotencyKey          String
   requestHash             String
   accountType             FleetOwnerAccountType
@@ -899,7 +900,7 @@ model FleetOwnerAccountVerification {
   drivingCompletedAt      DateTime?
   submittedAt             DateTime?
   failureReason           String?
-  reviewedById            String?
+  reviewedById            String?                                     @db.Uuid
   reviewedAt              DateTime?
   reviewNotes             String?
   createdAt               DateTime                                    @default(now())
@@ -919,8 +920,8 @@ model FleetOwnerAccountVerification {
 }
 
 model FleetOwnerAccountVerificationStageRequest {
-  id                  String                        @id @default(cuid())
-  verificationId      String
+  id                  String                        @id @default(uuid(7)) @db.Uuid
+  verificationId      String                        @db.Uuid
   stage               AccountVerificationStage
   idempotencyKey      String
   requestHash         String
@@ -940,10 +941,10 @@ model FleetOwnerAccountVerificationStageRequest {
 }
 
 model UserReferralStats {
-  id                  String    @id @default(cuid())
+  id                  String    @id @default(uuid(7)) @db.Uuid
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  userId              String    @unique
+  userId              String    @unique @db.Uuid
   totalReferrals      Int       @default(0)
   totalRewardsGranted Decimal   @default(0) @db.Decimal(10, 2)
   totalRewardsPending Decimal   @default(0) @db.Decimal(10, 2)
@@ -952,10 +953,10 @@ model UserReferralStats {
 }
 
 model ReferralAttribution {
-  id             String                    @id @default(cuid())
+  id             String                    @id @default(uuid(7)) @db.Uuid
   createdAt      DateTime                  @default(now())
-  refereeUserId  String                    @unique
-  referrerUserId String
+  refereeUserId  String                    @unique @db.Uuid
+  referrerUserId String                    @db.Uuid
   referralCode   String
   source         ReferralAttributionSource
   ipAddress      String?
@@ -969,12 +970,12 @@ model ReferralAttribution {
 }
 
 model ReferralReward {
-  id               String                   @id @default(cuid())
+  id               String                   @id @default(uuid(7)) @db.Uuid
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
-  referrerUserId   String
-  refereeUserId    String
-  bookingId        String
+  referrerUserId   String                   @db.Uuid
+  refereeUserId    String                   @db.Uuid
+  bookingId        String                   @db.Uuid
   amount           Decimal                  @db.Decimal(10, 2)
   status           ReferralRewardStatus     @default(PENDING)
   releaseCondition ReferralReleaseCondition
@@ -1000,14 +1001,14 @@ model ReferralProgramConfig {
 }
 
 model Session {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid(7)) @db.Uuid
   expiresAt DateTime
   token     String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   ipAddress String?
   userAgent String?
-  userId    String
+  userId    String   @db.Uuid
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -1016,10 +1017,10 @@ model Session {
 }
 
 model Account {
-  id                    String    @id @default(cuid())
+  id                    String    @id @default(uuid(7)) @db.Uuid
   accountId             String
   providerId            String
-  userId                String
+  userId                String    @db.Uuid
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   accessToken           String?
   refreshToken          String?
@@ -1037,7 +1038,7 @@ model Account {
 }
 
 model Verification {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid(7)) @db.Uuid
   identifier String
   value      String
   expiresAt  DateTime
@@ -1050,7 +1051,7 @@ model Verification {
 }
 
 model RateLimit {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid(7)) @db.Uuid
   key         String   @unique
   count       Int
   lastRequest BigInt
@@ -1061,15 +1062,15 @@ model RateLimit {
 }
 
 model BookingDraft {
-  id                String             @id @default(cuid())
-  conversationId    String
+  id                String             @id @default(uuid(7)) @db.Uuid
+  conversationId    String             @db.Uuid
   status            BookingDraftStatus @default(NEW)
   state             Json
   selectedOptionId  String?
   quoteExpiresAt    DateTime?
   checkoutUrl       String?
   checkoutExpiresAt DateTime?
-  linkedBookingId   String?
+  linkedBookingId   String?            @db.Uuid
   linkedBooking     Booking?           @relation("LinkedBookingDraft", fields: [linkedBookingId], references: [id], onDelete: SetNull)
   paymentStatus     PaymentStatus?
   createdAt         DateTime           @default(now())
@@ -1083,12 +1084,12 @@ model BookingDraft {
 }
 
 model WhatsAppConversation {
-  id                      String                     @id @default(cuid())
+  id                      String                     @id @default(uuid(7)) @db.Uuid
   phoneE164               String                     @unique
   waId                    String?                    @unique
   profileName             String?
   status                  WhatsAppConversationStatus @default(ACTIVE)
-  linkedUserId            String?
+  linkedUserId            String?                    @db.Uuid
   linkStatus              WhatsAppLinkStatus         @default(UNLINKED)
   linkRequestedAt         DateTime?
   linkVerifiedAt          DateTime?
@@ -1097,7 +1098,7 @@ model WhatsAppConversation {
   windowExpiresAt         DateTime?
   handoffReason           String?
   handoffAt               DateTime?
-  activeBookingDraftId    String?
+  activeBookingDraftId    String?                    @db.Uuid
   activeBookingDraft      BookingDraft?              @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
   linkedUser              User?                      @relation("WhatsAppConversationLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
   processingLockToken     String?
@@ -1116,8 +1117,8 @@ model WhatsAppConversation {
 }
 
 model WhatsAppMessage {
-  id                 String                   @id
-  conversationId     String
+  id                 String                   @id @default(uuid(7)) @db.Uuid
+  conversationId     String                   @db.Uuid
   providerMessageSid String?                  @unique
   dedupeKey          String                   @unique
   direction          WhatsAppMessageDirection
@@ -1142,8 +1143,8 @@ model WhatsAppMessage {
 }
 
 model WhatsAppOutbox {
-  id                 String               @id
-  conversationId     String
+  id                 String               @id @default(uuid(7)) @db.Uuid
+  conversationId     String               @db.Uuid
   dedupeKey          String               @unique
   mode               WhatsAppDeliveryMode
   status             WhatsAppOutboxStatus @default(PENDING)

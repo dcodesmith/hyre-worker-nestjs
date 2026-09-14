@@ -21,9 +21,11 @@ export type CarCategoriesQueryDto = z.infer<typeof carCategoriesQuerySchema>;
  */
 export interface PublicCarDto {
   id: string;
+  publicRef: string;
   make: string;
   model: string;
   year: number;
+  color: string;
   dayRate: number;
   passengerCapacity: number;
   pricingIncludesFuel: boolean;

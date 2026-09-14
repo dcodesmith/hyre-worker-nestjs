@@ -53,6 +53,7 @@ export async function resetAndSeedDb() {
 
       const car1 = await tx.car.create({
         data: {
+          publicRef: "0000000000000001",
           make: "Toyota",
           model: "Camry",
           year: 2022,
@@ -72,6 +73,7 @@ export async function resetAndSeedDb() {
 
       const car2 = await tx.car.create({
         data: {
+          publicRef: "0000000000000002",
           make: "Honda",
           model: "Accord",
           year: 2023,

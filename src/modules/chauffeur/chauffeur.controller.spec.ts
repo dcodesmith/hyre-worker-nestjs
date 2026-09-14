@@ -114,7 +114,9 @@ describe("FleetOwnerChauffeurController", () => {
       items: [],
     });
     await expect(
-      controller.update(mockUser, "ckx7b9q1e0000qwertyuiopas", { isActive: false }),
+      controller.update(mockUser, "01994a1d-4263-7000-8000-000000000001", {
+        isActive: false,
+      }),
     ).resolves.toMatchObject({ isActive: false });
   });
 });

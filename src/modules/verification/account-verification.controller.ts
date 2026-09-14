@@ -22,7 +22,7 @@ import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { idempotencyKeySchema } from "../booking/dto/idempotency-key.dto";
-import { cuidParamSchema, type RejectBodyDto, rejectBodySchema } from "../car/dto/car-approval.dto";
+import { type RejectBodyDto, rejectBodySchema, uuidParamSchema } from "../car/dto/car-approval.dto";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
   type AccountDocuments,
@@ -219,7 +219,7 @@ export class AdminAccountVerificationController {
 
   @Post(":verificationId/approve")
   approve(
-    @ZodParam("verificationId", cuidParamSchema) verificationId: string,
+    @ZodParam("verificationId", uuidParamSchema) verificationId: string,
     @CurrentUser() user: AuthSession["user"],
   ) {
     return this.accountVerificationService.approve(verificationId, user.id);
@@ -227,7 +227,7 @@ export class AdminAccountVerificationController {
 
   @Post(":verificationId/reject")
   reject(
-    @ZodParam("verificationId", cuidParamSchema) verificationId: string,
+    @ZodParam("verificationId", uuidParamSchema) verificationId: string,
     @ZodBody(rejectBodySchema) body: RejectBodyDto,
     @CurrentUser() user: AuthSession["user"],
   ) {
