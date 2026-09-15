@@ -19,8 +19,6 @@ describe("HandoffNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},

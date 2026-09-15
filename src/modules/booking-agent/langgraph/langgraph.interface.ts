@@ -22,9 +22,6 @@ export interface BookingDraft {
 }
 
 export interface UserPreferences {
-  pricePreference?: "budget" | "mid" | "premium";
-  rejectedVehicleIds?: string[];
-  preferredBrands?: string[];
   notes?: string[];
 }
 
@@ -40,9 +37,7 @@ export type BookingStage =
   | "collecting"
   | "searching"
   | "presenting_options"
-  | "awaiting_selection"
   | "confirming"
-  | "creating_hold"
   | "awaiting_payment"
   | "completed"
   | "cancelled";
@@ -162,8 +157,6 @@ export interface BookingAgentState {
   availableOptions: VehicleSearchOption[];
   lastShownOptions: VehicleSearchOption[];
   selectedOption: VehicleSearchOption | null;
-  holdId: string | null;
-  holdExpiresAt: string | null;
   bookingId: string | null;
   paymentLink: string | null;
   preferences: UserPreferences;
@@ -227,8 +220,6 @@ export interface PersistedState {
   lastShownOptions: VehicleSearchOption[];
   selectedOption: VehicleSearchOption | null;
   preferences: UserPreferences;
-  holdId: string | null;
-  holdExpiresAt: string | null;
   bookingId: string | null;
   locationValidation?: BookingAgentLocationValidationState;
   updatedAt: string;
@@ -248,22 +239,5 @@ export function convertToExtractedParams(draft: BookingDraft): ExtractedAiSearch
     pickupLocation: draft.pickupLocation,
     dropoffLocation: draft.dropoffLocation,
     flightNumber: draft.flightNumber,
-  };
-}
-
-export function convertFromExtractedParams(params: ExtractedAiSearchParams): Partial<BookingDraft> {
-  return {
-    color: params.color,
-    make: params.make,
-    model: params.model,
-    vehicleType: params.vehicleType,
-    serviceTier: params.serviceTier,
-    pickupDate: params.from,
-    dropoffDate: params.to,
-    bookingType: params.bookingType,
-    pickupTime: params.pickupTime,
-    pickupLocation: params.pickupLocation,
-    dropoffLocation: params.dropoffLocation,
-    flightNumber: params.flightNumber,
   };
 }
