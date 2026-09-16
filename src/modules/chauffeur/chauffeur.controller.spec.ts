@@ -229,7 +229,7 @@ describe("ChauffeurOnboardingController", () => {
         controller.verifyDriving(
           "ver-1",
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
           response,
         ),

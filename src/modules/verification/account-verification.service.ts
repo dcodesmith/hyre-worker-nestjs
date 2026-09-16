@@ -16,6 +16,7 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
+import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -1339,11 +1340,12 @@ export class AccountVerificationService {
   ): Promise<PremblyDriversLicenseResult | null> {
     if (!input.isOwnerDriver) return null;
     if (!input.driversLicenseNumber) throw new OwnerDriverLicenseNotVerifiedException();
+    const licenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
 
     let license: PremblyDriversLicenseResult;
     try {
       license = await this.premblyService.verifyDriversLicense(
-        input.driversLicenseNumber,
+        licenseNumber,
         identity.firstName,
         identity.lastName,
       );
@@ -1375,11 +1377,12 @@ export class AccountVerificationService {
     license: PremblyDriversLicenseResult | null,
     licenseNumber = license?.licenseNumber,
   ) {
+    const hashedNumber = licenseNumber ? normalizeDriversLicenseNumber(licenseNumber) : null;
     return {
-      driversLicenseHash: licenseNumber
-        ? createHmac("sha256", this.hashKey).update(licenseNumber).digest("hex")
+      driversLicenseHash: hashedNumber
+        ? createHmac("sha256", this.hashKey).update(hashedNumber).digest("hex")
         : null,
-      driversLicenseLast4: licenseNumber?.slice(-4).toUpperCase() ?? null,
+      driversLicenseLast4: hashedNumber?.slice(-4) ?? null,
       driversLicenseExpiresAt: license?.expiresAt ?? null,
       driversLicenseProviderRef: license?.reference ?? null,
     };

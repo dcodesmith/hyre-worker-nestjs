@@ -172,7 +172,7 @@ describe("drivingCredentialsSchema", () => {
   ] as const)("coerces multipart boolean %j to %s", (input, expected) => {
     const parsed = drivingCredentialsSchema.safeParse({
       isOwnerDriver: input,
-      ...(expected ? { driversLicenseNumber: "ABC12345" } : {}),
+      ...(expected ? { driversLicenseNumber: "ABC12345DE67" } : {}),
     });
 
     expect(parsed.success).toBe(true);
@@ -202,19 +202,19 @@ describe("drivingCredentialsSchema", () => {
   it("accepts an owner-driver with a valid licence number", () => {
     const parsed = drivingCredentialsSchema.safeParse({
       isOwnerDriver: true,
-      driversLicenseNumber: "ABC12345",
+      driversLicenseNumber: "ABC12345DE67",
     });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data).toEqual({ isOwnerDriver: true, driversLicenseNumber: "ABC12345" });
+      expect(parsed.data).toEqual({ isOwnerDriver: true, driversLicenseNumber: "ABC12345DE67" });
     }
   });
 
   it("rejects a licence number for a non-owner-driver", () => {
     const parsed = drivingCredentialsSchema.safeParse({
       isOwnerDriver: false,
-      driversLicenseNumber: "ABC12345",
+      driversLicenseNumber: "ABC12345DE67",
     });
 
     expect(parsed.success).toBe(false);
@@ -263,25 +263,25 @@ describe("drivingCredentialsSchema", () => {
   });
 
   it.each([
-    ["too short", "AB12"],
-    ["too long", "A".repeat(31)],
-    ["spaces", "ABC 12345"],
-    ["invalid charset", "ABC_12345"],
+    ["legacy short number", "ABC12345"],
+    ["one leading letter", "F63483AT78"],
+    ["spaces that do not form a card number", "ABC 12345"],
+    ["invalid charset", "ABC_12345DE67"],
   ])("rejects a licence number that is %s", (_label, driversLicenseNumber) => {
     expect(
       drivingCredentialsSchema.safeParse({ isOwnerDriver: true, driversLicenseNumber }).success,
     ).toBe(false);
   });
 
-  it("accepts a hyphenated licence number and trims it", () => {
+  it("accepts a hyphenated licence number and canonicalizes it", () => {
     const parsed = drivingCredentialsSchema.safeParse({
       isOwnerDriver: true,
-      driversLicenseNumber: "  ABC-12345  ",
+      driversLicenseNumber: "  abc-12345-de67  ",
     });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.driversLicenseNumber).toBe("ABC-12345");
+      expect(parsed.data.driversLicenseNumber).toBe("ABC12345DE67");
     }
   });
 });
@@ -314,7 +314,7 @@ describe("createAccountVerificationSchema", () => {
     const parsed = createAccountVerificationSchema.safeParse({
       ...validIndividual,
       isOwnerDriver: input,
-      ...(expected ? { driversLicenseNumber: "ABC12345" } : {}),
+      ...(expected ? { driversLicenseNumber: "ABC12345DE67" } : {}),
     });
 
     expect(parsed.success).toBe(true);
@@ -344,12 +344,12 @@ describe("createAccountVerificationSchema", () => {
     const parsed = createAccountVerificationSchema.safeParse({
       ...validIndividual,
       isOwnerDriver: true,
-      driversLicenseNumber: "ABC12345",
+      driversLicenseNumber: "ABC12345DE67",
     });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.driversLicenseNumber).toBe("ABC12345");
+      expect(parsed.data.driversLicenseNumber).toBe("ABC12345DE67");
     }
   });
 
@@ -357,7 +357,7 @@ describe("createAccountVerificationSchema", () => {
     expect(
       createAccountVerificationSchema.safeParse({
         ...validIndividual,
-        driversLicenseNumber: "ABC12345",
+        driversLicenseNumber: "ABC12345DE67",
       }).success,
     ).toBe(false);
   });
@@ -385,10 +385,10 @@ describe("createAccountVerificationSchema", () => {
   });
 
   it.each([
-    ["too short", "AB12"],
-    ["too long", "A".repeat(31)],
-    ["spaces", "ABC 12345"],
-    ["invalid charset", "ABC_12345"],
+    ["legacy short number", "ABC12345"],
+    ["one leading letter", "F63483AT78"],
+    ["spaces that do not form a card number", "ABC 12345"],
+    ["invalid charset", "ABC_12345DE67"],
   ])("rejects a licence number that is %s", (_label, driversLicenseNumber) => {
     expect(
       createAccountVerificationSchema.safeParse({
@@ -399,16 +399,16 @@ describe("createAccountVerificationSchema", () => {
     ).toBe(false);
   });
 
-  it("accepts a hyphenated licence number and trims it", () => {
+  it("accepts a hyphenated licence number and canonicalizes it", () => {
     const parsed = createAccountVerificationSchema.safeParse({
       ...validIndividual,
       isOwnerDriver: true,
-      driversLicenseNumber: "  ABC-12345  ",
+      driversLicenseNumber: "  abc-12345-de67  ",
     });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.driversLicenseNumber).toBe("ABC-12345");
+      expect(parsed.data.driversLicenseNumber).toBe("ABC12345DE67");
     }
   });
 

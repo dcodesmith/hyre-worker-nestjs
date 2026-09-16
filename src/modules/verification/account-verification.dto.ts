@@ -1,19 +1,9 @@
 import { z } from "zod";
+import { optionalDriversLicenseNumberSchema } from "../../shared/drivers-license-number";
 
 const multipartBooleanSchema = z
   .union([z.boolean(), z.enum(["true", "false"])])
   .transform((value) => value === true || value === "true");
-
-const driversLicenseNumberSchema = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  z
-    .string()
-    .trim()
-    .min(5)
-    .max(30)
-    .regex(/^[A-Za-z0-9-]+$/)
-    .optional(),
-);
 
 const ninSchema = z
   .string()
@@ -55,7 +45,7 @@ export const accountIdentityVerificationSchema = z.discriminatedUnion("accountTy
 
 const drivingCredentialsShape = {
   isOwnerDriver: multipartBooleanSchema,
-  driversLicenseNumber: driversLicenseNumberSchema,
+  driversLicenseNumber: optionalDriversLicenseNumberSchema,
 };
 
 function validateDrivingCredentials(

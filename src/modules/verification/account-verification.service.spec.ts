@@ -172,7 +172,7 @@ const drivingHash = (
 
 const submissionHash = () => hashValue({ stage: AccountVerificationStage.SUBMISSION });
 
-const LICENSE_NUMBER = "ABC12345";
+const LICENSE_NUMBER = "ABC12345DE67";
 
 const identity = {
   firstName: "JOHN",
@@ -2231,8 +2231,11 @@ describe("AccountVerificationService", () => {
     });
 
     it("hashes the typed licence number rather than Prembly's canonical form", async () => {
-      const typedNumber = "abc-12345";
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+      const typedNumber = "abc-12345-de67";
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        licenseNumber: "ABC12345YZ00",
+      });
 
       await expect(
         service.saveDrivingCredentialsStage({
@@ -2242,11 +2245,16 @@ describe("AccountVerificationService", () => {
           documents: { driversLicense: licenseFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED" });
+      expect(premblyService.verifyDriversLicense).toHaveBeenCalledWith(
+        LICENSE_NUMBER,
+        "JOHN",
+        "DOE",
+      );
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
         data: expect.objectContaining({
-          driversLicenseHash: hashLicenseNumber(typedNumber),
-          driversLicenseLast4: "2345",
+          driversLicenseHash: hashLicenseNumber(LICENSE_NUMBER),
+          driversLicenseLast4: "DE67",
         }),
       });
     });

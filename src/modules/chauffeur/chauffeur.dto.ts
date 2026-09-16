@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { driversLicenseNumberSchema } from "../../shared/drivers-license-number";
 
 export const createChauffeurInvitationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -33,12 +34,7 @@ export const verifyChauffeurNinSchema = z.object({
 });
 
 export const verifyChauffeurDrivingSchema = z.object({
-  driversLicenseNumber: z
-    .string()
-    .trim()
-    .min(5)
-    .max(30)
-    .regex(/^[A-Za-z0-9-]+$/, "Driver's licence number is invalid"),
+  driversLicenseNumber: driversLicenseNumberSchema,
 });
 
 export const listChauffeursQuerySchema = z.object({

@@ -38,7 +38,7 @@ vi.mock("twilio", () => ({
 
 const PHONE = "+2348012345678";
 const ACCOUNT_NUMBER = "0123456789";
-const LICENSE_NUMBER = "ABC12345";
+const LICENSE_NUMBER = "ABC12345DE67";
 const VERIFIED_DRIVERS_LICENSE = {
   licenseNumber: LICENSE_NUMBER,
   firstName: "JOHN",
