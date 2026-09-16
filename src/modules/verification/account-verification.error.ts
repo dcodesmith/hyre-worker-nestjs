@@ -8,6 +8,9 @@ export const AccountVerificationErrorCode = {
   PHONE_PROVIDER_UNAVAILABLE: "PHONE_VERIFICATION_PROVIDER_UNAVAILABLE",
   DOCUMENT_INVALID: "ACCOUNT_DOCUMENT_INVALID",
   DRIVER_LICENSE_REQUIRED: "OWNER_DRIVER_LICENSE_REQUIRED",
+  DRIVER_LICENSE_NOT_VERIFIED: "OWNER_DRIVER_LICENSE_NOT_VERIFIED",
+  DRIVER_LICENSE_EXPIRED: "OWNER_DRIVER_LICENSE_EXPIRED",
+  DRIVER_LICENSE_IDENTITY_MISMATCH: "OWNER_DRIVER_LICENSE_IDENTITY_MISMATCH",
   ACCOUNT_ALREADY_VERIFIED: "ACCOUNT_ALREADY_VERIFIED",
   NIN_NOT_VERIFIED: "ACCOUNT_NIN_NOT_VERIFIED",
   CAC_NOT_VERIFIED: "ACCOUNT_CAC_NOT_VERIFIED",
@@ -89,6 +92,51 @@ export class OwnerDriverLicenseRequiredException extends AccountVerificationExce
       "A driver's licence is required for owner-drivers",
       HttpStatus.BAD_REQUEST,
       { title: "Driver's Licence Required" },
+    );
+  }
+}
+
+export class OwnerDriverLicenseNotVerifiedException extends AccountVerificationException {
+  constructor() {
+    const message = "We couldn't verify this driver's licence. Check the number and try again.";
+    super(
+      AccountVerificationErrorCode.DRIVER_LICENSE_NOT_VERIFIED,
+      message,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      {
+        title: "Driver's Licence Not Verified",
+        errors: [{ field: "driversLicenseNumber", code: "NOT_VERIFIED", message }],
+      },
+    );
+  }
+}
+
+export class OwnerDriverLicenseExpiredException extends AccountVerificationException {
+  constructor() {
+    const message = "This driver's licence has expired";
+    super(
+      AccountVerificationErrorCode.DRIVER_LICENSE_EXPIRED,
+      message,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      {
+        title: "Driver's Licence Expired",
+        errors: [{ field: "driversLicenseNumber", code: "EXPIRED", message }],
+      },
+    );
+  }
+}
+
+export class OwnerDriverLicenseIdentityMismatchException extends AccountVerificationException {
+  constructor() {
+    const message = "The driver's licence identity does not match the verified NIN";
+    super(
+      AccountVerificationErrorCode.DRIVER_LICENSE_IDENTITY_MISMATCH,
+      message,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      {
+        title: "Driver's Licence Identity Mismatch",
+        errors: [{ field: "driversLicenseNumber", code: "IDENTITY_MISMATCH", message }],
+      },
     );
   }
 }

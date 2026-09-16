@@ -19,7 +19,11 @@ import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
-import type { PremblyCacResult, PremblyNinResult } from "../prembly/prembly.interface";
+import type {
+  PremblyCacResult,
+  PremblyDriversLicenseResult,
+  PremblyNinResult,
+} from "../prembly/prembly.interface";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import type { AccountDocuments } from "./account-documents.pipe";
@@ -53,7 +57,10 @@ import {
   BusinessOwnerDriverInvalidException,
   CacNotVerifiedException,
   NinNotVerifiedException,
+  OwnerDriverLicenseExpiredException,
+  OwnerDriverLicenseIdentityMismatchException,
   OwnerDriverLicenseNotApprovedException,
+  OwnerDriverLicenseNotVerifiedException,
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
 import {
@@ -114,7 +121,8 @@ function onboardingProgress(
     payoutComplete: Boolean(verification?.payoutVerifiedAt ?? verification?.accountName),
     drivingComplete:
       verification?.accountType === FleetOwnerAccountType.BUSINESS ||
-      Boolean(verification?.drivingCompletedAt ?? verification?.submittedAt),
+      (Boolean(verification?.drivingCompletedAt ?? verification?.submittedAt) &&
+        (verification?.isOwnerDriver !== true || Boolean(verification.driversLicenseHash))),
     submissionComplete:
       verification?.status === AccountVerificationStatus.SUCCEEDED ||
       verification?.status === AccountVerificationStatus.REVIEW_REQUIRED,
@@ -247,6 +255,9 @@ export class AccountVerificationService {
     documents: AccountDocuments;
   }) {
     const user = await this.assertUserCanVerify(userId);
+    if (input.accountType === FleetOwnerAccountType.BUSINESS && input.isOwnerDriver) {
+      throw new BusinessOwnerDriverInvalidException();
+    }
     const driverLicenseApproved = await this.assertDocumentsValid(
       userId,
       input.isOwnerDriver,
@@ -268,6 +279,7 @@ export class AccountVerificationService {
     try {
       const { identity, legalName, business, businessNameMatch, representativeNameMatch } =
         await this.verifyIdentity(input);
+      const driversLicense = await this.verifyOwnerDriverLicense(input, identity);
 
       const resolvedAccount = await this.flutterwaveService.resolveBankAccount(
         input.bankCode,
@@ -408,6 +420,7 @@ export class AccountVerificationService {
             bankNameMatch,
             payoutVerifiedAt: verifiedAt,
             representativeNameMatch,
+            ...this.driverLicenseData(driversLicense, input.driversLicenseNumber),
             drivingCompletedAt: verifiedAt,
             submittedAt: verifiedAt,
           },
@@ -623,7 +636,10 @@ export class AccountVerificationService {
     }
     if (
       verification.accountType === FleetOwnerAccountType.BUSINESS &&
-      (input.isOwnerDriver || documents.driversLicense || documents.lasdri)
+      (input.isOwnerDriver ||
+        input.driversLicenseNumber ||
+        documents.driversLicense ||
+        documents.lasdri)
     ) {
       throw new BusinessOwnerDriverInvalidException();
     }
@@ -642,6 +658,16 @@ export class AccountVerificationService {
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
     try {
+      if (
+        input.isOwnerDriver &&
+        (!verification.identityFirstName || !verification.identityLastName)
+      ) {
+        throw new AccountVerificationOperationFailedException();
+      }
+      const driversLicense = await this.verifyOwnerDriverLicense(input, {
+        firstName: verification.identityFirstName ?? "",
+        lastName: verification.identityLastName ?? "",
+      });
       for (const [type, file] of [
         [DocumentType.DRIVERS_LICENSE, documents.driversLicense],
         [DocumentType.LASDRI, documents.lasdri],
@@ -690,7 +716,11 @@ export class AccountVerificationService {
 
         const advanced = await tx.fleetOwnerAccountVerification.updateMany({
           where: { id: verification.id, status: AccountVerificationStatus.DRAFT },
-          data: { isOwnerDriver: input.isOwnerDriver, drivingCompletedAt: completedAt },
+          data: {
+            isOwnerDriver: input.isOwnerDriver,
+            ...this.driverLicenseData(driversLicense, input.driversLicenseNumber),
+            drivingCompletedAt: completedAt,
+          },
         });
         if (advanced.count === 0) throw new AccountVerificationChangedException();
 
@@ -784,22 +814,7 @@ export class AccountVerificationService {
           throw new AccountVerificationChangedException();
         }
 
-        let driverLicenseApproved = true;
-        if (current.isOwnerDriver) {
-          const driverLicense = await tx.documentApproval.findUnique({
-            where: {
-              documentType_userId: {
-                documentType: DocumentType.DRIVERS_LICENSE,
-                userId,
-              },
-            },
-            select: { status: true },
-          });
-          if (!driverLicense || driverLicense.status === DocumentStatus.REJECTED) {
-            throw new OwnerDriverLicenseRequiredException();
-          }
-          driverLicenseApproved = driverLicense.status === DocumentStatus.APPROVED;
-        }
+        const driverLicenseApproved = await this.ownerDriverApprovedOnSubmit(tx, userId, current);
 
         const needsReview =
           current.identityRequiresReview ||
@@ -1287,6 +1302,89 @@ export class AccountVerificationService {
     return existingDriverLicense.status === DocumentStatus.APPROVED;
   }
 
+  private async ownerDriverApprovedOnSubmit(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    current: FleetOwnerAccountVerification,
+  ): Promise<boolean> {
+    if (!current.isOwnerDriver) return true;
+
+    const driverLicense = await tx.documentApproval.findUnique({
+      where: {
+        documentType_userId: {
+          documentType: DocumentType.DRIVERS_LICENSE,
+          userId,
+        },
+      },
+      select: { status: true },
+    });
+    if (!driverLicense || driverLicense.status === DocumentStatus.REJECTED) {
+      throw new OwnerDriverLicenseRequiredException();
+    }
+    if (!current.driversLicenseHash) {
+      throw new OwnerDriverLicenseNotVerifiedException();
+    }
+    if (
+      current.driversLicenseExpiresAt &&
+      current.driversLicenseExpiresAt < this.startOfTodayUtc()
+    ) {
+      throw new OwnerDriverLicenseExpiredException();
+    }
+    return driverLicense.status === DocumentStatus.APPROVED;
+  }
+
+  private async verifyOwnerDriverLicense(
+    input: Pick<DrivingCredentialsDto, "isOwnerDriver" | "driversLicenseNumber">,
+    identity: Pick<PremblyNinResult, "firstName" | "lastName">,
+  ): Promise<PremblyDriversLicenseResult | null> {
+    if (!input.isOwnerDriver) return null;
+    if (!input.driversLicenseNumber) throw new OwnerDriverLicenseNotVerifiedException();
+
+    let license: PremblyDriversLicenseResult;
+    try {
+      license = await this.premblyService.verifyDriversLicense(
+        input.driversLicenseNumber,
+        identity.firstName,
+        identity.lastName,
+      );
+    } catch (error) {
+      if (error instanceof PremblyError && error.kind === "REJECTED") {
+        throw new OwnerDriverLicenseNotVerifiedException();
+      }
+      throw error;
+    }
+
+    if (
+      this.normalizeName(identity.firstName) !== this.normalizeName(license.firstName) ||
+      this.normalizeName(identity.lastName) !== this.normalizeName(license.lastName)
+    ) {
+      throw new OwnerDriverLicenseIdentityMismatchException();
+    }
+
+    if (license.expiresAt < this.startOfTodayUtc()) throw new OwnerDriverLicenseExpiredException();
+    return license;
+  }
+
+  private startOfTodayUtc(): Date {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    return today;
+  }
+
+  private driverLicenseData(
+    license: PremblyDriversLicenseResult | null,
+    licenseNumber = license?.licenseNumber,
+  ) {
+    return {
+      driversLicenseHash: licenseNumber
+        ? createHmac("sha256", this.hashKey).update(licenseNumber).digest("hex")
+        : null,
+      driversLicenseLast4: licenseNumber?.slice(-4).toUpperCase() ?? null,
+      driversLicenseExpiresAt: license?.expiresAt ?? null,
+      driversLicenseProviderRef: license?.reference ?? null,
+    };
+  }
+
   private async verifyIdentity(
     input: AccountIdentityVerificationDto,
   ): Promise<VerifiedAccountIdentity> {
@@ -1654,6 +1752,10 @@ export class AccountVerificationService {
     return value.normalize("NFKD").replaceAll(/\p{M}/gu, "").trim().toUpperCase();
   }
 
+  private normalizeName(value: string): string {
+    return this.normalizeToken(value).replaceAll(/[^A-Z0-9]/g, "");
+  }
+
   private fullName(identity: PremblyNinResult): string {
     return [identity.firstName, identity.middleName, identity.lastName].filter(Boolean).join(" ");
   }
@@ -1817,6 +1919,12 @@ export class AccountVerificationService {
         return new AccountVerificationNotFoundException();
       case AccountVerificationErrorCode.DRIVER_LICENSE_REQUIRED:
         return new OwnerDriverLicenseRequiredException();
+      case AccountVerificationErrorCode.DRIVER_LICENSE_NOT_VERIFIED:
+        return new OwnerDriverLicenseNotVerifiedException();
+      case AccountVerificationErrorCode.DRIVER_LICENSE_EXPIRED:
+        return new OwnerDriverLicenseExpiredException();
+      case AccountVerificationErrorCode.DRIVER_LICENSE_IDENTITY_MISMATCH:
+        return new OwnerDriverLicenseIdentityMismatchException();
       case AccountVerificationErrorCode.MANUAL_REVIEW_REJECTED:
         return new AccountManualReviewRejectedException();
       default:

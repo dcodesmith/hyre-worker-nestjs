@@ -38,6 +38,23 @@ vi.mock("twilio", () => ({
 
 const PHONE = "+2348012345678";
 const ACCOUNT_NUMBER = "0123456789";
+const LICENSE_NUMBER = "ABC12345";
+const VERIFIED_DRIVERS_LICENSE = {
+  licenseNumber: LICENSE_NUMBER,
+  firstName: "JOHN",
+  lastName: "DOE",
+  middleName: null,
+  dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+  expiresAt: new Date(Date.UTC(2099, 11, 31)),
+  officialPhoto: "photo",
+  reference: "lic-ref",
+} as const;
+
+function hashLicenseNumber(licenseNumber = LICENSE_NUMBER): string {
+  return createHmac("sha256", process.env.HMAC_KEY ?? "")
+    .update(licenseNumber)
+    .digest("hex");
+}
 const INDIVIDUAL_FIELDS = {
   accountType: "INDIVIDUAL",
   nin: "12345678901",
@@ -89,6 +106,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
   let premblyService: {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyCac: ReturnType<typeof vi.fn>;
+    verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
   let flutterwaveService: {
     resolveBankAccount: ReturnType<typeof vi.fn>;
@@ -147,6 +165,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
         .field("accountType", INDIVIDUAL_FIELDS.accountType)
         .field("nin", INDIVIDUAL_FIELDS.nin)
         .field("isOwnerDriver", "true")
+        .field("driversLicenseNumber", LICENSE_NUMBER)
         .field("bankName", INDIVIDUAL_FIELDS.bankName)
         .field("bankCode", INDIVIDUAL_FIELDS.bankCode)
         .field("accountNumber", INDIVIDUAL_FIELDS.accountNumber)
@@ -207,13 +226,24 @@ describe("Fleet-owner account verification E2E Tests", () => {
     cookie: string,
     idempotencyKey: string,
     isOwnerDriver = "false",
+    extras: { driversLicenseNumber?: string; driversLicense?: Buffer } = {},
   ) {
-    return withAuth(
+    const req = withAuth(
       http("put", "/api/fleet-owner/onboarding/driving-credentials")
         .set("Idempotency-Key", idempotencyKey)
         .field("isOwnerDriver", isOwnerDriver),
       cookie,
     );
+    if (extras.driversLicenseNumber) {
+      req.field("driversLicenseNumber", extras.driversLicenseNumber);
+    }
+    if (extras.driversLicense) {
+      req.attach("driversLicense", extras.driversLicense, {
+        filename: "license.pdf",
+        contentType: "application/pdf",
+      });
+    }
+    return req;
   }
 
   function submitRequest(cookie: string, idempotencyKey: string) {
@@ -226,10 +256,25 @@ describe("Fleet-owner account verification E2E Tests", () => {
     );
   }
 
+  async function completeIdentityAndPayout(cookie: string, prefix: string) {
+    const identity = await identityVerificationRequest(cookie, `${prefix}-identity`);
+    expect(identity.status).toBe(HttpStatus.CREATED);
+    const payout = await payoutVerificationRequest(cookie, `${prefix}-payout`);
+    expect(payout.status).toBe(HttpStatus.CREATED);
+  }
+
+  function expectNoLicenseLeak(body: Record<string, unknown>) {
+    expect(body).not.toHaveProperty("driversLicenseHash");
+    expect(body).not.toHaveProperty("driversLicenseLast4");
+    expect(body).not.toHaveProperty("driversLicenseNumber");
+    expect(JSON.stringify(body)).not.toContain(LICENSE_NUMBER);
+  }
+
   beforeAll(async () => {
     premblyService = {
       verifyNin: vi.fn(),
       verifyCac: vi.fn(),
+      verifyDriversLicense: vi.fn(),
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn(),
@@ -308,6 +353,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     twilioMocks.createVerificationCheck.mockReset();
     premblyService.verifyNin.mockReset();
     premblyService.verifyCac.mockReset();
+    premblyService.verifyDriversLicense.mockReset();
     flutterwaveService.resolveBankAccount.mockReset();
     flutterwaveService.listNigerianBanks.mockReset();
 
@@ -319,6 +365,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       lastName: "DOE",
       reference: "nin-ref",
     });
+    premblyService.verifyDriversLicense.mockResolvedValue({ ...VERIFIED_DRIVERS_LICENSE });
     flutterwaveService.resolveBankAccount.mockResolvedValue({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN DOE",
@@ -510,12 +557,12 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
   });
 
-  it("POST /api/fleet-owner/account-verifications rejects an owner-driver without a licence", async () => {
-    const owner = await readyOwner("acct-no-license");
+  it("POST /api/fleet-owner/account-verifications rejects an owner-driver without a licence number", async () => {
+    const owner = await readyOwner("acct-no-license-number");
 
     const response = await http("post", "/api/fleet-owner/account-verifications")
       .set("Cookie", owner.cookie)
-      .set("Idempotency-Key", "account-no-license")
+      .set("Idempotency-Key", "account-no-license-number")
       .field("accountType", "INDIVIDUAL")
       .field("nin", INDIVIDUAL_FIELDS.nin)
       .field("isOwnerDriver", "true")
@@ -524,8 +571,32 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("accountNumber", ACCOUNT_NUMBER);
 
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(response.body.errorCode ?? response.body.type).toBe("VALIDATION_ERROR");
+    expect(response.body.errors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ field: "driversLicenseNumber" })]),
+    );
+    expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/fleet-owner/account-verifications rejects an owner-driver without a licence file", async () => {
+    const owner = await readyOwner("acct-no-license");
+
+    const response = await http("post", "/api/fleet-owner/account-verifications")
+      .set("Cookie", owner.cookie)
+      .set("Idempotency-Key", "account-no-license")
+      .field("accountType", "INDIVIDUAL")
+      .field("nin", INDIVIDUAL_FIELDS.nin)
+      .field("isOwnerDriver", "true")
+      .field("driversLicenseNumber", LICENSE_NUMBER)
+      .field("bankName", "GTBank")
+      .field("bankCode", "058")
+      .field("accountNumber", ACCOUNT_NUMBER);
+
+    expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     expect(response.body.errorCode).toBe("OWNER_DRIVER_LICENSE_REQUIRED");
     expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
   });
 
   it("POST /api/fleet-owner/account-verifications verifies a business and matches CAC plus bank names", async () => {
@@ -657,12 +728,16 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("accountType", "INDIVIDUAL")
       .field("nin", INDIVIDUAL_FIELDS.nin)
       .field("isOwnerDriver", "true")
+      .field("driversLicenseNumber", LICENSE_NUMBER)
       .field("bankName", "GTBank")
       .field("bankCode", "058")
       .field("accountNumber", ACCOUNT_NUMBER);
 
     expect(response.status).toBe(HttpStatus.CREATED);
     expect(response.body).toMatchObject({ status: "SUCCEEDED", isOwnerDriver: true });
+    expect(response.body).not.toHaveProperty("driversLicenseHash");
+    expect(response.body).not.toHaveProperty("driversLicenseLast4");
+    expect(response.body).not.toHaveProperty("driversLicenseNumber");
 
     const [user, bank] = await Promise.all([
       databaseService.user.findUnique({
@@ -897,6 +972,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("accountType", "INDIVIDUAL")
       .field("nin", INDIVIDUAL_FIELDS.nin)
       .field("isOwnerDriver", "true")
+      .field("driversLicenseNumber", LICENSE_NUMBER)
       .field("bankName", "GTBank")
       .field("bankCode", "058")
       .field("accountNumber", ACCOUNT_NUMBER)
@@ -918,6 +994,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("accountType", "INDIVIDUAL")
       .field("nin", INDIVIDUAL_FIELDS.nin)
       .field("isOwnerDriver", "true")
+      .field("driversLicenseNumber", LICENSE_NUMBER)
       .field("bankName", "GTBank")
       .field("bankCode", "058")
       .field("accountNumber", ACCOUNT_NUMBER)
@@ -1350,6 +1427,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       owner.cookie,
       "stage-fail-driving-1",
       "true",
+      { driversLicenseNumber: LICENSE_NUMBER },
     );
     expect(missingLicense.status).toBe(HttpStatus.BAD_REQUEST);
     expect(missingLicense.body.errorCode).toBe("OWNER_DRIVER_LICENSE_REQUIRED");
@@ -1358,6 +1436,106 @@ describe("Fleet-owner account verification E2E Tests", () => {
       select: { drivingCompletedAt: true },
     });
     expect(stillDraft?.drivingCompletedAt).toBeNull();
+  });
+
+  it("saves staged owner-driver driving with a hashed licence and hides the number", async () => {
+    const owner = await readyOwner("acct-stage-owner-driver");
+    await completeIdentityAndPayout(owner.cookie, "stage-od");
+
+    const driving = await drivingCredentialsRequest(owner.cookie, "stage-od-driving-1", "true", {
+      driversLicenseNumber: LICENSE_NUMBER,
+      driversLicense: pdfDocument(),
+    });
+
+    expect(driving.status).toBe(HttpStatus.OK);
+    expect(driving.body).toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+    expectNoLicenseLeak(driving.body);
+
+    const verification = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id },
+      select: {
+        driversLicenseHash: true,
+        driversLicenseLast4: true,
+        driversLicenseExpiresAt: true,
+        driversLicenseProviderRef: true,
+      },
+    });
+    expect(verification).toMatchObject({
+      driversLicenseHash: hashLicenseNumber(),
+      driversLicenseLast4: "2345",
+      driversLicenseProviderRef: "lic-ref",
+    });
+    expect(verification?.driversLicenseExpiresAt?.toISOString()).toBe(
+      new Date(Date.UTC(2099, 11, 31)).toISOString(),
+    );
+
+    const status = await http("get", "/api/fleet-owner/onboarding").set("Cookie", owner.cookie);
+    expect(status.status).toBe(HttpStatus.OK);
+    expectNoLicenseLeak(status.body);
+  });
+
+  it("returns OWNER_DRIVER_LICENSE_NOT_VERIFIED when Prembly rejects a staged licence", async () => {
+    const owner = await readyOwner("acct-stage-od-rejected");
+    await completeIdentityAndPayout(owner.cookie, "stage-od-rejected");
+    premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+    const driving = await drivingCredentialsRequest(
+      owner.cookie,
+      "stage-od-rejected-driving-1",
+      "true",
+      { driversLicenseNumber: LICENSE_NUMBER, driversLicense: pdfDocument() },
+    );
+
+    expect(driving.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(driving.body.errorCode).toBe("OWNER_DRIVER_LICENSE_NOT_VERIFIED");
+    const draft = await databaseService.fleetOwnerAccountVerification.findFirst({
+      where: { userId: owner.id, status: "DRAFT" },
+      select: { drivingCompletedAt: true, driversLicenseHash: true },
+    });
+    expect(draft?.drivingCompletedAt).toBeNull();
+    expect(draft?.driversLicenseHash).toBeNull();
+  });
+
+  it("returns OWNER_DRIVER_LICENSE_EXPIRED for an expired staged licence", async () => {
+    const owner = await readyOwner("acct-stage-od-expired");
+    await completeIdentityAndPayout(owner.cookie, "stage-od-expired");
+    const expiredAt = new Date();
+    expiredAt.setUTCHours(0, 0, 0, 0);
+    expiredAt.setUTCDate(expiredAt.getUTCDate() - 1);
+    premblyService.verifyDriversLicense.mockResolvedValueOnce({
+      ...VERIFIED_DRIVERS_LICENSE,
+      expiresAt: expiredAt,
+    });
+
+    const driving = await drivingCredentialsRequest(
+      owner.cookie,
+      "stage-od-expired-driving-1",
+      "true",
+      { driversLicenseNumber: LICENSE_NUMBER, driversLicense: pdfDocument() },
+    );
+
+    expect(driving.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(driving.body.errorCode).toBe("OWNER_DRIVER_LICENSE_EXPIRED");
+  });
+
+  it("returns OWNER_DRIVER_LICENSE_IDENTITY_MISMATCH when the licence name does not match NIN", async () => {
+    const owner = await readyOwner("acct-stage-od-mismatch");
+    await completeIdentityAndPayout(owner.cookie, "stage-od-mismatch");
+    premblyService.verifyDriversLicense.mockResolvedValueOnce({
+      ...VERIFIED_DRIVERS_LICENSE,
+      firstName: "JANE",
+      lastName: "SMITH",
+    });
+
+    const driving = await drivingCredentialsRequest(
+      owner.cookie,
+      "stage-od-mismatch-driving-1",
+      "true",
+      { driversLicenseNumber: LICENSE_NUMBER, driversLicense: pdfDocument() },
+    );
+
+    expect(driving.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(driving.body.errorCode).toBe("OWNER_DRIVER_LICENSE_IDENTITY_MISMATCH");
   });
 
   it("enforces staged prerequisites before payout, driving, and submit", async () => {

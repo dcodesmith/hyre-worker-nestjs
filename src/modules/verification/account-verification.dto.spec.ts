@@ -170,16 +170,119 @@ describe("drivingCredentialsSchema", () => {
     ["true", true],
     ["false", false],
   ] as const)("coerces multipart boolean %j to %s", (input, expected) => {
-    const parsed = drivingCredentialsSchema.safeParse({ isOwnerDriver: input });
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: input,
+      ...(expected ? { driversLicenseNumber: "ABC12345" } : {}),
+    });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.isOwnerDriver).toBe(expected);
+      if (!expected) {
+        expect(parsed.data.driversLicenseNumber).toBeUndefined();
+      }
     }
   });
 
   it.each(["yes", "1", "", null])("rejects a non-multipart boolean %j", (isOwnerDriver) => {
     expect(drivingCredentialsSchema.safeParse({ isOwnerDriver }).success).toBe(false);
+  });
+
+  it("requires a licence number for an owner-driver", () => {
+    const parsed = drivingCredentialsSchema.safeParse({ isOwnerDriver: true });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some((issue) => issue.path.includes("driversLicenseNumber"))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("accepts an owner-driver with a valid licence number", () => {
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: true,
+      driversLicenseNumber: "ABC12345",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({ isOwnerDriver: true, driversLicenseNumber: "ABC12345" });
+    }
+  });
+
+  it("rejects a licence number for a non-owner-driver", () => {
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: false,
+      driversLicenseNumber: "ABC12345",
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some((issue) => issue.path.includes("driversLicenseNumber"))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("treats an empty licence number as absent for an owner-driver", () => {
+    expect(
+      drivingCredentialsSchema.safeParse({ isOwnerDriver: true, driversLicenseNumber: "" }).success,
+    ).toBe(false);
+  });
+
+  it("treats a whitespace licence number as absent for an owner-driver", () => {
+    expect(
+      drivingCredentialsSchema.safeParse({ isOwnerDriver: true, driversLicenseNumber: "   " })
+        .success,
+    ).toBe(false);
+  });
+
+  it("treats an empty licence number as absent for a non-owner-driver", () => {
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: false,
+      driversLicenseNumber: "",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBeUndefined();
+    }
+  });
+
+  it("treats a whitespace licence number as absent for a non-owner-driver", () => {
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: false,
+      driversLicenseNumber: "  \t  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ["too short", "AB12"],
+    ["too long", "A".repeat(31)],
+    ["spaces", "ABC 12345"],
+    ["invalid charset", "ABC_12345"],
+  ])("rejects a licence number that is %s", (_label, driversLicenseNumber) => {
+    expect(
+      drivingCredentialsSchema.safeParse({ isOwnerDriver: true, driversLicenseNumber }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a hyphenated licence number and trims it", () => {
+    const parsed = drivingCredentialsSchema.safeParse({
+      isOwnerDriver: true,
+      driversLicenseNumber: "  ABC-12345  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBe("ABC-12345");
+    }
   });
 });
 
@@ -211,11 +314,101 @@ describe("createAccountVerificationSchema", () => {
     const parsed = createAccountVerificationSchema.safeParse({
       ...validIndividual,
       isOwnerDriver: input,
+      ...(expected ? { driversLicenseNumber: "ABC12345" } : {}),
     });
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.isOwnerDriver).toBe(expected);
+      if (!expected) {
+        expect(parsed.data.driversLicenseNumber).toBeUndefined();
+      }
+    }
+  });
+
+  it("requires a licence number for an owner-driver", () => {
+    const parsed = createAccountVerificationSchema.safeParse({
+      ...validIndividual,
+      isOwnerDriver: true,
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some((issue) => issue.path.includes("driversLicenseNumber"))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("accepts an owner-driver with a valid licence number", () => {
+    const parsed = createAccountVerificationSchema.safeParse({
+      ...validIndividual,
+      isOwnerDriver: true,
+      driversLicenseNumber: "ABC12345",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBe("ABC12345");
+    }
+  });
+
+  it("rejects a licence number for a non-owner-driver", () => {
+    expect(
+      createAccountVerificationSchema.safeParse({
+        ...validIndividual,
+        driversLicenseNumber: "ABC12345",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("treats an empty licence number as absent for an owner-driver", () => {
+    expect(
+      createAccountVerificationSchema.safeParse({
+        ...validIndividual,
+        isOwnerDriver: true,
+        driversLicenseNumber: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("treats a whitespace licence number as absent for a non-owner-driver", () => {
+    const parsed = createAccountVerificationSchema.safeParse({
+      ...validIndividual,
+      driversLicenseNumber: "   ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ["too short", "AB12"],
+    ["too long", "A".repeat(31)],
+    ["spaces", "ABC 12345"],
+    ["invalid charset", "ABC_12345"],
+  ])("rejects a licence number that is %s", (_label, driversLicenseNumber) => {
+    expect(
+      createAccountVerificationSchema.safeParse({
+        ...validIndividual,
+        isOwnerDriver: true,
+        driversLicenseNumber,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a hyphenated licence number and trims it", () => {
+    const parsed = createAccountVerificationSchema.safeParse({
+      ...validIndividual,
+      isOwnerDriver: true,
+      driversLicenseNumber: "  ABC-12345  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBe("ABC-12345");
     }
   });
 

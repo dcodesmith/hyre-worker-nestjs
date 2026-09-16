@@ -18,6 +18,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import type { PremblyDriversLicenseResult } from "../prembly/prembly.interface";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import type {
@@ -49,11 +50,15 @@ import {
   BusinessOwnerDriverInvalidException,
   CacNotVerifiedException,
   NinNotVerifiedException,
+  OwnerDriverLicenseExpiredException,
+  OwnerDriverLicenseIdentityMismatchException,
   OwnerDriverLicenseNotApprovedException,
+  OwnerDriverLicenseNotVerifiedException,
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
 import {
+  ProviderVerificationException,
   VerificationIdempotencyKeyReusedException,
   VerificationRequestInProgressException,
 } from "./verification.error";
@@ -167,11 +172,60 @@ const drivingHash = (
 
 const submissionHash = () => hashValue({ stage: AccountVerificationStage.SUBMISSION });
 
+const LICENSE_NUMBER = "ABC12345";
+
 const identity = {
   firstName: "JOHN",
   middleName: "MIDDLE",
   lastName: "DOE",
   reference: "nin-ref",
+};
+
+const driversLicense: PremblyDriversLicenseResult = {
+  licenseNumber: LICENSE_NUMBER,
+  firstName: "JOHN",
+  lastName: "DOE",
+  middleName: null,
+  dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+  expiresAt: new Date(Date.UTC(2099, 11, 31)),
+  officialPhoto: "photo",
+  reference: "lic-ref",
+};
+
+const hashLicenseNumber = (licenseNumber = LICENSE_NUMBER) =>
+  createHmac("sha256", HMAC_KEY).update(licenseNumber).digest("hex");
+
+const persistedLicenseData = {
+  driversLicenseHash: hashLicenseNumber(),
+  driversLicenseLast4: LICENSE_NUMBER.slice(-4).toUpperCase(),
+  driversLicenseExpiresAt: driversLicense.expiresAt,
+  driversLicenseProviderRef: driversLicense.reference,
+};
+
+const clearedLicenseData = {
+  driversLicenseHash: null,
+  driversLicenseLast4: null,
+  driversLicenseExpiresAt: null,
+  driversLicenseProviderRef: null,
+};
+
+const ownerDriverInput = (
+  overrides: Partial<Extract<CreateAccountVerificationDto, { accountType: "INDIVIDUAL" }>> = {},
+) => individualInput({ isOwnerDriver: true, driversLicenseNumber: LICENSE_NUMBER, ...overrides });
+
+const ownerDriverDriving = (
+  overrides: Partial<DrivingCredentialsDto> = {},
+): DrivingCredentialsDto => ({
+  isOwnerDriver: true,
+  driversLicenseNumber: LICENSE_NUMBER,
+  ...overrides,
+});
+
+const utcStartOfDay = (dayOffset = 0) => {
+  const date = new Date();
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() + dayOffset);
+  return date;
 };
 
 const cac = {
@@ -215,6 +269,7 @@ const processingRecord = (overrides: Record<string, unknown> = {}) => ({
   identityRequiresReview: false,
   identityVerifiedAt: null,
   payoutVerifiedAt: null,
+  ...clearedLicenseData,
   drivingCompletedAt: null,
   submittedAt: null,
   processingExpiresAt: new Date("2026-01-01T00:15:00Z"),
@@ -326,7 +381,11 @@ describe("AccountVerificationService", () => {
     $transaction: ReturnType<typeof vi.fn>;
   };
   let logger: { warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
-  let premblyService: { verifyNin: ReturnType<typeof vi.fn>; verifyCac: ReturnType<typeof vi.fn> };
+  let premblyService: {
+    verifyNin: ReturnType<typeof vi.fn>;
+    verifyCac: ReturnType<typeof vi.fn>;
+    verifyDriversLicense: ReturnType<typeof vi.fn>;
+  };
   let flutterwaveService: { resolveBankAccount: ReturnType<typeof vi.fn> };
   let storageService: {
     uploadBuffer: ReturnType<typeof vi.fn>;
@@ -373,6 +432,7 @@ describe("AccountVerificationService", () => {
     premblyService = {
       verifyNin: vi.fn().mockResolvedValue(identity),
       verifyCac: vi.fn().mockResolvedValue(cac),
+      verifyDriversLicense: vi.fn(),
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn().mockResolvedValue(resolvedAccount),
@@ -430,6 +490,20 @@ describe("AccountVerificationService", () => {
           update: vi.fn().mockResolvedValue(record),
           updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
         },
+      }),
+    );
+  };
+
+  const expectNoLicenseLeak = (result: object) => {
+    expect(result).not.toHaveProperty("driversLicenseHash");
+    expect(result).not.toHaveProperty("driversLicenseLast4");
+    expect(result).not.toHaveProperty("driversLicenseNumber");
+  };
+
+  const expectDraftNotAdvanced = () => {
+    expect(databaseService.fleetOwnerAccountVerification.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
       }),
     );
   };
@@ -596,15 +670,21 @@ describe("AccountVerificationService", () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce({
         status: DocumentStatus.APPROVED,
       });
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
 
       await expect(
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput({ isOwnerDriver: true }),
+          input: ownerDriverInput(),
           documents: {},
         }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
+      expect(premblyService.verifyDriversLicense).toHaveBeenCalledWith(
+        LICENSE_NUMBER,
+        "JOHN",
+        "DOE",
+      );
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -622,6 +702,7 @@ describe("AccountVerificationService", () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce({
         status: DocumentStatus.PENDING,
       });
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       mockReviewTransaction(
         succeededRecord({
           status: AccountVerificationStatus.REVIEW_REQUIRED,
@@ -633,7 +714,7 @@ describe("AccountVerificationService", () => {
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput({ isOwnerDriver: true }),
+          input: ownerDriverInput(),
           documents: {},
         }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
@@ -664,6 +745,7 @@ describe("AccountVerificationService", () => {
 
     it("sends a new owner-driver licence to review and leaves the bank unverified", async () => {
       const licence = licenseFile();
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       mockReviewTransaction(
         succeededRecord({
           status: AccountVerificationStatus.REVIEW_REQUIRED,
@@ -674,7 +756,7 @@ describe("AccountVerificationService", () => {
       const result = await service.create({
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        input: individualInput({ isOwnerDriver: true }),
+        input: ownerDriverInput(),
         documents: { driversLicense: licence },
       });
 
@@ -717,6 +799,7 @@ describe("AccountVerificationService", () => {
     it("uploads optional LASDRI without changing a review-required outcome", async () => {
       const licence = licenseFile();
       const lasdri = licenseFile("lasdri.pdf");
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       mockReviewTransaction(
         succeededRecord({
           status: AccountVerificationStatus.REVIEW_REQUIRED,
@@ -728,7 +811,7 @@ describe("AccountVerificationService", () => {
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput({ isOwnerDriver: true }),
+          input: ownerDriverInput(),
           documents: {
             driversLicense: licence,
             lasdri,
@@ -736,6 +819,92 @@ describe("AccountVerificationService", () => {
         }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects a business owner-driver before claiming or calling Prembly", async () => {
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: businessInput({ isOwnerDriver: true, driversLicenseNumber: LICENSE_NUMBER }),
+          documents: {},
+        }),
+      ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.create).not.toHaveBeenCalled();
+    });
+
+    it("persists hashed licence evidence on a one-shot owner-driver create", async () => {
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+          ...persistedLicenseData,
+        }),
+      );
+
+      const result = await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: ownerDriverInput(),
+        documents: { driversLicense: licenseFile() },
+      });
+
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining(persistedLicenseData),
+      });
+      expectNoLicenseLeak(result);
+    });
+
+    it("maps a rejected Prembly licence to not-verified without uploading", async () => {
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverInput(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: AccountVerificationErrorCode.DRIVER_LICENSE_NOT_VERIFIED,
+        },
+      });
+    });
+
+    it("maps an unavailable Prembly licence lookup to a provider exception", async () => {
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverInput(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(ProviderVerificationException);
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("rejects an owner-driver without a number after documents are valid", async () => {
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput({ isOwnerDriver: true }),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
     });
 
     it("treats accent-normalized person names as an exact match", async () => {
@@ -1202,13 +1371,14 @@ describe("AccountVerificationService", () => {
 
     it("deletes uploaded documents when verification fails after storage", async () => {
       const licence = licenseFile();
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       databaseService.$transaction.mockRejectedValueOnce(new Error("db write failed"));
 
       await expect(
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput({ isOwnerDriver: true }),
+          input: ownerDriverInput(),
           documents: {
             driversLicense: licence,
           },
@@ -1229,6 +1399,7 @@ describe("AccountVerificationService", () => {
 
     it("retries document cleanup three times and logs after repeated failure", async () => {
       const licence = licenseFile();
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       databaseService.$transaction.mockRejectedValueOnce(new Error("db write failed"));
       storageService.deleteObjectByKey.mockRejectedValue(new Error("s3 down"));
 
@@ -1236,7 +1407,7 @@ describe("AccountVerificationService", () => {
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput({ isOwnerDriver: true }),
+          input: ownerDriverInput(),
           documents: {
             driversLicense: licence,
           },
@@ -1318,6 +1489,7 @@ describe("AccountVerificationService", () => {
 
     it("deletes replaced previous documents after a successful re-upload", async () => {
       const licence = licenseFile();
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       databaseService.documentApproval.findMany.mockResolvedValueOnce([
         { documentType: DocumentType.DRIVERS_LICENSE, documentUrl: "old-license-key" },
       ]);
@@ -1325,7 +1497,7 @@ describe("AccountVerificationService", () => {
       await service.create({
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        input: individualInput({ isOwnerDriver: true }),
+        input: ownerDriverInput(),
         documents: {
           driversLicense: licence,
         },
@@ -1381,7 +1553,11 @@ describe("AccountVerificationService", () => {
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: false });
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
-        data: { isOwnerDriver: false, drivingCompletedAt: expect.any(Date) },
+        data: {
+          isOwnerDriver: false,
+          ...clearedLicenseData,
+          drivingCompletedAt: expect.any(Date),
+        },
       });
 
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
@@ -2003,9 +2179,14 @@ describe("AccountVerificationService", () => {
         documents: { driversLicense: null, lasdri: null },
       });
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
-        data: { isOwnerDriver: false, drivingCompletedAt: expect.any(Date) },
+        data: {
+          isOwnerDriver: false,
+          ...clearedLicenseData,
+          drivingCompletedAt: expect.any(Date),
+        },
       });
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
@@ -2019,16 +2200,68 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("does not delete the new object when the same filename is resubmitted", async () => {
-      databaseService.documentApproval.findMany.mockResolvedValueOnce([
-        { documentType: DocumentType.DRIVERS_LICENSE, documentUrl: "old-license-key" },
-      ]);
+    it("verifies an owner-driver licence with Prembly and persists hashed evidence", async () => {
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
 
       await expect(
         service.saveDrivingCredentialsStage({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
-          input: { isOwnerDriver: true },
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).resolves.toMatchObject({
+        status: "COMPLETED",
+        isOwnerDriver: true,
+        documents: { driversLicense: "PENDING" },
+      });
+      expect(premblyService.verifyDriversLicense).toHaveBeenCalledWith(
+        LICENSE_NUMBER,
+        "JOHN",
+        "DOE",
+      );
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: {
+          isOwnerDriver: true,
+          ...persistedLicenseData,
+          drivingCompletedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it("hashes the typed licence number rather than Prembly's canonical form", async () => {
+      const typedNumber = "abc-12345";
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving({ driversLicenseNumber: typedNumber }),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED" });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          driversLicenseHash: hashLicenseNumber(typedNumber),
+          driversLicenseLast4: "2345",
+        }),
+      });
+    });
+
+    it("does not delete the new object when the same filename is resubmitted", async () => {
+      databaseService.documentApproval.findMany.mockResolvedValueOnce([
+        { documentType: DocumentType.DRIVERS_LICENSE, documentUrl: "old-license-key" },
+      ]);
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
           documents: { driversLicense: licenseFile() },
         }),
       ).resolves.toMatchObject({
@@ -2111,6 +2344,28 @@ describe("AccountVerificationService", () => {
         }),
       ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("rejects a business draft with a licence number before Prembly", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        payoutReadyDraft({
+          accountType: FleetOwnerAccountType.BUSINESS,
+          businessName: "HYRE MOBILITY LTD",
+        }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: {},
+        }),
+      ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
     });
 
     it("replays a completed driving request with the same idempotency key", async () => {
@@ -2215,6 +2470,167 @@ describe("AccountVerificationService", () => {
         }),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
     });
+
+    it("maps a rejected Prembly licence to not-verified without uploading or advancing", async () => {
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expectDraftNotAdvanced();
+    });
+
+    it("maps an unavailable Prembly licence lookup to a provider exception", async () => {
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(ProviderVerificationException);
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expectDraftNotAdvanced();
+    });
+
+    it.each([
+      ["first", { firstName: "JANE", lastName: "DOE" }],
+      ["last", { firstName: "JOHN", lastName: "SMITH" }],
+    ] as const)("rejects a licence %s-name mismatch", async (_label, overrides) => {
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        ...overrides,
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseIdentityMismatchException);
+      expectDraftNotAdvanced();
+    });
+
+    it("treats accent-normalized licence names as a match", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        payoutReadyDraft({ identityFirstName: "José", identityLastName: "Doe" }),
+      );
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        firstName: "JOSE",
+        lastName: "DOE",
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+    });
+
+    it("treats differently cased licence names as a match", async () => {
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        firstName: "John",
+        lastName: "Doe",
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+    });
+
+    it("rejects a licence that expired before today UTC", async () => {
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        expiresAt: utcStartOfDay(-1),
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseExpiredException);
+      expectDraftNotAdvanced();
+    });
+
+    it("accepts a licence that expires at the start of today UTC", async () => {
+      const expiresAt = utcStartOfDay();
+      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+        ...driversLicense,
+        expiresAt,
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          driversLicenseExpiresAt: expiresAt,
+        }),
+      });
+    });
+
+    it("fails closed when the draft is missing identity names", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        payoutReadyDraft({ identityFirstName: null, identityLastName: null }),
+      );
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it("rejects an owner-driver without a number after documents are valid", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce({
+        status: DocumentStatus.APPROVED,
+      });
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: { isOwnerDriver: true },
+          documents: {},
+        }),
+      ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expectDraftNotAdvanced();
+    });
   });
 
   describe("submitStage", () => {
@@ -2236,7 +2652,9 @@ describe("AccountVerificationService", () => {
     });
 
     it("approves an individual non-driver after identity, payout, and driving", async () => {
-      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toMatchObject({
+      const result = await service.submitStage(USER_ID, IDEMPOTENCY_KEY);
+
+      expect(result).toMatchObject({
         id: VERIFICATION_ID,
         status: AccountVerificationStatus.SUCCEEDED,
         accountType: FleetOwnerAccountType.INDIVIDUAL,
@@ -2248,6 +2666,7 @@ describe("AccountVerificationService", () => {
           nameMatch: NameMatchStatus.MATCHED,
         },
       });
+      expectNoLicenseLeak(result);
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.updateMany,
       ).toHaveBeenCalledWith({
@@ -2281,6 +2700,67 @@ describe("AccountVerificationService", () => {
       expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
         data: { status: AccountVerificationStatus.SUCCEEDED, submittedAt: expect.any(Date) },
+      });
+    });
+
+    it("rejects an owner-driver submit when the licence hash is missing", async () => {
+      const ownerDriverDraft = drivingReadyDraft({ isOwnerDriver: true });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce({
+        status: DocumentStatus.PENDING,
+      });
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        OwnerDriverLicenseNotVerifiedException,
+      );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects an owner-driver submit when the stored licence has expired", async () => {
+      const ownerDriverDraft = drivingReadyDraft({
+        isOwnerDriver: true,
+        ...persistedLicenseData,
+        driversLicenseExpiresAt: new Date(Date.UTC(2020, 0, 1)),
+      });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce({
+        status: DocumentStatus.PENDING,
+      });
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        OwnerDriverLicenseExpiredException,
+      );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("sends an owner-driver with a hash and PENDING document to review", async () => {
+      const ownerDriverDraft = drivingReadyDraft({
+        isOwnerDriver: true,
+        ...persistedLicenseData,
+      });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
+      databaseService.documentApproval.findUnique.mockResolvedValueOnce({
+        status: DocumentStatus.PENDING,
+      });
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
+        succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+          ...persistedLicenseData,
+          submittedAt: new Date("2026-01-01T00:15:00Z"),
+        }),
+      );
+
+      const result = await service.submitStage(USER_ID, IDEMPOTENCY_KEY);
+
+      expect(result).toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
+      expectNoLicenseLeak(result);
+      expect(databaseService.user.updateMany).toHaveBeenCalledWith({
+        where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
       });
     });
 
@@ -2382,6 +2862,30 @@ describe("AccountVerificationService", () => {
       await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
         OwnerDriverLicenseRequiredException,
       );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        AccountVerificationErrorCode.DRIVER_LICENSE_NOT_VERIFIED,
+        OwnerDriverLicenseNotVerifiedException,
+      ],
+      [AccountVerificationErrorCode.DRIVER_LICENSE_EXPIRED, OwnerDriverLicenseExpiredException],
+      [
+        AccountVerificationErrorCode.DRIVER_LICENSE_IDENTITY_MISMATCH,
+        OwnerDriverLicenseIdentityMismatchException,
+      ],
+    ] as const)("replays a failed submission with %s", async (failureReason, Exception) => {
+      databaseService.fleetOwnerAccountVerificationStageRequest.findUnique.mockResolvedValueOnce(
+        stageRequest({
+          stage: AccountVerificationStage.SUBMISSION,
+          requestHash: submissionHash(),
+          status: ProviderVerificationStatus.FAILED,
+          failureReason,
+        }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(Exception);
       expect(databaseService.user.updateMany).not.toHaveBeenCalled();
     });
 
@@ -2721,6 +3225,51 @@ describe("AccountVerificationService", () => {
           driving: "COMPLETED",
           submission: "PENDING",
         },
+      });
+    });
+
+    it("sends an owner-driver without a licence hash back to driving", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [drivingReadyDraft({ isOwnerDriver: true })],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "PROVIDE_DRIVING_CREDENTIALS",
+        steps: {
+          identity: "VERIFIED",
+          payout: "VERIFIED",
+          driving: "PENDING",
+          submission: "PENDING",
+        },
+      });
+    });
+
+    it("asks an owner-driver with a stored licence hash to submit", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [
+            drivingReadyDraft({ isOwnerDriver: true, ...persistedLicenseData }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "SUBMIT_ACCOUNT",
+        steps: { driving: "COMPLETED", submission: "PENDING" },
       });
     });
 

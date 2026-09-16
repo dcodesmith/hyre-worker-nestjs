@@ -897,6 +897,10 @@ model FleetOwnerAccountVerification {
   bankNameMatch           NameMatchStatus?
   payoutVerifiedAt        DateTime?
   representativeNameMatch NameMatchStatus?
+  driversLicenseHash      String?
+  driversLicenseLast4     String?
+  driversLicenseExpiresAt DateTime?
+  driversLicenseProviderRef String?
   drivingCompletedAt      DateTime?
   submittedAt             DateTime?
   failureReason           String?
