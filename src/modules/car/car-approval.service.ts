@@ -1,15 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import {
-  CarApprovalStatus,
-  DocumentStatus,
-  Prisma,
-  ProviderVerificationStatus,
-  Status,
-} from "@prisma/client";
+import { CarApprovalStatus, DocumentStatus, Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
-import { REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
+import { MIN_IMAGE_COUNT, REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
 import {
   CarApprovalBlockedException,
   CarApprovalFailedException,
@@ -255,15 +249,6 @@ export class CarApprovalService {
           select: {
             status: true,
             submittedAt: true,
-            vehicleVerification: { select: { id: true } },
-            insuranceVerifications: {
-              where: {
-                status: ProviderVerificationStatus.SUCCEEDED,
-                policyExpiresAt: { gt: new Date() },
-              },
-              select: { id: true },
-              take: 1,
-            },
           },
         }),
         tx.documentApproval.count({ where: unresolvedFilter }),
@@ -287,10 +272,9 @@ export class CarApprovalService {
     const fullyReviewed =
       unresolvedDocuments === 0 &&
       unresolvedImages === 0 &&
-      approvedImageCount > 0 &&
+      approvedImageCount >= MIN_IMAGE_COUNT &&
       hasAllRequiredDocuments &&
-      Boolean(car?.submittedAt) &&
-      (!car?.vehicleVerification || car.insuranceVerifications.length > 0);
+      Boolean(car?.submittedAt);
 
     if (fullyReviewed) {
       await tx.car.update({

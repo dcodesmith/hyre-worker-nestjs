@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
 import { PinoLogger } from "nestjs-pino";
+import { redactVinInUrl } from "../../shared/vehicle-validation";
 
 export interface HttpClientConfig {
   baseURL?: string;
@@ -44,7 +45,7 @@ export class HttpClientService {
           {
             serviceName: config.serviceName,
             method: requestConfig.method?.toUpperCase(),
-            url: requestConfig.url,
+            url: redactVinInUrl(requestConfig.url),
           },
           "Outgoing HTTP request",
         );
@@ -69,7 +70,7 @@ export class HttpClientService {
           {
             serviceName: config.serviceName,
             method: response.config.method?.toUpperCase(),
-            url: response.config.url,
+            url: redactVinInUrl(response.config.url),
             status: response.status,
           },
           "Incoming HTTP response",

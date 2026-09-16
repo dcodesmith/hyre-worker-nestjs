@@ -1,8 +1,7 @@
 export type PremblyPlateResult = {
   plateNumber: string;
-  chassisNumber: string;
-  make: string | null;
-  model: string | null;
+  vehicleName: string;
+  chassisNumber: string | null;
   color: string | null;
   reference: string;
 };
@@ -11,7 +10,7 @@ export type PremblyVinResult = {
   year: number;
   make: string;
   model: string;
-  passengerCapacity: number;
+  passengerCapacity: number | null;
   reference: string;
 };
 

@@ -11,23 +11,15 @@ export const premblyEnvelopeSchema = z.looseObject({
   response_code: z.string().optional(),
 });
 
-const plateVehicleSchema = z.looseObject({
-  ChassisNo: z.string().optional(),
-  bodyColor: z.string().optional(),
-  carMake: z.string().optional(),
-  carModel: z.string().optional(),
-});
-
 export const premblyPlateResponseSchema = z.looseObject({
   status: z.literal(true),
   response_code: z.literal("00"),
   data: z.looseObject({
     vehicle_number: z.string().optional(),
-    vehicle_name: z.string().optional(),
+    vehicle_name: z.string().trim().min(1),
     vehicle_color: z.string().optional(),
-    ChassisNo: z.string().optional(),
     chassis_number: z.string().optional(),
-    vehicle: plateVehicleSchema.optional(),
+    vehicle: z.looseObject({ ChassisNo: z.string().optional() }).optional(),
   }),
   verification: verificationSchema,
 });

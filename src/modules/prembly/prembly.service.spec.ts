@@ -21,12 +21,6 @@ const plateSuccess = (overrides: Record<string, unknown> = {}) => ({
     vehicle_number: "KJA-123AB",
     vehicle_name: "Toyota Camry",
     vehicle_color: "Black",
-    vehicle: {
-      ChassisNo: VALID_CHASSIS,
-      carMake: "Toyota",
-      carModel: "Camry",
-      bodyColor: "Black",
-    },
   },
   verification,
   ...overrides,
@@ -94,14 +88,13 @@ describe("PremblyService", () => {
   });
 
   describe("verifyPlate", () => {
-    it("normalizes plate details and required chassis from nested vehicle fields", async () => {
+    it("returns plate number, vehicle name, color, and reference without requiring a chassis", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({ data: plateSuccess() });
 
       await expect(service.verifyPlate("kja-123ab")).resolves.toEqual({
         plateNumber: "KJA-123AB",
-        chassisNumber: VALID_CHASSIS,
-        make: "Toyota",
-        model: "Camry",
+        vehicleName: "Toyota Camry",
+        chassisNumber: null,
         color: "Black",
         reference: "prembly-ref-1",
       });
@@ -110,44 +103,69 @@ describe("PremblyService", () => {
       });
     });
 
-    it("falls back to top-level chassis_number and uppercases it", async () => {
+    it("falls back to the requested plate when vehicle_number is omitted", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: plateSuccess({
           data: {
-            vehicle_number: "ABC123XY",
-            chassis_number: `  ${VALID_CHASSIS.toLowerCase()}  `,
-            vehicle: { carMake: "Honda", carModel: "Accord" },
+            vehicle_name: "Honda Accord",
+            vehicle_color: "Silver",
           },
         }),
       });
 
-      const result = await service.verifyPlate("ABC123XY");
-
-      expect(result.chassisNumber).toBe(VALID_CHASSIS);
-      expect(result.make).toBe("Honda");
-      expect(result.model).toBe("Accord");
+      await expect(service.verifyPlate("ABC123XY")).resolves.toEqual({
+        plateNumber: "ABC123XY",
+        vehicleName: "Honda Accord",
+        chassisNumber: null,
+        color: "Silver",
+        reference: "prembly-ref-1",
+      });
     });
 
-    it("rejects a missing chassis number as an invalid provider response", async () => {
+    it("treats a missing vehicle_color as null and reads a registry chassis when present", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: plateSuccess({
           data: {
             vehicle_number: "KJA-123AB",
-            vehicle: { carMake: "Toyota", carModel: "Camry" },
+            vehicle_name: "Toyota Camry",
+            chassis_number: VALID_CHASSIS.toLowerCase(),
+            vehicle: { ChassisNo: VALID_CHASSIS, carMake: "Toyota", carModel: "Camry" },
           },
         }),
       });
 
-      await expect(service.verifyPlate("KJA-123AB")).rejects.toEqual(
-        new PremblyError("INVALID_RESPONSE"),
-      );
+      await expect(service.verifyPlate("KJA-123AB")).resolves.toEqual({
+        plateNumber: "KJA-123AB",
+        vehicleName: "Toyota Camry",
+        chassisNumber: VALID_CHASSIS,
+        color: null,
+        reference: "prembly-ref-1",
+      });
     });
 
-    it("rejects a chassis that is not a valid VIN", async () => {
+    it("reads ChassisNo when chassis_number is omitted", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: plateSuccess({
           data: {
-            vehicle: { ChassisNo: "1HGCM82633A00435I", carMake: "Toyota", carModel: "Camry" },
+            vehicle_number: "KJA-123AB",
+            vehicle_name: "Toyota Camry",
+            vehicle: { ChassisNo: `  ${VALID_CHASSIS.toLowerCase()}  ` },
+          },
+        }),
+      });
+
+      await expect(service.verifyPlate("KJA-123AB")).resolves.toMatchObject({
+        chassisNumber: VALID_CHASSIS,
+      });
+    });
+
+    it("rejects a plate payload whose registry chassis is not a VIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: plateSuccess({
+          data: {
+            vehicle_number: "KJA-123AB",
+            vehicle_name: "Toyota Camry",
+            chassis_number: "NOT-A-VIN",
           },
         }),
       });

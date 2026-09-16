@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { MIN_IMAGE_COUNT } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -93,16 +94,31 @@ describe("Admin Approval E2E Tests", () => {
   });
 
   /**
-   * Create a PENDING car with one pending image and the required pending
-   * documents (MOT + insurance) — mirrors what car creation always uploads, so
-   * approving the full set promotes the car (all required assets present).
+   * Create a PENDING car with the required pending documents plus enough
+   * images to meet MIN_IMAGE_COUNT. All but one image are already approved so
+   * the last image approval can promote the car.
    */
   async function createCarUnderReview() {
     const car = await factory.createCar(ownerId, { approvalStatus: "PENDING" });
+    await databaseService.vehicleImage.createMany({
+      data: Array.from({ length: MIN_IMAGE_COUNT - 1 }, (_, index) => ({
+        carId: car.id,
+        url: `https://cdn.tripdly.test/${ownerId}/${car.id}/images/photo-${index + 1}.jpg`,
+        status: "APPROVED" as const,
+      })),
+    });
     const image = await databaseService.vehicleImage.create({
       data: {
         carId: car.id,
         url: `https://cdn.tripdly.test/${ownerId}/${car.id}/images/photo.jpg`,
+        status: "PENDING",
+      },
+    });
+    const registrationDocument = await databaseService.documentApproval.create({
+      data: {
+        carId: car.id,
+        documentType: "VEHICLE_REGISTRATION",
+        documentUrl: `https://cdn.tripdly.test/${ownerId}/${car.id}/documents/registration.pdf`,
         status: "PENDING",
       },
     });
@@ -122,7 +138,7 @@ describe("Admin Approval E2E Tests", () => {
         status: "PENDING",
       },
     });
-    return { car, image, document, insuranceDocument };
+    return { car, image, document, insuranceDocument, registrationDocument };
   }
 
   describe("role enforcement", () => {
@@ -190,7 +206,8 @@ describe("Admin Approval E2E Tests", () => {
 
   describe("approval cascade", () => {
     it("approves the car once staff and admin approve all pending items", async () => {
-      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument, registrationDocument } =
+        await createCarUnderReview();
 
       const documentResponse = await request(app.getHttpServer())
         .post(`/api/admin/documents/${document.id}/approve`)
@@ -199,6 +216,11 @@ describe("Admin Approval E2E Tests", () => {
 
       let carRow = await factory.getCarById(car.id);
       expect(carRow?.approvalStatus).toBe("PENDING");
+
+      const registrationResponse = await request(app.getHttpServer())
+        .post(`/api/admin/documents/${registrationDocument.id}/approve`)
+        .set("Cookie", staffCookie);
+      expect(registrationResponse.status).toBe(HttpStatus.CREATED);
 
       const insuranceResponse = await request(app.getHttpServer())
         .post(`/api/admin/documents/${insuranceDocument.id}/approve`)
@@ -235,7 +257,8 @@ describe("Admin Approval E2E Tests", () => {
     it("never leaves a car APPROVED with a rejected asset under concurrent approve/reject", async () => {
       // Set up a car that is one approval away from APPROVED, plus a second
       // already-approved image we can reject at the same time.
-      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument, registrationDocument } =
+        await createCarUnderReview();
       const secondImage = await databaseService.vehicleImage.create({
         data: {
           carId: car.id,
@@ -244,7 +267,7 @@ describe("Admin Approval E2E Tests", () => {
         },
       });
       await databaseService.documentApproval.updateMany({
-        where: { id: { in: [document.id, insuranceDocument.id] } },
+        where: { id: { in: [document.id, insuranceDocument.id, registrationDocument.id] } },
         data: { status: "APPROVED" },
       });
 
@@ -275,9 +298,10 @@ describe("Admin Approval E2E Tests", () => {
     });
 
     it("serializes concurrent approve and reject on the same image without deadlock", async () => {
-      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument, registrationDocument } =
+        await createCarUnderReview();
       await databaseService.documentApproval.updateMany({
-        where: { id: { in: [document.id, insuranceDocument.id] } },
+        where: { id: { in: [document.id, insuranceDocument.id, registrationDocument.id] } },
         data: { status: "APPROVED" },
       });
 
@@ -385,7 +409,8 @@ describe("Admin Approval E2E Tests", () => {
 
   describe("owner re-upload of rejected files", () => {
     it("lets the owner replace a rejected document, then approval completes the loop", async () => {
-      const { car, image, document, insuranceDocument } = await createCarUnderReview();
+      const { car, image, document, insuranceDocument, registrationDocument } =
+        await createCarUnderReview();
       await databaseService.documentApproval.update({
         where: { id: document.id },
         data: { status: "REJECTED", notes: "Blurry scan" },
@@ -418,6 +443,9 @@ describe("Admin Approval E2E Tests", () => {
         .set("Cookie", adminCookie);
       await request(app.getHttpServer())
         .post(`/api/admin/documents/${insuranceDocument.id}/approve`)
+        .set("Cookie", adminCookie);
+      await request(app.getHttpServer())
+        .post(`/api/admin/documents/${registrationDocument.id}/approve`)
         .set("Cookie", adminCookie);
       await request(app.getHttpServer())
         .post(`/api/admin/cars/${car.id}/images/${image.id}/approve`)

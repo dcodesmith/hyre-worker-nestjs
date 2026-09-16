@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   CarApprovalStatus,
@@ -23,6 +23,7 @@ import {
   CAR_S3_CATEGORY_DOCUMENTS,
   CAR_S3_CATEGORY_IMAGES,
   MAX_IMAGE_COUNT,
+  MIN_IMAGE_COUNT,
   REJECTION_ACTION_NOTE,
   REQUIRED_CAR_DOCUMENT_TYPES,
 } from "./car.const";
@@ -256,29 +257,6 @@ export class CarService {
           throw new CarCreateFailedException();
         }
 
-        if (
-          verification.insurancePolicyNumber &&
-          verification.insurancePolicyStatus?.trim().toLowerCase() === "active" &&
-          verification.insurancePolicyExpiresAt &&
-          verification.insurancePolicyExpiresAt > new Date()
-        ) {
-          const policyNumber = verification.insurancePolicyNumber.trim().toUpperCase();
-          await tx.insuranceVerification.create({
-            data: {
-              ownerId,
-              carId: car.id,
-              idempotencyKey: `initial-insurance:${verification.id}`,
-              requestHash: createHash("sha256")
-                .update(JSON.stringify({ carId: car.id, policyNumber }))
-                .digest("hex"),
-              policyNumber,
-              policyStatus: verification.insurancePolicyStatus,
-              policyExpiresAt: verification.insurancePolicyExpiresAt,
-              providerRef: verification.insuranceProviderRef,
-              status: ProviderVerificationStatus.SUCCEEDED,
-            },
-          });
-        }
         return car;
       });
     } catch (error) {
@@ -318,7 +296,7 @@ export class CarService {
       ownerId,
       carId,
       publicRef,
-      [files.motCertificate, files.insuranceCertificate],
+      [files.vehicleRegistration, files.motCertificate, files.insuranceCertificate],
       CAR_S3_CATEGORY_DOCUMENTS,
     );
     try {
@@ -326,13 +304,18 @@ export class CarService {
         this.databaseService.documentApproval.createMany({
           data: [
             {
-              documentType: DocumentType.MOT_CERTIFICATE,
+              documentType: DocumentType.VEHICLE_REGISTRATION,
               documentUrl: uploaded[0].url,
               carId,
             },
             {
-              documentType: DocumentType.INSURANCE_CERTIFICATE,
+              documentType: DocumentType.MOT_CERTIFICATE,
               documentUrl: uploaded[1].url,
+              carId,
+            },
+            {
+              documentType: DocumentType.INSURANCE_CERTIFICATE,
+              documentUrl: uploaded[2].url,
               carId,
             },
           ],
@@ -396,12 +379,12 @@ export class CarService {
     const car = await this.databaseService.car.findFirst({
       where: { id: carId, ownerId },
       include: {
-        vehicleVerification: { select: { id: true } },
+        documents: {
+          where: { documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] } },
+          select: { documentType: true },
+        },
         _count: {
           select: {
-            documents: {
-              where: { documentType: { in: [...REQUIRED_CAR_DOCUMENT_TYPES] } },
-            },
             images: true,
           },
         },
@@ -411,16 +394,6 @@ export class CarService {
       throw new CarNotFoundException();
     }
 
-    const hasInsuranceVerification =
-      !car.vehicleVerification ||
-      (await this.databaseService.insuranceVerification.count({
-        where: {
-          carId,
-          ownerId,
-          status: ProviderVerificationStatus.SUCCEEDED,
-          policyExpiresAt: { gt: new Date() },
-        },
-      })) > 0;
     const hasPricing =
       car.hourlyRate !== null &&
       car.dayRate !== null &&
@@ -429,10 +402,11 @@ export class CarService {
       car.airportPickupRate !== null &&
       (car.pricingIncludesFuel || car.fuelUpgradeRate !== null);
     const requirements = {
-      hasDocuments: car._count.documents === REQUIRED_CAR_DOCUMENT_TYPES.length,
-      hasImages: car._count.images > 0,
+      hasDocuments: REQUIRED_CAR_DOCUMENT_TYPES.every((documentType) =>
+        car.documents.some((document) => document.documentType === documentType),
+      ),
+      hasImages: car._count.images >= MIN_IMAGE_COUNT,
       hasPricing,
-      hasInsuranceVerification,
     };
 
     if (!Object.values(requirements).every(Boolean)) {

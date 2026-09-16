@@ -3,8 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import type { AxiosInstance } from "axios";
 import type { z } from "zod";
 import type { EnvConfig } from "../../config/env.config";
+import { VIN_PATTERN } from "../../shared/vehicle-validation";
 import { HttpClientService } from "../http-client/http-client.service";
-import { VIN_PATTERN } from "./prembly.const";
 import {
   PremblyCacResult,
   PremblyDriversLicenseResult,
@@ -58,26 +58,13 @@ export class PremblyService {
       { vehicle_number: plateNumber },
       premblyPlateResponseSchema,
     );
-    const vehicle = response.data.vehicle;
-    const chassisNumber = (
-      vehicle?.ChassisNo ??
-      response.data.ChassisNo ??
-      response.data.chassis_number ??
-      ""
-    )
-      .trim()
-      .toUpperCase();
 
-    if (!VIN_PATTERN.test(chassisNumber)) {
-      throw new PremblyError("INVALID_RESPONSE");
-    }
-
+    const chassisNumber = this.readPlateChassis(response.data);
     return {
       plateNumber: (response.data.vehicle_number ?? plateNumber).trim().toUpperCase(),
+      vehicleName: response.data.vehicle_name.trim(),
       chassisNumber,
-      make: vehicle?.carMake?.trim() ?? response.data.vehicle_name?.trim() ?? null,
-      model: vehicle?.carModel?.trim() ?? null,
-      color: vehicle?.bodyColor?.trim() ?? response.data.vehicle_color?.trim() ?? null,
+      color: response.data.vehicle_color?.trim() ?? null,
       reference: response.verification.reference,
     };
   }
@@ -90,7 +77,11 @@ export class PremblyService {
     );
     const specification = Object.assign({}, ...response.data.vehicle_specification);
     const year = Number(specification.year);
-    const passengerCapacity = Number(specification.standard_seating);
+    const decodedSeats = Number(specification.standard_seating);
+    const passengerCapacity =
+      Number.isInteger(decodedSeats) && decodedSeats >= 1 && decodedSeats <= 15
+        ? decodedSeats
+        : null;
     const make = specification.make?.trim();
     const model = specification.model?.trim();
 
@@ -99,10 +90,7 @@ export class PremblyService {
       year < 1886 ||
       year > new Date().getFullYear() + 1 ||
       !make ||
-      !model ||
-      !Number.isInteger(passengerCapacity) ||
-      passengerCapacity < 1 ||
-      passengerCapacity > 15
+      !model
     ) {
       throw new PremblyError("INVALID_RESPONSE");
     }
@@ -255,6 +243,18 @@ export class PremblyService {
         .filter((director) => director.firstName || director.lastName),
       reference: response.verification.reference,
     };
+  }
+
+  private readPlateChassis(data: {
+    chassis_number?: string;
+    vehicle?: { ChassisNo?: string };
+  }): string | null {
+    const chassisNumber =
+      (data.chassis_number ?? data.vehicle?.ChassisNo)?.trim().toUpperCase() || null;
+    if (chassisNumber && !VIN_PATTERN.test(chassisNumber)) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
+    return chassisNumber;
   }
 
   private normalizeCacRegistrationNumber(value: string): string {

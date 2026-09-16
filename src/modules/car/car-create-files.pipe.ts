@@ -2,14 +2,15 @@ import {
   IMAGE_MIME_TYPES_SET,
   MAX_FILE_SIZE_BYTES,
   MAX_IMAGE_COUNT,
+  MIN_IMAGE_COUNT,
   PDF_MIME_TYPE,
 } from "./car.const";
 import { CarValidationException } from "./car.error";
 import type { UploadedCarFile } from "./car.interface";
 
 export function validateCarImages(images: UploadedCarFile[]): void {
-  if (images.length === 0) {
-    throw new CarValidationException("At least one image is required");
+  if (images.length < MIN_IMAGE_COUNT) {
+    throw new CarValidationException(`At least ${MIN_IMAGE_COUNT} images are required`);
   }
   if (images.length > MAX_IMAGE_COUNT) {
     throw new CarValidationException(`You can upload up to ${MAX_IMAGE_COUNT} images`);
