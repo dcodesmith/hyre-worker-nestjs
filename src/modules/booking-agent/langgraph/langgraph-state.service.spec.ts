@@ -97,9 +97,7 @@ describe("LangGraphStateService", () => {
         turnCount: 2,
         availableOptions: [],
         lastShownOptions: [],
-        preferences: { pricePreference: "budget" },
-        holdId: null,
-        holdExpiresAt: null,
+        preferences: { notes: ["budget"] },
         bookingId: null,
       };
 
@@ -122,7 +120,7 @@ describe("LangGraphStateService", () => {
       expect(merged.turnCount).toBe(3);
       expect(merged.messages).toHaveLength(2);
       expect(merged.draft.pickupLocation).toBe("Lagos");
-      expect(merged.preferences.pricePreference).toBe("budget");
+      expect(merged.preferences.notes).toEqual(["budget"]);
     });
 
     it("preserves existing customerId when new one is null", () => {
@@ -134,8 +132,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         preferences: {},
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
       };
 
@@ -153,8 +149,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         preferences: {},
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
       };
 
@@ -182,8 +176,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         preferences: {},
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
       };
 
@@ -253,8 +245,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         preferences: {},
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
         updatedAt: new Date().toISOString(),
       };
@@ -277,8 +267,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         preferences: {},
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
         locationValidation: {
           pickup: {
@@ -331,8 +319,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         selectedOption: null,
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
         paymentLink: null,
         preferences: {},
@@ -368,8 +354,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         selectedOption: null,
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
         paymentLink: null,
         preferences: {},
@@ -401,8 +385,6 @@ describe("LangGraphStateService", () => {
         availableOptions: [],
         lastShownOptions: [],
         selectedOption: null,
-        holdId: null,
-        holdExpiresAt: null,
         bookingId: null,
         paymentLink: null,
         preferences: {},

@@ -1,20 +1,11 @@
 import type { BookingDraft } from "./langgraph.interface";
 
 export const LANGGRAPH_DEFAULT_HISTORY_LIMIT = 10;
-export const LANGGRAPH_DEFAULT_HISTORY_TTL_HOURS = 24;
 export const LANGGRAPH_STATE_TTL_SECONDS = 24 * 60 * 60;
 
 export const LANGGRAPH_EXTRACTION_MODEL = "gpt-4o-mini";
-export const LANGGRAPH_EXTRACTION_TEMPERATURE = 0;
-export const LANGGRAPH_EXTRACTION_MAX_TOKENS = 500;
-export const LANGGRAPH_EXTRACTION_TIMEOUT_MS = 10_000;
 
 export const LANGGRAPH_RESPONSE_MODEL = "claude-sonnet-4-20250514";
-export const LANGGRAPH_RESPONSE_TEMPERATURE = 0.3;
-export const LANGGRAPH_RESPONSE_MAX_TOKENS = 800;
-export const LANGGRAPH_RESPONSE_TIMEOUT_MS = 15_000;
-
-export const LANGGRAPH_HOLD_TTL_MINUTES = 15;
 
 /**
  * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.
@@ -74,8 +65,4 @@ export const LANGGRAPH_REDIS_KEY_PREFIX = "langgraph:booking-agent";
 
 export function buildLangGraphStateKey(conversationId: string): string {
   return `${LANGGRAPH_REDIS_KEY_PREFIX}:state:${conversationId}`;
-}
-
-export function buildLangGraphCheckpointKey(conversationId: string): string {
-  return `${LANGGRAPH_REDIS_KEY_PREFIX}:checkpoint:${conversationId}`;
 }

@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { MergeNode } from "./merge.node";
@@ -43,8 +43,6 @@ describe("MergeNode", () => {
       ],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: {},
@@ -65,7 +63,7 @@ describe("MergeNode", () => {
     expect(result.availableOptions).toEqual([]);
   });
 
-  it("maps preference hints to budget/premium and appends notes without duplicates", () => {
+  it("maps preference hints to notes without duplicates", () => {
     const result = mergeNode.run({
       conversationId: "conv_1",
       inboundMessage: "I want budget",
@@ -78,8 +76,6 @@ describe("MergeNode", () => {
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
       bookingId: null,
       paymentLink: null,
       preferences: { notes: ["budget"] },
@@ -97,7 +93,6 @@ describe("MergeNode", () => {
       locationValidation: createDefaultLocationValidationState(),
     });
 
-    expect(result.preferences?.pricePreference).toBe("budget");
     expect(result.preferences?.notes).toEqual(["budget"]);
   });
 });
