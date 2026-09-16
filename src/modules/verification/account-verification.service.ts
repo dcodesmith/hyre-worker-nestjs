@@ -123,7 +123,9 @@ function onboardingProgress(
     drivingComplete:
       verification?.accountType === FleetOwnerAccountType.BUSINESS ||
       (Boolean(verification?.drivingCompletedAt ?? verification?.submittedAt) &&
-        (verification?.isOwnerDriver !== true || Boolean(verification.driversLicenseHash))),
+        (verification?.status !== AccountVerificationStatus.DRAFT ||
+          verification.isOwnerDriver !== true ||
+          Boolean(verification.driversLicenseHash))),
     submissionComplete:
       verification?.status === AccountVerificationStatus.SUCCEEDED ||
       verification?.status === AccountVerificationStatus.REVIEW_REQUIRED,

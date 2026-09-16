@@ -3236,7 +3236,7 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("sends an owner-driver without a licence hash back to driving", async () => {
+    it("sends a DRAFT owner-driver without a licence hash back to driving", async () => {
       databaseService.user.findUnique.mockResolvedValueOnce(
         readyStatusUser({
           bankDetails: {
@@ -3257,6 +3257,61 @@ describe("AccountVerificationService", () => {
           driving: "PENDING",
           submission: "PENDING",
         },
+      });
+    });
+
+    it("keeps a submitted owner-driver without a pre-migration hash off driving", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          hasOnboarded: true,
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: false,
+          },
+          accountVerifications: [
+            drivingReadyDraft({
+              status: AccountVerificationStatus.REVIEW_REQUIRED,
+              isOwnerDriver: true,
+              submittedAt: new Date("2026-01-01T00:15:00Z"),
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "WAIT_FOR_REVIEW",
+        steps: { driving: "COMPLETED", submission: "REVIEW_REQUIRED" },
+      });
+    });
+
+    it("keeps a succeeded owner-driver without a pre-migration hash complete", async () => {
+      databaseService.user.findUnique.mockResolvedValueOnce(
+        readyStatusUser({
+          hasOnboarded: true,
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+          bankDetails: {
+            bankName: "GTBank",
+            accountName: "JOHN DOE",
+            accountNumber: "0123456789",
+            isVerified: true,
+          },
+          accountVerifications: [
+            succeededRecord({
+              isOwnerDriver: true,
+              identityVerifiedAt: new Date("2026-01-01T00:05:00Z"),
+              payoutVerifiedAt: new Date("2026-01-01T00:10:00Z"),
+              drivingCompletedAt: new Date("2026-01-01T00:12:00Z"),
+              submittedAt: new Date("2026-01-01T00:15:00Z"),
+            }),
+          ],
+        }),
+      );
+
+      await expect(service.getStatus(USER_ID)).resolves.toMatchObject({
+        nextAction: "COMPLETE",
+        steps: { driving: "COMPLETED", submission: "VERIFIED" },
       });
     });
 

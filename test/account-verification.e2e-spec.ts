@@ -1462,7 +1462,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     });
     expect(verification).toMatchObject({
       driversLicenseHash: hashLicenseNumber(),
-      driversLicenseLast4: "2345",
+      driversLicenseLast4: LICENSE_NUMBER.slice(-4),
       driversLicenseProviderRef: "lic-ref",
     });
     expect(verification?.driversLicenseExpiresAt?.toISOString()).toBe(

@@ -642,7 +642,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       {
         prefix: "uniq-a",
         nin: "34567890123",
-        license: "UNIQ11111",
+        license: "UNQ11111AB00",
       },
     );
     expect(first.driving.status).toBe(HttpStatus.CREATED);
@@ -652,7 +652,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     const secondToken = extractInviteToken(htmlSentTo(secondEmail));
     const second = await completeOnboarding(
       (await exchange(secondToken)).body.sessionToken as string,
-      { prefix: "uniq-b", nin: "34567890123", license: "UNIQ22222" },
+      { prefix: "uniq-b", nin: "34567890123", license: "UNQ22222AB00" },
     );
     expect(second.nin.status).toBe(HttpStatus.CREATED);
     expect(second.driving.status).toBe(HttpStatus.CONFLICT);
