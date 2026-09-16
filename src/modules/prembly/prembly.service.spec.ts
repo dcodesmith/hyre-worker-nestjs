@@ -94,6 +94,7 @@ describe("PremblyService", () => {
       await expect(service.verifyPlate("kja-123ab")).resolves.toEqual({
         plateNumber: "KJA-123AB",
         vehicleName: "Toyota Camry",
+        chassisNumber: null,
         color: "Black",
         reference: "prembly-ref-1",
       });
@@ -115,18 +116,19 @@ describe("PremblyService", () => {
       await expect(service.verifyPlate("ABC123XY")).resolves.toEqual({
         plateNumber: "ABC123XY",
         vehicleName: "Honda Accord",
+        chassisNumber: null,
         color: "Silver",
         reference: "prembly-ref-1",
       });
     });
 
-    it("treats a missing vehicle_color as null and ignores extra chassis fields", async () => {
+    it("treats a missing vehicle_color as null and reads a registry chassis when present", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: plateSuccess({
           data: {
             vehicle_number: "KJA-123AB",
             vehicle_name: "Toyota Camry",
-            chassis_number: VALID_CHASSIS,
+            chassis_number: VALID_CHASSIS.toLowerCase(),
             vehicle: { ChassisNo: VALID_CHASSIS, carMake: "Toyota", carModel: "Camry" },
           },
         }),
@@ -135,9 +137,42 @@ describe("PremblyService", () => {
       await expect(service.verifyPlate("KJA-123AB")).resolves.toEqual({
         plateNumber: "KJA-123AB",
         vehicleName: "Toyota Camry",
+        chassisNumber: VALID_CHASSIS,
         color: null,
         reference: "prembly-ref-1",
       });
+    });
+
+    it("reads ChassisNo when chassis_number is omitted", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: plateSuccess({
+          data: {
+            vehicle_number: "KJA-123AB",
+            vehicle_name: "Toyota Camry",
+            vehicle: { ChassisNo: `  ${VALID_CHASSIS.toLowerCase()}  ` },
+          },
+        }),
+      });
+
+      await expect(service.verifyPlate("KJA-123AB")).resolves.toMatchObject({
+        chassisNumber: VALID_CHASSIS,
+      });
+    });
+
+    it("rejects a plate payload whose registry chassis is not a VIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: plateSuccess({
+          data: {
+            vehicle_number: "KJA-123AB",
+            vehicle_name: "Toyota Camry",
+            chassis_number: "NOT-A-VIN",
+          },
+        }),
+      });
+
+      await expect(service.verifyPlate("KJA-123AB")).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE"),
+      );
     });
   });
 

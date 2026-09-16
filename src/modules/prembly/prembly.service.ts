@@ -59,9 +59,11 @@ export class PremblyService {
       premblyPlateResponseSchema,
     );
 
+    const chassisNumber = this.readPlateChassis(response.data);
     return {
       plateNumber: (response.data.vehicle_number ?? plateNumber).trim().toUpperCase(),
       vehicleName: response.data.vehicle_name.trim(),
+      chassisNumber,
       color: response.data.vehicle_color?.trim() ?? null,
       reference: response.verification.reference,
     };
@@ -241,6 +243,18 @@ export class PremblyService {
         .filter((director) => director.firstName || director.lastName),
       reference: response.verification.reference,
     };
+  }
+
+  private readPlateChassis(data: {
+    chassis_number?: string;
+    vehicle?: { ChassisNo?: string };
+  }): string | null {
+    const chassisNumber =
+      (data.chassis_number ?? data.vehicle?.ChassisNo)?.trim().toUpperCase() || null;
+    if (chassisNumber && !VIN_PATTERN.test(chassisNumber)) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
+    return chassisNumber;
   }
 
   private normalizeCacRegistrationNumber(value: string): string {

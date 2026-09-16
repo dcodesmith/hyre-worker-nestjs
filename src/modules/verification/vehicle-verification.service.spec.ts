@@ -178,6 +178,7 @@ describe("VehicleVerificationService", () => {
   const mockPlate = {
     plateNumber: PLATE,
     vehicleName: "Toyota Camry",
+    chassisNumber: null,
     color: "Black",
     reference: "plate-ref",
   };
@@ -475,6 +476,39 @@ describe("VehicleVerificationService", () => {
           chassisNumber: CHASSIS,
         }),
       ).rejects.toBeInstanceOf(VehicleMismatchException);
+    });
+
+    it("rejects a plate lookup that returns a different registry chassis", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        chassisNumber: "1HGCM82633A999999",
+      });
+      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
+    });
+
+    it("accepts a plate lookup that returns the same registry chassis", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        chassisNumber: CHASSIS,
+      });
+      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).resolves.toMatchObject(succeededResponse);
     });
 
     it("rejects a plate lookup that returns a different plate number", async () => {

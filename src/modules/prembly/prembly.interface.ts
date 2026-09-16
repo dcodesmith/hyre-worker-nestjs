@@ -1,6 +1,7 @@
 export type PremblyPlateResult = {
   plateNumber: string;
   vehicleName: string;
+  chassisNumber: string | null;
   color: string | null;
   reference: string;
 };

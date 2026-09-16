@@ -18,6 +18,8 @@ export const premblyPlateResponseSchema = z.looseObject({
     vehicle_number: z.string().optional(),
     vehicle_name: z.string().trim().min(1),
     vehicle_color: z.string().optional(),
+    chassis_number: z.string().optional(),
+    vehicle: z.looseObject({ ChassisNo: z.string().optional() }).optional(),
   }),
   verification: verificationSchema,
 });

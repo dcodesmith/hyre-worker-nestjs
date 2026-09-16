@@ -90,7 +90,7 @@ export class VehicleVerificationService {
         this.premblyService.verifyPlate(plateNumber),
         this.verifyVin(chassisNumber),
       ]);
-      this.assertVehicleDetailsMatch(plateNumber, plate.plateNumber, plate.vehicleName, vin);
+      this.assertVehicleDetailsMatch(plateNumber, chassisNumber, plate, vin);
 
       const completed = await this.databaseService.vehicleVerification.update({
         where: { id: verification.id },
@@ -278,13 +278,18 @@ export class VehicleVerificationService {
 
   private assertVehicleDetailsMatch(
     requestedPlate: string,
-    returnedPlate: string,
-    plateVehicleName: string,
+    requestedChassis: string,
+    plate: { plateNumber: string; vehicleName: string; chassisNumber: string | null },
     vin: { make: string; model: string },
   ): void {
-    if (this.normalizePlate(returnedPlate) !== requestedPlate) {
+    if (this.normalizePlate(plate.plateNumber) !== requestedPlate) {
       throw new VehicleMismatchException();
     }
+    if (plate.chassisNumber && plate.chassisNumber !== requestedChassis) {
+      throw new VehicleMismatchException();
+    }
+
+    const plateVehicleName = plate.vehicleName;
 
     const plateWords = this.vehicleWords(plateVehicleName);
     const makeWords = this.vehicleWords(vin.make);

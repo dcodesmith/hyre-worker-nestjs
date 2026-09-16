@@ -59,6 +59,7 @@ describe("Vehicle verification E2E Tests", () => {
     premblyService.verifyPlate.mockResolvedValue({
       plateNumber: normalizedPlate,
       vehicleName: "Toyota Camry",
+      chassisNumber: null,
       color: "Black",
       reference: "plate-ref",
     });
@@ -302,6 +303,7 @@ describe("Vehicle verification E2E Tests", () => {
     premblyService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Honda Accord",
+      chassisNumber: null,
       color: "Black",
       reference: "plate-ref",
     });
@@ -329,6 +331,7 @@ describe("Vehicle verification E2E Tests", () => {
     premblyService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Toyota Camry",
+      chassisNumber: null,
       color: "Black",
       reference: "plate-ref",
     });
