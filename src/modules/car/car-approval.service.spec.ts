@@ -73,11 +73,11 @@ describe("CarApprovalService", () => {
 
   it("approves the car once the last pending image is approved", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
-    // Fully reviewed: nothing unresolved, an approved image exists, required docs present.
+    // Fully reviewed: nothing unresolved, three approved images, required docs present.
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     databaseServiceMock.vehicleImage.count
       .mockResolvedValueOnce(0) // unresolved images
-      .mockResolvedValueOnce(2); // approved images
+      .mockResolvedValueOnce(3); // approved images
     databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");
@@ -136,6 +136,19 @@ describe("CarApprovalService", () => {
     expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
   });
 
+  it("does not approve a car with fewer than three approved images", async () => {
+    databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
+    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
+    databaseServiceMock.vehicleImage.count
+      .mockResolvedValueOnce(0) // unresolved images
+      .mockResolvedValueOnce(2); // fewer than MIN_IMAGE_COUNT
+    databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
+
+    await service.approveImage("car-1", "img-1", "admin-1");
+
+    expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+  });
+
   it("does not approve a car that is missing a required document", async () => {
     databaseServiceMock.vehicleImage.update.mockResolvedValueOnce({ id: "img-1", carId: "car-1" });
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
@@ -159,7 +172,7 @@ describe("CarApprovalService", () => {
       status: Status.HOLD,
       submittedAt: null,
     });
-    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
     databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");
@@ -180,7 +193,7 @@ describe("CarApprovalService", () => {
       status: Status.HOLD,
       submittedAt: new Date("2026-09-07T00:00:00.000Z"),
     });
-    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    databaseServiceMock.vehicleImage.count.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
     databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");
@@ -204,7 +217,7 @@ describe("CarApprovalService", () => {
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     databaseServiceMock.vehicleImage.count
       .mockResolvedValueOnce(0) // unresolved images
-      .mockResolvedValueOnce(2); // approved images
+      .mockResolvedValueOnce(3); // approved images
     databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");
@@ -227,7 +240,7 @@ describe("CarApprovalService", () => {
     databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
     databaseServiceMock.vehicleImage.count
       .mockResolvedValueOnce(0) // unresolved images
-      .mockResolvedValueOnce(2); // approved images
+      .mockResolvedValueOnce(3); // approved images
     databaseServiceMock.documentApproval.findMany.mockResolvedValueOnce(approvedRequiredDocs);
 
     await service.approveImage("car-1", "img-1", "admin-1");

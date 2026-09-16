@@ -60,13 +60,30 @@ describe("NhtsaService", () => {
     expect(mockAxiosInstance.get).not.toHaveBeenCalled();
   });
 
-  it("rejects a provider row whose ErrorCode is not 0", async () => {
-    mockAxiosInstance.get.mockResolvedValueOnce({
-      data: decodeSuccess({ ErrorCode: "7" }),
-    });
+  it.each(["0", "0,10", "1,10", "1, 400", "1,10,400"])(
+    "accepts documented clean vPIC ErrorCode %s",
+    async (errorCode) => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: decodeSuccess({ ErrorCode: errorCode }),
+      });
 
-    await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("REJECTED"));
-  });
+      await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({
+        make: "Honda",
+        model: "Accord",
+      });
+    },
+  );
+
+  it.each(["7", "1", "10", "400", "1,7,400", ""])(
+    "rejects a provider row whose ErrorCode is %s",
+    async (errorCode) => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: decodeSuccess({ ErrorCode: errorCode }),
+      });
+
+      await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("REJECTED"));
+    },
+  );
 
   it("rejects an empty Results array", async () => {
     mockAxiosInstance.get.mockResolvedValueOnce({ data: { Results: [] } });

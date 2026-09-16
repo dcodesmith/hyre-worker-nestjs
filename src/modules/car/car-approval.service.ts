@@ -3,7 +3,7 @@ import { CarApprovalStatus, DocumentStatus, Prisma, Status } from "@prisma/clien
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService, isRecordNotFoundError, lockCarRow } from "../database/database.service";
-import { REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
+import { MIN_IMAGE_COUNT, REJECTION_ACTION_NOTE, REQUIRED_CAR_DOCUMENT_TYPES } from "./car.const";
 import {
   CarApprovalBlockedException,
   CarApprovalFailedException,
@@ -272,7 +272,7 @@ export class CarApprovalService {
     const fullyReviewed =
       unresolvedDocuments === 0 &&
       unresolvedImages === 0 &&
-      approvedImageCount > 0 &&
+      approvedImageCount >= MIN_IMAGE_COUNT &&
       hasAllRequiredDocuments &&
       Boolean(car?.submittedAt);
 

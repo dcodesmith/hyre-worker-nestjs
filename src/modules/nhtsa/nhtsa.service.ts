@@ -32,6 +32,28 @@ export type NhtsaVinResult = {
   passengerCapacity: number | null;
 };
 
+const CLEAN_VPIC_ERROR_CODE_SETS: ReadonlyArray<ReadonlySet<string>> = [
+  new Set(["0"]),
+  new Set(["0", "10"]),
+  new Set(["1", "10"]),
+  new Set(["1", "400"]),
+  new Set(["1", "10", "400"]),
+];
+
+export function isCleanVpicErrorCode(errorCode: string): boolean {
+  const codes = [
+    ...new Set(
+      errorCode
+        .split(",")
+        .map((code) => code.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return CLEAN_VPIC_ERROR_CODE_SETS.some(
+    (allowed) => codes.length === allowed.size && codes.every((code) => allowed.has(code)),
+  );
+}
+
 @Injectable()
 export class NhtsaService {
   private readonly client: AxiosInstance;
@@ -68,7 +90,7 @@ export class NhtsaService {
       if (vehicle.VIN.trim().toUpperCase() !== normalizedVin) {
         throw new NhtsaError("INVALID_RESPONSE");
       }
-      if (vehicle.ErrorCode !== "0") {
+      if (!isCleanVpicErrorCode(vehicle.ErrorCode)) {
         throw new NhtsaError("REJECTED");
       }
 
