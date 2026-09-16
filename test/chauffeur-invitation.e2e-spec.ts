@@ -170,7 +170,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .send({ nin: extras.nin ?? "12345678901" });
     const driving = await onboarding("post", "/driving-verifications", session)
       .set("Idempotency-Key", `${extras.prefix ?? "drive"}-${Date.now()}-${Math.random()}`)
-      .field("driversLicenseNumber", extras.license ?? "ABC12345")
+      .field("driversLicenseNumber", extras.license ?? "ABC12345DE67")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
     return { nin, driving };
   }
@@ -250,7 +250,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       reference: "nin-ref",
     });
     premblyService.verifyDriversLicense.mockResolvedValue({
-      licenseNumber: "ABC12345",
+      licenseNumber: "ABC12345DE67",
       firstName: "ADA",
       lastName: "LOVELACE",
       middleName: null,
@@ -514,7 +514,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
 
     const driving = await onboarding("post", "/driving-verifications", session)
       .set("Idempotency-Key", `drive-${Date.now()}`)
-      .field("driversLicenseNumber", "ABC12345")
+      .field("driversLicenseNumber", "ABC12345DE67")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
     expect(driving.status).toBe(HttpStatus.CREATED);
     expect(driving.body.status).toBe("APPROVED");
@@ -567,7 +567,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     });
     const replayDriving = await onboarding("post", "/driving-verifications", session)
       .set("Idempotency-Key", `drive-replay-${Date.now()}`)
-      .field("driversLicenseNumber", "ZZZ99999")
+      .field("driversLicenseNumber", "ZZZ99999AB00")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
     expect(replayDriving.status).toBe(HttpStatus.CREATED);
     expect(replayDriving.body.status).toBe("APPROVED");
@@ -602,7 +602,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .send({ nin: "23456789012" });
     const driving = await onboarding("post", "/driving-verifications", session)
       .set("Idempotency-Key", `drive-link-${Date.now()}`)
-      .field("driversLicenseNumber", "LINK12345")
+      .field("driversLicenseNumber", "LNK12345AB00")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
 
     expect(driving.status).toBe(HttpStatus.CREATED);
@@ -642,7 +642,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       {
         prefix: "uniq-a",
         nin: "34567890123",
-        license: "UNIQ11111",
+        license: "UNQ11111AB00",
       },
     );
     expect(first.driving.status).toBe(HttpStatus.CREATED);
@@ -652,7 +652,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     const secondToken = extractInviteToken(htmlSentTo(secondEmail));
     const second = await completeOnboarding(
       (await exchange(secondToken)).body.sessionToken as string,
-      { prefix: "uniq-b", nin: "34567890123", license: "UNIQ22222" },
+      { prefix: "uniq-b", nin: "34567890123", license: "UNQ22222AB00" },
     );
     expect(second.nin.status).toBe(HttpStatus.CREATED);
     expect(second.driving.status).toBe(HttpStatus.CONFLICT);

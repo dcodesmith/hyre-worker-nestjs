@@ -12,6 +12,7 @@ import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { getEmailPublicEnv } from "../../email-public-env";
+import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { maskEmail } from "../../shared/helper";
 import { renderChauffeurInvitationEmail } from "../../templates/emails";
 import { USER } from "../auth/auth.const";
@@ -465,12 +466,13 @@ export class ChauffeurService {
       throw new ChauffeurStepIncompleteException("NIN");
     }
     const processedSelfie = await this.imageService.processSelfie(selfie);
+    const driversLicenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
     const claim = await this.claimStage(
       verificationId,
       ChauffeurVerificationStage.DRIVING,
       idempotencyKey,
       this.hashJson({
-        driversLicenseNumber: input.driversLicenseNumber,
+        driversLicenseNumber,
         selfie: this.hash(processedSelfie),
       }),
     );
@@ -481,7 +483,7 @@ export class ChauffeurService {
     let license: PremblyDriversLicenseResult;
     try {
       license = await this.premblyService.verifyDriversLicense(
-        input.driversLicenseNumber,
+        driversLicenseNumber,
         verification.identityFirstName,
         verification.identityLastName,
       );
@@ -520,7 +522,7 @@ export class ChauffeurService {
           liveness,
           faceMatch,
           selfieObjectKey,
-          licenseNumber: input.driversLicenseNumber,
+          licenseNumber: driversLicenseNumber,
         });
       } catch (error) {
         await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);

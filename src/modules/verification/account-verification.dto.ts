@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalDriversLicenseNumberSchema } from "../../shared/drivers-license-number";
 
 const multipartBooleanSchema = z
   .union([z.boolean(), z.enum(["true", "false"])])
@@ -42,20 +43,47 @@ export const accountIdentityVerificationSchema = z.discriminatedUnion("accountTy
   businessIdentityVerificationSchema,
 ]);
 
-export const drivingCredentialsSchema = z.object({
+const drivingCredentialsShape = {
   isOwnerDriver: multipartBooleanSchema,
-});
+  driversLicenseNumber: optionalDriversLicenseNumberSchema,
+};
 
-export const createAccountVerificationSchema = z.discriminatedUnion("accountType", [
-  individualIdentityVerificationSchema.extend({
-    ...payoutVerificationSchema.shape,
-    ...drivingCredentialsSchema.shape,
-  }),
-  businessIdentityVerificationSchema.extend({
-    ...payoutVerificationSchema.shape,
-    ...drivingCredentialsSchema.shape,
-  }),
-]);
+function validateDrivingCredentials(
+  input: { isOwnerDriver?: boolean; driversLicenseNumber?: string },
+  context: z.RefinementCtx,
+) {
+  if (input.isOwnerDriver && input.driversLicenseNumber === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["driversLicenseNumber"],
+      message: "Driver's licence number is required for owner-drivers",
+    });
+  }
+  if (!input.isOwnerDriver && input.driversLicenseNumber) {
+    context.addIssue({
+      code: "custom",
+      path: ["driversLicenseNumber"],
+      message: "Driver's licence number is only accepted for owner-drivers",
+    });
+  }
+}
+
+export const drivingCredentialsSchema = z
+  .object(drivingCredentialsShape)
+  .superRefine(validateDrivingCredentials);
+
+export const createAccountVerificationSchema = z
+  .discriminatedUnion("accountType", [
+    individualIdentityVerificationSchema.extend({
+      ...payoutVerificationSchema.shape,
+      ...drivingCredentialsShape,
+    }),
+    businessIdentityVerificationSchema.extend({
+      ...payoutVerificationSchema.shape,
+      ...drivingCredentialsShape,
+    }),
+  ])
+  .superRefine(validateDrivingCredentials);
 
 export const sendPhoneVerificationSchema = z.object({
   phoneNumber: z

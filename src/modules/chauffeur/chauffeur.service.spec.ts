@@ -156,7 +156,7 @@ const REQUESTED_SELFIE_KEY_PATTERN = new RegExp(
 const STORED_SELFIE_KEY = `stored/fleet-owners/${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.webp`;
 
 const eligibleLicense = {
-  licenseNumber: "ABC12345",
+  licenseNumber: "ABC12345DE67",
   firstName: "ADA",
   middleName: null,
   lastName: "LOVELACE",
@@ -863,7 +863,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
@@ -886,7 +886,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
@@ -904,7 +904,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurStepIncompleteException);
@@ -921,7 +921,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurIdentityMismatchException);
@@ -938,7 +938,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-2",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurMinimumAgeException);
@@ -954,7 +954,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-3",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurLicenseExpiredException);
@@ -971,7 +971,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurLicenseNotVerifiedException);
@@ -1000,7 +1000,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).resolves.toMatchObject({
@@ -1052,7 +1052,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
@@ -1089,7 +1089,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
@@ -1112,7 +1112,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
@@ -1146,7 +1146,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
@@ -1166,7 +1166,7 @@ describe("ChauffeurService", () => {
         stage: ChauffeurVerificationStage.DRIVING,
         requestHash: hash(
           JSON.stringify({
-            driversLicenseNumber: "ABC12345",
+            driversLicenseNumber: "ABC12345DE67",
             selfie: hash(Buffer.from("processed-selfie").toString()),
           }),
         ),
@@ -1180,7 +1180,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
@@ -1217,7 +1217,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
@@ -1267,7 +1267,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
@@ -1286,7 +1286,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
@@ -1303,7 +1303,7 @@ describe("ChauffeurService", () => {
         service.verifyDriving(
           VERIFICATION_ID,
           "drive-key-1",
-          { driversLicenseNumber: "ABC12345" },
+          { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);

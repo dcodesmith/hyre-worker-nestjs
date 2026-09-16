@@ -94,13 +94,21 @@ describe("verifyChauffeurNinSchema", () => {
 });
 
 describe("verifyChauffeurDrivingSchema", () => {
-  it("accepts an alphanumeric licence number", () => {
-    expect(
-      verifyChauffeurDrivingSchema.safeParse({ driversLicenseNumber: "ABC-12345" }).success,
-    ).toBe(true);
+  it("canonicalizes a hyphenated FRSC licence number", () => {
+    const parsed = verifyChauffeurDrivingSchema.safeParse({
+      driversLicenseNumber: "  abc-12345-de67  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.driversLicenseNumber).toBe("ABC12345DE67");
+    }
   });
 
-  it("rejects a licence number with spaces or symbols", () => {
+  it("rejects a licence number that is not the current FRSC shape", () => {
+    expect(
+      verifyChauffeurDrivingSchema.safeParse({ driversLicenseNumber: "ABC12345" }).success,
+    ).toBe(false);
     expect(
       verifyChauffeurDrivingSchema.safeParse({ driversLicenseNumber: "ABC 123" }).success,
     ).toBe(false);
