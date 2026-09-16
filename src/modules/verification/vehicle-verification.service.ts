@@ -9,6 +9,7 @@ import { PinoLogger } from "nestjs-pino";
 import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
+import { NhtsaError, NhtsaService } from "../nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import type {
   CreateInsuranceVerificationDto,
@@ -38,6 +39,7 @@ export class VehicleVerificationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly premblyService: PremblyService,
+    private readonly nhtsaService: NhtsaService,
     private readonly carService: CarService,
     private readonly logger: PinoLogger,
   ) {
@@ -50,8 +52,8 @@ export class VehicleVerificationService {
     input: CreateVehicleVerificationDto,
   ) {
     const plateNumber = this.normalizePlate(input.plateNumber);
-    const policyNumber = input.policyNumber.trim().toUpperCase();
-    const requestHash = this.hash({ plateNumber, policyNumber });
+    const chassisNumber = input.chassisNumber.trim().toUpperCase();
+    const requestHash = this.hash({ plateNumber, chassisNumber });
 
     let verification: VehicleVerification;
     try {
@@ -61,7 +63,7 @@ export class VehicleVerificationService {
           idempotencyKey,
           requestHash,
           plateNumber,
-          insurancePolicyNumber: policyNumber,
+          chassisNumber,
           expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
         },
       });
@@ -84,37 +86,23 @@ export class VehicleVerificationService {
     }
 
     try {
-      const insurance = await this.premblyService.verifyInsurance(policyNumber);
-      if (
-        insurance.policyStatus.trim().toLowerCase() !== "active" ||
-        insurance.expiresAt <= new Date()
-      ) {
-        throw new InsuranceInactiveException();
-      }
-      if (!insurance.plateNumbers.some((plate) => this.normalizePlate(plate) === plateNumber)) {
-        throw new InsuranceVehicleMismatchException();
-      }
-      if (!insurance.chassisNumber) {
-        throw new ProviderVerificationException("INVALID_RESPONSE");
-      }
-
-      const vin = await this.premblyService.verifyVin(insurance.chassisNumber);
+      const [plate, vin] = await Promise.all([
+        this.premblyService.verifyPlate(plateNumber),
+        this.verifyVin(chassisNumber),
+      ]);
+      this.assertVehicleDetailsMatch(plateNumber, plate.plateNumber, plate.vehicleName, vin);
 
       const completed = await this.databaseService.vehicleVerification.update({
         where: { id: verification.id },
         data: {
           status: ProviderVerificationStatus.SUCCEEDED,
-          chassisNumber: insurance.chassisNumber,
           make: vin.make,
           model: vin.model,
           year: vin.year,
-          color: insurance.color,
+          color: plate.color,
           passengerCapacity: vin.passengerCapacity,
+          plateProviderRef: plate.reference,
           vinProviderRef: vin.reference,
-          insurancePolicyNumber: insurance.policyNumber,
-          insurancePolicyStatus: insurance.policyStatus,
-          insurancePolicyExpiresAt: insurance.expiresAt,
-          insuranceProviderRef: insurance.reference,
         },
       });
       return this.toVehicleResponse(completed);
@@ -281,6 +269,72 @@ export class VehicleVerificationService {
     return plateNumber.toUpperCase().replaceAll(/[\s-]+/g, "");
   }
 
+  private vehicleWords(value: string): string[] {
+    return value
+      .toUpperCase()
+      .split(/[^A-Z0-9]+/)
+      .filter(Boolean);
+  }
+
+  private assertVehicleDetailsMatch(
+    requestedPlate: string,
+    returnedPlate: string,
+    plateVehicleName: string,
+    vin: { make: string; model: string },
+  ): void {
+    if (this.normalizePlate(returnedPlate) !== requestedPlate) {
+      throw new VehicleMismatchException();
+    }
+
+    const plateWords = this.vehicleWords(plateVehicleName);
+    const makeWords = this.vehicleWords(vin.make);
+    const modelWords = this.vehicleWords(vin.model);
+    const normalizedModel = modelWords.join("");
+    const makeIndex = plateWords.findIndex((_, start) =>
+      makeWords.every((word, offset) => plateWords[start + offset] === word),
+    );
+    const plateModelWords = plateWords.slice(makeIndex + makeWords.length);
+    const modelMatches = plateModelWords.some((_, start) => {
+      let candidate = "";
+      for (const word of plateModelWords.slice(start)) {
+        candidate += word;
+        if (candidate === normalizedModel) return true;
+        if (candidate.length >= normalizedModel.length) return false;
+      }
+      return false;
+    });
+    if (makeWords.length === 0 || modelWords.length === 0 || makeIndex < 0 || !modelMatches) {
+      throw new VehicleMismatchException();
+    }
+  }
+
+  private async verifyVin(chassisNumber: string) {
+    try {
+      const vin = await this.premblyService.verifyVin(chassisNumber);
+      if (vin.passengerCapacity) {
+        return vin;
+      }
+
+      const nhtsaVin = await this.nhtsaService.verifyVin(chassisNumber);
+      if (!nhtsaVin.passengerCapacity) {
+        throw new NhtsaError("INVALID_RESPONSE");
+      }
+      return { ...vin, passengerCapacity: nhtsaVin.passengerCapacity };
+    } catch (error) {
+      if (
+        !(error instanceof PremblyError) ||
+        !["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+      ) {
+        throw error;
+      }
+      const vin = await this.nhtsaService.verifyVin(chassisNumber);
+      if (!vin.passengerCapacity) {
+        throw new NhtsaError("INVALID_RESPONSE");
+      }
+      return { ...vin, reference: null };
+    }
+  }
+
   private hash(value: Record<string, string>): string {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
   }
@@ -322,6 +376,9 @@ export class VehicleVerificationService {
   private toVerificationException(error: unknown): VerificationException {
     if (error instanceof VerificationException) return error;
     if (error instanceof PremblyError) {
+      return new ProviderVerificationException(error.kind);
+    }
+    if (error instanceof NhtsaError) {
       return new ProviderVerificationException(error.kind);
     }
     this.logger.error(

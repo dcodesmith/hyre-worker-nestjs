@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { CarModule } from "../car/car.module";
+import { NhtsaModule } from "../nhtsa/nhtsa.module";
 import { PremblyModule } from "../prembly/prembly.module";
 import { StorageModule } from "../storage/storage.module";
 import {
@@ -17,7 +18,7 @@ import { VehicleVerificationService } from "./vehicle-verification.service";
 import { VerificationThrottlerGuard } from "./verification-throttler.guard";
 
 @Module({
-  imports: [AuthModule, CarModule, PremblyModule, StorageModule],
+  imports: [AuthModule, CarModule, NhtsaModule, PremblyModule, StorageModule],
   controllers: [
     VehicleVerificationController,
     InsuranceVerificationController,

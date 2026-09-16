@@ -7,11 +7,13 @@ export interface UploadedCarFile {
 
 export interface CarUploadFields {
   images?: UploadedCarFile[];
+  vehicleRegistration?: UploadedCarFile[];
   motCertificate?: UploadedCarFile[];
   insuranceCertificate?: UploadedCarFile[];
 }
 
 export interface CarDocumentFiles {
+  vehicleRegistration: UploadedCarFile;
   motCertificate: UploadedCarFile;
   insuranceCertificate: UploadedCarFile;
 }

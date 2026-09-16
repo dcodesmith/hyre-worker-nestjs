@@ -92,7 +92,11 @@ describe("FleetOwnerCarController", () => {
 
   describe("staged onboarding", () => {
     it("uploads draft documents", async () => {
-      const files = { motCertificate: {}, insuranceCertificate: {} };
+      const files = {
+        vehicleRegistration: {},
+        motCertificate: {},
+        insuranceCertificate: {},
+      };
       vi.mocked(carService.uploadDraftCarDocuments).mockResolvedValueOnce({ id: "car-1" } as never);
 
       await expect(

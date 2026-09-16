@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
   CarApprovalStatus,
   DocumentStatus,
   DocumentType,
   Prisma,
-  ProviderVerificationStatus,
   ServiceTier,
   Status,
   VehicleType,
@@ -753,6 +751,7 @@ describe("CarService", () => {
             model: "Camry",
             year: 2020,
             color: "Black",
+            passengerCapacity: 5,
             status: Status.HOLD,
             approvalStatus: CarApprovalStatus.PENDING,
           }),
@@ -765,108 +764,24 @@ describe("CarService", () => {
       expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
     });
 
-    it("creates a SUCCEEDED InsuranceVerification in the same transaction when an unexpired snapshot exists", async () => {
-      const policyExpiresAt = new Date("2027-01-14T22:59:59.999Z");
+    it("fails when the verification is missing trusted passenger capacity", async () => {
       databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
       databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
         ...verification,
-        insurancePolicyNumber: "TEST/POLICY/123",
-        insurancePolicyStatus: "Active",
-        insurancePolicyExpiresAt: policyExpiresAt,
-        insuranceProviderRef: "ins-ref",
+        passengerCapacity: null,
       });
-      databaseServiceMock.car.create.mockResolvedValueOnce({
-        id: "car-1",
-        ownerId: "owner-1",
-        registrationNumber: "KJA123AB",
-        chassisNumber: verification.chassisNumber,
-      });
-      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
-      databaseServiceMock.insuranceVerification.create.mockResolvedValueOnce({ id: "ins-1" });
-
-      const result = await service.createDraftCarFromVerification("owner-1", "ver-1");
-
-      expect(result).toMatchObject({ id: "car-1" });
-      expect(databaseServiceMock.$transaction).toHaveBeenCalledTimes(1);
-      expect(databaseServiceMock.insuranceVerification.create).toHaveBeenCalledWith({
-        data: {
-          ownerId: "owner-1",
-          carId: "car-1",
-          idempotencyKey: "initial-insurance:ver-1",
-          requestHash: createHash("sha256")
-            .update(JSON.stringify({ carId: "car-1", policyNumber: "TEST/POLICY/123" }))
-            .digest("hex"),
-          policyNumber: "TEST/POLICY/123",
-          policyStatus: "Active",
-          policyExpiresAt,
-          providerRef: "ins-ref",
-          status: ProviderVerificationStatus.SUCCEEDED,
-        },
-      });
-    });
-
-    it("uses a deterministic initial-insurance idempotency key and request hash across calls", async () => {
-      const snapshot = {
-        ...verification,
-        insurancePolicyNumber: "TEST/POLICY/123",
-        insurancePolicyStatus: "Active",
-        insurancePolicyExpiresAt: new Date("2027-01-14T22:59:59.999Z"),
-        insuranceProviderRef: "ins-ref",
-      };
-      databaseServiceMock.user.findUnique.mockResolvedValue({ isOwnerDriver: false });
-      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValue(snapshot);
-      databaseServiceMock.car.create.mockResolvedValue({
-        id: "car-1",
-        ownerId: "owner-1",
-        registrationNumber: "KJA123AB",
-        chassisNumber: verification.chassisNumber,
-      });
-      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValue({ count: 1 });
-      databaseServiceMock.insuranceVerification.create.mockResolvedValue({ id: "ins-1" });
-
-      await service.createDraftCarFromVerification("owner-1", "ver-1");
-      await service.createDraftCarFromVerification("owner-1", "ver-1");
-
-      const [first, second] = databaseServiceMock.insuranceVerification.create.mock.calls;
-      expect(first?.[0]).toEqual(second?.[0]);
-      expect(first?.[0]?.data.idempotencyKey).toBe("initial-insurance:ver-1");
-      expect(first?.[0]?.data.requestHash).toBe(
-        createHash("sha256")
-          .update(JSON.stringify({ carId: "car-1", policyNumber: "TEST/POLICY/123" }))
-          .digest("hex"),
-      );
-    });
-
-    it("still creates the draft and skips insurance when the snapshot is already expired", async () => {
-      databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
-      databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
-        ...verification,
-        insurancePolicyNumber: "TEST/POLICY/123",
-        insurancePolicyStatus: "Active",
-        insurancePolicyExpiresAt: new Date(Date.now() - 60_000),
-      });
-      databaseServiceMock.car.create.mockResolvedValueOnce({
-        id: "car-1",
-        ownerId: "owner-1",
-        registrationNumber: "KJA123AB",
-        chassisNumber: verification.chassisNumber,
-      });
-      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
 
       await expect(
         service.createDraftCarFromVerification("owner-1", "ver-1"),
-      ).resolves.toMatchObject({ id: "car-1" });
-      expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
+      ).rejects.toBeInstanceOf(CarCreateFailedException);
+      expect(databaseServiceMock.car.create).not.toHaveBeenCalled();
     });
 
-    it("still creates the draft and skips insurance when the snapshot is missing", async () => {
+    it("defaults a missing plate color to an empty string and never writes insurance", async () => {
       databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
       databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
         ...verification,
         color: null,
-        insurancePolicyNumber: null,
-        insurancePolicyStatus: null,
-        insurancePolicyExpiresAt: null,
       });
       databaseServiceMock.car.create.mockResolvedValueOnce({
         id: "car-1",
@@ -916,6 +831,11 @@ describe("CarService", () => {
   });
 
   describe("submitCar", () => {
+    const requiredDocuments = [
+      { documentType: DocumentType.VEHICLE_REGISTRATION },
+      { documentType: DocumentType.MOT_CERTIFICATE },
+      { documentType: DocumentType.INSURANCE_CERTIFICATE },
+    ];
     const draftCar = {
       id: "car-1",
       ownerId: "owner-1",
@@ -928,12 +848,12 @@ describe("CarService", () => {
       fuelUpgradeRate: null,
       submittedAt: null,
       vehicleVerification: { id: "ver-1" },
-      _count: { documents: 0, images: 0 },
+      documents: [],
+      _count: { images: 0 },
     };
 
-    it("derives missing document, image, pricing, and insurance requirements", async () => {
+    it("derives missing document, image, and pricing requirements without an insurance gate", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce(draftCar);
-      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(0);
 
       const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
 
@@ -943,9 +863,9 @@ describe("CarService", () => {
           hasDocuments: false,
           hasImages: false,
           hasPricing: false,
-          hasInsuranceVerification: false,
         },
       });
+      expect(databaseServiceMock.insuranceVerification.count).not.toHaveBeenCalled();
     });
 
     it("treats fuel-inclusive pricing as complete without a fuel upgrade rate", async () => {
@@ -958,9 +878,9 @@ describe("CarService", () => {
         airportPickupRate: 30_000,
         pricingIncludesFuel: true,
         fuelUpgradeRate: null,
-        _count: { documents: 2, images: 1 },
+        documents: requiredDocuments,
+        _count: { images: 3 },
       });
-      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(1);
 
       await expect(service.submitCar("car-1", "owner-1")).resolves.toEqual({
         success: true,
@@ -968,24 +888,16 @@ describe("CarService", () => {
           hasDocuments: true,
           hasImages: true,
           hasPricing: true,
-          hasInsuranceVerification: true,
         },
       });
-      expect(databaseServiceMock.insuranceVerification.count).toHaveBeenCalledWith({
-        where: {
-          carId: "car-1",
-          ownerId: "owner-1",
-          status: ProviderVerificationStatus.SUCCEEDED,
-          policyExpiresAt: { gt: expect.any(Date) },
-        },
-      });
+      expect(databaseServiceMock.insuranceVerification.count).not.toHaveBeenCalled();
       expect(databaseServiceMock.car.update).toHaveBeenCalledWith({
         where: { id: "car-1" },
         data: { submittedAt: expect.any(Date) },
       });
     });
 
-    it("blocks a verified car when unexpired insurance verification is missing", async () => {
+    it("blocks submission until all three required documents are present", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({
         ...draftCar,
         hourlyRate: 5000,
@@ -994,9 +906,35 @@ describe("CarService", () => {
         fullDayRate: 100_000,
         airportPickupRate: 30_000,
         pricingIncludesFuel: true,
-        _count: { documents: 2, images: 1 },
+        documents: requiredDocuments.slice(1),
+        _count: { images: 3 },
       });
-      databaseServiceMock.insuranceVerification.count.mockResolvedValueOnce(0);
+
+      const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
+
+      expect(error).toBeInstanceOf(CarSubmissionRequirementsNotMetException);
+      expect((error as CarSubmissionRequirementsNotMetException).getDetails()).toEqual({
+        requirements: {
+          hasDocuments: false,
+          hasImages: true,
+          hasPricing: true,
+        },
+      });
+      expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
+    });
+
+    it("blocks submission until at least three images are present", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        ...draftCar,
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        documents: requiredDocuments,
+        _count: { images: 2 },
+      });
 
       const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
 
@@ -1004,32 +942,10 @@ describe("CarService", () => {
       expect((error as CarSubmissionRequirementsNotMetException).getDetails()).toEqual({
         requirements: {
           hasDocuments: true,
-          hasImages: true,
+          hasImages: false,
           hasPricing: true,
-          hasInsuranceVerification: false,
         },
       });
-      expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
-    });
-
-    it("does not require insurance verification for a legacy unverified car", async () => {
-      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
-        ...draftCar,
-        vehicleVerification: null,
-        hourlyRate: 5000,
-        dayRate: 50_000,
-        nightRate: 60_000,
-        fullDayRate: 100_000,
-        airportPickupRate: 30_000,
-        pricingIncludesFuel: true,
-        _count: { documents: 2, images: 1 },
-      });
-
-      await expect(service.submitCar("car-1", "owner-1")).resolves.toMatchObject({
-        success: true,
-        requirements: { hasInsuranceVerification: true },
-      });
-      expect(databaseServiceMock.insuranceVerification.count).not.toHaveBeenCalled();
     });
   });
 
@@ -1043,6 +959,10 @@ describe("CarService", () => {
         .mockResolvedValueOnce({ id: "car-1", documents: [] });
       storageServiceMock.uploadBuffer
         .mockResolvedValueOnce({
+          key: "owner-1/car-1/documents/registration.pdf",
+          url: "owner-1/car-1/documents/registration.pdf",
+        })
+        .mockResolvedValueOnce({
           key: "owner-1/car-1/documents/mot.pdf",
           url: "owner-1/car-1/documents/mot.pdf",
         })
@@ -1050,10 +970,11 @@ describe("CarService", () => {
           key: "owner-1/car-1/documents/insurance.pdf",
           url: "owner-1/car-1/documents/insurance.pdf",
         });
-      databaseServiceMock.documentApproval.createMany.mockResolvedValueOnce({ count: 2 });
+      databaseServiceMock.documentApproval.createMany.mockResolvedValueOnce({ count: 3 });
       databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1" });
 
       const result = await service.uploadDraftCarDocuments("car-1", "owner-1", {
+        vehicleRegistration: createMockFile("registration.pdf", "application/pdf"),
         motCertificate: createMockFile("mot.pdf", "application/pdf"),
         insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
       });
@@ -1069,6 +990,11 @@ describe("CarService", () => {
       );
       expect(databaseServiceMock.documentApproval.createMany).toHaveBeenCalledWith({
         data: [
+          {
+            documentType: DocumentType.VEHICLE_REGISTRATION,
+            documentUrl: "owner-1/car-1/documents/registration.pdf",
+            carId: "car-1",
+          },
           {
             documentType: DocumentType.MOT_CERTIFICATE,
             documentUrl: "owner-1/car-1/documents/mot.pdf",
@@ -1089,13 +1015,13 @@ describe("CarService", () => {
         url: "https://cdn.test/stored/mot.pdf",
       };
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
-      databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
       storageServiceMock.uploadBuffer
         .mockResolvedValueOnce(uploaded)
         .mockRejectedValueOnce(new Error("upload failed"));
 
       await expect(
         service.uploadDraftCarDocuments("car-1", "owner-1", {
+          vehicleRegistration: createMockFile("registration.pdf", "application/pdf"),
           motCertificate: createMockFile("mot.pdf", "application/pdf"),
           insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
         }),
@@ -1106,10 +1032,11 @@ describe("CarService", () => {
 
     it("rejects a second document upload for the same car", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({ id: "car-1" });
-      databaseServiceMock.documentApproval.count.mockResolvedValueOnce(2);
+      databaseServiceMock.documentApproval.count.mockResolvedValueOnce(3);
 
       await expect(
         service.uploadDraftCarDocuments("car-1", "owner-1", {
+          vehicleRegistration: createMockFile("registration.pdf", "application/pdf"),
           motCertificate: createMockFile("mot.pdf", "application/pdf"),
           insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
         }),

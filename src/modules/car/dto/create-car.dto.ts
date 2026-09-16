@@ -12,7 +12,10 @@ export const registrationNumberSchema = z
         const plate = value.replaceAll(/\s+/g, "");
         const stateFormat = /^[A-Z]{3}-?\d{3}[A-Z]{2}$/;
         const federalFormat = /^[A-Z]{2}\d{3}[A-Z]{2}$/;
-        return stateFormat.test(plate) || federalFormat.test(plate);
+        const premblySandboxFormat = /^[A-Z]{3}-?\d{6}$/;
+        return (
+          stateFormat.test(plate) || federalFormat.test(plate) || premblySandboxFormat.test(plate)
+        );
       },
       {
         message:
