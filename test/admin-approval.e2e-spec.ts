@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { MIN_IMAGE_COUNT } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -93,12 +94,19 @@ describe("Admin Approval E2E Tests", () => {
   });
 
   /**
-   * Create a PENDING car with one pending image and the required pending
-   * documents (registration + MOT + insurance) — mirrors what car creation
-   * always uploads, so approving the full set promotes the car.
+   * Create a PENDING car with the required pending documents plus enough
+   * images to meet MIN_IMAGE_COUNT. All but one image are already approved so
+   * the last image approval can promote the car.
    */
   async function createCarUnderReview() {
     const car = await factory.createCar(ownerId, { approvalStatus: "PENDING" });
+    await databaseService.vehicleImage.createMany({
+      data: Array.from({ length: MIN_IMAGE_COUNT - 1 }, (_, index) => ({
+        carId: car.id,
+        url: `https://cdn.tripdly.test/${ownerId}/${car.id}/images/photo-${index + 1}.jpg`,
+        status: "APPROVED" as const,
+      })),
+    });
     const image = await databaseService.vehicleImage.create({
       data: {
         carId: car.id,
