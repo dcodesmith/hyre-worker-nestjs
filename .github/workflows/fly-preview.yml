@@ -1,5 +1,7 @@
 # Deploy-only. Teardown lives in fly-preview-cleanup.yml so it still runs
 # from main after the PR branch is deleted.
+# Draft PRs do not get Neon/Fly/Redis. ready_for_review starts the preview;
+# converted_to_draft cancels an in-flight deploy via the concurrency group.
 name: Preview Environment (Neon + Fly)
 
 on:
@@ -8,6 +10,8 @@ on:
       - opened
       - reopened
       - synchronize
+      - ready_for_review
+      - converted_to_draft
 
 concurrency:
   group: preview-pr-${{ github.event.number }}
@@ -67,6 +71,7 @@ env:
 jobs:
   setup:
     name: Setup
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     outputs:
       neon_branch: ${{ steps.meta.outputs.neon_branch }}
@@ -84,7 +89,7 @@ jobs:
   create_neon_branch:
     name: Create Neon Branch
     needs: setup
-    if: github.event.action != 'closed'
+    if: ${{ !github.event.pull_request.draft && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -180,7 +185,7 @@ jobs:
   fly_auth_check:
     name: Verify Fly auth and org permissions
     needs: setup
-    if: github.event.action != 'closed'
+    if: ${{ !github.event.pull_request.draft && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -206,7 +211,7 @@ jobs:
   provision_redis:
     name: Provision Redis per PR
     needs: [setup, fly_auth_check]
-    if: github.event.action != 'closed'
+    if: ${{ !github.event.pull_request.draft && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     outputs:
       redis_url: ${{ steps.redis.outputs.redis_url }}
@@ -295,7 +300,7 @@ jobs:
   preflight:
     name: Preflight checks (env + migrations)
     needs: [setup, create_neon_branch, provision_redis]
-    if: github.event.action != 'closed'
+    if: ${{ !github.event.pull_request.draft && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     env:
       DOMAIN: ${{ needs.setup.outputs.preview_url }}
@@ -375,7 +380,7 @@ jobs:
   deploy_preview:
     name: Deploy Fly preview app
     needs: [setup, create_neon_branch, provision_redis, preflight]
-    if: github.event.action != 'closed'
+    if: ${{ !github.event.pull_request.draft && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-${{ github.event.number }}
