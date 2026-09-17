@@ -274,8 +274,13 @@ export class AuthService implements OnModuleInit {
    * @returns true if new user with grantable role, or existing user has the role
    */
   async validateExistingUserRole(email: string, role: RoleName): Promise<boolean> {
-    const user = await this.databaseService.user.findUnique({
-      where: { email },
+    const user = await this.databaseService.user.findFirst({
+      where: {
+        email: {
+          equals: email.trim(),
+          mode: "insensitive",
+        },
+      },
       include: { roles: { select: { name: true } } },
     });
 
@@ -290,8 +295,13 @@ export class AuthService implements OnModuleInit {
   }
 
   async isExistingUser(email: string): Promise<boolean> {
-    const user = await this.databaseService.user.findUnique({
-      where: { email },
+    const user = await this.databaseService.user.findFirst({
+      where: {
+        email: {
+          equals: email.trim(),
+          mode: "insensitive",
+        },
+      },
       select: { id: true },
     });
 
@@ -478,50 +488,81 @@ export class AuthService implements OnModuleInit {
   }
 
   async assignPendingReferralToNewUser(userId: string, email: string): Promise<void> {
-    await this.databaseService.$transaction(async (tx) => {
-      const normalizedEmail = email.trim().toLowerCase();
-      const pendingReferral = await tx.pendingReferralSignup.findUnique({
-        where: { email: normalizedEmail },
+    try {
+      await this.databaseService.$transaction(async (tx) => {
+        const normalizedEmail = email.trim().toLowerCase();
+        const pendingReferral = await tx.pendingReferralSignup.findUnique({
+          where: { email: normalizedEmail },
+        });
+        if (!pendingReferral) {
+          return;
+        }
+
+        const { count: consumedCount } = await tx.pendingReferralSignup.deleteMany({
+          where: { email: normalizedEmail },
+        });
+        if (consumedCount === 0) {
+          return;
+        }
+
+        if (pendingReferral.expiresAt <= new Date()) {
+          this.logger.info({ userId }, "Skipped expired pending referral attribution");
+          return;
+        }
+
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: {
+            createdAt: true,
+            referredByUserId: true,
+            referralAttribution: { select: { id: true } },
+          },
+        });
+        if (
+          !user ||
+          user.createdAt.getTime() <= pendingReferral.updatedAt.getTime() ||
+          user.referredByUserId ||
+          user.referralAttribution
+        ) {
+          this.logger.warn({ userId }, "Discarded pending referral for an existing user");
+          return;
+        }
+
+        if (!(await this.referralProgramService.getActiveProgramForTransaction(tx))) {
+          this.logger.info(
+            { userId },
+            "Skipped referral attribution because programme is not active",
+          );
+          return;
+        }
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            referredByUserId: pendingReferral.referrerUserId,
+            referralAttributionSource: ReferralAttributionSource.LINK,
+            referralSignupAt: new Date(),
+          },
+        });
+
+        await tx.referralAttribution.create({
+          data: {
+            refereeUserId: userId,
+            referrerUserId: pendingReferral.referrerUserId,
+            referralCode: pendingReferral.referralCode,
+            source: ReferralAttributionSource.LINK,
+          },
+        });
       });
-      if (!pendingReferral) {
-        return;
-      }
-
-      await tx.pendingReferralSignup.delete({
-        where: { email: normalizedEmail },
-      });
-
-      if (pendingReferral.expiresAt <= new Date()) {
-        this.logger.info({ userId }, "Skipped expired pending referral attribution");
-        return;
-      }
-
-      if (!(await this.referralProgramService.getActiveProgramForTransaction(tx))) {
-        this.logger.info(
-          { userId },
-          "Skipped referral attribution because programme is not active",
-        );
-        return;
-      }
-
-      await tx.user.update({
-        where: { id: userId },
-        data: {
-          referredByUserId: pendingReferral.referrerUserId,
-          referralAttributionSource: ReferralAttributionSource.LINK,
-          referralSignupAt: new Date(),
+    } catch (error) {
+      this.logger.error(
+        {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
         },
-      });
-
-      await tx.referralAttribution.create({
-        data: {
-          refereeUserId: userId,
-          referrerUserId: pendingReferral.referrerUserId,
-          referralCode: pendingReferral.referralCode,
-          source: ReferralAttributionSource.LINK,
-        },
-      });
-    });
+        "Failed to assign pending referral after sign-in",
+      );
+    }
   }
 
   /**

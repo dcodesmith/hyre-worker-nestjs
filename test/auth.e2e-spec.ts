@@ -595,6 +595,34 @@ describe("Auth E2E Tests", () => {
       });
     });
 
+    it("does not plant a referral on an existing account through email casing", async () => {
+      await factory.enableReferralProgram();
+      const { user: referrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-case-referrer"),
+        "user",
+      );
+      const { user: existingUser } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-case-existing"),
+        "user",
+      );
+
+      const sendResponse = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: existingUser.email.toUpperCase(),
+          type: "sign-in",
+          referralCode: referrer.referralCode,
+        });
+
+      expect(sendResponse.status).toBe(HttpStatus.OK);
+      await expect(
+        databaseService.pendingReferralSignup.findUnique({
+          where: { email: existingUser.email.toLowerCase() },
+        }),
+      ).resolves.toBeNull();
+    });
+
     it("does not inherit stale attribution when OTP is resent without a referral code", async () => {
       await factory.enableReferralProgram();
       const { user: referrer } = await factory.authenticateAndGetUser(

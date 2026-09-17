@@ -13,7 +13,7 @@ export interface ReferralUserSummaryResponse {
   referralCode: string | null;
   shareLink: string | null;
   programEnabled: boolean;
-  discountAmount: number;
+  discountAmount: number | null;
   discount:
     | { type: "FIXED"; amount: number }
     | { type: "PERCENTAGE"; percentage: number; maxAmount: number }

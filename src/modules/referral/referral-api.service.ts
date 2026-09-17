@@ -198,11 +198,11 @@ export class ReferralApiService {
       referralCode: referralInfo.referralCode,
       shareLink,
       programEnabled: program?.status === ReferralProgramStatus.ACTIVE,
-      discountAmount: program
-        ? program.refereeDiscountType === ReferralIncentiveType.FIXED
+      discountAmount: !program
+        ? 0
+        : program.refereeDiscountType === ReferralIncentiveType.FIXED
           ? program.refereeDiscountValue.toNumber()
-          : (program.refereeDiscountMaxAmount?.toNumber() ?? 0)
-        : 0,
+          : null,
       discount: program
         ? program.refereeDiscountType === ReferralIncentiveType.FIXED
           ? {

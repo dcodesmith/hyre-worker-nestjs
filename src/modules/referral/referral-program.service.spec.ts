@@ -151,6 +151,16 @@ describe("ReferralProgramService", () => {
     });
   });
 
+  describe("getActiveProgram", () => {
+    it("returns null when the programme is paused", async () => {
+      databaseService.referralProgram.findUnique.mockResolvedValue(
+        createReferralProgram({ status: ReferralProgramStatus.PAUSED }),
+      );
+
+      await expect(service.getActiveProgram()).resolves.toBeNull();
+    });
+  });
+
   describe("update", () => {
     it("throws not-found when the locked row is missing", async () => {
       transactionClient.referralProgram.findUnique.mockResolvedValue(null);

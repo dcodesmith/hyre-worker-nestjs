@@ -40,6 +40,7 @@ describe("AuthService", () => {
     $queryRaw?: ReturnType<typeof vi.fn>;
     user?: {
       findUnique: ReturnType<typeof vi.fn>;
+      findFirst?: ReturnType<typeof vi.fn>;
       update?: ReturnType<typeof vi.fn>;
     };
     referralAttribution?: {
@@ -556,7 +557,8 @@ describe("AuthService", () => {
     describe("new user (not found in database)", () => {
       beforeEach(() => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue(null),
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue(null),
         };
       });
 
@@ -584,20 +586,31 @@ describe("AuthService", () => {
     describe("existing user", () => {
       it("should return true if existing user has the role", async () => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue({
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue({
             id: "user-1",
             email: "existing@example.com",
             roles: [{ name: USER }],
           }),
         };
 
-        const result = await service.validateExistingUserRole("existing@example.com", USER);
+        const result = await service.validateExistingUserRole(" Existing@Example.com ", USER);
         expect(result).toBe(true);
+        expect(mockDatabaseService.user.findFirst).toHaveBeenCalledWith({
+          where: {
+            email: {
+              equals: "Existing@Example.com",
+              mode: "insensitive",
+            },
+          },
+          include: { roles: { select: { name: true } } },
+        });
       });
 
       it("should return false if existing user does not have the role", async () => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue({
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue({
             id: "user-1",
             email: "existing@example.com",
             roles: [{ name: USER }],
@@ -610,7 +623,8 @@ describe("AuthService", () => {
 
       it("should return true if user has multiple roles including requested", async () => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue({
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue({
             id: "user-1",
             email: "admin@example.com",
             roles: [{ name: USER }, { name: ADMIN }],
@@ -623,7 +637,8 @@ describe("AuthService", () => {
 
       it("should return true for admin with existing admin role (protected but already has it)", async () => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue({
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue({
             id: "user-1",
             email: "admin@example.com",
             roles: [{ name: ADMIN }],
@@ -636,7 +651,8 @@ describe("AuthService", () => {
 
       it("should return true for staff with existing staff role (protected but already has it)", async () => {
         mockDatabaseService.user = {
-          findUnique: vi.fn().mockResolvedValue({
+          findUnique: vi.fn(),
+          findFirst: vi.fn().mockResolvedValue({
             id: "user-1",
             email: "staff@example.com",
             roles: [{ name: STAFF }],
@@ -645,6 +661,26 @@ describe("AuthService", () => {
 
         const result = await service.validateExistingUserRole("staff@example.com", STAFF);
         expect(result).toBe(true);
+      });
+    });
+  });
+
+  describe("isExistingUser", () => {
+    it("checks email identity case-insensitively", async () => {
+      mockDatabaseService.user = {
+        findUnique: vi.fn(),
+        findFirst: vi.fn().mockResolvedValue({ id: "user-1" }),
+      };
+
+      await expect(service.isExistingUser(" Existing@Example.com ")).resolves.toBe(true);
+      expect(mockDatabaseService.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          email: {
+            equals: "Existing@Example.com",
+            mode: "insensitive",
+          },
+        },
+        select: { id: true },
       });
     });
   });
@@ -920,16 +956,24 @@ describe("AuthService", () => {
     });
 
     it("atomically consumes pending referral attribution after OTP authentication", async () => {
+      const capturedAt = new Date(Date.now() - 60_000);
       mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
         email: "new-user@example.com",
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
         expiresAt: new Date(Date.now() + 600_000),
+        updatedAt: capturedAt,
+      });
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        createdAt: new Date(capturedAt.getTime() + 30_000),
+        referredByUserId: null,
+        referralAttribution: null,
       });
 
       await service.assignPendingReferralToNewUser("user-1", "New-User@Example.com");
 
-      expect(mockDatabaseService.pendingReferralSignup?.delete).toHaveBeenCalledWith({
+      expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
         where: { email: "new-user@example.com" },
       });
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
@@ -956,11 +1000,13 @@ describe("AuthService", () => {
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
         expiresAt: new Date(Date.now() - 1),
+        updatedAt: new Date(Date.now() - 600_000),
       });
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.assignPendingReferralToNewUser("user-1", "expired@example.com");
 
-      expect(mockDatabaseService.pendingReferralSignup?.delete).toHaveBeenCalledWith({
+      expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
         where: { email: "expired@example.com" },
       });
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
@@ -982,30 +1028,48 @@ describe("AuthService", () => {
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
         expiresAt: new Date(Date.now() + 600_000),
+        updatedAt: new Date(Date.now() - 60_000),
+      });
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        createdAt: new Date(),
+        referredByUserId: null,
+        referralAttribution: null,
       });
       await service.assignPendingReferralToNewUser("user-1", "new-user@example.com");
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
       expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
     });
 
-    it("reports programInactive and creates no relationship when the programme is paused", async () => {
-      mockReferralProgramService.getActiveProgram.mockResolvedValue(null);
-      mockReferralProgramService.getActiveProgramForTransaction.mockResolvedValue(null);
-
-      await expect(
-        service.validateReferralCodeForSignup("FLOWREF1", "new-user@example.com"),
-      ).resolves.toEqual({ programInactive: true });
-      expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
-
+    it("discards planted attribution when the account predates referral capture", async () => {
+      const capturedAt = new Date();
       mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
-        email: "new-user@example.com",
+        email: "existing@example.com",
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
         expiresAt: new Date(Date.now() + 600_000),
+        updatedAt: capturedAt,
       });
-      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com");
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
+      mockDatabaseService.user.findUnique.mockResolvedValue({
+        createdAt: new Date(capturedAt.getTime() - 60_000),
+        referredByUserId: null,
+        referralAttribution: null,
+      });
+
+      await service.assignPendingReferralToNewUser("user-1", "existing@example.com");
+
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
       expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
+      expect(mockReferralProgramService.getActiveProgramForTransaction).not.toHaveBeenCalled();
+    });
+
+    it("does not fail sign-in when pending referral persistence fails", async () => {
+      mockDatabaseService.$transaction?.mockRejectedValueOnce(new Error("database unavailable"));
+
+      await expect(
+        service.assignPendingReferralToNewUser("user-1", "new-user@example.com"),
+      ).resolves.toBeUndefined();
     });
   });
 

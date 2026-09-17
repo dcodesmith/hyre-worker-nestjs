@@ -251,7 +251,12 @@ describe("ReferralApiService", () => {
 
   it("reports the programme as disabled when it is paused or missing", async () => {
     referralProgramService.getProgram.mockResolvedValue(
-      createReferralProgram({ status: ReferralProgramStatus.PAUSED }),
+      createReferralProgram({
+        status: ReferralProgramStatus.PAUSED,
+        refereeDiscountType: ReferralIncentiveType.PERCENTAGE,
+        refereeDiscountValue: new Decimal(10),
+        refereeDiscountMaxAmount: new Decimal(5000),
+      }),
     );
     mockDatabaseService.user.findUnique.mockResolvedValueOnce({
       referralCode: "ABCDEFGH",
@@ -272,5 +277,11 @@ describe("ReferralApiService", () => {
     const result = await service.getUserReferralSummary("user-1", "http://localhost:3000");
 
     expect(result?.programEnabled).toBe(false);
+    expect(result?.discountAmount).toBeNull();
+    expect(result?.discount).toEqual({
+      type: ReferralIncentiveType.PERCENTAGE,
+      percentage: 10,
+      maxAmount: 5000,
+    });
   });
 });

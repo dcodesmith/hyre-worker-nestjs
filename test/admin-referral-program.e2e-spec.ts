@@ -141,12 +141,9 @@ describe("Admin referral programme E2E Tests", () => {
   });
 
   it("GET /api/admin/referral-program returns 404 when unconfigured", async () => {
-    const existing = await databaseService.referralProgram.findUnique({
+    await databaseService.referralProgram.deleteMany({
       where: { id: "default" },
     });
-    if (existing) {
-      return;
-    }
 
     const response = await request(app.getHttpServer())
       .get("/api/admin/referral-program")

@@ -24,6 +24,8 @@ import type { ReferralEligibility } from "./booking.interface";
  */
 const RELEASED_RESERVATION_REASON = "RESERVATION_RELEASED";
 
+type ReferralCreditReader = Pick<Prisma.TransactionClient, "$queryRaw" | "referralReward">;
+
 @Injectable()
 export class BookingEligibilityService {
   constructor(
@@ -498,40 +500,12 @@ export class BookingEligibilityService {
       SELECT "id" FROM "User" WHERE "id" = ${reward.referrerUserId} FOR UPDATE
     `;
 
-    const [releasedRewards, committedCredits] = await Promise.all([
-      tx.referralReward.aggregate({
-        where: {
-          referrerUserId: reward.referrerUserId,
-          status: ReferralRewardStatus.RELEASED,
-        },
-        _sum: { amount: true },
-      }),
-      tx.$queryRaw<Array<{ amount: Prisma.Decimal }>>`
-        SELECT COALESCE(SUM(
-          CASE
-            WHEN "paymentStatus" IN (
-              'PAID',
-              'PARTIALLY_REFUNDED',
-              'REFUND_PROCESSING',
-              'REFUND_FAILED'
-            )
-              THEN "referralCreditsUsed"
-            WHEN "paymentStatus" = 'UNPAID' AND "status" <> 'CANCELLED'
-              THEN "referralCreditsReserved"
-            ELSE 0
-          END
-        ), 0)::decimal AS amount
-        FROM "Booking"
-        WHERE "userId" = ${reward.referrerUserId}
-      `,
-    ]);
-
-    const remainingEarned = Decimal.max(
-      0,
-      new Decimal(releasedRewards._sum.amount ?? 0).minus(reward.amount),
+    const { totalEarned, totalCommitted } = await this.getReferralCreditTotals(
+      tx,
+      reward.referrerUserId,
     );
-    const committed = new Decimal(committedCredits[0]?.amount ?? 0);
-    const manualRecoveryRequired = committed.gt(remainingEarned);
+    const remainingEarned = Decimal.max(0, totalEarned.minus(reward.amount));
+    const manualRecoveryRequired = totalCommitted.gt(remainingEarned);
     const reason = manualRecoveryRequired
       ? "BOOKING_REFUNDED_CREDITS_ALREADY_USED"
       : "BOOKING_REFUNDED";
@@ -569,7 +543,7 @@ export class BookingEligibilityService {
       bookingId,
       referrerUserId: reward.referrerUserId,
       rewardAmount: reward.amount.toString(),
-      recoveryShortfall: Decimal.max(0, committed.minus(remainingEarned)).toString(),
+      recoveryShortfall: Decimal.max(0, totalCommitted.minus(remainingEarned)).toString(),
     };
     if (manualRecoveryRequired) {
       this.logger.error(logContext, "Referral reward refund clawback requires manual recovery");
@@ -581,11 +555,23 @@ export class BookingEligibilityService {
   }
 
   private async getCappedReferralCreditBalance(
-    database: Pick<Prisma.TransactionClient, "$queryRaw" | "referralReward">,
+    database: ReferralCreditReader,
     userId: string,
     program: ReferralProgram,
     bookingAmount: Decimal,
   ): Promise<Decimal> {
+    const { totalEarned, totalCommitted } = await this.getReferralCreditTotals(database, userId);
+    const availableCredits = Decimal.max(0, totalEarned.minus(totalCommitted));
+    return Decimal.min(
+      availableCredits,
+      this.referralProgramService.calculateCreditsCap(program, bookingAmount),
+    );
+  }
+
+  private async getReferralCreditTotals(
+    database: ReferralCreditReader,
+    userId: string,
+  ): Promise<{ totalEarned: Decimal; totalCommitted: Decimal }> {
     const [releasedRewards, committedCredits] = await Promise.all([
       database.referralReward.aggregate({
         where: {
@@ -614,12 +600,9 @@ export class BookingEligibilityService {
       `,
     ]);
 
-    const totalEarned = new Decimal(releasedRewards._sum.amount ?? 0);
-    const totalCommitted = new Decimal(committedCredits[0]?.amount ?? 0);
-    const availableCredits = Decimal.max(0, totalEarned.minus(totalCommitted));
-    return Decimal.min(
-      availableCredits,
-      this.referralProgramService.calculateCreditsCap(program, bookingAmount),
-    );
+    return {
+      totalEarned: new Decimal(releasedRewards._sum.amount ?? 0),
+      totalCommitted: new Decimal(committedCredits[0]?.amount ?? 0),
+    };
   }
 }
