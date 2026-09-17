@@ -1,12 +1,14 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { PaymentAttemptStatus } from "@prisma/client";
+import { BookingReferralStatus, PaymentAttemptStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { createPaymentRecord } from "../../shared/helper.fixtures";
+import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { DatabaseService } from "../database/database.service";
 import { RefundStatusChangedHandler } from "../notification/handlers/refund-status-changed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { ReferralProcessingService } from "../referral/referral-processing.service";
 import {
   type RefundFinalizationPayment,
   RefundFinalizationService,
@@ -15,6 +17,12 @@ import {
 describe("RefundFinalizationService", () => {
   let service: RefundFinalizationService;
   let notificationOutboxService: NotificationOutboxService;
+  let bookingEligibilityService: {
+    reverseReferralRewardForRefund: ReturnType<typeof vi.fn>;
+  };
+  let referralProcessingService: {
+    processReferralCompletionAfterFailedRefund: ReturnType<typeof vi.fn>;
+  };
   const findUnique = vi.fn<(args: unknown) => Promise<RefundFinalizationPayment | null>>();
   const refundStatusChangedHandler = {} as RefundStatusChangedHandler;
   const transactionClient = {
@@ -43,6 +51,15 @@ describe("RefundFinalizationService", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    bookingEligibilityService = {
+      reverseReferralRewardForRefund: vi.fn().mockResolvedValue({
+        reversed: true,
+        manualRecoveryRequired: false,
+      }),
+    };
+    referralProcessingService = {
+      processReferralCompletionAfterFailedRefund: vi.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RefundFinalizationService,
@@ -56,6 +73,14 @@ describe("RefundFinalizationService", () => {
               callback(transactionClient),
             ),
           },
+        },
+        {
+          provide: BookingEligibilityService,
+          useValue: bookingEligibilityService,
+        },
+        {
+          provide: ReferralProcessingService,
+          useValue: referralProcessingService,
         },
         {
           provide: NotificationOutboxService,
@@ -132,6 +157,27 @@ describe("RefundFinalizationService", () => {
       },
     });
     expect(transactionClient.extension.updateMany).not.toHaveBeenCalled();
+    expect(bookingEligibilityService.reverseReferralRewardForRefund).toHaveBeenCalledWith(
+      transactionClient,
+      "booking-123",
+    );
+    expect(
+      referralProcessingService.processReferralCompletionAfterFailedRefund,
+    ).not.toHaveBeenCalled();
+    expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-123",
+        referralStatus: {
+          in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED],
+        },
+      },
+      data: { referralStatus: BookingReferralStatus.REVERSED },
+    });
+    expect(
+      transactionClient.booking.updateMany.mock.calls.every(
+        ([args]) => !("referralCreditsUsed" in (args.data ?? {})),
+      ),
+    ).toBe(true);
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       refundStatusChangedHandler,
       {
@@ -151,6 +197,89 @@ describe("RefundFinalizationService", () => {
       },
       transactionClient,
     );
+  });
+
+  it("reverses referral rewards on a successful partial refund without mutating consumed credits", async () => {
+    findUnique.mockResolvedValueOnce({
+      ...createPaymentRecord({
+        id: "payment-123",
+        bookingId: "booking-123",
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+        amountCharged: new Decimal(10000),
+      }),
+      booking,
+      extension: null,
+    });
+
+    await expect(
+      service.finalize({
+        paymentId: "payment-123",
+        refundId: "refund-123",
+        status: PaymentAttemptStatus.PARTIALLY_REFUNDED,
+        amount: 4000,
+      }),
+    ).resolves.toBe(true);
+
+    expect(bookingEligibilityService.reverseReferralRewardForRefund).toHaveBeenCalledWith(
+      transactionClient,
+      "booking-123",
+    );
+    expect(
+      referralProcessingService.processReferralCompletionAfterFailedRefund,
+    ).not.toHaveBeenCalled();
+    expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-123",
+        referralStatus: {
+          in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED],
+        },
+      },
+      data: { referralStatus: BookingReferralStatus.REVERSED },
+    });
+    expect(
+      transactionClient.booking.updateMany.mock.calls.every(
+        ([args]) => !("referralCreditsUsed" in (args.data ?? {})),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not reverse referral rewards when refund finalization fails", async () => {
+    findUnique.mockResolvedValueOnce({
+      ...createPaymentRecord({
+        id: "payment-123",
+        bookingId: "booking-123",
+        status: PaymentAttemptStatus.REFUND_PROCESSING,
+      }),
+      booking,
+      extension: null,
+    });
+
+    await expect(
+      service.finalize({
+        paymentId: "payment-123",
+        refundId: "refund-123",
+        status: PaymentAttemptStatus.REFUND_FAILED,
+        amount: 10000,
+        failureReason: "Provider rejected refund",
+      }),
+    ).resolves.toBe(true);
+
+    expect(bookingEligibilityService.reverseReferralRewardForRefund).not.toHaveBeenCalled();
+    expect(
+      referralProcessingService.processReferralCompletionAfterFailedRefund,
+    ).toHaveBeenCalledWith(transactionClient, "booking-123");
+    expect(transactionClient.booking.updateMany).toHaveBeenCalledTimes(1);
+    expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-123",
+        paymentStatus: {
+          in: ["PAID", "REFUND_PROCESSING"],
+        },
+      },
+      data: {
+        paymentStatus: "REFUND_FAILED",
+      },
+    });
   });
 
   it("uses the parent booking and guest contact for an extension refund failure", async () => {
@@ -199,6 +328,9 @@ describe("RefundFinalizationService", () => {
       },
     });
     expect(transactionClient.booking.updateMany).not.toHaveBeenCalled();
+    expect(
+      referralProcessingService.processReferralCompletionAfterFailedRefund,
+    ).not.toHaveBeenCalled();
     expect(notificationOutboxService.create).toHaveBeenCalledWith(
       refundStatusChangedHandler,
       expect.objectContaining({

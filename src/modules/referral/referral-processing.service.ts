@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import {
   BookingReferralStatus,
+  BookingStatus,
+  PaymentStatus,
   Prisma,
-  ReferralReleaseCondition,
   ReferralRewardStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
@@ -21,231 +22,147 @@ export class ReferralProcessingService {
     this.logger.setContext(ReferralProcessingService.name);
   }
 
-  /**
-   * Process referral release for a completed booking when configured for COMPLETED.
-   * - Checks global referral config and idempotency
-   * - Optionally enforces expiry window
-   * - Marks referee discount as used
-   * - Releases pending reward and updates stats
-   * - Sets booking.referralStatus = REWARDED
-   */
   async processReferralCompletionForBooking(bookingId: string) {
-    // Load config
-    const configs = await this.databaseService.referralProgramConfig.findMany();
-    const configMap = configs.reduce<Record<string, unknown>>((acc, c) => {
-      acc[c.key] = c.value;
-      return acc;
-    }, {});
-
-    const REFERRAL_ENABLED = configMap.REFERRAL_ENABLED ?? true;
-    const REFERRAL_RELEASE_CONDITION = (configMap.REFERRAL_RELEASE_CONDITION ?? "COMPLETED") as
-      | "PAID"
-      | "COMPLETED";
-
-    if (REFERRAL_RELEASE_CONDITION !== "PAID" && REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
-      this.logger.warn(
-        {
-          value: REFERRAL_RELEASE_CONDITION,
-        },
-        "Invalid REFERRAL_RELEASE_CONDITION value",
-      );
-      return;
-    }
-
-    const REFERRAL_EXPIRY_DAYS = Number(configMap.REFERRAL_EXPIRY_DAYS ?? 0);
-
-    if (!REFERRAL_ENABLED || REFERRAL_RELEASE_CONDITION !== "COMPLETED") {
-      this.logger.info(
-        {
-          REFERRAL_ENABLED,
-          REFERRAL_RELEASE_CONDITION,
-        },
-        "Skipping referral completion due to config",
-      );
-      return;
-    }
-
-    const booking = await this.databaseService.booking.findFirst({
-      where: { id: bookingId, deletedAt: null },
-      select: {
-        id: true,
-        userId: true,
-        referralReferrerUserId: true,
-        referralStatus: true,
-      },
-    });
-
-    if (
-      booking?.referralStatus !== BookingReferralStatus.APPLIED ||
-      !booking?.userId ||
-      !booking?.referralReferrerUserId
-    ) {
-      this.logger.info(
-        {
-          bookingId,
-          hasBooking: !!booking,
-          referralStatus: booking?.referralStatus,
-          hasUser: !!booking?.userId,
-          hasReferrer: !!booking?.referralReferrerUserId,
-        },
-        "Skipping referral completion: booking not eligible",
-      );
-      return;
-    }
-
     try {
-      await this.databaseService.$transaction(async (tx) => {
-        // Idempotency: skip if already released
-        const alreadyReleased = await tx.referralReward.findFirst({
-          where: { bookingId: booking.id, status: ReferralRewardStatus.RELEASED },
-          select: { id: true },
-        });
+      const released = await this.databaseService.$transaction((tx) =>
+        this.releaseEligibleReward(tx, bookingId, PaymentStatus.PAID),
+      );
 
-        if (alreadyReleased) {
-          this.logger.warn(
-            {
-              bookingId: booking.id,
-              rewardId: alreadyReleased.id,
-            },
-            "Referral reward already released for booking",
-          );
-          return;
-        }
-
-        // Optional expiry check
-        const referee = await tx.user.findUnique({
-          where: { id: booking.userId },
-          select: { referralSignupAt: true, referralDiscountUsed: true },
-        });
-
-        if (REFERRAL_EXPIRY_DAYS > 0 && referee?.referralSignupAt) {
-          const daysSinceSignup = Math.floor(
-            (Date.now() - referee.referralSignupAt.getTime()) / (1000 * 60 * 60 * 24),
-          );
-
-          if (daysSinceSignup > REFERRAL_EXPIRY_DAYS) {
-            this.logger.warn(
-              {
-                bookingId: booking.id,
-                userId: booking.userId,
-                daysSinceSignup,
-                expiryDays: REFERRAL_EXPIRY_DAYS,
-              },
-              "Referral expired before completion; not releasing reward",
-            );
-            return;
-          }
-        }
-
-        // Mark discount used if not already. This is a fallback for bookings
-        // confirmed before the payment confirmation path marked the discount used.
-        if (referee && !referee.referralDiscountUsed) {
-          await tx.user.update({
-            where: { id: booking.userId },
-            data: { referralDiscountUsed: true },
-          });
-
-          this.logger.info(
-            {
-              bookingId: booking.id,
-              userId: booking.userId,
-            },
-            "Referral discount marked as used on completion (fallback)",
-          );
-        }
-
-        // Release pending reward
-        const pendingReward = await tx.referralReward.findFirst({
-          where: {
-            bookingId: booking.id,
-            status: ReferralRewardStatus.PENDING,
-            releaseCondition: ReferralReleaseCondition.COMPLETED,
-          },
-        });
-
-        if (!pendingReward) {
-          this.logger.info(
-            {
-              bookingId: booking.id,
-            },
-            "No pending referral reward found for booking",
-          );
-          return;
-        }
-
-        const releasedAt = new Date();
-        const released = await tx.referralReward.updateMany({
-          where: {
-            id: pendingReward.id,
-            status: ReferralRewardStatus.PENDING,
-            releaseCondition: ReferralReleaseCondition.COMPLETED,
-          },
-          data: { status: ReferralRewardStatus.RELEASED, processedAt: releasedAt },
-        });
-        if (released.count === 0) {
-          return;
-        }
-
-        await tx.booking.update({
-          where: { id: booking.id },
-          data: { referralStatus: BookingReferralStatus.REWARDED },
-        });
-
-        const currentStats = await tx.userReferralStats.findUnique({
-          where: { userId: pendingReward.referrerUserId },
-          select: { totalRewardsPending: true },
-        });
-        const currentPending = new Prisma.Decimal(currentStats?.totalRewardsPending ?? 0);
-        const computedPending = currentPending.minus(pendingReward.amount);
-        const newPending = computedPending.lessThan(0) ? new Prisma.Decimal(0) : computedPending;
-
-        await tx.userReferralStats.upsert({
-          where: { userId: pendingReward.referrerUserId },
-          create: {
-            userId: pendingReward.referrerUserId,
-            totalReferrals: 1,
-            totalRewardsGranted: pendingReward.amount,
-            totalRewardsPending: 0,
-            lastReferralAt: new Date(),
-          },
-          update: {
-            totalRewardsGranted: { increment: pendingReward.amount },
-            totalRewardsPending: newPending,
-            lastReferralAt: new Date(),
-          },
-        });
-
-        await this.notificationOutboxService.create(
-          this.referralRewardReleasedHandler,
-          {
-            rewardId: pendingReward.id,
-            bookingId: booking.id,
-            referrerUserId: pendingReward.referrerUserId,
-            amount: Number(pendingReward.amount),
-            releasedAt,
-          },
-          tx,
-        );
-
-        this.logger.info(
-          {
-            bookingId: booking.id,
-            rewardId: pendingReward.id,
-            rewardAmount: pendingReward.amount,
-            referrerId: pendingReward.referrerUserId,
-          },
-          "Referral reward released on completion",
-        );
-      });
+      this.logger.info(
+        { bookingId, released },
+        released
+          ? "Referral reward released on completion"
+          : "Referral completion skipped because booking or reward was not eligible",
+      );
+      return released;
     } catch (error) {
       this.logger.error(
         {
-          bookingId: booking.id,
+          bookingId,
           error: error instanceof Error ? error.message : String(error),
         },
         "Failed to process referral completion",
       );
       throw error;
     }
+  }
+
+  processReferralCompletionAfterFailedRefund(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+  ): Promise<boolean> {
+    return this.releaseEligibleReward(tx, bookingId, PaymentStatus.REFUND_FAILED);
+  }
+
+  private async releaseEligibleReward(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    requiredPaymentStatus: PaymentStatus,
+  ): Promise<boolean> {
+    await tx.$queryRaw`
+      SELECT "id" FROM "Booking" WHERE "id" = ${bookingId} FOR UPDATE
+    `;
+    const booking = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        paymentStatus: true,
+        referralReferrerUserId: true,
+        referralStatus: true,
+        deletedAt: true,
+      },
+    });
+    if (
+      !booking ||
+      booking.deletedAt ||
+      booking.status !== BookingStatus.COMPLETED ||
+      booking.paymentStatus !== requiredPaymentStatus ||
+      booking.referralStatus !== BookingReferralStatus.APPLIED ||
+      !booking.userId ||
+      !booking.referralReferrerUserId
+    ) {
+      return false;
+    }
+
+    const pendingReward = await tx.referralReward.findUnique({
+      where: { bookingId: booking.id },
+    });
+    if (!pendingReward || pendingReward.status !== ReferralRewardStatus.PENDING) {
+      return false;
+    }
+
+    const releasedAt = new Date();
+    const rewardUpdate = await tx.referralReward.updateMany({
+      where: {
+        id: pendingReward.id,
+        status: ReferralRewardStatus.PENDING,
+      },
+      data: {
+        status: ReferralRewardStatus.RELEASED,
+        processedAt: releasedAt,
+      },
+    });
+    if (rewardUpdate.count === 0) {
+      return false;
+    }
+
+    const referee = await tx.user.findUnique({
+      where: { id: booking.userId },
+      select: { referralDiscountUsed: true },
+    });
+    if (referee && !referee.referralDiscountUsed) {
+      await tx.user.update({
+        where: { id: booking.userId },
+        data: { referralDiscountUsed: true },
+      });
+    }
+
+    await tx.booking.update({
+      where: { id: booking.id },
+      data: { referralStatus: BookingReferralStatus.REWARDED },
+    });
+    await tx.$queryRaw`
+      SELECT "id" FROM "User" WHERE "id" = ${pendingReward.referrerUserId} FOR UPDATE
+    `;
+
+    const currentStats = await tx.userReferralStats.findUnique({
+      where: { userId: pendingReward.referrerUserId },
+      select: { totalRewardsPending: true },
+    });
+    const currentPending = new Prisma.Decimal(currentStats?.totalRewardsPending ?? 0);
+    const computedPending = currentPending.minus(pendingReward.amount);
+    const newPending = computedPending.lessThan(0) ? new Prisma.Decimal(0) : computedPending;
+
+    await tx.userReferralStats.upsert({
+      where: { userId: pendingReward.referrerUserId },
+      create: {
+        userId: pendingReward.referrerUserId,
+        totalReferrals: 1,
+        totalRewardsGranted: pendingReward.amount,
+        totalRewardsPending: 0,
+        lastReferralAt: new Date(),
+      },
+      update: {
+        totalRewardsGranted: { increment: pendingReward.amount },
+        totalRewardsPending: newPending,
+        lastReferralAt: new Date(),
+      },
+    });
+
+    await this.notificationOutboxService.create(
+      this.referralRewardReleasedHandler,
+      {
+        rewardId: pendingReward.id,
+        bookingId: booking.id,
+        referrerUserId: pendingReward.referrerUserId,
+        amount: Number(pendingReward.amount),
+        releasedAt,
+      },
+      tx,
+    );
+
+    return true;
   }
 }

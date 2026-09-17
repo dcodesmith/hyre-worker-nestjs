@@ -814,6 +814,8 @@ describe("Bookings E2E Tests", () => {
           referralReferrerUserId: referrer.id,
           referralStatus: "APPLIED",
           referralDiscountAmount: 5000,
+          referralCreditsUsed: 4000,
+          referralCreditsReserved: 4000,
         },
       });
       const reward = await databaseService.referralReward.create({
@@ -823,7 +825,6 @@ describe("Bookings E2E Tests", () => {
           bookingId: booking.id,
           amount: 2500,
           status: "PENDING",
-          releaseCondition: "COMPLETED",
         },
       });
       await databaseService.userReferralStats.create({
@@ -849,7 +850,10 @@ describe("Bookings E2E Tests", () => {
 
       const cancelled = await factory.getBookingById(booking.id);
       expect(cancelled?.status).toBe("CANCELLED");
+      expect(cancelled?.paymentStatus).toBe("REFUND_PROCESSING");
       expect(cancelled?.referralStatus).toBe("APPLIED");
+      expect(cancelled?.referralCreditsUsed.toString()).toBe("4000");
+      expect(cancelled?.referralCreditsReserved.toString()).toBe("0");
       await expect(
         databaseService.referralReward.findUniqueOrThrow({ where: { id: reward.id } }),
       ).resolves.toMatchObject({

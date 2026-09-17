@@ -28,7 +28,7 @@ describe("Auth E2E Tests", () => {
     });
 
     databaseService = app.get(DatabaseService);
-    factory = new TestDataFactory(databaseService);
+    factory = new TestDataFactory(databaseService, app);
 
     await app.init();
 
@@ -500,6 +500,216 @@ describe("Auth E2E Tests", () => {
 
         expect(user?.roles.some(({ name }) => name === "user")).toBe(true);
       });
+    });
+  });
+
+  describe("referral programme signup", () => {
+    beforeEach(async () => {
+      await factory.clearRateLimits();
+    });
+
+    afterEach(async () => {
+      await factory.enableReferralProgram();
+    });
+
+    it("reports an inactive programme and creates no attribution when a referral code is supplied", async () => {
+      const { user: referrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-inactive-referrer"),
+        "user",
+      );
+      expect(referrer.referralCode).toEqual(expect.any(String));
+
+      await databaseService.referralProgram.updateMany({ data: { status: "PAUSED" } });
+
+      const refereeEmail = uniqueEmail("ref-inactive-referee");
+      const sendResponse = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+          referralCode: referrer.referralCode,
+        });
+
+      expect(sendResponse.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(sendResponse.body.message).toBe("Referral programme is not active");
+      await expect(
+        databaseService.user.findUnique({ where: { email: refereeEmail } }),
+      ).resolves.toBeNull();
+      await expect(
+        databaseService.referralAttribution.count({
+          where: { referrerUserId: referrer.id },
+        }),
+      ).resolves.toBe(0);
+    });
+
+    it("rejects an invalid referral code while the programme is active", async () => {
+      await factory.enableReferralProgram();
+
+      const sendResponse = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: uniqueEmail("ref-invalid-code"),
+          type: "sign-in",
+          referralCode: "NOTACODE",
+        });
+
+      expect(sendResponse.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(sendResponse.body.message).toBe("Invalid referral code");
+    });
+
+    it("attributes a new user when the programme is active and the code is valid", async () => {
+      await factory.enableReferralProgram();
+      const { user: referrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-active-referrer"),
+        "user",
+      );
+      expect(referrer.referralCode).toEqual(expect.any(String));
+
+      const { user: referee } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-active-referee"),
+        "user",
+        "mobile",
+        { referralCode: referrer.referralCode ?? undefined },
+      );
+
+      expect(referee.referredByUserId).toBe(referrer.id);
+      expect(referee.referralAttributionSource).toBe("LINK");
+      expect(referee.referralSignupAt).toEqual(expect.any(Date));
+      await expect(
+        databaseService.pendingReferralSignup.findUnique({
+          where: { email: referee.email.toLowerCase() },
+        }),
+      ).resolves.toBeNull();
+      await expect(
+        databaseService.referralAttribution.findFirst({
+          where: {
+            refereeUserId: referee.id,
+            referrerUserId: referrer.id,
+            referralCode: referrer.referralCode ?? undefined,
+          },
+        }),
+      ).resolves.toMatchObject({
+        source: "LINK",
+      });
+    });
+
+    it("does not inherit stale attribution when OTP is resent without a referral code", async () => {
+      await factory.enableReferralProgram();
+      const { user: referrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-resend-referrer"),
+        "user",
+      );
+      expect(referrer.referralCode).toEqual(expect.any(String));
+
+      const refereeEmail = uniqueEmail("ref-resend-referee");
+      const firstSend = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+          referralCode: referrer.referralCode,
+        });
+      expect(firstSend.status).toBe(HttpStatus.OK);
+      await expect(
+        databaseService.pendingReferralSignup.findUnique({
+          where: { email: refereeEmail.toLowerCase() },
+        }),
+      ).resolves.toMatchObject({
+        referrerUserId: referrer.id,
+        referralCode: referrer.referralCode,
+      });
+
+      const resend = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+        });
+      expect(resend.status).toBe(HttpStatus.OK);
+      await expect(
+        databaseService.pendingReferralSignup.findUnique({
+          where: { email: refereeEmail.toLowerCase() },
+        }),
+      ).resolves.toBeNull();
+
+      const verification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${refereeEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const otp = verification?.value.split(":")[0];
+
+      const verifyResponse = await request(app.getHttpServer())
+        .post("/api/auth/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: refereeEmail, otp });
+
+      expect(verifyResponse.status).toBe(HttpStatus.OK);
+
+      const referee = await databaseService.user.findUnique({
+        where: { email: refereeEmail },
+        select: { id: true, referredByUserId: true },
+      });
+      expect(referee?.referredByUserId).toBeNull();
+      await expect(
+        databaseService.referralAttribution.count({
+          where: { refereeUserId: referee?.id },
+        }),
+      ).resolves.toBe(0);
+    });
+
+    it("discards an expired persisted referral after successful OTP authentication", async () => {
+      await factory.enableReferralProgram();
+      const { user: referrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-expired-referrer"),
+        "user",
+      );
+      const refereeEmail = uniqueEmail("ref-expired-referee");
+
+      const sendResponse = await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+          referralCode: referrer.referralCode,
+        });
+      expect(sendResponse.status).toBe(HttpStatus.OK);
+
+      await databaseService.pendingReferralSignup.update({
+        where: { email: refereeEmail.toLowerCase() },
+        data: { expiresAt: new Date(Date.now() - 1) },
+      });
+
+      const verification = await databaseService.verification.findFirst({
+        where: { identifier: `sign-in-otp-${refereeEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const otp = verification?.value.split(":")[0];
+      const verifyResponse = await request(app.getHttpServer())
+        .post("/api/auth/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({ email: refereeEmail, otp });
+
+      expect(verifyResponse.status).toBe(HttpStatus.OK);
+      const referee = await databaseService.user.findUnique({
+        where: { email: refereeEmail },
+        select: { id: true, referredByUserId: true },
+      });
+      expect(referee?.referredByUserId).toBeNull();
+      await expect(
+        databaseService.pendingReferralSignup.findUnique({
+          where: { email: refereeEmail.toLowerCase() },
+        }),
+      ).resolves.toBeNull();
+      await expect(
+        databaseService.referralAttribution.count({
+          where: { refereeUserId: referee?.id },
+        }),
+      ).resolves.toBe(0);
     });
   });
 });

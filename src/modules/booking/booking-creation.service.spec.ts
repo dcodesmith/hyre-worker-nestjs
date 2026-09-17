@@ -8,6 +8,7 @@ import {
   createBooking,
   createBookingFinancials,
   createCar,
+  createReferralProgram,
   createUser,
 } from "../../shared/helper.fixtures";
 import { InvalidBookingAddonsException } from "../addons/addons.error";
@@ -23,6 +24,7 @@ import { FlightAwareService } from "../flightaware/flightaware.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { MapsService } from "../maps/maps.service";
+import { ReferralProgramService } from "../referral/referral-program.service";
 import {
   BookingCreationFailedException,
   BookingPaymentSyncFailedException,
@@ -103,6 +105,15 @@ describe("BookingCreationService", () => {
   let flightAwareService: FlightAwareService;
   let mapsService: MapsService;
   let addonsService: AddonsService;
+  let referralProgramService: {
+    getActiveProgram: ReturnType<typeof vi.fn>;
+    getProgram: ReturnType<typeof vi.fn>;
+    getActiveProgramForTransaction: ReturnType<typeof vi.fn>;
+    getProgramForTransaction: ReturnType<typeof vi.fn>;
+    calculateRefereeDiscount: ReturnType<typeof vi.fn>;
+    calculateReferrerReward: ReturnType<typeof vi.fn>;
+    calculateCreditsCap: ReturnType<typeof vi.fn>;
+  };
 
   // Mock transaction function
   const mockTransaction = vi.fn();
@@ -111,10 +122,20 @@ describe("BookingCreationService", () => {
     // Reset all mocks
     vi.clearAllMocks();
     mockTransaction.mockReset();
+    referralProgramService = {
+      getActiveProgram: vi.fn().mockResolvedValue(null),
+      getProgram: vi.fn().mockResolvedValue(null),
+      getActiveProgramForTransaction: vi.fn().mockResolvedValue(null),
+      getProgramForTransaction: vi.fn().mockResolvedValue(null),
+      calculateRefereeDiscount: vi.fn().mockReturnValue(new Decimal(0)),
+      calculateReferrerReward: vi.fn().mockReturnValue(new Decimal(0)),
+      calculateCreditsCap: vi.fn().mockReturnValue(new Decimal(30000)),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingCreationService,
+        { provide: ReferralProgramService, useValue: referralProgramService },
         {
           provide: AddonsService,
           useValue: {
@@ -134,7 +155,7 @@ describe("BookingCreationService", () => {
               updateMany: vi.fn(),
             },
             flight: { upsert: vi.fn(), updateMany: vi.fn() },
-            referralProgramConfig: { findMany: vi.fn(), findFirst: vi.fn() },
+            referralProgram: { findMany: vi.fn(), findFirst: vi.fn() },
             referralReward: { create: vi.fn(), aggregate: vi.fn() },
             userReferralStats: { upsert: vi.fn() },
             $transaction: mockTransaction,
@@ -255,7 +276,7 @@ describe("BookingCreationService", () => {
         createBookingFinancials(),
       );
 
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
       vi.mocked(databaseService.referralReward.aggregate).mockResolvedValue({
         _sum: { amount: new Decimal(10000) },
       } as never);
@@ -282,7 +303,7 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: {
             create: vi.fn(),
             aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
@@ -421,6 +442,10 @@ describe("BookingCreationService", () => {
 
     it("rechecks and applies referral credits inside the booking transaction", async () => {
       setupSuccessfulMocks();
+      const program = createReferralProgram();
+      referralProgramService.getProgram.mockResolvedValue(program);
+      referralProgramService.getProgramForTransaction.mockResolvedValue(program);
+      referralProgramService.calculateCreditsCap.mockReturnValue(new Decimal(30000));
 
       await service.createBooking({
         input: createBookingInput({ useCredits: 5000 }),
@@ -605,7 +630,7 @@ describe("BookingCreationService", () => {
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials(),
       );
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
       vi.mocked(validationService.validateExpectedPrice).mockImplementation(() => {
         throw new BookingValidationException([
           { field: "expectedTotalAmount", message: "Price mismatch" },
@@ -703,7 +728,7 @@ describe("BookingCreationService", () => {
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
 
       // Return empty legs array (edge case regression scenario)
       vi.mocked(legService.generateLegs).mockReturnValue([]);
@@ -730,7 +755,7 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
@@ -836,7 +861,7 @@ describe("BookingCreationService", () => {
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials(),
       );
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
       vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
         "https://api.example.com/api/payments/callback",
       );
@@ -858,7 +883,7 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
@@ -946,6 +971,15 @@ describe("BookingCreationService", () => {
   });
 
   describe("createBooking - Referral Handling", () => {
+    const enableActiveProgram = () => {
+      const program = createReferralProgram();
+      referralProgramService.getActiveProgram.mockResolvedValue(program);
+      referralProgramService.getActiveProgramForTransaction.mockResolvedValue(program);
+      referralProgramService.calculateRefereeDiscount.mockReturnValue(new Decimal(5000));
+      referralProgramService.calculateReferrerReward.mockReturnValue(new Decimal(2500));
+      return program;
+    };
+
     it("should apply referral discount for eligible users", async () => {
       // Mock user in database with referral info (fetched for preliminary check)
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
@@ -968,11 +1002,7 @@ describe("BookingCreationService", () => {
         },
       ]);
 
-      // Mock referral config - user is eligible for discount
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
-        { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
-      ]);
+      const program = enableActiveProgram();
 
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials({ referralDiscountAmount: new Decimal(5000) }),
@@ -1007,16 +1037,11 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: {
-            findMany: vi.fn().mockResolvedValue([
-              { key: "REFERRAL_REWARD_AMOUNT", value: "2500" },
-              { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
-            ]),
-          },
           referralReward: {
             create: vi.fn(),
             findMany: vi.fn().mockResolvedValue([]),
             updateMany: vi.fn(),
+            updateManyAndReturn: vi.fn().mockResolvedValue([]),
           },
           userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
           user: { update: vi.fn() },
@@ -1045,6 +1070,10 @@ describe("BookingCreationService", () => {
         }),
         expect.anything(),
       );
+      expect(referralProgramService.calculateRefereeDiscount).toHaveBeenCalledWith(
+        program,
+        new Decimal(50000),
+      );
     });
 
     it("should reserve referral discount without marking it used before payment", async () => {
@@ -1069,11 +1098,7 @@ describe("BookingCreationService", () => {
         },
       ]);
 
-      // Mock referral config - user is eligible for discount
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
-        { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
-      ]);
+      enableActiveProgram();
 
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials({ referralDiscountAmount: new Decimal(5000) }),
@@ -1110,16 +1135,11 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: {
-            findMany: vi.fn().mockResolvedValue([
-              { key: "REFERRAL_REWARD_AMOUNT", value: "2500" },
-              { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
-            ]),
-          },
           referralReward: {
             create: vi.fn(),
             findMany: vi.fn().mockResolvedValue([]),
             updateMany: vi.fn(),
+            updateManyAndReturn: vi.fn().mockResolvedValue([]),
           },
           userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
           user: { update: mockUserUpdate },
@@ -1140,6 +1160,89 @@ describe("BookingCreationService", () => {
       await service.createBooking({ input: booking, sessionUser });
 
       expect(mockUserUpdate).not.toHaveBeenCalled();
+    });
+
+    it("creates no referral reward or reservation when the final discount is zero", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          referredByUserId: "referrer-123",
+          referralDiscountUsed: false,
+        }),
+      );
+      vi.mocked(validationService.validateDates).mockReturnValue(undefined);
+      vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
+      vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
+      vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: new Date("2025-02-01T00:00:00Z"),
+          legStartTime: new Date("2025-02-01T09:00:00Z"),
+          legEndTime: new Date("2025-02-01T21:00:00Z"),
+        },
+      ]);
+      enableActiveProgram();
+      vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
+        createBookingFinancials({ referralDiscountAmount: new Decimal(0) }),
+      );
+      vi.mocked(flutterwaveService.getWebhookUrl).mockReturnValue(
+        "https://api.example.com/api/payments/callback",
+      );
+
+      const createBooking = vi.fn().mockResolvedValue({
+        id: "booking-123",
+        bookingReference: "BK-123456-ABC",
+        totalAmount: new Decimal(56437.5),
+        status: BookingStatus.PENDING,
+      });
+      const createReward = vi.fn();
+      const upsertStats = vi.fn();
+
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi
+            .fn()
+            .mockResolvedValue([
+              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+            ]),
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
+          booking: {
+            findFirst: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
+            findUnique: vi.fn(),
+            create: createBooking,
+            update: vi.fn(),
+          },
+          referralReward: { create: createReward },
+          userReferralStats: { upsert: upsertStats },
+          user: { update: vi.fn() },
+        };
+
+        return callback(mockTx);
+      });
+
+      vi.mocked(flutterwaveService.createPaymentIntent).mockResolvedValue({
+        paymentIntentId: "pi-123",
+        checkoutUrl: "https://checkout.flutterwave.com/pay/abc123",
+      });
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(createBooking).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          referralReferrerUserId: null,
+          referralStatus: "NONE",
+          referralDiscountAmount: new Decimal(0),
+        }),
+      });
+      expect(createReward).not.toHaveBeenCalled();
+      expect(upsertStats).not.toHaveBeenCalled();
     });
 
     it("should throw ReferralDiscountNoLongerAvailableException when discount was already used (race condition)", async () => {
@@ -1164,11 +1267,7 @@ describe("BookingCreationService", () => {
         },
       ]);
 
-      // Preliminary check: user appears eligible (from initial DB query)
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: null },
-        { key: "REFERRAL_DISCOUNT_AMOUNT", value: "5000", updatedAt: new Date(), updatedBy: null },
-      ]);
+      enableActiveProgram();
 
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials({ referralDiscountAmount: new Decimal(5000) }),
@@ -1189,8 +1288,7 @@ describe("BookingCreationService", () => {
               { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: true },
             ]),
           flight: { upsert: vi.fn(), updateMany: vi.fn() },
-          booking: { create: vi.fn(), update: vi.fn() },
-          referralProgramConfig: { findMany: vi.fn() },
+          booking: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
@@ -1225,7 +1323,7 @@ describe("BookingCreationService", () => {
         },
       ]);
 
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials(),
       );
@@ -1251,7 +1349,7 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
@@ -1301,7 +1399,7 @@ describe("BookingCreationService", () => {
       ]);
 
       // No referral config should be queried since preliminary check fails
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([]);
+      vi.mocked(databaseService.referralProgram.findMany).mockResolvedValue([]);
 
       vi.mocked(calculationService.calculateBookingCost).mockResolvedValue(
         createBookingFinancials(),
@@ -1328,7 +1426,7 @@ describe("BookingCreationService", () => {
             }),
             update: vi.fn(),
           },
-          referralProgramConfig: { findMany: vi.fn().mockResolvedValue([]) },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
           user: { update: vi.fn() },
@@ -1355,12 +1453,7 @@ describe("BookingCreationService", () => {
         expect.anything(),
       );
 
-      // Verify referral config was NOT fetched (preliminary check caught it)
-      expect(databaseService.referralProgramConfig.findMany).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { key: { in: ["REFERRAL_ENABLED", "REFERRAL_DISCOUNT_AMOUNT"] } },
-        }),
-      );
+      expect(referralProgramService.getActiveProgram).not.toHaveBeenCalled();
     });
   });
 });

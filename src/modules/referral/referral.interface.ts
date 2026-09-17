@@ -1,13 +1,3 @@
-export interface ReferralConfig {
-  REFERRAL_ENABLED: boolean;
-  REFERRAL_DISCOUNT_AMOUNT: number;
-  REFERRAL_MIN_BOOKING_AMOUNT: number;
-  REFERRAL_ELIGIBLE_TYPES: string[];
-  REFERRAL_RELEASE_CONDITION: "PAID" | "COMPLETED";
-  REFERRAL_EXPIRY_DAYS: number;
-  REFERRAL_MAX_CREDITS_PER_BOOKING: number;
-}
-
 export interface ReferralStatsResponse {
   totalReferrals: number;
   totalRewardsGranted: number;
@@ -24,6 +14,10 @@ export interface ReferralUserSummaryResponse {
   shareLink: string | null;
   programEnabled: boolean;
   discountAmount: number;
+  discount:
+    | { type: "FIXED"; amount: number }
+    | { type: "PERCENTAGE"; percentage: number; maxAmount: number }
+    | null;
   hasUsedDiscount: boolean;
   referredBy: string | null;
   signupDate: Date | null;

@@ -1,9 +1,20 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingReferralStatus } from "@prisma/client";
+import {
+  BookingReferralStatus,
+  ReferralIncentiveType,
+  ReferralProgramStatus,
+} from "@prisma/client";
+import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createReferralProgram } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
-import { ReferralInvalidCodeException, ReferralSelfReferralException } from "./referral.error";
+import {
+  ReferralInvalidCodeException,
+  ReferralProgramInactiveException,
+  ReferralSelfReferralException,
+} from "./referral.error";
 import { ReferralApiService } from "./referral-api.service";
+import { ReferralProgramService } from "./referral-program.service";
 
 describe("ReferralApiService", () => {
   let service: ReferralApiService;
@@ -21,9 +32,11 @@ describe("ReferralApiService", () => {
     userReferralStats: {
       findUnique: ReturnType<typeof vi.fn>;
     };
-    referralProgramConfig: {
-      findMany: ReturnType<typeof vi.fn>;
-    };
+  };
+  let referralProgramService: {
+    getActiveProgram: ReturnType<typeof vi.fn>;
+    getProgram: ReturnType<typeof vi.fn>;
+    calculateRefereeDiscount: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -41,9 +54,15 @@ describe("ReferralApiService", () => {
       userReferralStats: {
         findUnique: vi.fn(),
       },
-      referralProgramConfig: {
-        findMany: vi.fn(),
-      },
+    };
+    const program = createReferralProgram({
+      refereeDiscountValue: new Decimal(10000),
+      maxCreditsPerBookingAmount: new Decimal(30000),
+    });
+    referralProgramService = {
+      getActiveProgram: vi.fn().mockResolvedValue(program),
+      getProgram: vi.fn().mockResolvedValue(program),
+      calculateRefereeDiscount: vi.fn().mockReturnValue(new Decimal(10000)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -52,6 +71,10 @@ describe("ReferralApiService", () => {
         {
           provide: DatabaseService,
           useValue: mockDatabaseService,
+        },
+        {
+          provide: ReferralProgramService,
+          useValue: referralProgramService,
         },
       ],
     }).compile();
@@ -65,6 +88,15 @@ describe("ReferralApiService", () => {
     await expect(service.validateReferralCode("ABCDEFGH", "")).rejects.toThrow(
       ReferralInvalidCodeException,
     );
+  });
+
+  it("throws when the programme is inactive", async () => {
+    referralProgramService.getActiveProgram.mockResolvedValue(null);
+
+    await expect(service.validateReferralCode("ABCDEFGH", "")).rejects.toThrow(
+      ReferralProgramInactiveException,
+    );
+    expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
   });
 
   it("throws self-referral exception when email matches referrer", async () => {
@@ -81,7 +113,6 @@ describe("ReferralApiService", () => {
   });
 
   it("returns eligibility false when user has reserved or rewarded referral booking", async () => {
-    mockDatabaseService.referralProgramConfig.findMany.mockResolvedValue([]);
     mockDatabaseService.user.findUnique.mockResolvedValue({
       referredByUserId: "referrer-1",
       referralDiscountUsed: false,
@@ -102,12 +133,12 @@ describe("ReferralApiService", () => {
   });
 
   it("maps user referral summary payload with shareLink and numeric fields", async () => {
-    mockDatabaseService.referralProgramConfig.findMany.mockResolvedValue([]);
     mockDatabaseService.user.findUnique.mockResolvedValueOnce({
       referralCode: "ABCDEFGH",
       referredByUserId: null,
       referralDiscountUsed: false,
       referralSignupAt: null,
+      _count: { referrals: 1 },
       referrals: [
         {
           id: "user-2",
@@ -153,6 +184,7 @@ describe("ReferralApiService", () => {
     expect(result.shareLink).toBe("http://localhost:3000/auth?ref=ABCDEFGH");
     expect(result.programEnabled).toBe(true);
     expect(result.discountAmount).toBe(10000);
+    expect(result.discount).toEqual({ type: ReferralIncentiveType.FIXED, amount: 10000 });
     expect(result.stats.totalReferrals).toBe(1);
     expect(result.stats.totalRewardsGranted).toBe(2500);
     expect(result.stats.totalRewardsPending).toBe(500);
@@ -164,12 +196,12 @@ describe("ReferralApiService", () => {
   });
 
   it("derives summary stats from source rows when denormalized stats drift", async () => {
-    mockDatabaseService.referralProgramConfig.findMany.mockResolvedValue([]);
     mockDatabaseService.user.findUnique.mockResolvedValueOnce({
       referralCode: "ABCDEFGH",
       referredByUserId: null,
       referralDiscountUsed: false,
       referralSignupAt: null,
+      _count: { referrals: 1 },
       referrals: [
         {
           id: "referee-1",
@@ -215,5 +247,30 @@ describe("ReferralApiService", () => {
     expect(result?.stats.totalEarned).toBe(0);
     expect(result?.stats.availableCredits).toBe(0);
     expect(mockDatabaseService.userReferralStats.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("reports the programme as disabled when it is paused or missing", async () => {
+    referralProgramService.getProgram.mockResolvedValue(
+      createReferralProgram({ status: ReferralProgramStatus.PAUSED }),
+    );
+    mockDatabaseService.user.findUnique.mockResolvedValueOnce({
+      referralCode: "ABCDEFGH",
+      referredByUserId: null,
+      referralDiscountUsed: false,
+      referralSignupAt: null,
+      _count: { referrals: 0 },
+      referrals: [],
+      referralRewardsEarned: [],
+    });
+    mockDatabaseService.referralReward.aggregate
+      .mockResolvedValue({ _sum: { amount: null } })
+      .mockResolvedValue({ _sum: { amount: null } });
+    mockDatabaseService.booking.aggregate
+      .mockResolvedValue({ _sum: { referralCreditsUsed: null } })
+      .mockResolvedValue({ _sum: { referralCreditsReserved: null } });
+
+    const result = await service.getUserReferralSummary("user-1", "http://localhost:3000");
+
+    expect(result?.programEnabled).toBe(false);
   });
 });

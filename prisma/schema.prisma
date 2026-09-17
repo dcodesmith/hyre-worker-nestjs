@@ -211,6 +211,7 @@ model User {
   payoutsReceived              PayoutTransaction[]             @relation("FleetOwnerPayouts")
   referralAttribution          ReferralAttribution?            @relation("RefereeAttribution")
   referralAttributions         ReferralAttribution[]           @relation("ReferrerAttributions")
+  pendingReferralSignups       PendingReferralSignup[]         @relation("PendingReferralReferrer")
   referralRewardsFrom          ReferralReward[]                @relation("RefereeRewards")
   referralRewardsEarned        ReferralReward[]                @relation("ReferrerRewards")
   moderatedReviews             Review[]                        @relation("ReviewModerator")
@@ -871,47 +872,47 @@ model BankDetails {
 }
 
 model FleetOwnerAccountVerification {
-  id                      String                                      @id @default(uuid(7)) @db.Uuid
-  userId                  String                                      @db.Uuid
-  idempotencyKey          String
-  requestHash             String
-  accountType             FleetOwnerAccountType
-  isOwnerDriver           Boolean?
-  status                  AccountVerificationStatus                   @default(PROCESSING)
-  processingExpiresAt     DateTime
-  identityFirstName       String?
-  identityLastName        String?
-  legalName               String?
-  businessName            String?
-  businessNameMatch       NameMatchStatus?
-  registrationNumber      String?
-  registrationType        String?
-  identityProviderRef     String?
-  businessProviderRef     String?
-  identityRequiresReview  Boolean                                     @default(false)
-  identityVerifiedAt      DateTime?
-  bankName                String?
-  bankCode                String?
-  accountNumberLast4      String?
-  accountName             String?
-  bankNameMatch           NameMatchStatus?
-  payoutVerifiedAt        DateTime?
-  representativeNameMatch NameMatchStatus?
-  driversLicenseHash      String?
-  driversLicenseLast4     String?
-  driversLicenseExpiresAt DateTime?
+  id                        String                                      @id @default(uuid(7)) @db.Uuid
+  userId                    String                                      @db.Uuid
+  idempotencyKey            String
+  requestHash               String
+  accountType               FleetOwnerAccountType
+  isOwnerDriver             Boolean?
+  status                    AccountVerificationStatus                   @default(PROCESSING)
+  processingExpiresAt       DateTime
+  identityFirstName         String?
+  identityLastName          String?
+  legalName                 String?
+  businessName              String?
+  businessNameMatch         NameMatchStatus?
+  registrationNumber        String?
+  registrationType          String?
+  identityProviderRef       String?
+  businessProviderRef       String?
+  identityRequiresReview    Boolean                                     @default(false)
+  identityVerifiedAt        DateTime?
+  bankName                  String?
+  bankCode                  String?
+  accountNumberLast4        String?
+  accountName               String?
+  bankNameMatch             NameMatchStatus?
+  payoutVerifiedAt          DateTime?
+  representativeNameMatch   NameMatchStatus?
+  driversLicenseHash        String?
+  driversLicenseLast4       String?
+  driversLicenseExpiresAt   DateTime?
   driversLicenseProviderRef String?
-  drivingCompletedAt      DateTime?
-  submittedAt             DateTime?
-  failureReason           String?
-  reviewedById            String?                                     @db.Uuid
-  reviewedAt              DateTime?
-  reviewNotes             String?
-  createdAt               DateTime                                    @default(now())
-  updatedAt               DateTime                                    @updatedAt
-  user                    User                                        @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
-  reviewedBy              User?                                       @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
-  stageRequests           FleetOwnerAccountVerificationStageRequest[]
+  drivingCompletedAt        DateTime?
+  submittedAt               DateTime?
+  failureReason             String?
+  reviewedById              String?                                     @db.Uuid
+  reviewedAt                DateTime?
+  reviewNotes               String?
+  createdAt                 DateTime                                    @default(now())
+  updatedAt                 DateTime                                    @updatedAt
+  user                      User                                        @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy                User?                                       @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
+  stageRequests             FleetOwnerAccountVerificationStageRequest[]
 
   @@unique([userId, idempotencyKey])
   // One active DRAFT/PROCESSING/REVIEW_REQUIRED row per user is enforced by a
@@ -973,35 +974,70 @@ model ReferralAttribution {
   @@index([referrerUserId])
 }
 
+model PendingReferralSignup {
+  email          String   @id
+  referrerUserId String   @db.Uuid
+  referralCode   String
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  referrer       User     @relation("PendingReferralReferrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([referrerUserId])
+}
+
 model ReferralReward {
-  id               String                   @id @default(uuid(7)) @db.Uuid
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  referrerUserId   String                   @db.Uuid
-  refereeUserId    String                   @db.Uuid
-  bookingId        String                   @db.Uuid
-  amount           Decimal                  @db.Decimal(10, 2)
-  status           ReferralRewardStatus     @default(PENDING)
-  releaseCondition ReferralReleaseCondition
-  reason           String?
-  processedAt      DateTime?
-  booking          Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  referee          User                     @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
-  referrer         User                     @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  id             String               @id @default(uuid(7)) @db.Uuid
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  referrerUserId String               @db.Uuid
+  refereeUserId  String               @db.Uuid
+  bookingId      String               @unique @db.Uuid
+  amount         Decimal              @db.Decimal(10, 2)
+  status         ReferralRewardStatus @default(PENDING)
+  reason         String?
+  processedAt    DateTime?
+  booking        Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  referee        User                 @relation("RefereeRewards", fields: [refereeUserId], references: [id], onDelete: Cascade)
+  referrer       User                 @relation("ReferrerRewards", fields: [referrerUserId], references: [id], onDelete: Cascade)
 
   @@index([referrerUserId])
   @@index([refereeUserId])
-  @@index([bookingId])
   @@index([status, createdAt])
   @@index([status, bookingId])
   @@index([status, processedAt])
 }
 
-model ReferralProgramConfig {
-  key       String   @id
-  value     Json
-  updatedAt DateTime @updatedAt
-  updatedBy String?
+model ReferralProgram {
+  id                          String                @id @default("default")
+  status                      ReferralProgramStatus @default(ACTIVE)
+  refereeDiscountType         ReferralIncentiveType
+  refereeDiscountValue        Decimal               @db.Decimal(10, 2)
+  refereeDiscountMaxAmount    Decimal?              @db.Decimal(10, 2)
+  referrerRewardType          ReferralIncentiveType
+  referrerRewardValue         Decimal               @db.Decimal(10, 2)
+  referrerRewardMaxAmount     Decimal?              @db.Decimal(10, 2)
+  minimumBookingAmount        Decimal               @db.Decimal(10, 2)
+  eligibleBookingTypes        BookingType[]
+  referralValidityDays        Int
+  maxCreditsPerBookingAmount  Decimal               @db.Decimal(10, 2)
+  maxCreditsPerBookingPercent Decimal               @db.Decimal(5, 2)
+  createdAt                   DateTime              @default(now())
+  updatedAt                   DateTime              @updatedAt
+  createdById                 String                @db.Uuid
+  updatedById                 String                @db.Uuid
+}
+
+model ReferralProgramAudit {
+  id        String                     @id @default(uuid(7)) @db.Uuid
+  action    ReferralProgramAuditAction
+  before    Json?
+  after     Json
+  actorId   String                     @db.Uuid
+  createdAt DateTime                   @default(now())
+
+  @@index([createdAt(sort: Desc)])
 }
 
 model Session {
@@ -1402,9 +1438,20 @@ enum ReferralRewardStatus {
   REVERSED
 }
 
-enum ReferralReleaseCondition {
-  PAID
-  COMPLETED
+enum ReferralProgramStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum ReferralIncentiveType {
+  FIXED
+  PERCENTAGE
+}
+
+enum ReferralProgramAuditAction {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
 }
 
 enum BookingReferralStatus {

@@ -14,6 +14,9 @@ import {
   PayoutTransactionStatus,
   Prisma,
   type Promotion,
+  ReferralIncentiveType,
+  type ReferralProgram,
+  ReferralProgramStatus,
   type Review,
   ServiceTier,
   Status,
@@ -529,6 +532,29 @@ export function createPromotionRecord(
     isActive: true,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+export function createReferralProgram(overrides: Partial<ReferralProgram> = {}): ReferralProgram {
+  return {
+    id: "default",
+    status: ReferralProgramStatus.ACTIVE,
+    refereeDiscountType: ReferralIncentiveType.FIXED,
+    refereeDiscountValue: new Decimal(5000),
+    refereeDiscountMaxAmount: null,
+    referrerRewardType: ReferralIncentiveType.FIXED,
+    referrerRewardValue: new Decimal(2500),
+    referrerRewardMaxAmount: null,
+    minimumBookingAmount: new Decimal(20000),
+    eligibleBookingTypes: [BookingType.DAY, BookingType.FULL_DAY],
+    referralValidityDays: 30,
+    maxCreditsPerBookingAmount: new Decimal(30000),
+    maxCreditsPerBookingPercent: new Decimal(50),
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    createdById: "admin-1",
+    updatedById: "admin-1",
     ...overrides,
   };
 }

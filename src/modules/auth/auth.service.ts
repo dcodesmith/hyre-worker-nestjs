@@ -9,7 +9,8 @@ import {
   isUniqueConstraintError,
   lockUserRow,
 } from "../database/database.service";
-import { type Auth, createAuth } from "./auth.config";
+import { ReferralProgramService } from "../referral/referral-program.service";
+import { type Auth, createAuth, type ReferralSignupValidation } from "./auth.config";
 import {
   ADMIN,
   FLEET_OWNER,
@@ -45,6 +46,7 @@ export class AuthService implements OnModuleInit {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService<EnvConfig>,
     private readonly authEmailService: AuthEmailService,
+    private readonly referralProgramService: ReferralProgramService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(AuthService.name);
@@ -80,7 +82,9 @@ export class AuthService implements OnModuleInit {
         assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
         assignReferralCodeToNewUser: this.assignReferralCodeToNewUser.bind(this),
         validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
-        assignReferralToNewUser: this.assignReferralToNewUser.bind(this),
+        savePendingReferralForSignup: this.savePendingReferralForSignup.bind(this),
+        clearPendingReferralForSignup: this.clearPendingReferralForSignup.bind(this),
+        assignPendingReferralToNewUser: this.assignPendingReferralToNewUser.bind(this),
         getUserRoles: this.getUserRoles.bind(this),
         claimGuestBookingsForUser: this.claimGuestBookingsForUser.bind(this),
       },
@@ -409,10 +413,14 @@ export class AuthService implements OnModuleInit {
   async validateReferralCodeForSignup(
     code: string,
     email: string,
-  ): Promise<{ referrerUserId: string; referralCode: string } | null> {
+  ): Promise<ReferralSignupValidation> {
     const normalizedCode = code.trim().toUpperCase();
     if (!normalizedCode) {
       return null;
+    }
+
+    if (!(await this.referralProgramService.getActiveProgram())) {
+      return { programInactive: true };
     }
 
     const referrer = await this.databaseService.user.findUnique({
@@ -434,15 +442,72 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  async assignReferralToNewUser(
-    userId: string,
+  async savePendingReferralForSignup(
+    email: string,
     attribution: { referrerUserId: string; referralCode: string },
+    expiresAt: Date,
   ): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const now = new Date();
+
     await this.databaseService.$transaction(async (tx) => {
+      await tx.pendingReferralSignup.deleteMany({
+        where: { expiresAt: { lte: now } },
+      });
+      await tx.pendingReferralSignup.upsert({
+        where: { email: normalizedEmail },
+        create: {
+          email: normalizedEmail,
+          referrerUserId: attribution.referrerUserId,
+          referralCode: attribution.referralCode,
+          expiresAt,
+        },
+        update: {
+          referrerUserId: attribution.referrerUserId,
+          referralCode: attribution.referralCode,
+          expiresAt,
+        },
+      });
+    });
+  }
+
+  async clearPendingReferralForSignup(email: string): Promise<void> {
+    await this.databaseService.pendingReferralSignup.deleteMany({
+      where: { email: email.trim().toLowerCase() },
+    });
+  }
+
+  async assignPendingReferralToNewUser(userId: string, email: string): Promise<void> {
+    await this.databaseService.$transaction(async (tx) => {
+      const normalizedEmail = email.trim().toLowerCase();
+      const pendingReferral = await tx.pendingReferralSignup.findUnique({
+        where: { email: normalizedEmail },
+      });
+      if (!pendingReferral) {
+        return;
+      }
+
+      await tx.pendingReferralSignup.delete({
+        where: { email: normalizedEmail },
+      });
+
+      if (pendingReferral.expiresAt <= new Date()) {
+        this.logger.info({ userId }, "Skipped expired pending referral attribution");
+        return;
+      }
+
+      if (!(await this.referralProgramService.getActiveProgramForTransaction(tx))) {
+        this.logger.info(
+          { userId },
+          "Skipped referral attribution because programme is not active",
+        );
+        return;
+      }
+
       await tx.user.update({
         where: { id: userId },
         data: {
-          referredByUserId: attribution.referrerUserId,
+          referredByUserId: pendingReferral.referrerUserId,
           referralAttributionSource: ReferralAttributionSource.LINK,
           referralSignupAt: new Date(),
         },
@@ -451,8 +516,8 @@ export class AuthService implements OnModuleInit {
       await tx.referralAttribution.create({
         data: {
           refereeUserId: userId,
-          referrerUserId: attribution.referrerUserId,
-          referralCode: attribution.referralCode,
+          referrerUserId: pendingReferral.referrerUserId,
+          referralCode: pendingReferral.referralCode,
           source: ReferralAttributionSource.LINK,
         },
       });

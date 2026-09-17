@@ -20,6 +20,7 @@ export interface ReferralEligibility {
   eligible: boolean;
   referrerUserId: string | null;
   discountAmount: Decimal;
+  rewardAmount: Decimal;
 }
 
 /**

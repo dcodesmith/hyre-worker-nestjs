@@ -808,55 +808,52 @@ export class TestDataFactory {
   }
 
   /**
-   * Enable the referral program with deterministic config for E2E tests.
+   * Enable the referral programme singleton with deterministic values for E2E tests.
    * Idempotent via upsert — safe to call multiple times.
-   * Sets: enabled, 10000 discount, 20000 min booking, DAY/NIGHT/FULL_DAY eligible, 30 day expiry.
+   * Sets: ACTIVE, 10000 FIXED discount, configurable FIXED reward, 20000 min booking,
+   * DAY/NIGHT/FULL_DAY eligible, 30 day expiry.
    */
   async enableReferralProgram(options: { rewardAmount?: number } = {}): Promise<void> {
-    const writes: Promise<unknown>[] = [
-      this.prisma.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_ENABLED" },
-        create: { key: "REFERRAL_ENABLED", value: true },
-        update: { value: true },
-      }),
-      this.prisma.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_DISCOUNT_AMOUNT" },
-        create: { key: "REFERRAL_DISCOUNT_AMOUNT", value: 10000 },
-        update: { value: 10000 },
-      }),
-      this.prisma.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_MIN_BOOKING_AMOUNT" },
-        create: { key: "REFERRAL_MIN_BOOKING_AMOUNT", value: 20000 },
-        update: { value: 20000 },
-      }),
-      this.prisma.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_ELIGIBLE_TYPES" },
-        create: { key: "REFERRAL_ELIGIBLE_TYPES", value: ["DAY", "NIGHT", "FULL_DAY"] },
-        update: { value: ["DAY", "NIGHT", "FULL_DAY"] },
-      }),
-      this.prisma.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_EXPIRY_DAYS" },
-        create: { key: "REFERRAL_EXPIRY_DAYS", value: 30 },
-        update: { value: 30 },
-      }),
-    ];
-
-    if (options.rewardAmount !== undefined) {
-      writes.push(
-        this.prisma.referralProgramConfig.upsert({
-          where: { key: "REFERRAL_REWARD_AMOUNT" },
-          create: { key: "REFERRAL_REWARD_AMOUNT", value: options.rewardAmount },
-          update: { value: options.rewardAmount },
-        }),
-        this.prisma.referralProgramConfig.upsert({
-          where: { key: "REFERRAL_RELEASE_CONDITION" },
-          create: { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
-          update: { value: "COMPLETED" },
-        }),
-      );
-    }
-
-    await Promise.all(writes);
+    const actor =
+      (await this.prisma.user.findFirst({ select: { id: true } })) ??
+      (await this.createUser({ email: uniqueEmail("referral-program-actor") }));
+    const actorId = actor.id;
+    const rewardAmount = options.rewardAmount ?? 10000;
+    await this.prisma.referralProgram.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        status: "ACTIVE",
+        refereeDiscountType: "FIXED",
+        refereeDiscountValue: 10000,
+        refereeDiscountMaxAmount: null,
+        referrerRewardType: "FIXED",
+        referrerRewardValue: rewardAmount,
+        referrerRewardMaxAmount: null,
+        minimumBookingAmount: 20000,
+        eligibleBookingTypes: ["DAY", "NIGHT", "FULL_DAY"],
+        referralValidityDays: 30,
+        maxCreditsPerBookingAmount: 30000,
+        maxCreditsPerBookingPercent: 50,
+        createdById: actorId,
+        updatedById: actorId,
+      },
+      update: {
+        status: "ACTIVE",
+        refereeDiscountType: "FIXED",
+        refereeDiscountValue: 10000,
+        refereeDiscountMaxAmount: null,
+        referrerRewardType: "FIXED",
+        referrerRewardValue: rewardAmount,
+        referrerRewardMaxAmount: null,
+        minimumBookingAmount: 20000,
+        eligibleBookingTypes: ["DAY", "NIGHT", "FULL_DAY"],
+        referralValidityDays: 30,
+        maxCreditsPerBookingAmount: 30000,
+        maxCreditsPerBookingPercent: 50,
+        updatedById: actorId,
+      },
+    });
   }
 }
 

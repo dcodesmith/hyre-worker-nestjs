@@ -120,6 +120,7 @@ describe("ReferralController", () => {
       referralCode: "ABCDEFGH",
       shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
       programEnabled: true,
+      discount: { type: "FIXED", amount: 10000 },
       discountAmount: 10000,
       hasUsedDiscount: false,
       referredBy: null,
