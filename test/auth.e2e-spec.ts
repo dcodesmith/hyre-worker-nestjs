@@ -595,6 +595,69 @@ describe("Auth E2E Tests", () => {
       });
     });
 
+    it("does not let an unauthenticated OTP resend overwrite referral attribution", async () => {
+      await factory.enableReferralProgram();
+      const { user: intendedReferrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-intended-referrer"),
+        "user",
+      );
+      const { user: attackingReferrer } = await factory.authenticateAndGetUser(
+        uniqueEmail("ref-attacking-referrer"),
+        "user",
+      );
+      const refereeEmail = uniqueEmail("ref-overwrite-referee");
+
+      await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+          referralCode: intendedReferrer.referralCode,
+        })
+        .expect(HttpStatus.OK);
+
+      await request(app.getHttpServer())
+        .post("/api/auth/email-otp/send-verification-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          type: "sign-in",
+          referralCode: attackingReferrer.referralCode,
+        })
+        .expect(HttpStatus.OK);
+
+      const verification = await databaseService.verification.findFirstOrThrow({
+        where: { identifier: `sign-in-otp-${refereeEmail}` },
+        orderBy: { createdAt: "desc" },
+      });
+      const otp = verification.value.split(":")[0];
+
+      await request(app.getHttpServer())
+        .post("/api/auth/sign-in/email-otp")
+        .set("X-Client-Type", "mobile")
+        .send({
+          email: refereeEmail,
+          otp,
+          referralCode: intendedReferrer.referralCode,
+        })
+        .expect(HttpStatus.OK);
+
+      const referee = await databaseService.user.findUniqueOrThrow({
+        where: { email: refereeEmail },
+        select: { id: true, referredByUserId: true },
+      });
+      expect(referee.referredByUserId).toBe(intendedReferrer.id);
+      await expect(
+        databaseService.referralAttribution.findUnique({
+          where: { refereeUserId: referee.id },
+        }),
+      ).resolves.toMatchObject({
+        referrerUserId: intendedReferrer.id,
+        referralCode: intendedReferrer.referralCode,
+      });
+    });
+
     it("does not plant a referral on an existing account through email casing", async () => {
       await factory.enableReferralProgram();
       const { user: referrer } = await factory.authenticateAndGetUser(
@@ -662,7 +725,10 @@ describe("Auth E2E Tests", () => {
         databaseService.pendingReferralSignup.findUnique({
           where: { email: refereeEmail.toLowerCase() },
         }),
-      ).resolves.toBeNull();
+      ).resolves.toMatchObject({
+        referrerUserId: referrer.id,
+        referralCode: referrer.referralCode,
+      });
 
       const verification = await databaseService.verification.findFirst({
         where: { identifier: `sign-in-otp-${refereeEmail}` },

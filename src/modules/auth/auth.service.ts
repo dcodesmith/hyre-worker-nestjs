@@ -83,7 +83,6 @@ export class AuthService implements OnModuleInit {
         assignReferralCodeToNewUser: this.assignReferralCodeToNewUser.bind(this),
         validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
         savePendingReferralForSignup: this.savePendingReferralForSignup.bind(this),
-        clearPendingReferralForSignup: this.clearPendingReferralForSignup.bind(this),
         assignPendingReferralToNewUser: this.assignPendingReferralToNewUser.bind(this),
         getUserRoles: this.getUserRoles.bind(this),
         claimGuestBookingsForUser: this.claimGuestBookingsForUser.bind(this),
@@ -464,30 +463,23 @@ export class AuthService implements OnModuleInit {
       await tx.pendingReferralSignup.deleteMany({
         where: { expiresAt: { lte: now } },
       });
-      await tx.pendingReferralSignup.upsert({
-        where: { email: normalizedEmail },
-        create: {
+      await tx.pendingReferralSignup.createMany({
+        data: {
           email: normalizedEmail,
           referrerUserId: attribution.referrerUserId,
           referralCode: attribution.referralCode,
           expiresAt,
         },
-        update: {
-          referrerUserId: attribution.referrerUserId,
-          referralCode: attribution.referralCode,
-          expiresAt,
-        },
+        skipDuplicates: true,
       });
     });
   }
 
-  async clearPendingReferralForSignup(email: string): Promise<void> {
-    await this.databaseService.pendingReferralSignup.deleteMany({
-      where: { email: email.trim().toLowerCase() },
-    });
-  }
-
-  async assignPendingReferralToNewUser(userId: string, email: string): Promise<void> {
+  async assignPendingReferralToNewUser(
+    userId: string,
+    email: string,
+    verifiedReferralCode: string | undefined,
+  ): Promise<void> {
     try {
       await this.databaseService.$transaction(async (tx) => {
         const normalizedEmail = email.trim().toLowerCase();
@@ -508,6 +500,14 @@ export class AuthService implements OnModuleInit {
           },
         });
         if (consumedCount === 0) {
+          return;
+        }
+
+        if (
+          !verifiedReferralCode ||
+          pendingReferral.referralCode !== verifiedReferralCode.trim().toUpperCase()
+        ) {
+          this.logger.warn({ userId }, "Discarded pending referral not claimed during OTP sign-in");
           return;
         }
 

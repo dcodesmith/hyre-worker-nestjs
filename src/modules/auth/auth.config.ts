@@ -37,10 +37,12 @@ export interface RoleValidationCallbacks {
     attribution: { referrerUserId: string; referralCode: string },
     expiresAt: Date,
   ) => Promise<void>;
-  /** Clears referral attribution when an OTP is requested without a referral code */
-  clearPendingReferralForSignup: (email: string) => Promise<void>;
-  /** Consumes persisted referral attribution after successful OTP authentication */
-  assignPendingReferralToNewUser: (userId: string, email: string) => Promise<void>;
+  /** Consumes matching persisted referral attribution after successful OTP authentication */
+  assignPendingReferralToNewUser: (
+    userId: string,
+    email: string,
+    referralCode: string | undefined,
+  ) => Promise<void>;
   /** Gets all roles for a user (used by after hook to enrich sign-in response) */
   getUserRoles: (userId: string) => Promise<RoleName[]>;
   /** Claims guest bookings after the account email has been verified by sign-in */
@@ -173,7 +175,6 @@ async function capturePendingReferral({
   }
 
   const referralCode = extractReferralCode(body);
-  await callbacks.clearPendingReferralForSignup(email);
   if (!referralCode || (await callbacks.isExistingUser(email))) {
     return;
   }
@@ -312,6 +313,7 @@ export function createAuth(options: AuthConfigOptions) {
                 await roleValidation.assignPendingReferralToNewUser(
                   returned.user.id,
                   returned.user.email,
+                  extractReferralCode(ctx.body),
                 );
                 await roleValidation.claimGuestBookingsForUser(returned.user.id);
 

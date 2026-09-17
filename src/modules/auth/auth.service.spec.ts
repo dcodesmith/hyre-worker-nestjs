@@ -49,8 +49,8 @@ describe("AuthService", () => {
     pendingReferralSignup?: {
       delete: ReturnType<typeof vi.fn>;
       deleteMany: ReturnType<typeof vi.fn>;
+      createMany: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
-      upsert: ReturnType<typeof vi.fn>;
     };
   } = {};
 
@@ -820,8 +820,8 @@ describe("AuthService", () => {
       mockDatabaseService.pendingReferralSignup = {
         delete: vi.fn(),
         deleteMany: vi.fn(),
+        createMany: vi.fn(),
         findUnique: vi.fn(),
-        upsert: vi.fn(),
       };
       mockDatabaseService.$transaction = vi.fn(async (callback) =>
         callback({
@@ -931,27 +931,14 @@ describe("AuthService", () => {
       expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
         where: { expiresAt: { lte: expect.any(Date) } },
       });
-      expect(mockDatabaseService.pendingReferralSignup?.upsert).toHaveBeenCalledWith({
-        where: { email: "new-user@example.com" },
-        create: {
+      expect(mockDatabaseService.pendingReferralSignup?.createMany).toHaveBeenCalledWith({
+        data: {
           email: "new-user@example.com",
           referrerUserId: "referrer-1",
           referralCode: "FLOWREF1",
           expiresAt,
         },
-        update: {
-          referrerUserId: "referrer-1",
-          referralCode: "FLOWREF1",
-          expiresAt,
-        },
-      });
-    });
-
-    it("clears pending referral attribution using a normalized email", async () => {
-      await service.clearPendingReferralForSignup(" New-User@Example.com ");
-
-      expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
-        where: { email: "new-user@example.com" },
+        skipDuplicates: true,
       });
     });
 
@@ -972,7 +959,7 @@ describe("AuthService", () => {
         referralAttribution: null,
       });
 
-      await service.assignPendingReferralToNewUser("user-1", "New-User@Example.com");
+      await service.assignPendingReferralToNewUser("user-1", "New-User@Example.com", "flowref1");
 
       expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
         where: {
@@ -1012,7 +999,25 @@ describe("AuthService", () => {
       });
       mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 0 });
 
-      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com");
+      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com", "OLDREF01");
+
+      expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
+      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
+      expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
+      expect(mockReferralProgramService.getActiveProgramForTransaction).not.toHaveBeenCalled();
+    });
+
+    it("rejects pending attribution that does not match the code used during OTP sign-in", async () => {
+      mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
+        email: "new-user@example.com",
+        referrerUserId: "attacker-referrer",
+        referralCode: "ATTACK01",
+        expiresAt: new Date(Date.now() + 600_000),
+        updatedAt: new Date(Date.now() - 60_000),
+      });
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com", "VICTIM01");
 
       expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
@@ -1032,7 +1037,7 @@ describe("AuthService", () => {
       });
       mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
 
-      await service.assignPendingReferralToNewUser("user-1", "expired@example.com");
+      await service.assignPendingReferralToNewUser("user-1", "expired@example.com", "FLOWREF1");
 
       expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
         where: {
@@ -1070,7 +1075,7 @@ describe("AuthService", () => {
         referredByUserId: null,
         referralAttribution: null,
       });
-      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com");
+      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com", "FLOWREF1");
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
       expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
     });
@@ -1091,7 +1096,7 @@ describe("AuthService", () => {
         referralAttribution: null,
       });
 
-      await service.assignPendingReferralToNewUser("user-1", "existing@example.com");
+      await service.assignPendingReferralToNewUser("user-1", "existing@example.com", "FLOWREF1");
 
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
       expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
@@ -1102,7 +1107,7 @@ describe("AuthService", () => {
       mockDatabaseService.$transaction?.mockRejectedValueOnce(new Error("database unavailable"));
 
       await expect(
-        service.assignPendingReferralToNewUser("user-1", "new-user@example.com"),
+        service.assignPendingReferralToNewUser("user-1", "new-user@example.com", "FLOWREF1"),
       ).resolves.toBeUndefined();
     });
   });
