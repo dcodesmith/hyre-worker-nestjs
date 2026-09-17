@@ -4,6 +4,7 @@ import { BookingModule } from "../booking/booking.module";
 import { DatabaseModule } from "../database/database.module";
 import { FlutterwaveModule } from "../flutterwave/flutterwave.module";
 import { NotificationModule } from "../notification/notification.module";
+import { ReferralModule } from "../referral/referral.module";
 import { AdminFinancialOperationsController } from "./admin-financial-operations.controller";
 import { AdminFinancialOperationsService } from "./admin-financial-operations.service";
 import { BookingReservationExpirationService } from "./booking-reservation-expiration.service";
@@ -19,7 +20,14 @@ import { RefundReconciliationService } from "./refund-reconciliation.service";
 import { TransferCompletedHandler } from "./transfer-completed.handler";
 
 @Module({
-  imports: [FlutterwaveModule, DatabaseModule, AuthModule, BookingModule, NotificationModule],
+  imports: [
+    FlutterwaveModule,
+    DatabaseModule,
+    AuthModule,
+    BookingModule,
+    NotificationModule,
+    ReferralModule,
+  ],
   controllers: [PaymentController, AdminFinancialOperationsController],
   providers: [
     AdminFinancialOperationsService,

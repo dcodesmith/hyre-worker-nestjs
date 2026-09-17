@@ -9,6 +9,9 @@ export const ReferralErrorCode = {
   REFERRAL_ELIGIBILITY_CHECK_FAILED: "REFERRAL_ELIGIBILITY_CHECK_FAILED",
   REFERRAL_USER_FETCH_FAILED: "REFERRAL_USER_FETCH_FAILED",
   REFERRAL_USER_NOT_FOUND: "REFERRAL_USER_NOT_FOUND",
+  REFERRAL_PROGRAM_NOT_FOUND: "REFERRAL_PROGRAM_NOT_FOUND",
+  REFERRAL_PROGRAM_ALREADY_EXISTS: "REFERRAL_PROGRAM_ALREADY_EXISTS",
+  REFERRAL_PROGRAM_INACTIVE: "REFERRAL_PROGRAM_INACTIVE",
 } as const;
 
 export class ReferralException extends AppException {
@@ -93,6 +96,39 @@ export class ReferralUserNotFoundException extends ReferralException {
       "User not found",
       HttpStatus.NOT_FOUND,
       "Referral User Not Found",
+    );
+  }
+}
+
+export class ReferralProgramNotFoundException extends ReferralException {
+  constructor() {
+    super(
+      ReferralErrorCode.REFERRAL_PROGRAM_NOT_FOUND,
+      "The referral programme has not been configured",
+      HttpStatus.NOT_FOUND,
+      "Referral Programme Not Found",
+    );
+  }
+}
+
+export class ReferralProgramAlreadyExistsException extends ReferralException {
+  constructor() {
+    super(
+      ReferralErrorCode.REFERRAL_PROGRAM_ALREADY_EXISTS,
+      "The referral programme has already been configured",
+      HttpStatus.CONFLICT,
+      "Referral Programme Already Exists",
+    );
+  }
+}
+
+export class ReferralProgramInactiveException extends ReferralException {
+  constructor() {
+    super(
+      ReferralErrorCode.REFERRAL_PROGRAM_INACTIVE,
+      "The referral programme is not active",
+      HttpStatus.CONFLICT,
+      "Referral Programme Inactive",
     );
   }
 }

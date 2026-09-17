@@ -9,6 +9,11 @@ import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.i
 
 export const generateAuthId = (): string => uuidv7();
 
+export type ReferralSignupValidation =
+  | { referrerUserId: string; referralCode: string }
+  | { programInactive: true }
+  | null;
+
 /**
  * Role validation callbacks that integrate with AuthService methods.
  * These are injected by AuthService to allow hooks to use NestJS services.
@@ -25,14 +30,18 @@ export interface RoleValidationCallbacks {
   /** Generates and stores a referral code for a newly created user */
   assignReferralCodeToNewUser: (userId: string) => Promise<string>;
   /** Validates a referral code and returns the referrer user ID for new user attribution */
-  validateReferralCodeForSignup: (
-    code: string,
+  validateReferralCodeForSignup: (code: string, email: string) => Promise<ReferralSignupValidation>;
+  /** Persists referral attribution while the user completes OTP verification */
+  savePendingReferralForSignup: (
     email: string,
-  ) => Promise<{ referrerUserId: string; referralCode: string } | null>;
-  /** Assigns referral attribution to a newly created user */
-  assignReferralToNewUser: (
-    userId: string,
     attribution: { referrerUserId: string; referralCode: string },
+    expiresAt: Date,
+  ) => Promise<void>;
+  /** Consumes matching persisted referral attribution after successful OTP authentication */
+  assignPendingReferralToNewUser: (
+    userId: string,
+    email: string,
+    referralCode: string | undefined,
   ) => Promise<void>;
   /** Gets all roles for a user (used by after hook to enrich sign-in response) */
   getUserRoles: (userId: string) => Promise<RoleName[]>;
@@ -55,11 +64,8 @@ export interface RoleValidationCallbacks {
  * TTL cleanup prevents memory leaks from abandoned OTP flows.
  */
 const pendingRoles = new Map<string, { role: RoleName; timestamp: number }>();
-const pendingReferrals = new Map<
-  string,
-  { referrerUserId: string; referralCode: string; timestamp: number }
->();
 const PENDING_ROLE_TTL_MS = 10 * 60 * 1000; // 10 minutes (matches OTP expiry)
+const EMAIL_OTP_EXPIRY_SECONDS = 600;
 
 /**
  * Cleans up expired pending role entries to prevent memory leaks.
@@ -71,11 +77,6 @@ function cleanupExpiredPendingRoles(): void {
       pendingRoles.delete(email);
     }
   }
-  for (const [email, entry] of pendingReferrals) {
-    if (now - entry.timestamp > PENDING_ROLE_TTL_MS) {
-      pendingReferrals.delete(email);
-    }
-  }
 }
 
 /**
@@ -84,20 +85,10 @@ function cleanupExpiredPendingRoles(): void {
  */
 function setPendingRole(email: string, role: RoleName): void {
   // Clean up old entries periodically to prevent unbounded growth
-  if (pendingRoles.size > 100 || pendingReferrals.size > 100) {
+  if (pendingRoles.size > 100) {
     cleanupExpiredPendingRoles();
   }
   pendingRoles.set(email, { role, timestamp: Date.now() });
-}
-
-function setPendingReferral(
-  email: string,
-  attribution: { referrerUserId: string; referralCode: string },
-): void {
-  if (pendingRoles.size > 100 || pendingReferrals.size > 100) {
-    cleanupExpiredPendingRoles();
-  }
-  pendingReferrals.set(email, { ...attribution, timestamp: Date.now() });
 }
 
 /**
@@ -115,22 +106,6 @@ function consumePendingRole(email: string): RoleName {
     }
   }
   return USER;
-}
-
-function consumePendingReferral(
-  email: string,
-): { referrerUserId: string; referralCode: string } | null {
-  const entry = pendingReferrals.get(email);
-  if (entry) {
-    pendingReferrals.delete(email);
-    if (Date.now() - entry.timestamp <= PENDING_ROLE_TTL_MS) {
-      return {
-        referrerUserId: entry.referrerUserId,
-        referralCode: entry.referralCode,
-      };
-    }
-  }
-  return null;
 }
 
 export interface AuthConfigOptions {
@@ -153,6 +128,7 @@ const ROLE_VALIDATED_PATHS = [
   "/email-otp/verify-email",
   "/sign-in/email-otp",
 ] as const;
+const REFERRAL_CAPTURE_PATH = "/email-otp/send-verification-otp";
 
 /**
  * Safely extracts email from an unknown body type.
@@ -181,6 +157,45 @@ function extractReferralCode(body: unknown): string | undefined {
     return typeof referralCode === "string" ? referralCode.trim().toUpperCase() : undefined;
   }
   return undefined;
+}
+
+async function capturePendingReferral({
+  path,
+  email,
+  body,
+  callbacks,
+}: {
+  path: string;
+  email: string;
+  body: unknown;
+  callbacks: RoleValidationCallbacks;
+}): Promise<void> {
+  if (path !== REFERRAL_CAPTURE_PATH) {
+    return;
+  }
+
+  const referralCode = extractReferralCode(body);
+  if (!referralCode || (await callbacks.isExistingUser(email))) {
+    return;
+  }
+
+  const attribution = await callbacks.validateReferralCodeForSignup(referralCode, email);
+  if (!attribution) {
+    throw new APIError("BAD_REQUEST", {
+      message: "Invalid referral code",
+    });
+  }
+  if ("programInactive" in attribution) {
+    throw new APIError("BAD_REQUEST", {
+      message: "Referral programme is not active",
+    });
+  }
+
+  await callbacks.savePendingReferralForSignup(
+    email,
+    attribution,
+    new Date(Date.now() + EMAIL_OTP_EXPIRY_SECONDS * 1000),
+  );
 }
 
 /**
@@ -256,20 +271,12 @@ export function createAuth(options: AuthConfigOptions) {
           // This is necessary because Better Auth's email-otp plugin strips
           // custom fields (like 'role') from the request body during validation.
           setPendingRole(email, role);
-
-          const referralCode = extractReferralCode(ctx.body);
-          if (referralCode && !(await roleValidation.isExistingUser(email))) {
-            const attribution = await roleValidation.validateReferralCodeForSignup(
-              referralCode,
-              email,
-            );
-            if (!attribution) {
-              throw new APIError("BAD_REQUEST", {
-                message: "Invalid referral code",
-              });
-            }
-            setPendingReferral(email, attribution);
-          }
+          await capturePendingReferral({
+            path,
+            email,
+            body: ctx.body,
+            callbacks: roleValidation,
+          });
         }
       })
     : undefined;
@@ -289,7 +296,7 @@ export function createAuth(options: AuthConfigOptions) {
               handler: createAuthMiddleware(async (ctx) => {
                 // Get the response from the context - it's already the parsed body, not a Response
                 const returned = ctx.context.returned as
-                  | { user?: { id?: string }; token?: string }
+                  | { user?: { id?: string; email?: string }; token?: string }
                   | Error
                   | undefined;
 
@@ -299,10 +306,15 @@ export function createAuth(options: AuthConfigOptions) {
                 }
 
                 // Check if response contains user data (successful sign-in)
-                if (!returned.user?.id) {
+                if (!returned.user?.id || !returned.user.email) {
                   return;
                 }
 
+                await roleValidation.assignPendingReferralToNewUser(
+                  returned.user.id,
+                  returned.user.email,
+                  extractReferralCode(ctx.body),
+                );
                 await roleValidation.claimGuestBookingsForUser(returned.user.id);
 
                 // Fetch roles for the user
@@ -355,11 +367,6 @@ export function createAuth(options: AuthConfigOptions) {
                 // Protected roles were already rejected in the before hook via validateExistingUserRole()
                 await roleValidation.assignRoleToNewUser(user.id, role);
                 await roleValidation.assignReferralCodeToNewUser(user.id);
-
-                const referralAttribution = consumePendingReferral(user.email);
-                if (referralAttribution) {
-                  await roleValidation.assignReferralToNewUser(user.id, referralAttribution);
-                }
               },
             },
           },
@@ -367,7 +374,7 @@ export function createAuth(options: AuthConfigOptions) {
       : undefined,
     plugins: [
       emailOTP({
-        expiresIn: 600, // 10 minutes
+        expiresIn: EMAIL_OTP_EXPIRY_SECONDS,
         otpLength: 6,
         async sendVerificationOTP({ email, otp }) {
           await sendOTPEmail(email, otp);

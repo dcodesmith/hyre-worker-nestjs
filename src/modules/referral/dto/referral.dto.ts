@@ -1,3 +1,4 @@
+import { BookingType } from "@prisma/client";
 import { z } from "zod";
 
 const referralCodePattern = /^[A-Z0-9]{8}$/;
@@ -21,7 +22,7 @@ export type ValidateReferralQueryDto = z.infer<typeof validateReferralQuerySchem
 
 export const referralEligibilityQuerySchema = z.object({
   amount: z.coerce.number().int().min(1, "Amount must be greater than 0"),
-  type: z.enum(["DAY", "NIGHT", "FULL_DAY"], {
+  type: z.enum(BookingType, {
     error: "Booking type is required and must be valid.",
   }),
 });

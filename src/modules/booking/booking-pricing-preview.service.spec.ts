@@ -69,6 +69,7 @@ describe("BookingPricingPreviewService", () => {
       eligible: false,
       referrerUserId: null,
       discountAmount: new Decimal(0),
+      rewardAmount: new Decimal(0),
     });
     vi.mocked(bookingEligibilityService.getReferralCreditBalanceForPricing).mockResolvedValue(
       new Decimal(0),
@@ -338,6 +339,7 @@ describe("BookingPricingPreviewService", () => {
       eligible: true,
       referrerUserId: "referrer-1",
       discountAmount: new Decimal(5000),
+      rewardAmount: new Decimal(2500),
     });
     vi.mocked(bookingEligibilityService.getReferralCreditBalanceForPricing).mockResolvedValue(
       new Decimal(2000),
@@ -370,8 +372,9 @@ describe("BookingPricingPreviewService", () => {
 
     expect(bookingEligibilityService.checkReferralEligibilityForPricing).toHaveBeenCalledWith(
       sessionUser,
-      new Decimal(52500),
+      new Decimal(50000),
       BookingType.DAY,
+      "owner-1",
     );
     expect(bookingCalculationService.calculateBookingCost).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -384,6 +387,80 @@ describe("BookingPricingPreviewService", () => {
     expect(result.creditsUsed).toBe(2000);
     expect(result.subtotalAfterDiscounts).toBe(45500);
     expect(result.totalAmount).toBe(48912.5);
+  });
+
+  it("evaluates referral eligibility on post-promotion netTotal, not fees, add-ons, or VAT", async () => {
+    vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
+      id: "car-1",
+      ownerId: "owner-1",
+      dayRate: 50000,
+      nightRate: 45000,
+      fullDayRate: 80000,
+      airportPickupRate: 60000,
+      fuelUpgradeRate: 0,
+      pricingIncludesFuel: false,
+    });
+    vi.mocked(bookingLegService.generateLegs).mockReturnValue([
+      {
+        legDate: new Date("2026-05-01T00:00:00.000Z"),
+        legStartTime: new Date("2026-05-01T09:00:00.000Z"),
+        legEndTime: new Date("2026-05-01T21:00:00.000Z"),
+      },
+    ]);
+    vi.mocked(bookingCalculationService.calculateBookingCost).mockResolvedValue({
+      legPrices: [],
+      numberOfLegs: 1,
+      netTotal: new Decimal(40000),
+      compareAtNetTotal: new Decimal(50000),
+      appliedPromotion: { id: "promo-1" } as never,
+      addons: [],
+      addonTotal: new Decimal(5000),
+      fuelUpgradeCost: new Decimal(0),
+      netTotalWithAddons: new Decimal(45000),
+      platformFeeBase: new Decimal(40000),
+      platformCustomerServiceFeeRatePercent: new Decimal(10),
+      platformCustomerServiceFeeAmount: new Decimal(4000),
+      subtotalBeforeDiscounts: new Decimal(49000),
+      referralDiscountAmount: new Decimal(0),
+      creditsUsed: new Decimal(0),
+      subtotalAfterDiscounts: new Decimal(49000),
+      vatRatePercent: new Decimal(7.5),
+      vatAmount: new Decimal(3675),
+      totalAmount: new Decimal(52675),
+      platformFleetOwnerCommissionRatePercent: new Decimal(5),
+      platformFleetOwnerCommissionAmount: new Decimal(2000),
+      fleetOwnerPayoutAmountNet: new Decimal(38000),
+    });
+
+    await service.preview(
+      {
+        carId: "car-1",
+        bookingType: BookingType.DAY,
+        startDate: new Date("2026-05-01T00:00:00.000Z"),
+        endDate: new Date("2026-05-01T23:59:00.000Z"),
+        pickupTime: "9:00 AM",
+        addonIds: [],
+        requiresFullTank: false,
+        useCredits: 0,
+      },
+      {
+        id: "user-1",
+        email: "user@example.com",
+        name: "User",
+        emailVerified: true,
+        image: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        roles: ["user" as const],
+      },
+    );
+
+    expect(bookingEligibilityService.checkReferralEligibilityForPricing).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "user-1" }),
+      new Decimal(40000),
+      BookingType.DAY,
+      "owner-1",
+    );
   });
 
   it("resolves selected add-ons and maps them onto the preview response", async () => {

@@ -489,6 +489,26 @@ describe("BookingCalculationService", () => {
 
       expect(result.referralDiscountAmount.equals(new Decimal(0))).toBe(true);
     });
+
+    it("reduces customer payable but not fleet-owner payout when Tripdly funds the discount", async () => {
+      const base: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        addons: [],
+        requiresFullTank: false,
+      };
+      const withoutDiscount = await service.calculateBookingCost(base);
+      const withDiscount = await service.calculateBookingCost({
+        ...base,
+        referralDiscountAmount: new Decimal(5000),
+      });
+
+      expect(withDiscount.totalAmount.lt(withoutDiscount.totalAmount)).toBe(true);
+      expect(
+        withDiscount.fleetOwnerPayoutAmountNet.eq(withoutDiscount.fleetOwnerPayoutAmountNet),
+      ).toBe(true);
+    });
   });
 
   describe("credits usage", () => {
@@ -543,6 +563,27 @@ describe("BookingCalculationService", () => {
       // Credits leave ₦1 for the provider-backed payment flow.
       expect(result.creditsUsed.equals(new Decimal(7499))).toBe(true);
       expect(result.totalAmount.gt(0)).toBe(true);
+    });
+
+    it("reduces customer payable but not fleet-owner payout when Tripdly funds credits", async () => {
+      const base: BookingCalculationInput = {
+        bookingType: "DAY",
+        legs: createLegs(1),
+        car: mockCar,
+        addons: [],
+        requiresFullTank: false,
+      };
+      const withoutCredits = await service.calculateBookingCost(base);
+      const withCredits = await service.calculateBookingCost({
+        ...base,
+        userCreditsBalance: new Decimal(10000),
+        creditsToUse: new Decimal(3000),
+      });
+
+      expect(withCredits.totalAmount.lt(withoutCredits.totalAmount)).toBe(true);
+      expect(
+        withCredits.fleetOwnerPayoutAmountNet.eq(withoutCredits.fleetOwnerPayoutAmountNet),
+      ).toBe(true);
     });
 
     it("should handle zero credits", async () => {

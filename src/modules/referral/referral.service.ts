@@ -10,21 +10,10 @@ import {
   ReferralUserNotFoundException,
   ReferralValidationFailedException,
 } from "./referral.error";
-import type { ReferralUserSummaryResponse } from "./referral.interface";
 import { ReferralApiService } from "./referral-api.service";
 
 @Injectable()
 export class ReferralService {
-  private readonly userSummaryTtlMs = 30 * 1000;
-  private readonly maxPruneChecksPerWrite = 25;
-  private readonly userSummaryCache = new Map<
-    string,
-    {
-      value: ReferralUserSummaryResponse;
-      expiresAt: number;
-    }
-  >();
-
   constructor(
     private readonly referralApiService: ReferralApiService,
     private readonly logger: PinoLogger,
@@ -50,23 +39,6 @@ export class ReferralService {
         `Unhandled referral error in ${operationName}`,
       );
       throw fallback();
-    }
-  }
-
-  private pruneExpiredUserSummaryCache(
-    now: number,
-    maxEntriesToScan = this.userSummaryCache.size,
-  ): void {
-    let scanned = 0;
-    for (const [key, entry] of this.userSummaryCache.entries()) {
-      if (entry.expiresAt <= now) {
-        this.userSummaryCache.delete(key);
-      }
-
-      scanned += 1;
-      if (scanned >= maxEntriesToScan) {
-        break;
-      }
     }
   }
 
@@ -109,17 +81,6 @@ export class ReferralService {
 
   async getCurrentUserReferralInfo(userId: string, request: Request) {
     const requestOrigin = getRequestOrigin(request);
-    const cacheKey = `${userId}:${requestOrigin ?? "unknown-origin"}`;
-    const now = Date.now();
-    const cached = this.userSummaryCache.get(cacheKey);
-    if (cached) {
-      if (cached.expiresAt > now) {
-        return cached.value;
-      }
-
-      this.userSummaryCache.delete(cacheKey);
-    }
-
     const referralInfo = await this.withReferralExceptionBoundary(
       async () => this.referralApiService.getUserReferralSummary(userId, requestOrigin),
       () => new ReferralUserFetchFailedException(),
@@ -129,13 +90,6 @@ export class ReferralService {
     if (!referralInfo) {
       throw new ReferralUserNotFoundException();
     }
-
-    const nowAfterFetch = Date.now();
-    this.userSummaryCache.set(cacheKey, {
-      value: referralInfo,
-      expiresAt: nowAfterFetch + this.userSummaryTtlMs,
-    });
-    this.pruneExpiredUserSummaryCache(nowAfterFetch, this.maxPruneChecksPerWrite);
 
     return referralInfo;
   }

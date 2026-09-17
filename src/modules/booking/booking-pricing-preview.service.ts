@@ -98,12 +98,14 @@ export class BookingPricingPreviewService {
     const [referralEligibility, referralCreditBalance] = await Promise.all([
       this.bookingEligibilityService.checkReferralEligibilityForPricing(
         sessionUser,
-        baseFinancials.subtotalBeforeDiscounts,
+        baseFinancials.netTotal,
         input.bookingType,
+        car.ownerId,
       ),
       this.bookingEligibilityService.getReferralCreditBalanceForPricing(
         sessionUser,
         input.useCredits,
+        baseFinancials.netTotal,
       ),
     ]);
 

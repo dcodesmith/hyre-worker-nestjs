@@ -68,6 +68,7 @@ describe("Booking Flow E2E", () => {
     await app.init();
 
     await factory.createPlatformRates();
+    await factory.enableReferralProgram();
 
     // Create a fleet owner (shared; each test creates its own car)
     const fleetOwner = await factory.createFleetOwner();
@@ -388,8 +389,6 @@ describe("Booking Flow E2E", () => {
       );
       expect(userB.referredByUserId).toBe(userA.id);
 
-      await factory.enableReferralProgram();
-
       // 20% car-specific promotion covering the booking window
       await factory.createPromotion(fleetOwnerId, { carId: car.id, discountValue: 20 });
 
@@ -489,9 +488,6 @@ describe("Booking Flow E2E", () => {
     );
     expect(referee.referredByUserId).toBe(referrer.id);
 
-    // Configure REFERRAL_REWARD_AMOUNT so createReferralRewardIfEligible actually
-    // creates the PENDING reward + bumps userReferralStats. This is what exercises
-    // the soft-delete + stats decrement path in releaseReferralReservation.
     const REWARD_AMOUNT = 2500;
     await factory.enableReferralProgram({ rewardAmount: REWARD_AMOUNT });
 
@@ -723,7 +719,7 @@ describe("Booking Flow E2E", () => {
     expect(confirmedRetryBooking.referralStatus).toBe("APPLIED");
     expect(confirmedRetryBooking.referralReferrerUserId).toBe(referrer.id);
 
-    // With releaseCondition=COMPLETED the reward stays PENDING after confirmation
+    // Rewards stay PENDING until the booking is COMPLETED + PAID + APPLIED
     // (release happens on booking completion downstream). Stats should still be the
     // single active referral — proving the release/retry loop didn't leak counters.
     const rewardsAfterConfirm = await factory.getReferralRewardsByBookingId(retryBookingId);

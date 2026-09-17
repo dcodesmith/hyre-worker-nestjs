@@ -1,10 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import { PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
+import { BookingReferralStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { GuestUserDetails } from "../../types";
+import { BookingEligibilityService } from "../booking/booking-eligibility.service";
 import { DatabaseService } from "../database/database.service";
 import { RefundStatusChangedHandler } from "../notification/handlers/refund-status-changed.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { ReferralProcessingService } from "../referral/referral-processing.service";
 import { RefundDomainStateMismatchException } from "./payment.error";
 
 const refundBookingSelect = {
@@ -98,6 +100,8 @@ function getRefundNotificationCustomer(booking: RefundNotificationBooking) {
 export class RefundFinalizationService {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly bookingEligibilityService: BookingEligibilityService,
+    private readonly referralProcessingService: ReferralProcessingService,
     private readonly notificationOutboxService: NotificationOutboxService,
     private readonly refundStatusChangedHandler: RefundStatusChangedHandler,
     private readonly logger: PinoLogger,
@@ -179,6 +183,30 @@ export class RefundFinalizationService {
           });
           if (bookingUpdate.count === 0) {
             throw new RefundDomainStateMismatchException(payment.id);
+          }
+
+          if (
+            domainPaymentStatus === PaymentStatus.REFUNDED ||
+            domainPaymentStatus === PaymentStatus.PARTIALLY_REFUNDED
+          ) {
+            await this.bookingEligibilityService.reverseReferralRewardForRefund(
+              tx,
+              payment.bookingId,
+            );
+            await tx.booking.updateMany({
+              where: {
+                id: payment.bookingId,
+                referralStatus: {
+                  in: [BookingReferralStatus.APPLIED, BookingReferralStatus.REWARDED],
+                },
+              },
+              data: { referralStatus: BookingReferralStatus.REVERSED },
+            });
+          } else if (domainPaymentStatus === PaymentStatus.REFUND_FAILED) {
+            await this.referralProcessingService.processReferralCompletionAfterFailedRefund(
+              tx,
+              payment.bookingId,
+            );
           }
         } else if (payment.extensionId) {
           const extensionUpdate = await tx.extension.updateMany({

@@ -78,6 +78,12 @@ describe("Referrals E2E Tests", () => {
     });
 
     it("returns valid payload for an existing referral code", async () => {
+      await factory.enableReferralProgram();
+      const program = await databaseService.referralProgram.findUnique({
+        where: { id: "default" },
+      });
+      expect(program?.status).toBe("ACTIVE");
+
       const freshAuth = await factory.authenticateAndGetUser(
         uniqueEmail("referral-validate"),
         "user",
@@ -141,7 +147,6 @@ describe("Referrals E2E Tests", () => {
           bookingId: booking.id,
           amount: 1200,
           status: "RELEASED",
-          releaseCondition: "COMPLETED",
           processedAt: new Date(),
         },
       });

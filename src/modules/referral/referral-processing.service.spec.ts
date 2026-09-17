@@ -1,10 +1,10 @@
-import { Test, TestingModule } from "@nestjs/testing";
+import { Test, type TestingModule } from "@nestjs/testing";
 import {
   BookingReferralStatus,
-  ReferralReleaseCondition,
+  BookingStatus,
+  PaymentStatus,
   ReferralRewardStatus,
 } from "@prisma/client";
-import { createBooking } from "src/shared/helper.fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -12,890 +12,308 @@ import { ReferralRewardReleasedHandler } from "../notification/handlers/referral
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import { ReferralProcessingService } from "./referral-processing.service";
 
+const BOOKING_ID = "booking-123";
+const REFERRER_ID = "referrer-123";
+
+function queryRawSql(query: unknown): string {
+  if (Array.isArray(query)) {
+    return query.join("");
+  }
+  if (query && typeof query === "object" && "strings" in query) {
+    return (query as { strings: string[] }).strings.join("");
+  }
+  return String(query);
+}
+
+function expectReferrerUserLockBeforeStats(
+  queryRaw: ReturnType<typeof vi.fn>,
+  statsWrite: ReturnType<typeof vi.fn>,
+) {
+  const lockIndex = queryRaw.mock.calls.findIndex(([query]) => {
+    const sql = queryRawSql(query);
+    return sql.includes('"User"') && sql.includes("FOR UPDATE");
+  });
+  expect(lockIndex).toBeGreaterThanOrEqual(0);
+  expect(queryRaw.mock.calls[lockIndex]?.[1]).toBe(REFERRER_ID);
+  expect(queryRaw.mock.invocationCallOrder[lockIndex]).toBeLessThan(
+    statsWrite.mock.invocationCallOrder[0],
+  );
+}
+
+function eligibleBooking(overrides: Record<string, unknown> = {}) {
+  return {
+    id: BOOKING_ID,
+    userId: "user-123",
+    status: BookingStatus.COMPLETED,
+    paymentStatus: PaymentStatus.PAID,
+    referralReferrerUserId: REFERRER_ID,
+    referralStatus: BookingReferralStatus.APPLIED,
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
+function pendingReward(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "reward-123",
+    bookingId: BOOKING_ID,
+    referrerUserId: REFERRER_ID,
+    amount: 1000,
+    status: ReferralRewardStatus.PENDING,
+    ...overrides,
+  };
+}
+
 describe("ReferralProcessingService", () => {
   let service: ReferralProcessingService;
-  let databaseService: DatabaseService;
   let notificationOutboxService: NotificationOutboxService;
+  let databaseService: { $transaction: ReturnType<typeof vi.fn> };
+  const transactionClient = {
+    $queryRaw: vi.fn(),
+    booking: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    referralReward: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    user: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    userReferralStats: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
+  };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    databaseService = {
+      $transaction: vi.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+        callback(transactionClient),
+      ),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReferralProcessingService,
         {
           provide: DatabaseService,
-          useValue: {
-            referralProgramConfig: {
-              findMany: vi.fn(),
-            },
-            booking: {
-              findFirst: vi.fn(),
-              update: vi.fn(),
-            },
-            user: {
-              findUnique: vi.fn(),
-              update: vi.fn(),
-            },
-            referralReward: {
-              findFirst: vi.fn(),
-              updateMany: vi.fn(),
-            },
-            $transaction: vi.fn(),
-            userReferralStats: {
-              findUnique: vi.fn(),
-              upsert: vi.fn(),
-            },
-          },
+          useValue: databaseService,
         },
         {
           provide: NotificationOutboxService,
-          useValue: {
-            create: vi.fn().mockResolvedValue(1),
-          },
+          useValue: { create: vi.fn().mockResolvedValue(1) },
         },
         {
           provide: ReferralRewardReleasedHandler,
-          useValue: {
-            eventType: "BOOKING_LIFECYCLE",
-            buildEvents: vi.fn(),
-          },
+          useValue: { eventType: "BOOKING_LIFECYCLE", buildEvents: vi.fn() },
         },
       ],
     })
       .useMocker(mockPinoLoggerToken)
       .compile();
 
-    service = module.get<ReferralProcessingService>(ReferralProcessingService);
-    databaseService = module.get<DatabaseService>(DatabaseService);
-    notificationOutboxService = module.get<NotificationOutboxService>(NotificationOutboxService);
+    service = module.get(ReferralProcessingService);
+    notificationOutboxService = module.get(NotificationOutboxService);
+    transactionClient.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    transactionClient.booking.update.mockResolvedValue({});
+    transactionClient.user.update.mockResolvedValue({});
+    transactionClient.userReferralStats.findUnique.mockResolvedValue(null);
+    transactionClient.userReferralStats.upsert.mockResolvedValue({});
+    transactionClient.user.findUnique.mockResolvedValue({
+      referralDiscountUsed: false,
+    });
   });
 
-  describe("processReferralCompletionForBooking - Configuration-Based Early Returns", () => {
-    it.each([
-      {
-        name: "REFERRAL_ENABLED is false",
-        enabled: false,
-        releaseCondition: "COMPLETED",
+  it("releases only a COMPLETED + PAID + APPLIED booking with a PENDING reward", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
+
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(true);
+
+    expect(transactionClient.referralReward.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "reward-123",
+        status: ReferralRewardStatus.PENDING,
       },
-      {
-        name: "REFERRAL_RELEASE_CONDITION is PAID (not COMPLETED)",
-        enabled: true,
-        releaseCondition: "PAID",
+      data: {
+        status: ReferralRewardStatus.RELEASED,
+        processedAt: expect.any(Date),
       },
+    });
+    expect(transactionClient.booking.update).toHaveBeenCalledWith({
+      where: { id: BOOKING_ID },
+      data: { referralStatus: BookingReferralStatus.REWARDED },
+    });
+    expect(transactionClient.user.update).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      data: { referralDiscountUsed: true },
+    });
+    expect(notificationOutboxService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
       {
-        name: "REFERRAL_ENABLED is false AND REFERRAL_RELEASE_CONDITION is PAID",
-        enabled: false,
-        releaseCondition: "PAID",
+        rewardId: "reward-123",
+        bookingId: BOOKING_ID,
+        referrerUserId: REFERRER_ID,
+        amount: 1000,
+        releasedAt: expect.any(Date),
       },
-    ])("should skip processing when $name", async ({ enabled, releaseCondition }) => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: enabled, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: releaseCondition,
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-      ]);
+      transactionClient,
+    );
+    expectReferrerUserLockBeforeStats(
+      transactionClient.$queryRaw,
+      transactionClient.userReferralStats.upsert,
+    );
+  });
 
-      await service.processReferralCompletionForBooking("booking-123");
+  it("releases a COMPLETED + REFUND_FAILED + APPLIED pending reward on the provided transaction", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(
+      eligibleBooking({ paymentStatus: PaymentStatus.REFUND_FAILED }),
+    );
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
 
-      expect(databaseService.referralProgramConfig.findMany).toHaveBeenCalled();
-      expect(databaseService.booking.findFirst).not.toHaveBeenCalled();
+    await expect(
+      service.processReferralCompletionAfterFailedRefund(transactionClient as never, BOOKING_ID),
+    ).resolves.toBe(true);
+
+    expect(databaseService.$transaction).not.toHaveBeenCalled();
+    expect(transactionClient.referralReward.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "reward-123",
+        status: ReferralRewardStatus.PENDING,
+      },
+      data: {
+        status: ReferralRewardStatus.RELEASED,
+        processedAt: expect.any(Date),
+      },
+    });
+    expectReferrerUserLockBeforeStats(
+      transactionClient.$queryRaw,
+      transactionClient.userReferralStats.upsert,
+    );
+  });
+
+  it("does not release a PAID booking through the failed-refund completion path", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
+
+    await expect(
+      service.processReferralCompletionAfterFailedRefund(transactionClient as never, BOOKING_ID),
+    ).resolves.toBe(false);
+
+    expect(databaseService.$transaction).not.toHaveBeenCalled();
+    expect(transactionClient.referralReward.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not consult current programme status or expiry", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
+
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(true);
+
+    expect(transactionClient).not.toHaveProperty("referralProgram");
+    expect(transactionClient.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      select: { referralDiscountUsed: true },
     });
   });
 
-  describe("processReferralCompletionForBooking - Booking Eligibility Checks", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-      ]);
-    });
+  it.each([
+    { name: "missing booking", booking: null },
+    { name: "soft-deleted booking", booking: eligibleBooking({ deletedAt: new Date() }) },
+    {
+      name: "non-COMPLETED booking",
+      booking: eligibleBooking({ status: BookingStatus.CONFIRMED }),
+    },
+    {
+      name: "refunded booking",
+      booking: eligibleBooking({ paymentStatus: PaymentStatus.REFUNDED }),
+    },
+    {
+      name: "REFUND_FAILED booking",
+      booking: eligibleBooking({ paymentStatus: PaymentStatus.REFUND_FAILED }),
+    },
+    {
+      name: "non-APPLIED referral",
+      booking: eligibleBooking({ referralStatus: BookingReferralStatus.RESERVED }),
+    },
+    { name: "missing user", booking: eligibleBooking({ userId: null }) },
+    {
+      name: "missing referrer",
+      booking: eligibleBooking({ referralReferrerUserId: null }),
+    },
+  ])("does not release when $name", async ({ booking }) => {
+    transactionClient.booking.findUnique.mockResolvedValue(booking);
 
-    it("should skip processing when booking does not exist", async () => {
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(null);
-
-      await service.processReferralCompletionForBooking("non-existent-booking");
-
-      expect(databaseService.booking.findFirst).toHaveBeenCalledWith({
-        where: { id: "non-existent-booking", deletedAt: null },
-        select: {
-          id: true,
-          userId: true,
-          referralReferrerUserId: true,
-          referralStatus: true,
-        },
-      });
-      expect(databaseService.$transaction).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when booking referralStatus is not APPLIED", async () => {
-      const booking = createBooking({ id: "booking-1231" });
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.booking.findFirst).toHaveBeenCalled();
-      expect(databaseService.$transaction).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when booking has no userId", async () => {
-      const booking = createBooking({
-        id: "booking-1231",
-        referralStatus: BookingReferralStatus.APPLIED,
-        referralReferrerUserId: "referrer-123",
-        userId: undefined,
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.booking.findFirst).toHaveBeenCalled();
-      expect(databaseService.$transaction).not.toHaveBeenCalled();
-    });
-
-    it("should skip processing when booking has no referralReferrerUserId", async () => {
-      const booking = createBooking({
-        id: "booking-1231",
-        referralStatus: BookingReferralStatus.APPLIED,
-        referralReferrerUserId: undefined,
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.booking.findFirst).toHaveBeenCalled();
-      expect(databaseService.$transaction).not.toHaveBeenCalled();
-    });
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(false);
+    expect(transactionClient.referralReward.updateMany).not.toHaveBeenCalled();
   });
 
-  describe("processReferralCompletionForBooking - Idempotency and Transaction Logic", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
+  it("is idempotent when the reward is no longer PENDING", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(
+      pendingReward({ status: ReferralRewardStatus.RELEASED }),
+    );
 
-      const booking = createBooking({
-        id: "booking-1231",
-        referralStatus: BookingReferralStatus.APPLIED,
-        referralReferrerUserId: "referrer-123",
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-    });
-
-    it("should skip processing when reward is already released (idempotency)", async () => {
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValue({
-              id: "reward-already-released",
-              status: ReferralRewardStatus.RELEASED,
-            }),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(false);
+    expect(transactionClient.referralReward.updateMany).not.toHaveBeenCalled();
   });
 
-  describe("processReferralCompletionForBooking - Expiry Window Checks", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 30, updatedAt: new Date(), updatedBy: "system" },
-      ]);
+  it("is idempotent when a concurrent worker already released the reward", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
+    transactionClient.referralReward.updateMany.mockResolvedValue({ count: 0 });
 
-      const booking = createBooking({
-        id: "booking-1231",
-        referralStatus: BookingReferralStatus.APPLIED,
-        referralReferrerUserId: "referrer-123",
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-    });
-
-    it("should skip processing when referral has expired", async () => {
-      const fortyDaysAgo = new Date();
-      fortyDaysAgo.setDate(fortyDaysAgo.getDate() - 40);
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValue(null),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: fortyDaysAgo,
-              referralDiscountUsed: false,
-            }),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-
-    it("should process when within expiry window - signup date is 20 days ago (within 30 day window)", async () => {
-      const twentyDaysAgo = new Date();
-      twentyDaysAgo.setDate(twentyDaysAgo.getDate() - 20);
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi
-              .fn()
-              .mockResolvedValueOnce(null) // First call: check if already released
-              .mockResolvedValueOnce({
-                // Second call: find pending reward
-                id: "reward-123",
-                bookingId: "booking-123",
-                referrerUserId: "referrer-123",
-                amount: 1000,
-                status: ReferralRewardStatus.PENDING,
-              }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: twentyDaysAgo,
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-
-    it("should process when REFERRAL_EXPIRY_DAYS is 0 (disabled)", async () => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
-
-      const veryOldDate = new Date("2020-01-01");
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 1000,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: veryOldDate,
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-
-    it("should process when referee has no referralSignupAt date", async () => {
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 1000,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: null,
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(false);
+    expect(transactionClient.booking.update).not.toHaveBeenCalled();
   });
 
-  describe("processReferralCompletionForBooking - Pending Reward Checks", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
+  it("does not mark the referee discount used when it is already marked", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward());
+    transactionClient.user.findUnique.mockResolvedValue({ referralDiscountUsed: true });
 
-      const booking = createBooking({
-        referralReferrerUserId: "referrer-123",
-        referralStatus: BookingReferralStatus.APPLIED,
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
-    });
-
-    it("should skip processing when no pending reward is found", async () => {
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi
-              .fn()
-              .mockResolvedValueOnce(null) // Not already released
-              .mockResolvedValueOnce(null), // No pending reward
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-
-    it("should skip processing when only non-PENDING rewards exist", async () => {
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi
-              .fn()
-              .mockResolvedValueOnce(null) // Not already released
-              .mockResolvedValueOnce(null), // No pending reward (could be CANCELLED)
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
+    await expect(service.processReferralCompletionForBooking(BOOKING_ID)).resolves.toBe(true);
+    expect(transactionClient.user.update).not.toHaveBeenCalled();
   });
 
-  describe("processReferralCompletionForBooking - Discount Usage Marking", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
-
-      const booking = createBooking({
-        referralReferrerUserId: "referrer-123",
-        referralStatus: BookingReferralStatus.APPLIED,
-      });
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(booking);
+  it("clamps totalRewardsPending at zero when stats have drifted", async () => {
+    transactionClient.booking.findUnique.mockResolvedValue(eligibleBooking());
+    transactionClient.referralReward.findUnique.mockResolvedValue(pendingReward({ amount: 500 }));
+    transactionClient.userReferralStats.findUnique.mockResolvedValue({
+      totalRewardsPending: 100,
     });
 
-    it("should mark referee discount as used when not already marked", async () => {
-      const mockUserUpdate = vi.fn().mockResolvedValue({});
+    await service.processReferralCompletionForBooking(BOOKING_ID);
 
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 1000,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: false,
-            }),
-            update: mockUserUpdate,
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(mockUserUpdate).toHaveBeenCalledWith({
-        where: { id: "user-123" },
-        data: { referralDiscountUsed: true },
-      });
-    });
-
-    it("should NOT update discount when already marked as used", async () => {
-      const mockUserUpdate = vi.fn().mockResolvedValue({});
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 1000,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: true, // Already used
-            }),
-            update: mockUserUpdate,
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(mockUserUpdate).not.toHaveBeenCalled();
-    });
-
-    it("should handle missing referee data gracefully", async () => {
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 1000,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue(null),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: vi.fn().mockResolvedValue({}),
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
+    const upsert = transactionClient.userReferralStats.upsert.mock.calls[0]?.[0];
+    expect(upsert.update.totalRewardsPending.toString()).toBe("0");
   });
 
-  describe("processReferralCompletionForBooking - Successful Processing Path", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(
-        createBooking({
-          referralReferrerUserId: "referrer-123",
-          referralStatus: BookingReferralStatus.APPLIED,
-        }),
-      );
-    });
-
-    it("should successfully release reward and create new referrer stats", async () => {
-      const mockRewardUpdate = vi.fn().mockResolvedValue({ count: 1 });
-      const mockBookingUpdate = vi.fn().mockResolvedValue({});
-      const mockStatsUpsert = vi.fn().mockResolvedValue({});
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi
-              .fn()
-              .mockResolvedValueOnce(null) // Not already released
-              .mockResolvedValueOnce({
-                // Pending reward exists
-                id: "reward-123",
-                bookingId: "booking-123",
-                referrerUserId: "referrer-123",
-                amount: 1000,
-                status: ReferralRewardStatus.PENDING,
-              }),
-            updateMany: mockRewardUpdate,
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: false,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: mockBookingUpdate,
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue(null),
-            upsert: mockStatsUpsert,
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(mockRewardUpdate).toHaveBeenCalledWith({
-        where: {
-          id: "reward-123",
-          status: ReferralRewardStatus.PENDING,
-          releaseCondition: ReferralReleaseCondition.COMPLETED,
-        },
-        data: expect.objectContaining({
-          status: ReferralRewardStatus.RELEASED,
-          processedAt: expect.any(Date),
-        }),
-      });
-
-      expect(mockBookingUpdate).toHaveBeenCalledWith({
-        where: { id: "booking-123" },
-        data: { referralStatus: BookingReferralStatus.REWARDED },
-      });
-
-      expect(mockStatsUpsert).toHaveBeenCalledWith({
-        where: { userId: "referrer-123" },
-        create: {
-          userId: "referrer-123",
-          totalReferrals: 1,
-          totalRewardsGranted: 1000,
-          totalRewardsPending: 0,
-          lastReferralAt: expect.any(Date),
-        },
-        update: {
-          totalRewardsGranted: { increment: 1000 },
-          totalRewardsPending: expect.anything(),
-          lastReferralAt: expect.any(Date),
-        },
-      });
-
-      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
-      expect(firstCall.update.totalRewardsPending.toString()).toBe("0");
-      expect(notificationOutboxService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: "BOOKING_LIFECYCLE" }),
-        {
-          rewardId: "reward-123",
-          bookingId: expect.any(String),
-          referrerUserId: "referrer-123",
-          amount: 1000,
-          releasedAt: expect.any(Date),
-        },
-        expect.any(Object),
-      );
-    });
-
-    it("should successfully release reward and update existing referrer stats", async () => {
-      const mockStatsUpsert = vi.fn().mockResolvedValue({});
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 500,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: true,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue({ totalRewardsPending: 1000 }),
-            upsert: mockStatsUpsert,
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      expect(mockStatsUpsert).toHaveBeenCalledWith({
-        where: { userId: "referrer-123" },
-        create: expect.anything(),
-        update: {
-          totalRewardsGranted: { increment: 500 },
-          totalRewardsPending: expect.anything(),
-          lastReferralAt: expect.any(Date),
-        },
-      });
-
-      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
-      expect(firstCall.update.totalRewardsPending.toString()).toBe("500");
-    });
-
-    it("should clamp totalRewardsPending to zero when pending amount exceeds current stats", async () => {
-      const mockStatsUpsert = vi.fn().mockResolvedValue({});
-
-      const mockTransaction = vi.fn(async (callback) => {
-        const mockTx = {
-          referralReward: {
-            findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({
-              id: "reward-123",
-              bookingId: "booking-123",
-              referrerUserId: "referrer-123",
-              amount: 500,
-              status: ReferralRewardStatus.PENDING,
-            }),
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-          },
-          user: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "user-123",
-              referralSignupAt: new Date(),
-              referralDiscountUsed: true,
-            }),
-            update: vi.fn().mockResolvedValue({}),
-          },
-          booking: {
-            update: vi.fn().mockResolvedValue({}),
-          },
-          userReferralStats: {
-            findUnique: vi.fn().mockResolvedValue({ totalRewardsPending: 100 }),
-            upsert: mockStatsUpsert,
-          },
-        };
-        return callback(mockTx);
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await service.processReferralCompletionForBooking("booking-123");
-
-      const firstCall = mockStatsUpsert.mock.calls[0]?.[0];
-      expect(firstCall.update.totalRewardsPending.toString()).toBe("0");
-    });
-  });
-
-  describe("processReferralCompletionForBooking - Transaction and Error Handling", () => {
-    beforeEach(() => {
-      vi.mocked(databaseService.referralProgramConfig.findMany).mockResolvedValue([
-        { key: "REFERRAL_ENABLED", value: true, updatedAt: new Date(), updatedBy: "system" },
-        {
-          key: "REFERRAL_RELEASE_CONDITION",
-          value: "COMPLETED",
-          updatedAt: new Date(),
-          updatedBy: "system",
-        },
-        { key: "REFERRAL_EXPIRY_DAYS", value: 0, updatedAt: new Date(), updatedBy: "system" },
-      ]);
-
-      vi.mocked(databaseService.booking.findFirst).mockResolvedValue(
-        createBooking({
-          id: "booking-123",
-          userId: "user-123",
-          referralReferrerUserId: "referrer-123",
-          referralStatus: BookingReferralStatus.APPLIED,
-        }),
-      );
-    });
-
-    it("should rollback and rethrow if any database operation fails", async () => {
-      const mockTransaction = vi.fn(async () => {
+  it("rethrows transaction failures so the worker can retry", async () => {
+    const databaseService = {
+      $transaction: vi.fn(async () => {
         throw new Error("Database constraint violation");
-      });
+      }),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ReferralProcessingService,
+        { provide: DatabaseService, useValue: databaseService },
+        { provide: NotificationOutboxService, useValue: { create: vi.fn() } },
+        {
+          provide: ReferralRewardReleasedHandler,
+          useValue: { eventType: "BOOKING_LIFECYCLE" },
+        },
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
 
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
-        "Database constraint violation",
-      );
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
-
-    it("should rethrow errors so BullMQ can retry", async () => {
-      const mockTransaction = vi.fn(async () => {
-        throw new Error("Unexpected database error");
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
-        "Unexpected database error",
-      );
-    });
-
-    it("should rethrow database connection errors", async () => {
-      const mockTransaction = vi.fn(async () => {
-        const error = new Error("Connection timeout");
-        error.name = "DatabaseConnectionError";
-        throw error;
-      });
-
-      vi.mocked(databaseService.$transaction).mockImplementation(mockTransaction);
-
-      await expect(service.processReferralCompletionForBooking("booking-123")).rejects.toThrow(
-        "Connection timeout",
-      );
-
-      expect(databaseService.$transaction).toHaveBeenCalled();
-    });
+    await expect(
+      module.get(ReferralProcessingService).processReferralCompletionForBooking(BOOKING_ID),
+    ).rejects.toThrow("Database constraint violation");
   });
 });

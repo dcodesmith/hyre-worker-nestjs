@@ -85,7 +85,6 @@ export class BookingCancellationService {
               "cancelledAt" = timezone('UTC', clock_timestamp()),
               "cancellationReason" = ${reason},
               "referralCreditsReserved" = 0,
-              "referralCreditsUsed" = 0,
               "updatedAt" = timezone('UTC', clock_timestamp())
           WHERE "id" = ${bookingId}
             AND "userId" = ${userId}

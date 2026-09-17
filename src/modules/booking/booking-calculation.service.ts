@@ -124,7 +124,8 @@ export class BookingCalculationService {
       .filter((addon) => addon.financialTreatment === "FLEET_OWNER")
       .reduce((sum, addon) => sum.add(addon.totalPrice), new Decimal(0));
 
-    // Fuel upgrade and platform-fulfilled add-ons are excluded from fleet-owner payout.
+    // Tripdly funds referral discounts and credits, so neither reduces fleet-owner payout.
+    // Fuel upgrade and platform-fulfilled add-ons are also excluded from fleet-owner payout.
     const fleetOwnerPayoutAmountNet = netTotal
       .add(fleetOwnerAddonTotal)
       .sub(platformFleetOwnerCommissionAmount);

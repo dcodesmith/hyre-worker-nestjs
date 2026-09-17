@@ -9,7 +9,8 @@ import {
   isUniqueConstraintError,
   lockUserRow,
 } from "../database/database.service";
-import { type Auth, createAuth } from "./auth.config";
+import { ReferralProgramService } from "../referral/referral-program.service";
+import { type Auth, createAuth, type ReferralSignupValidation } from "./auth.config";
 import {
   ADMIN,
   FLEET_OWNER,
@@ -45,6 +46,7 @@ export class AuthService implements OnModuleInit {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService<EnvConfig>,
     private readonly authEmailService: AuthEmailService,
+    private readonly referralProgramService: ReferralProgramService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(AuthService.name);
@@ -80,7 +82,8 @@ export class AuthService implements OnModuleInit {
         assignRoleToNewUser: this.assignRoleToNewUser.bind(this),
         assignReferralCodeToNewUser: this.assignReferralCodeToNewUser.bind(this),
         validateReferralCodeForSignup: this.validateReferralCodeForSignup.bind(this),
-        assignReferralToNewUser: this.assignReferralToNewUser.bind(this),
+        savePendingReferralForSignup: this.savePendingReferralForSignup.bind(this),
+        assignPendingReferralToNewUser: this.assignPendingReferralToNewUser.bind(this),
         getUserRoles: this.getUserRoles.bind(this),
         claimGuestBookingsForUser: this.claimGuestBookingsForUser.bind(this),
       },
@@ -270,8 +273,13 @@ export class AuthService implements OnModuleInit {
    * @returns true if new user with grantable role, or existing user has the role
    */
   async validateExistingUserRole(email: string, role: RoleName): Promise<boolean> {
-    const user = await this.databaseService.user.findUnique({
-      where: { email },
+    const user = await this.databaseService.user.findFirst({
+      where: {
+        email: {
+          equals: email.trim(),
+          mode: "insensitive",
+        },
+      },
       include: { roles: { select: { name: true } } },
     });
 
@@ -286,8 +294,13 @@ export class AuthService implements OnModuleInit {
   }
 
   async isExistingUser(email: string): Promise<boolean> {
-    const user = await this.databaseService.user.findUnique({
-      where: { email },
+    const user = await this.databaseService.user.findFirst({
+      where: {
+        email: {
+          equals: email.trim(),
+          mode: "insensitive",
+        },
+      },
       select: { id: true },
     });
 
@@ -409,10 +422,14 @@ export class AuthService implements OnModuleInit {
   async validateReferralCodeForSignup(
     code: string,
     email: string,
-  ): Promise<{ referrerUserId: string; referralCode: string } | null> {
+  ): Promise<ReferralSignupValidation> {
     const normalizedCode = code.trim().toUpperCase();
     if (!normalizedCode) {
       return null;
+    }
+
+    if (!(await this.referralProgramService.getActiveProgram())) {
+      return { programInactive: true };
     }
 
     const referrer = await this.databaseService.user.findUnique({
@@ -434,29 +451,124 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  async assignReferralToNewUser(
-    userId: string,
+  async savePendingReferralForSignup(
+    email: string,
     attribution: { referrerUserId: string; referralCode: string },
+    expiresAt: Date,
   ): Promise<void> {
-    await this.databaseService.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: {
-          referredByUserId: attribution.referrerUserId,
-          referralAttributionSource: ReferralAttributionSource.LINK,
-          referralSignupAt: new Date(),
-        },
-      });
+    const normalizedEmail = email.trim().toLowerCase();
+    const now = new Date();
 
-      await tx.referralAttribution.create({
+    await this.databaseService.$transaction(async (tx) => {
+      await tx.pendingReferralSignup.deleteMany({
+        where: { expiresAt: { lte: now } },
+      });
+      await tx.pendingReferralSignup.createMany({
         data: {
-          refereeUserId: userId,
+          email: normalizedEmail,
           referrerUserId: attribution.referrerUserId,
           referralCode: attribution.referralCode,
-          source: ReferralAttributionSource.LINK,
+          expiresAt,
         },
+        skipDuplicates: true,
       });
     });
+  }
+
+  async assignPendingReferralToNewUser(
+    userId: string,
+    email: string,
+    verifiedReferralCode: string | undefined,
+  ): Promise<void> {
+    try {
+      await this.databaseService.$transaction(async (tx) => {
+        const normalizedEmail = email.trim().toLowerCase();
+        const pendingReferral = await tx.pendingReferralSignup.findUnique({
+          where: { email: normalizedEmail },
+        });
+        if (!pendingReferral) {
+          return;
+        }
+
+        const { count: consumedCount } = await tx.pendingReferralSignup.deleteMany({
+          where: {
+            email: normalizedEmail,
+            referrerUserId: pendingReferral.referrerUserId,
+            referralCode: pendingReferral.referralCode,
+            expiresAt: pendingReferral.expiresAt,
+            updatedAt: pendingReferral.updatedAt,
+          },
+        });
+        if (consumedCount === 0) {
+          return;
+        }
+
+        if (
+          !verifiedReferralCode ||
+          pendingReferral.referralCode !== verifiedReferralCode.trim().toUpperCase()
+        ) {
+          this.logger.warn({ userId }, "Discarded pending referral not claimed during OTP sign-in");
+          return;
+        }
+
+        if (pendingReferral.expiresAt <= new Date()) {
+          this.logger.info({ userId }, "Skipped expired pending referral attribution");
+          return;
+        }
+
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: {
+            createdAt: true,
+            referredByUserId: true,
+            referralAttribution: { select: { id: true } },
+          },
+        });
+        if (
+          !user ||
+          user.createdAt.getTime() <= pendingReferral.updatedAt.getTime() ||
+          user.referredByUserId ||
+          user.referralAttribution
+        ) {
+          this.logger.warn({ userId }, "Discarded pending referral for an existing user");
+          return;
+        }
+
+        if (!(await this.referralProgramService.getActiveProgramForTransaction(tx))) {
+          this.logger.info(
+            { userId },
+            "Skipped referral attribution because programme is not active",
+          );
+          return;
+        }
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            referredByUserId: pendingReferral.referrerUserId,
+            referralAttributionSource: ReferralAttributionSource.LINK,
+            referralSignupAt: new Date(),
+          },
+        });
+
+        await tx.referralAttribution.create({
+          data: {
+            refereeUserId: userId,
+            referrerUserId: pendingReferral.referrerUserId,
+            referralCode: pendingReferral.referralCode,
+            source: ReferralAttributionSource.LINK,
+          },
+        });
+      });
+    } catch (error) {
+      this.logger.error(
+        {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to assign pending referral after sign-in",
+      );
+    }
   }
 
   /**

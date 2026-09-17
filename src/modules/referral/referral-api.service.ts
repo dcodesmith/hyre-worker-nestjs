@@ -2,28 +2,36 @@ import { Injectable } from "@nestjs/common";
 import {
   BookingReferralStatus,
   BookingStatus,
+  type BookingType,
   PaymentStatus,
   type Prisma,
+  ReferralIncentiveType,
+  ReferralProgramStatus,
   ReferralRewardStatus,
 } from "@prisma/client";
+import Decimal from "decimal.js";
+import { maskEmail } from "../../shared/helper";
 import { DatabaseService } from "../database/database.service";
-import { ReferralInvalidCodeException, ReferralSelfReferralException } from "./referral.error";
-import type { ReferralConfig, ReferralUserSummaryResponse } from "./referral.interface";
+import {
+  ReferralInvalidCodeException,
+  ReferralProgramInactiveException,
+  ReferralSelfReferralException,
+} from "./referral.error";
+import type { ReferralUserSummaryResponse } from "./referral.interface";
+import { ReferralProgramService } from "./referral-program.service";
 
 @Injectable()
 export class ReferralApiService {
-  private configCache:
-    | {
-        value: ReferralConfig;
-        expiresAt: number;
-      }
-    | undefined;
-
-  private readonly configTtlMs = 60 * 1000;
-
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly referralProgramService: ReferralProgramService,
+  ) {}
 
   async validateReferralCode(code: string, userEmail: string) {
+    if (!(await this.referralProgramService.getActiveProgram())) {
+      throw new ReferralProgramInactiveException();
+    }
+
     const referrer = await this.databaseService.user.findUnique({
       where: { referralCode: code },
       select: {
@@ -45,11 +53,11 @@ export class ReferralApiService {
     return referrer;
   }
 
-  async checkReferralEligibility(userId: string, bookingAmount: number, bookingType: string) {
-    const config = await this.getReferralConfig();
+  async checkReferralEligibility(userId: string, bookingAmount: number, bookingType: BookingType) {
+    const program = await this.referralProgramService.getActiveProgram();
 
-    if (!config.REFERRAL_ENABLED) {
-      return { eligible: false, reason: "Referral program is disabled", discountAmount: 0 };
+    if (!program) {
+      return { eligible: false, reason: "Referral programme is not active", discountAmount: 0 };
     }
 
     const user = await this.databaseService.user.findUnique({
@@ -94,15 +102,17 @@ export class ReferralApiService {
       };
     }
 
-    if (bookingAmount < config.REFERRAL_MIN_BOOKING_AMOUNT) {
+    if (new Decimal(bookingAmount).lt(program.minimumBookingAmount)) {
       return {
         eligible: false,
-        reason: `Booking amount must be at least ₦${config.REFERRAL_MIN_BOOKING_AMOUNT.toLocaleString()}`,
+        reason: `Booking amount must be at least ₦${program.minimumBookingAmount
+          .toNumber()
+          .toLocaleString()}`,
         discountAmount: 0,
       };
     }
 
-    if (!config.REFERRAL_ELIGIBLE_TYPES.includes(bookingType)) {
+    if (!program.eligibleBookingTypes.includes(bookingType)) {
       return {
         eligible: false,
         reason: "Booking type is not eligible for referral discount",
@@ -110,9 +120,9 @@ export class ReferralApiService {
       };
     }
 
-    if (config.REFERRAL_EXPIRY_DAYS > 0 && user.referralSignupAt) {
+    if (program.referralValidityDays > 0 && user.referralSignupAt) {
       const expiryDate = new Date(user.referralSignupAt);
-      expiryDate.setDate(expiryDate.getDate() + config.REFERRAL_EXPIRY_DAYS);
+      expiryDate.setDate(expiryDate.getDate() + program.referralValidityDays);
 
       if (new Date() > expiryDate) {
         return { eligible: false, reason: "Referral discount has expired", discountAmount: 0 };
@@ -121,7 +131,9 @@ export class ReferralApiService {
 
     return {
       eligible: true,
-      discountAmount: Math.min(config.REFERRAL_DISCOUNT_AMOUNT, bookingAmount),
+      discountAmount: this.referralProgramService
+        .calculateRefereeDiscount(program, new Decimal(bookingAmount))
+        .toNumber(),
       reason: undefined,
     };
   }
@@ -130,7 +142,7 @@ export class ReferralApiService {
     userId: string,
     requestOrigin: string | null,
   ): Promise<ReferralUserSummaryResponse | null> {
-    const [referralInfo, rewardTotals, config] = await Promise.all([
+    const [referralInfo, rewardTotals, program] = await Promise.all([
       this.databaseService.user.findUnique({
         where: { id: userId },
         select: {
@@ -138,6 +150,7 @@ export class ReferralApiService {
           referredByUserId: true,
           referralDiscountUsed: true,
           referralSignupAt: true,
+          _count: { select: { referrals: true } },
           referrals: {
             select: {
               id: true,
@@ -145,6 +158,8 @@ export class ReferralApiService {
               email: true,
               createdAt: true,
             },
+            orderBy: { createdAt: "desc" },
+            take: 50,
           },
           referralRewardsEarned: {
             select: {
@@ -166,7 +181,7 @@ export class ReferralApiService {
         },
       }),
       this.getReferralRewardTotals(userId),
-      this.getReferralConfig(),
+      this.referralProgramService.getProgram(),
     ]);
 
     if (!referralInfo) {
@@ -182,65 +197,52 @@ export class ReferralApiService {
     return {
       referralCode: referralInfo.referralCode,
       shareLink,
-      programEnabled: config.REFERRAL_ENABLED,
-      discountAmount: config.REFERRAL_DISCOUNT_AMOUNT,
+      programEnabled: program?.status === ReferralProgramStatus.ACTIVE,
+      discountAmount: !program
+        ? 0
+        : program.refereeDiscountType === ReferralIncentiveType.FIXED
+          ? program.refereeDiscountValue.toNumber()
+          : null,
+      discount: program
+        ? program.refereeDiscountType === ReferralIncentiveType.FIXED
+          ? {
+              type: ReferralIncentiveType.FIXED,
+              amount: program.refereeDiscountValue.toNumber(),
+            }
+          : {
+              type: ReferralIncentiveType.PERCENTAGE,
+              percentage: program.refereeDiscountValue.toNumber(),
+              maxAmount: program.refereeDiscountMaxAmount?.toNumber() ?? 0,
+            }
+        : null,
       hasUsedDiscount: referralInfo.referralDiscountUsed,
       referredBy: referralInfo.referredByUserId,
       signupDate: referralInfo.referralSignupAt,
       stats: {
-        totalReferrals: referralInfo.referrals.length,
+        totalReferrals: referralInfo._count.referrals,
         totalRewardsGranted: rewardTotals.totalReleased,
         totalRewardsPending: rewardTotals.totalPending,
-        lastReferralAt: this.getLastReferralAt(referralInfo.referrals),
+        lastReferralAt: referralInfo.referrals[0]?.createdAt ?? null,
         totalEarned: bookingCredits.totalEarned,
         totalUsed: bookingCredits.totalUsed,
         availableCredits: bookingCredits.availableCredits,
-        maxCreditsPerBooking: config.REFERRAL_MAX_CREDITS_PER_BOOKING,
+        maxCreditsPerBooking: program?.maxCreditsPerBookingAmount.toNumber() ?? 0,
       },
-      referrals: referralInfo.referrals,
+      referrals: referralInfo.referrals.map((referral) => ({
+        ...referral,
+        email: maskEmail(referral.email),
+      })),
       rewards: referralInfo.referralRewardsEarned.map((reward) => ({
         id: reward.id,
         amount: this.decimalToNumber(reward.amount),
         status: reward.status,
         createdAt: reward.createdAt,
         processedAt: reward.processedAt,
-        refereeName: reward.referee?.name || reward.referee?.email || "Unknown",
+        refereeName:
+          reward.referee?.name ||
+          (reward.referee?.email ? maskEmail(reward.referee.email) : "Unknown"),
       })),
     };
-  }
-
-  private async getReferralConfig(): Promise<ReferralConfig> {
-    const now = Date.now();
-    if (this.configCache && this.configCache.expiresAt > now) {
-      return this.configCache.value;
-    }
-
-    const rows = await this.databaseService.referralProgramConfig.findMany();
-    const map = rows.reduce<Record<string, unknown>>((acc, row) => {
-      acc[row.key] = row.value;
-      return acc;
-    }, {});
-
-    const config: ReferralConfig = {
-      REFERRAL_ENABLED: Boolean(map.REFERRAL_ENABLED ?? true),
-      REFERRAL_DISCOUNT_AMOUNT: Number(map.REFERRAL_DISCOUNT_AMOUNT ?? 10000),
-      REFERRAL_MIN_BOOKING_AMOUNT: Number(map.REFERRAL_MIN_BOOKING_AMOUNT ?? 20000),
-      REFERRAL_ELIGIBLE_TYPES: this.asStringArray(map.REFERRAL_ELIGIBLE_TYPES, [
-        "DAY",
-        "NIGHT",
-        "FULL_DAY",
-      ]),
-      REFERRAL_RELEASE_CONDITION: map.REFERRAL_RELEASE_CONDITION === "PAID" ? "PAID" : "COMPLETED",
-      REFERRAL_EXPIRY_DAYS: Number(map.REFERRAL_EXPIRY_DAYS ?? 30),
-      REFERRAL_MAX_CREDITS_PER_BOOKING: Number(map.REFERRAL_MAX_CREDITS_PER_BOOKING ?? 30000),
-    };
-
-    this.configCache = {
-      value: config,
-      expiresAt: now + this.configTtlMs,
-    };
-
-    return config;
   }
 
   private async getReferralRewardTotals(userId: string) {
@@ -271,7 +273,14 @@ export class ReferralApiService {
     const [usedCredits, reservedCredits] = await Promise.all([
       this.databaseService.booking.aggregate({
         where: {
-          paymentStatus: PaymentStatus.PAID,
+          paymentStatus: {
+            in: [
+              PaymentStatus.PAID,
+              PaymentStatus.PARTIALLY_REFUNDED,
+              PaymentStatus.REFUND_PROCESSING,
+              PaymentStatus.REFUND_FAILED,
+            ],
+          },
           userId,
           referralCreditsUsed: { gt: 0 },
         },
@@ -299,16 +308,6 @@ export class ReferralApiService {
     };
   }
 
-  private getLastReferralAt(referrals: Array<{ createdAt: Date }>): Date | null {
-    let latest: Date | null = null;
-    for (const referral of referrals) {
-      if (!latest || referral.createdAt > latest) {
-        latest = referral.createdAt;
-      }
-    }
-    return latest;
-  }
-
   private decimalToNumber(value: Prisma.Decimal | number | null | undefined): number {
     if (value === null || value === undefined) {
       return 0;
@@ -317,13 +316,5 @@ export class ReferralApiService {
       return value;
     }
     return value.toNumber();
-  }
-
-  private asStringArray(value: unknown, fallback: string[]): string[] {
-    if (!Array.isArray(value)) {
-      return fallback;
-    }
-    const strings = value.filter((item): item is string => typeof item === "string");
-    return strings.length > 0 ? strings : fallback;
   }
 }

@@ -192,12 +192,14 @@ export class BookingCreationService {
       const [preliminaryReferralEligibility, preliminaryReferralCreditBalance] = await Promise.all([
         this.eligibilityService.checkReferralEligibilityForPricing(
           sessionUser,
-          baseFinancials.subtotalBeforeDiscounts,
+          baseFinancials.netTotal,
           normalizedBooking.bookingType,
+          car.ownerId,
         ),
         this.eligibilityService.getReferralCreditBalanceForPricing(
           sessionUser,
           normalizedBooking.useCredits,
+          baseFinancials.netTotal,
         ),
       ]);
       const financials =
@@ -468,14 +470,30 @@ export class BookingCreationService {
           tx,
         );
         const freshCar = await this.persistenceService.fetchCarWithPricing(booking.carId, tx);
+        const verifiedAddons = await this.addonsService.resolveBookingAddons(
+          booking.addonIds,
+          booking.bookingType,
+          legs.length,
+          tx,
+        );
+        const transactionBaseFinancials = await this.calculateFinancials(
+          booking,
+          freshCar,
+          legs,
+          verifiedAddons,
+          new Decimal(0),
+          new Decimal(0),
+          tx,
+        );
 
-        // CRITICAL: Verify and reserve referral discount FIRST with pessimistic locking.
-        // This prevents concurrent active bookings from receiving the one-time discount.
         const verifiedReferralEligibility = sessionUser
           ? await this.eligibilityService.verifyAndReserveReferralDiscountInTransaction(
               tx,
               sessionUser.id,
               preliminaryReferralEligibility,
+              transactionBaseFinancials.netTotal,
+              booking.bookingType,
+              freshCar.ownerId,
             )
           : preliminaryReferralEligibility;
         const verifiedReferralCreditBalance = sessionUser
@@ -483,14 +501,9 @@ export class BookingCreationService {
               tx,
               sessionUser.id,
               booking.useCredits,
+              transactionBaseFinancials.netTotal,
             )
           : new Decimal(0);
-        const verifiedAddons = await this.addonsService.resolveBookingAddons(
-          booking.addonIds,
-          booking.bookingType,
-          legs.length,
-          tx,
-        );
 
         const recalculatedFinancials = await this.calculateFinancials(
           booking,
@@ -501,14 +514,28 @@ export class BookingCreationService {
           verifiedReferralCreditBalance,
           tx,
         );
+        const appliedReferralEligibility =
+          verifiedReferralEligibility.eligible &&
+          recalculatedFinancials.referralDiscountAmount.gt(0)
+            ? {
+                ...verifiedReferralEligibility,
+                discountAmount: recalculatedFinancials.referralDiscountAmount,
+              }
+            : {
+                eligible: false,
+                referrerUserId: null,
+                discountAmount: new Decimal(0),
+                rewardAmount: new Decimal(0),
+              };
 
         const referralEligibilityChanged =
-          verifiedReferralEligibility.eligible !== preliminaryReferralEligibility.eligible ||
-          verifiedReferralEligibility.referrerUserId !==
+          appliedReferralEligibility.eligible !== preliminaryReferralEligibility.eligible ||
+          appliedReferralEligibility.referrerUserId !==
             preliminaryReferralEligibility.referrerUserId ||
-          !verifiedReferralEligibility.discountAmount.eq(
+          !appliedReferralEligibility.discountAmount.eq(
             preliminaryReferralEligibility.discountAmount,
-          );
+          ) ||
+          !appliedReferralEligibility.rewardAmount.eq(preliminaryReferralEligibility.rewardAmount);
 
         if (referralEligibilityChanged) {
           this.logger.warn(
@@ -516,7 +543,9 @@ export class BookingCreationService {
               bookingReference,
               userId: sessionUser?.id,
               previousDiscountAmount: preliminaryReferralEligibility.discountAmount.toString(),
-              updatedDiscountAmount: verifiedReferralEligibility.discountAmount.toString(),
+              updatedDiscountAmount: appliedReferralEligibility.discountAmount.toString(),
+              previousRewardAmount: preliminaryReferralEligibility.rewardAmount.toString(),
+              updatedRewardAmount: appliedReferralEligibility.rewardAmount.toString(),
             },
             "Referral eligibility changed during booking transaction",
           );
@@ -541,7 +570,7 @@ export class BookingCreationService {
           guestUser,
           booking,
           financials: finalizedFinancials,
-          referralEligibility: verifiedReferralEligibility,
+          referralEligibility: appliedReferralEligibility,
           flightRecordId,
           legs,
         });
@@ -550,7 +579,7 @@ export class BookingCreationService {
         await this.eligibilityService.createReferralRewardIfEligible(
           tx,
           bookingRecord.id,
-          verifiedReferralEligibility,
+          appliedReferralEligibility,
           sessionUser?.id ?? null,
         );
         await tx.booking.update({

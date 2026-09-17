@@ -8,6 +8,7 @@ import { MapsModule } from "../maps/maps.module";
 import { NotificationModule } from "../notification/notification.module";
 import { PromotionModule } from "../promotion/promotion.module";
 import { RatesModule } from "../rates/rates.module";
+import { ReferralProgramModule } from "../referral/referral-program.module";
 import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCancellationService } from "./booking-cancellation.service";
@@ -46,6 +47,7 @@ import { GuestBookingAccessService } from "./guest-booking-access.service";
     FlightAwareModule,
     MapsModule,
     PromotionModule,
+    ReferralProgramModule,
   ],
   controllers: [BookingController, FleetOwnerBookingController],
   providers: [

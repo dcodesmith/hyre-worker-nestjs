@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { DatabaseModule } from "../database/database.module";
 import { EmailModule } from "../email/email.module";
+import { ReferralProgramModule } from "../referral/referral-program.module";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AuthEmailService } from "./auth-email.service";
@@ -10,7 +11,7 @@ import { SessionGuard } from "./guards/session.guard";
 import { VerifiedFleetOwnerGuard } from "./guards/verified-fleet-owner.guard";
 
 @Module({
-  imports: [DatabaseModule, EmailModule],
+  imports: [DatabaseModule, EmailModule, ReferralProgramModule],
   controllers: [AuthController],
   providers: [
     AuthService,

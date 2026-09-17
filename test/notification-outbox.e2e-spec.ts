@@ -134,26 +134,6 @@ describe("Notification outbox round-trip (e2e)", () => {
     };
   }
 
-  async function configureCompletedReferralRelease(): Promise<void> {
-    await Promise.all([
-      databaseService.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_ENABLED" },
-        create: { key: "REFERRAL_ENABLED", value: true },
-        update: { value: true },
-      }),
-      databaseService.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_RELEASE_CONDITION" },
-        create: { key: "REFERRAL_RELEASE_CONDITION", value: "COMPLETED" },
-        update: { value: "COMPLETED" },
-      }),
-      databaseService.referralProgramConfig.upsert({
-        where: { key: "REFERRAL_EXPIRY_DAYS" },
-        create: { key: "REFERRAL_EXPIRY_DAYS", value: 0 },
-        update: { value: 0 },
-      }),
-    ]);
-  }
-
   async function createCompletedReferralReward(label: string) {
     const referrer = await factory.createUser({
       email: uniqueEmail(`${label}-referrer`),
@@ -182,7 +162,6 @@ describe("Notification outbox round-trip (e2e)", () => {
         bookingId: booking.id,
         amount: 2500,
         status: "PENDING",
-        releaseCondition: "COMPLETED",
       },
     });
     await databaseService.userReferralStats.create({
@@ -193,7 +172,6 @@ describe("Notification outbox round-trip (e2e)", () => {
         totalRewardsPending: 2500,
       },
     });
-    await configureCompletedReferralRelease();
 
     return { booking, referrer, reward };
   }

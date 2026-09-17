@@ -189,6 +189,8 @@ describe("BookingCancellationService", () => {
     );
     const updateQuery = txMock.$queryRaw.mock.calls[3]?.[0];
     expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
+    expect(getQueryText(updateQuery)).toContain('"referralCreditsReserved" = 0');
+    expect(getQueryText(updateQuery)).not.toContain("referralCreditsUsed");
     expect(txMock.$queryRaw.mock.calls[3]?.slice(1)).toEqual(
       expect.arrayContaining([
         BookingStatus.CANCELLED,
