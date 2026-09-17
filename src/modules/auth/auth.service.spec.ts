@@ -957,11 +957,12 @@ describe("AuthService", () => {
 
     it("atomically consumes pending referral attribution after OTP authentication", async () => {
       const capturedAt = new Date(Date.now() - 60_000);
+      const expiresAt = new Date(Date.now() + 600_000);
       mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
         email: "new-user@example.com",
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
-        expiresAt: new Date(Date.now() + 600_000),
+        expiresAt,
         updatedAt: capturedAt,
       });
       mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
@@ -974,7 +975,13 @@ describe("AuthService", () => {
       await service.assignPendingReferralToNewUser("user-1", "New-User@Example.com");
 
       expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
-        where: { email: "new-user@example.com" },
+        where: {
+          email: "new-user@example.com",
+          referrerUserId: "referrer-1",
+          referralCode: "FLOWREF1",
+          expiresAt,
+          updatedAt: capturedAt,
+        },
       });
       expect(mockDatabaseService.user.update).toHaveBeenCalledWith({
         where: { id: "user-1" },
@@ -994,20 +1001,47 @@ describe("AuthService", () => {
       });
     });
 
+    it("does not consume stale attribution after a concurrent OTP resend", async () => {
+      const capturedAt = new Date(Date.now() - 60_000);
+      mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
+        email: "new-user@example.com",
+        referrerUserId: "old-referrer",
+        referralCode: "OLDREF01",
+        expiresAt: new Date(Date.now() + 540_000),
+        updatedAt: capturedAt,
+      });
+      mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 0 });
+
+      await service.assignPendingReferralToNewUser("user-1", "new-user@example.com");
+
+      expect(mockDatabaseService.user.findUnique).not.toHaveBeenCalled();
+      expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
+      expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();
+      expect(mockReferralProgramService.getActiveProgramForTransaction).not.toHaveBeenCalled();
+    });
+
     it("discards expired pending referral attribution without assigning it", async () => {
+      const expiresAt = new Date(Date.now() - 1);
+      const capturedAt = new Date(Date.now() - 600_000);
       mockDatabaseService.pendingReferralSignup?.findUnique.mockResolvedValue({
         email: "expired@example.com",
         referrerUserId: "referrer-1",
         referralCode: "FLOWREF1",
-        expiresAt: new Date(Date.now() - 1),
-        updatedAt: new Date(Date.now() - 600_000),
+        expiresAt,
+        updatedAt: capturedAt,
       });
       mockDatabaseService.pendingReferralSignup?.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.assignPendingReferralToNewUser("user-1", "expired@example.com");
 
       expect(mockDatabaseService.pendingReferralSignup?.deleteMany).toHaveBeenCalledWith({
-        where: { email: "expired@example.com" },
+        where: {
+          email: "expired@example.com",
+          referrerUserId: "referrer-1",
+          referralCode: "FLOWREF1",
+          expiresAt,
+          updatedAt: capturedAt,
+        },
       });
       expect(mockDatabaseService.user.update).not.toHaveBeenCalled();
       expect(mockDatabaseService.referralAttribution.create).not.toHaveBeenCalled();

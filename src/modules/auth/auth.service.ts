@@ -499,7 +499,13 @@ export class AuthService implements OnModuleInit {
         }
 
         const { count: consumedCount } = await tx.pendingReferralSignup.deleteMany({
-          where: { email: normalizedEmail },
+          where: {
+            email: normalizedEmail,
+            referrerUserId: pendingReferral.referrerUserId,
+            referralCode: pendingReferral.referralCode,
+            expiresAt: pendingReferral.expiresAt,
+            updatedAt: pendingReferral.updatedAt,
+          },
         });
         if (consumedCount === 0) {
           return;
