@@ -20,11 +20,9 @@ import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-numb
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
-import type {
-  PremblyCacResult,
-  PremblyDriversLicenseResult,
-  PremblyNinResult,
-} from "../prembly/prembly.interface";
+import type { MonoDriversLicenseResult, MonoNinResult } from "../mono/mono.interface";
+import { MonoError, MonoService } from "../mono/mono.service";
+import type { PremblyCacResult } from "../prembly/prembly.interface";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import type { AccountDocuments } from "./account-documents.pipe";
@@ -85,7 +83,7 @@ const PERSON_TITLES = new Set(["DR", "MISS", "MR", "MRS", "MS"]);
 const PROCESSING_TTL_MS = 15 * 60 * 1000;
 
 type VerifiedAccountIdentity = {
-  identity: PremblyNinResult;
+  identity: MonoNinResult;
   legalName: string;
   business?: PremblyCacResult;
   businessNameMatch?: NameMatchStatus;
@@ -114,11 +112,28 @@ type OnboardingProgress = {
   submissionComplete: boolean;
 };
 
+function identityLookupReady(verification: FleetOwnerAccountVerification): boolean {
+  if (verification.identityDateOfBirth) return true;
+  if (verification.accountType === FleetOwnerAccountType.BUSINESS) return true;
+  if (
+    verification.submittedAt ||
+    verification.status === AccountVerificationStatus.SUCCEEDED ||
+    verification.status === AccountVerificationStatus.REVIEW_REQUIRED
+  ) {
+    return true;
+  }
+  return Boolean(verification.drivingCompletedAt) && verification.isOwnerDriver !== true;
+}
+
 function onboardingProgress(
   verification: FleetOwnerAccountVerification | null,
 ): OnboardingProgress {
   return {
-    identityComplete: Boolean(verification?.identityVerifiedAt ?? verification?.legalName),
+    identityComplete: Boolean(
+      (verification?.identityVerifiedAt ?? verification?.legalName) &&
+        verification &&
+        identityLookupReady(verification),
+    ),
     payoutComplete: Boolean(verification?.payoutVerifiedAt ?? verification?.accountName),
     drivingComplete:
       verification?.accountType === FleetOwnerAccountType.BUSINESS ||
@@ -237,6 +252,7 @@ export class AccountVerificationService {
   constructor(
     configService: ConfigService<EnvConfig, true>,
     private readonly databaseService: DatabaseService,
+    private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly storageService: StorageService,
@@ -404,6 +420,7 @@ export class AccountVerificationService {
             status,
             identityFirstName: identity.firstName,
             identityLastName: identity.lastName,
+            identityDateOfBirth: identity.dateOfBirth,
             legalName,
             businessName: business?.businessName,
             businessNameMatch,
@@ -482,6 +499,7 @@ export class AccountVerificationService {
             status: AccountVerificationStatus.DRAFT,
             identityFirstName: verified.identity.firstName,
             identityLastName: verified.identity.lastName,
+            identityDateOfBirth: verified.identity.dateOfBirth,
             legalName: verified.legalName,
             businessName: verified.business?.businessName,
             businessNameMatch: verified.businessNameMatch,
@@ -661,16 +679,20 @@ export class AccountVerificationService {
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
     try {
-      if (
-        input.isOwnerDriver &&
-        (!verification.identityFirstName || !verification.identityLastName)
-      ) {
-        throw new AccountVerificationOperationFailedException();
+      let driversLicense = null;
+      if (input.isOwnerDriver) {
+        if (!verification.identityFirstName || !verification.identityLastName) {
+          throw new AccountVerificationOperationFailedException();
+        }
+        if (!verification.identityDateOfBirth) {
+          throw new AccountVerificationStepIncompleteException("IDENTITY");
+        }
+        driversLicense = await this.verifyOwnerDriverLicense(input, {
+          firstName: verification.identityFirstName,
+          lastName: verification.identityLastName,
+          dateOfBirth: verification.identityDateOfBirth,
+        });
       }
-      const driversLicense = await this.verifyOwnerDriverLicense(input, {
-        firstName: verification.identityFirstName ?? "",
-        lastName: verification.identityLastName ?? "",
-      });
       for (const [type, file] of [
         [DocumentType.DRIVERS_LICENSE, documents.driversLicense],
         [DocumentType.LASDRI, documents.lasdri],
@@ -1338,21 +1360,22 @@ export class AccountVerificationService {
 
   private async verifyOwnerDriverLicense(
     input: Pick<DrivingCredentialsDto, "isOwnerDriver" | "driversLicenseNumber">,
-    identity: Pick<PremblyNinResult, "firstName" | "lastName">,
-  ): Promise<PremblyDriversLicenseResult | null> {
+    identity: Pick<MonoNinResult, "firstName" | "lastName" | "dateOfBirth">,
+  ): Promise<MonoDriversLicenseResult | null> {
     if (!input.isOwnerDriver) return null;
     if (!input.driversLicenseNumber) throw new OwnerDriverLicenseNotVerifiedException();
     const licenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
 
-    let license: PremblyDriversLicenseResult;
+    let license: MonoDriversLicenseResult;
     try {
-      license = await this.premblyService.verifyDriversLicense(
+      license = await this.monoService.verifyDriversLicense(
         licenseNumber,
         identity.firstName,
         identity.lastName,
+        identity.dateOfBirth,
       );
     } catch (error) {
-      if (error instanceof PremblyError && error.kind === "REJECTED") {
+      if (error instanceof MonoError && error.kind === "REJECTED") {
         throw new OwnerDriverLicenseNotVerifiedException();
       }
       throw error;
@@ -1376,7 +1399,7 @@ export class AccountVerificationService {
   }
 
   private driverLicenseData(
-    license: PremblyDriversLicenseResult | null,
+    license: MonoDriversLicenseResult | null,
     licenseNumber = license?.licenseNumber,
   ) {
     const hashedNumber = licenseNumber ? normalizeDriversLicenseNumber(licenseNumber) : null;
@@ -1393,11 +1416,11 @@ export class AccountVerificationService {
   private async verifyIdentity(
     input: AccountIdentityVerificationDto,
   ): Promise<VerifiedAccountIdentity> {
-    let identity: PremblyNinResult;
+    let identity: MonoNinResult;
     try {
-      identity = await this.premblyService.verifyNin(input.nin);
+      identity = await this.monoService.verifyNin(input.nin);
     } catch (error) {
-      if (error instanceof PremblyError && error.kind === "REJECTED") {
+      if (error instanceof MonoError && error.kind === "REJECTED") {
         throw new NinNotVerifiedException();
       }
       throw error;
@@ -1443,7 +1466,7 @@ export class AccountVerificationService {
     accountName,
   }: {
     accountType: FleetOwnerAccountType;
-    identity: PremblyNinResult;
+    identity: MonoNinResult;
     business: PremblyCacResult | undefined;
     accountName: string;
   }): NameMatchStatus {
@@ -1697,7 +1720,7 @@ export class AccountVerificationService {
   }
 
   private comparePersonName(
-    person: Pick<PremblyNinResult, "firstName" | "lastName">,
+    person: Pick<MonoNinResult, "firstName" | "lastName">,
     candidateName: string,
   ): NameMatchStatus {
     const candidate = new Set(this.nameTokens(candidateName, PERSON_TITLES));
@@ -1729,7 +1752,7 @@ export class AccountVerificationService {
   }
 
   private matchRepresentative(
-    identity: PremblyNinResult,
+    identity: MonoNinResult,
     directors: Array<{ firstName: string; lastName: string }>,
   ): NameMatchStatus {
     if (directors.length === 0) return NameMatchStatus.REVIEW_REQUIRED;
@@ -1761,7 +1784,7 @@ export class AccountVerificationService {
     return this.normalizeToken(value).replaceAll(/[^A-Z0-9]/g, "");
   }
 
-  private fullName(identity: PremblyNinResult): string {
+  private fullName(identity: MonoNinResult): string {
     return [identity.firstName, identity.middleName, identity.lastName].filter(Boolean).join(" ");
   }
 
@@ -1881,7 +1904,7 @@ export class AccountVerificationService {
 
   private toException(error: unknown): AccountVerificationException {
     if (error instanceof AccountVerificationException) return error;
-    if (error instanceof PremblyError) {
+    if (error instanceof PremblyError || error instanceof MonoError) {
       return new ProviderVerificationException(error.kind);
     }
     if (error instanceof FlutterwaveError) {

@@ -1,7 +1,8 @@
 import { HttpStatus } from "@nestjs/common";
 import { AppException } from "../../common/errors/app.exception";
 import type { FieldError } from "../../common/errors/problem-details.interface";
-import type { PremblyErrorKind } from "../prembly/prembly.service";
+
+export type ProviderErrorKind = "REJECTED" | "INVALID_RESPONSE" | "UNAVAILABLE";
 
 export const VerificationErrorCode = {
   VALIDATION_ERROR: "VALIDATION_ERROR",
@@ -69,7 +70,7 @@ export class VerificationRequestInProgressException extends VerificationExceptio
 }
 
 export class ProviderVerificationException extends VerificationException {
-  constructor(kind: PremblyErrorKind) {
+  constructor(kind: ProviderErrorKind) {
     const definition = {
       REJECTED: {
         code: VerificationErrorCode.PROVIDER_REJECTED,

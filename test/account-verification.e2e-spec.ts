@@ -8,7 +8,8 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveError } from "../src/modules/flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
-import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
+import { MonoError, MonoService } from "../src/modules/mono/mono.service";
+import { PremblyService } from "../src/modules/prembly/prembly.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import {
   type AccountIdentityVerificationDto,
@@ -103,10 +104,12 @@ describe("Fleet-owner account verification E2E Tests", () => {
   let ownerCookie: string;
   let userCookie: string;
   let adminCookie: string;
-  let premblyService: {
+  let monoService: {
     verifyNin: ReturnType<typeof vi.fn>;
-    verifyCac: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
+  };
+  let premblyService: {
+    verifyCac: ReturnType<typeof vi.fn>;
   };
   let flutterwaveService: {
     resolveBankAccount: ReturnType<typeof vi.fn>;
@@ -271,10 +274,12 @@ describe("Fleet-owner account verification E2E Tests", () => {
   }
 
   beforeAll(async () => {
-    premblyService = {
+    monoService = {
       verifyNin: vi.fn(),
-      verifyCac: vi.fn(),
       verifyDriversLicense: vi.fn(),
+    };
+    premblyService = {
+      verifyCac: vi.fn(),
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn(),
@@ -303,6 +308,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
           }),
         deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
       })
+      .overrideProvider(MonoService)
+      .useValue(monoService)
       .overrideProvider(PremblyService)
       .useValue(premblyService)
       .overrideProvider(FlutterwaveService)
@@ -351,21 +358,23 @@ describe("Fleet-owner account verification E2E Tests", () => {
     await factory.clearRateLimits();
     twilioMocks.createVerification.mockReset();
     twilioMocks.createVerificationCheck.mockReset();
-    premblyService.verifyNin.mockReset();
+    monoService.verifyNin.mockReset();
     premblyService.verifyCac.mockReset();
-    premblyService.verifyDriversLicense.mockReset();
+    monoService.verifyDriversLicense.mockReset();
     flutterwaveService.resolveBankAccount.mockReset();
     flutterwaveService.listNigerianBanks.mockReset();
 
     twilioMocks.createVerification.mockResolvedValue({ status: "pending" });
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
-    premblyService.verifyNin.mockResolvedValue({
+    monoService.verifyNin.mockResolvedValue({
       firstName: "JOHN",
       middleName: "MIDDLE",
       lastName: "DOE",
+      dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+      officialPhoto: "nin-photo",
       reference: "nin-ref",
     });
-    premblyService.verifyDriversLicense.mockResolvedValue({ ...VERIFIED_DRIVERS_LICENSE });
+    monoService.verifyDriversLicense.mockResolvedValue({ ...VERIFIED_DRIVERS_LICENSE });
     flutterwaveService.resolveBankAccount.mockResolvedValue({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN DOE",
@@ -575,8 +584,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(response.body.errors).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: "driversLicenseNumber" })]),
     );
-    expect(premblyService.verifyNin).not.toHaveBeenCalled();
-    expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+    expect(monoService.verifyNin).not.toHaveBeenCalled();
+    expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
   });
 
   it("POST /api/fleet-owner/account-verifications rejects an owner-driver without a licence file", async () => {
@@ -595,8 +604,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     expect(response.body.errorCode).toBe("OWNER_DRIVER_LICENSE_REQUIRED");
-    expect(premblyService.verifyNin).not.toHaveBeenCalled();
-    expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+    expect(monoService.verifyNin).not.toHaveBeenCalled();
+    expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
   });
 
   it("POST /api/fleet-owner/account-verifications verifies a business and matches CAC plus bank names", async () => {
@@ -850,7 +859,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(first.status).toBe(HttpStatus.CREATED);
     expect(second.status).toBe(HttpStatus.CREATED);
     expect(second.body).toEqual(first.body);
-    expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+    expect(monoService.verifyNin).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an idempotency key reused with a different payload", async () => {
@@ -894,12 +903,12 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(response.status).toBe(HttpStatus.CONFLICT);
     expect(response.body.errorCode).toBe("VERIFICATION_REQUEST_IN_PROGRESS");
     expect(response.headers["retry-after"]).toBe("5");
-    expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    expect(monoService.verifyNin).not.toHaveBeenCalled();
   });
 
   it("replays a failed account verification as the original provider error", async () => {
     const owner = await readyOwner("acct-failed-replay");
-    premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+    monoService.verifyNin.mockRejectedValueOnce(new MonoError("REJECTED"));
 
     const first = await accountVerificationRequest(owner.cookie, "account-failed-1");
     const second = await accountVerificationRequest(owner.cookie, "account-failed-1");
@@ -915,7 +924,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     ]);
     expect(second.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(second.body.errorCode).toBe("ACCOUNT_NIN_NOT_VERIFIED");
-    expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+    expect(monoService.verifyNin).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a different idempotency key while a review is pending", async () => {
@@ -982,7 +991,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       });
 
     expect([HttpStatus.BAD_REQUEST, HttpStatus.PAYLOAD_TOO_LARGE]).toContain(response.status);
-    expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    expect(monoService.verifyNin).not.toHaveBeenCalled();
   });
 
   it("rejects spoofed document MIME types", async () => {
@@ -1005,7 +1014,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     expect(response.body.errorCode).toBe("ACCOUNT_DOCUMENT_INVALID");
-    expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    expect(monoService.verifyNin).not.toHaveBeenCalled();
   });
 
   it("keeps onboarding accessible while blocking operational fleet-owner routes", async () => {
@@ -1216,7 +1225,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       accountType: "INDIVIDUAL",
       legalName: "JOHN MIDDLE DOE",
     });
-    expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+    expect(monoService.verifyNin).toHaveBeenCalledWith("12345678901");
     expect(premblyService.verifyCac).not.toHaveBeenCalled();
 
     const afterIdentity = await http("get", "/api/fleet-owner/onboarding").set(
@@ -1376,16 +1385,18 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("keeps hard identity, payout, and driving failures on the current stage", async () => {
     const owner = await readyOwner("acct-stage-hard-fail");
-    premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+    monoService.verifyNin.mockRejectedValueOnce(new MonoError("REJECTED"));
 
     const rejectedNin = await identityVerificationRequest(owner.cookie, "stage-fail-nin-1");
     expect(rejectedNin.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(rejectedNin.body.errorCode).toBe("ACCOUNT_NIN_NOT_VERIFIED");
 
-    premblyService.verifyNin.mockResolvedValueOnce({
+    monoService.verifyNin.mockResolvedValueOnce({
       firstName: "JOHN",
       middleName: "MIDDLE",
       lastName: "DOE",
+      dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+      officialPhoto: "nin-photo",
       reference: "nin-ref",
     });
     const identity = await identityVerificationRequest(owner.cookie, "stage-fail-identity-2");
@@ -1477,7 +1488,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
   it("returns OWNER_DRIVER_LICENSE_NOT_VERIFIED when Prembly rejects a staged licence", async () => {
     const owner = await readyOwner("acct-stage-od-rejected");
     await completeIdentityAndPayout(owner.cookie, "stage-od-rejected");
-    premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+    monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("REJECTED"));
 
     const driving = await drivingCredentialsRequest(
       owner.cookie,
@@ -1502,7 +1513,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const expiredAt = new Date();
     expiredAt.setUTCHours(0, 0, 0, 0);
     expiredAt.setUTCDate(expiredAt.getUTCDate() - 1);
-    premblyService.verifyDriversLicense.mockResolvedValueOnce({
+    monoService.verifyDriversLicense.mockResolvedValueOnce({
       ...VERIFIED_DRIVERS_LICENSE,
       expiresAt: expiredAt,
     });
@@ -1521,7 +1532,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
   it("returns OWNER_DRIVER_LICENSE_IDENTITY_MISMATCH when the licence name does not match NIN", async () => {
     const owner = await readyOwner("acct-stage-od-mismatch");
     await completeIdentityAndPayout(owner.cookie, "stage-od-mismatch");
-    premblyService.verifyDriversLicense.mockResolvedValueOnce({
+    monoService.verifyDriversLicense.mockResolvedValueOnce({
       ...VERIFIED_DRIVERS_LICENSE,
       firstName: "JANE",
       lastName: "SMITH",
@@ -1581,7 +1592,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(firstIdentity.status).toBe(HttpStatus.CREATED);
     expect(replayIdentity.status).toBe(HttpStatus.CREATED);
     expect(replayIdentity.body).toEqual(firstIdentity.body);
-    expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+    expect(monoService.verifyNin).toHaveBeenCalledTimes(1);
 
     const changedIdentity = await identityVerificationRequest(
       owner.cookie,

@@ -24,24 +24,6 @@ export type PremblyInsuranceResult = {
   reference: string;
 };
 
-export type PremblyNinResult = {
-  firstName: string;
-  middleName: string | null;
-  lastName: string;
-  reference: string;
-};
-
-export type PremblyDriversLicenseResult = {
-  licenseNumber: string;
-  firstName: string;
-  middleName: string | null;
-  lastName: string;
-  dateOfBirth: Date;
-  expiresAt: Date;
-  officialPhoto: string;
-  reference: string;
-};
-
 export type PremblyLivenessResult = {
   confidence: number;
   reference: string;
