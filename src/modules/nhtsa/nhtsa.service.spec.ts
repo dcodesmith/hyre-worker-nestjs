@@ -128,7 +128,7 @@ describe("NhtsaService", () => {
     ["zero seats", "0"],
     ["over-capacity seats", "16"],
     ["fractional seats", "5.5"],
-  ])("returns null passengerCapacity for %s", async (_label, seats) => {
+  ])("returns null passengerCapacity for %s without a vehicle class", async (_label, seats) => {
     mockAxiosInstance.get.mockResolvedValueOnce({
       data: decodeSuccess(seats === undefined ? { Seats: undefined } : { Seats: seats }),
     });
@@ -138,6 +138,53 @@ describe("NhtsaService", () => {
       make: "Honda",
       model: "Accord",
       passengerCapacity: null,
+    });
+  });
+
+  it("infers SUV seating when vPIC omits seats but returns an SUV body class", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({
+        Make: "TOYOTA",
+        Model: "RAV4",
+        ModelYear: "2008",
+        Seats: "",
+        BodyClass: "Sport Utility Vehicle [SUV]/Multipurpose Vehicle [MPV]",
+        VehicleType: "MULTIPURPOSE PASSENGER VEHICLE (MPV)",
+      }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toEqual({
+      year: 2008,
+      make: "TOYOTA",
+      model: "RAV4",
+      passengerCapacity: 5,
+    });
+  });
+
+  it("infers sedan seating from the NHTSA vehicle type when body class is blank", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({
+        Seats: "",
+        BodyClass: "",
+        VehicleType: "PASSENGER CAR",
+      }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({
+      passengerCapacity: 5,
+    });
+  });
+
+  it("keeps decoded seats instead of the vehicle-class default", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({
+        Seats: "7",
+        BodyClass: "Sport Utility Vehicle [SUV]/Multi-Purpose Vehicle (MPV)",
+      }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({
+      passengerCapacity: 7,
     });
   });
 });

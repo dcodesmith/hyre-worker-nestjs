@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import type { AxiosInstance } from "axios";
 import type { z } from "zod";
 import type { EnvConfig } from "../../config/env.config";
+import { resolvePassengerCapacity } from "../../shared/vehicle-type-capacity";
 import { VIN_PATTERN } from "../../shared/vehicle-validation";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
@@ -74,12 +75,12 @@ export class PremblyService {
     const specification = Object.assign({}, ...response.data.vehicle_specification);
     const year = Number(specification.year);
     const decodedSeats = Number(specification.standard_seating);
-    const passengerCapacity =
-      Number.isInteger(decodedSeats) && decodedSeats >= 1 && decodedSeats <= 15
-        ? decodedSeats
-        : null;
     const make = specification.make?.trim();
     const model = specification.model?.trim();
+    const passengerCapacity = resolvePassengerCapacity(
+      Number.isInteger(decodedSeats) ? decodedSeats : null,
+      specification.category,
+    );
 
     if (
       !Number.isInteger(year) ||

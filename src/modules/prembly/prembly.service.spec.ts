@@ -207,6 +207,45 @@ describe("PremblyService", () => {
       );
     });
 
+    it("infers seating from the specification category when standard seating is blank", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: vinSuccess([
+          { year: "2020" },
+          { make: "Toyota" },
+          { model: "RAV4" },
+          { standard_seating: "" },
+          { category: "SUV" },
+        ]),
+      });
+
+      await expect(service.verifyVin(VALID_CHASSIS)).resolves.toEqual({
+        year: 2020,
+        make: "Toyota",
+        model: "RAV4",
+        passengerCapacity: 5,
+        reference: "prembly-ref-1",
+      });
+    });
+
+    it("returns null seating when standard seating and category are both unusable", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: vinSuccess([
+          { year: "2020" },
+          { make: "Toyota" },
+          { model: "Camry" },
+          { standard_seating: "" },
+        ]),
+      });
+
+      await expect(service.verifyVin(VALID_CHASSIS)).resolves.toEqual({
+        year: 2020,
+        make: "Toyota",
+        model: "Camry",
+        passengerCapacity: null,
+        reference: "prembly-ref-1",
+      });
+    });
+
     it("maps a provider rejection envelope to REJECTED", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({
         data: { status: false, response_code: "01", detail: "VIN not found", verification },

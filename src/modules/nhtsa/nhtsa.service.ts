@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { AxiosInstance } from "axios";
 import { z } from "zod";
+import { resolvePassengerCapacity } from "../../shared/vehicle-type-capacity";
 import { VIN_PATTERN } from "../../shared/vehicle-validation";
 import { HttpClientService } from "../http-client/http-client.service";
 
@@ -13,6 +14,8 @@ const nhtsaResponseSchema = z.looseObject({
       Model: z.string(),
       ModelYear: z.string(),
       Seats: z.string().optional().default(""),
+      BodyClass: z.string().optional().default(""),
+      VehicleType: z.string().optional().default(""),
     }),
   ),
 });
@@ -108,10 +111,11 @@ export class NhtsaService {
       }
 
       const decodedSeats = Number(vehicle.Seats);
-      const passengerCapacity =
-        Number.isInteger(decodedSeats) && decodedSeats >= 1 && decodedSeats <= 15
-          ? decodedSeats
-          : null;
+      const passengerCapacity = resolvePassengerCapacity(
+        Number.isInteger(decodedSeats) ? decodedSeats : null,
+        vehicle.BodyClass,
+        vehicle.VehicleType,
+      );
 
       return { year, make, model, passengerCapacity };
     } catch (error) {
