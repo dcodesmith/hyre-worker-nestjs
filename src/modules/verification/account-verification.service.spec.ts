@@ -698,17 +698,11 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("sends an owner-driver with an existing PENDING licence to review", async () => {
+    it("automatically succeeds when an owner-driver already has a PENDING licence", async () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce({
         status: DocumentStatus.PENDING,
       });
       premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
-      mockReviewTransaction(
-        succeededRecord({
-          status: AccountVerificationStatus.REVIEW_REQUIRED,
-          isOwnerDriver: true,
-        }),
-      );
 
       await expect(
         service.create({
@@ -717,16 +711,16 @@ describe("AccountVerificationService", () => {
           input: ownerDriverInput(),
           documents: {},
         }),
-      ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
+      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ isVerified: false }),
-          update: expect.objectContaining({ isVerified: false }),
+          create: expect.objectContaining({ isVerified: true }),
+          update: expect.objectContaining({ isVerified: true }),
         }),
       );
       expect(databaseService.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
       });
     });
 
@@ -743,15 +737,9 @@ describe("AccountVerificationService", () => {
       ).rejects.toBeInstanceOf(AccountDocumentInvalidException);
     });
 
-    it("sends a new owner-driver licence to review and leaves the bank unverified", async () => {
+    it("automatically succeeds after uploading a new owner-driver licence", async () => {
       const licence = licenseFile();
       premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
-      mockReviewTransaction(
-        succeededRecord({
-          status: AccountVerificationStatus.REVIEW_REQUIRED,
-          isOwnerDriver: true,
-        }),
-      );
 
       const result = await service.create({
         userId: USER_ID,
@@ -760,7 +748,7 @@ describe("AccountVerificationService", () => {
         documents: { driversLicense: licence },
       });
 
-      expect(result.status).toBe(AccountVerificationStatus.REVIEW_REQUIRED);
+      expect(result.status).toBe(AccountVerificationStatus.SUCCEEDED);
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         licence.buffer,
@@ -782,8 +770,8 @@ describe("AccountVerificationService", () => {
       );
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ isVerified: false }),
-          update: expect.objectContaining({ isVerified: false }),
+          create: expect.objectContaining({ isVerified: true }),
+          update: expect.objectContaining({ isVerified: true }),
         }),
       );
       expect(databaseService.user.update).toHaveBeenCalledWith({
@@ -791,21 +779,15 @@ describe("AccountVerificationService", () => {
         data: expect.objectContaining({
           isOwnerDriver: true,
           hasOnboarded: true,
-          fleetOwnerStatus: FleetOwnerStatus.PROCESSING,
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
         }),
       });
     });
 
-    it("uploads optional LASDRI without changing a review-required outcome", async () => {
+    it("uploads optional LASDRI without changing an auto-approved outcome", async () => {
       const licence = licenseFile();
       const lasdri = licenseFile("lasdri.pdf");
       premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
-      mockReviewTransaction(
-        succeededRecord({
-          status: AccountVerificationStatus.REVIEW_REQUIRED,
-          isOwnerDriver: true,
-        }),
-      );
 
       await expect(
         service.create({
@@ -817,7 +799,7 @@ describe("AccountVerificationService", () => {
             lasdri,
           },
         }),
-      ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
+      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
       expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
     });
 
@@ -839,7 +821,6 @@ describe("AccountVerificationService", () => {
       premblyService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
       databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
         succeededRecord({
-          status: AccountVerificationStatus.REVIEW_REQUIRED,
           isOwnerDriver: true,
           ...persistedLicenseData,
         }),
@@ -2743,7 +2724,7 @@ describe("AccountVerificationService", () => {
       expect(databaseService.user.updateMany).not.toHaveBeenCalled();
     });
 
-    it("sends an owner-driver with a hash and PENDING document to review", async () => {
+    it("approves an owner-driver with a hash and PENDING document on submit", async () => {
       const ownerDriverDraft = drivingReadyDraft({
         isOwnerDriver: true,
         ...persistedLicenseData,
@@ -2755,7 +2736,6 @@ describe("AccountVerificationService", () => {
       });
       databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
         succeededRecord({
-          status: AccountVerificationStatus.REVIEW_REQUIRED,
           isOwnerDriver: true,
           ...persistedLicenseData,
           submittedAt: new Date("2026-01-01T00:15:00Z"),
@@ -2764,11 +2744,11 @@ describe("AccountVerificationService", () => {
 
       const result = await service.submitStage(USER_ID, IDEMPOTENCY_KEY);
 
-      expect(result).toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
+      expect(result).toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
       expectNoLicenseLeak(result);
       expect(databaseService.user.updateMany).toHaveBeenCalledWith({
         where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
       });
     });
 

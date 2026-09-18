@@ -261,11 +261,7 @@ export class AccountVerificationService {
     if (input.accountType === FleetOwnerAccountType.BUSINESS && input.isOwnerDriver) {
       throw new BusinessOwnerDriverInvalidException();
     }
-    const driverLicenseApproved = await this.assertDocumentsValid(
-      userId,
-      input.isOwnerDriver,
-      documents,
-    );
+    await this.assertDocumentsValid(userId, input.isOwnerDriver, documents);
 
     const requestHash = this.hashRequest(input, documents);
     const claim = await this.claimVerification({
@@ -319,8 +315,7 @@ export class AccountVerificationService {
         bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
         businessNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
         representativeNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
-        business?.status === null ||
-        !driverLicenseApproved;
+        business?.status === null;
       const status = needsReview
         ? AccountVerificationStatus.REVIEW_REQUIRED
         : AccountVerificationStatus.SUCCEEDED;
@@ -817,12 +812,11 @@ export class AccountVerificationService {
           throw new AccountVerificationChangedException();
         }
 
-        const driverLicenseApproved = await this.ownerDriverApprovedOnSubmit(tx, userId, current);
+        await this.ownerDriverApprovedOnSubmit(tx, userId, current);
 
         const needsReview =
           current.identityRequiresReview ||
-          current.bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
-          !driverLicenseApproved;
+          current.bankNameMatch === NameMatchStatus.REVIEW_REQUIRED;
         const status = needsReview
           ? AccountVerificationStatus.REVIEW_REQUIRED
           : AccountVerificationStatus.SUCCEEDED;
@@ -1309,8 +1303,8 @@ export class AccountVerificationService {
     tx: Prisma.TransactionClient,
     userId: string,
     current: FleetOwnerAccountVerification,
-  ): Promise<boolean> {
-    if (!current.isOwnerDriver) return true;
+  ): Promise<void> {
+    if (!current.isOwnerDriver) return;
 
     const driverLicense = await tx.documentApproval.findUnique({
       where: {
@@ -1333,7 +1327,6 @@ export class AccountVerificationService {
     ) {
       throw new OwnerDriverLicenseExpiredException();
     }
-    return driverLicense.status === DocumentStatus.APPROVED;
   }
 
   private async verifyOwnerDriverLicense(

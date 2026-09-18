@@ -675,14 +675,14 @@ describe("Fleet-owner account verification E2E Tests", () => {
     });
   });
 
-  it("POST /api/fleet-owner/account-verifications sends a new owner-driver licence to review", async () => {
+  it("POST /api/fleet-owner/account-verifications succeeds with a new owner-driver licence", async () => {
     const owner = await readyOwner("acct-owner-driver");
 
     const response = await ownerDriverVerificationRequest(owner.cookie, "account-owner-driver-1");
 
     expect(response.status).toBe(HttpStatus.CREATED);
     expect(response.body).toMatchObject({
-      status: "REVIEW_REQUIRED",
+      status: "SUCCEEDED",
       isOwnerDriver: true,
     });
 
@@ -704,11 +704,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
       expect.arrayContaining([{ documentType: "DRIVERS_LICENSE", status: "PENDING" }]),
     );
     expect(documents.some(({ documentType }) => documentType === "LASDRI")).toBe(false);
-    expect(user).toMatchObject({ fleetOwnerStatus: "PROCESSING", hasOnboarded: true });
-    expect(bank?.isVerified).toBe(false);
+    expect(user).toMatchObject({ fleetOwnerStatus: "APPROVED", hasOnboarded: true });
+    expect(bank?.isVerified).toBe(true);
 
     const status = await http("get", "/api/fleet-owner/onboarding").set("Cookie", owner.cookie);
-    expect(status.body).toMatchObject({ status: "UNDER_REVIEW", bank: { verified: false } });
+    expect(status.body).toMatchObject({ status: "VERIFIED", bank: { verified: true } });
   });
 
   it("POST /api/fleet-owner/account-verifications succeeds when an owner-driver licence is already approved", async () => {
@@ -765,7 +765,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     );
 
     expect(response.status).toBe(HttpStatus.CREATED);
-    expect(response.body).toMatchObject({ status: "REVIEW_REQUIRED", isOwnerDriver: true });
+    expect(response.body).toMatchObject({ status: "SUCCEEDED", isOwnerDriver: true });
 
     const documents = await databaseService.documentApproval.findMany({
       where: { userId: owner.id },
@@ -920,6 +920,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("rejects a different idempotency key while a review is pending", async () => {
     const owner = await readyOwner("acct-review-lock");
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "JOHN SMITH",
+      bankCode: "058",
+    });
     const first = await ownerDriverVerificationRequest(owner.cookie, "account-review-lock-1");
     const second = await accountVerificationRequest(owner.cookie, "account-review-lock-2");
 
@@ -1057,6 +1062,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("requires an approved owner-driver licence before admin approval, then applies it atomically", async () => {
     const owner = await readyOwner("acct-admin-approve");
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "JOHN SMITH",
+      bankCode: "058",
+    });
     const created = await ownerDriverVerificationRequest(owner.cookie, "account-admin-approve-1");
     expect(created.body.status).toBe("REVIEW_REQUIRED");
 
@@ -1109,6 +1119,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("lets an admin reject a pending review and holds the fleet owner", async () => {
     const owner = await readyOwner("acct-admin-reject");
+    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      accountNumber: ACCOUNT_NUMBER,
+      accountName: "JOHN SMITH",
+      bankCode: "058",
+    });
     const created = await ownerDriverVerificationRequest(owner.cookie, "account-admin-reject-1");
 
     const rejected = await http(
