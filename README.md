@@ -386,6 +386,10 @@ PREMBLY_API_KEY=xxxxxxxxxxxxxxxx
 PREMBLY_APP_ID=xxxxxxxxxxxxxxxx  # Optional
 PREMBLY_BASE_URL=https://api.prembly.com
 
+# Identity lookup (Mono)
+MONO_SECRET_KEY=xxxxxxxxxxxxxxxx
+MONO_BASE_URL=https://api.withmono.com
+
 # Server
 PORT=3000
 TZ=Africa/Lagos

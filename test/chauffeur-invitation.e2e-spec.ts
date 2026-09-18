@@ -9,6 +9,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { ChauffeurImageService } from "../src/modules/chauffeur/chauffeur-image.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
+import { MonoService } from "../src/modules/mono/mono.service";
 import { PremblyService } from "../src/modules/prembly/prembly.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -87,9 +88,11 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       }),
     deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
   };
-  const premblyService = {
+  const monoService = {
     verifyNin: vi.fn(),
     verifyDriversLicense: vi.fn(),
+  };
+  const premblyService = {
     verifyFaceLiveness: vi.fn(),
     compareFaces: vi.fn(),
   };
@@ -210,6 +213,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .useValue({ sendOTPEmail: async () => undefined })
       .overrideProvider(EmailService)
       .useValue(emailService)
+      .overrideProvider(MonoService)
+      .useValue(monoService)
       .overrideProvider(PremblyService)
       .useValue(premblyService)
       .overrideProvider(StorageService)
@@ -239,17 +244,19 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     twilioMocks.createVerificationCheck.mockReset();
     twilioMocks.createVerification.mockResolvedValue({ status: "pending" });
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
-    premblyService.verifyNin.mockReset();
-    premblyService.verifyDriversLicense.mockReset();
+    monoService.verifyNin.mockReset();
+    monoService.verifyDriversLicense.mockReset();
     premblyService.verifyFaceLiveness.mockReset();
     premblyService.compareFaces.mockReset();
-    premblyService.verifyNin.mockResolvedValue({
+    monoService.verifyNin.mockResolvedValue({
       firstName: "ADA",
       middleName: null,
       lastName: "LOVELACE",
+      dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+      officialPhoto: "nin-photo",
       reference: "nin-ref",
     });
-    premblyService.verifyDriversLicense.mockResolvedValue({
+    monoService.verifyDriversLicense.mockResolvedValue({
       licenseNumber: "ABC12345DE67",
       firstName: "ADA",
       lastName: "LOVELACE",
@@ -559,7 +566,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .send({ nin: "99999999999" });
     expect(replayNin.status).toBe(HttpStatus.CREATED);
     expect(replayNin.body.status).toBe("APPROVED");
-    expect(premblyService.verifyNin).toHaveBeenCalledTimes(1);
+    expect(monoService.verifyNin).toHaveBeenCalledTimes(1);
 
     await databaseService.user.update({
       where: { id: user?.id },
@@ -571,7 +578,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
     expect(replayDriving.status).toBe(HttpStatus.CREATED);
     expect(replayDriving.body.status).toBe("APPROVED");
-    expect(premblyService.verifyDriversLicense).toHaveBeenCalledTimes(1);
+    expect(monoService.verifyDriversLicense).toHaveBeenCalledTimes(1);
     expect(
       await databaseService.user.findUnique({
         where: { id: user?.id },

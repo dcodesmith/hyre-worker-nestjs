@@ -8,6 +8,7 @@ primary_region = "lhr"
   TZ = "Africa/Lagos"
   APP_ENV = "preview"
   GRAFANA_TRACES_BASE_URL = "https://gallantcricket1373.grafana.net"
+  MONO_BASE_URL = "https://api.withmono.com"
 
 [http_service]
   internal_port = 3000

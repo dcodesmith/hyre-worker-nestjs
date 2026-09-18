@@ -199,6 +199,12 @@ export const envSchema = z
       .url("PREMBLY_BASE_URL must be a valid URL")
       .default("https://api.prembly.com"),
 
+    MONO_SECRET_KEY: z.string().min(1, "MONO_SECRET_KEY is required"),
+    MONO_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.url("MONO_BASE_URL must be a valid URL").default("https://api.withmono.com"),
+    ),
+
     HMAC_KEY: z.string().min(1, "HMAC_KEY is required"),
 
     ENABLE_MANUAL_TRIGGERS: z
