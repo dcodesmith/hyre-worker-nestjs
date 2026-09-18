@@ -480,20 +480,6 @@ describe("AccountVerificationService", () => {
     logger = module.get(PinoLogger);
   });
 
-  const mockReviewTransaction = (record: ReturnType<typeof succeededRecord>) => {
-    databaseService.$transaction.mockImplementationOnce(async (callback) =>
-      callback({
-        bankDetails: databaseService.bankDetails,
-        documentApproval: databaseService.documentApproval,
-        user: databaseService.user,
-        fleetOwnerAccountVerification: {
-          update: vi.fn().mockResolvedValue(record),
-          updateMany: databaseService.fleetOwnerAccountVerification.updateMany,
-        },
-      }),
-    );
-  };
-
   const expectNoLicenseLeak = (result: object) => {
     expect(result).not.toHaveProperty("driversLicenseHash");
     expect(result).not.toHaveProperty("driversLicenseLast4");
