@@ -28,6 +28,7 @@ const productionEnv = {
   FLUTTERWAVE_WEBHOOK_SECRET: "webhook-secret",
   FLUTTERWAVE_WEBHOOK_URL: "https://example.com/webhooks/flutterwave",
   PREMBLY_API_KEY: "prembly-key",
+  MONO_SECRET_KEY: "mono-secret-key",
   HMAC_KEY: "hmac-key",
   FLIGHTAWARE_API_KEY: "flightaware-key",
   FLIGHTAWARE_WEBHOOK_SECRET: "flightaware-secret",
@@ -232,6 +233,28 @@ describe("envSchema storage", () => {
         ]),
       );
     }
+  });
+});
+
+describe("envSchema MONO_BASE_URL", () => {
+  const baseEnv = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+  };
+
+  it("defaults to the Mono API origin", () => {
+    const result = envSchema.parse(baseEnv);
+
+    expect(result.MONO_BASE_URL).toBe("https://api.withmono.com");
+  });
+
+  it("treats a blank MONO_BASE_URL as the default origin", () => {
+    const result = envSchema.parse({
+      ...baseEnv,
+      MONO_BASE_URL: "",
+    });
+
+    expect(result.MONO_BASE_URL).toBe("https://api.withmono.com");
   });
 });
 

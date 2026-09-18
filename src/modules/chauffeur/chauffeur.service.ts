@@ -22,7 +22,8 @@ import {
   lockUserRow,
 } from "../database/database.service";
 import { EmailService } from "../email/email.service";
-import type { PremblyDriversLicenseResult } from "../prembly/prembly.interface";
+import type { MonoDriversLicenseResult } from "../mono/mono.interface";
+import { MonoError, MonoService } from "../mono/mono.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -86,6 +87,7 @@ export class ChauffeurService {
     private readonly databaseService: DatabaseService,
     private readonly emailService: EmailService,
     private readonly phoneVerificationService: PhoneVerificationService,
+    private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
@@ -421,7 +423,7 @@ export class ChauffeurService {
     }
 
     try {
-      const identity = await this.premblyService.verifyNin(input.nin);
+      const identity = await this.monoService.verifyNin(input.nin);
       await this.databaseService.$transaction([
         this.databaseService.chauffeurVerification.update({
           where: { id: verificationId },
@@ -431,7 +433,9 @@ export class ChauffeurService {
             identityFirstName: identity.firstName,
             identityMiddleName: identity.middleName,
             identityLastName: identity.lastName,
+            identityOfficialPhoto: identity.officialPhoto,
             identityProviderRef: identity.reference,
+            dateOfBirth: identity.dateOfBirth,
             status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
           },
         }),
@@ -461,7 +465,8 @@ export class ChauffeurService {
     if (
       !verification.ninHash ||
       !verification.identityFirstName ||
-      !verification.identityLastName
+      !verification.identityLastName ||
+      !verification.dateOfBirth
     ) {
       throw new ChauffeurStepIncompleteException("NIN");
     }
@@ -480,12 +485,13 @@ export class ChauffeurService {
       return this.getOnboarding(verificationId);
     }
 
-    let license: PremblyDriversLicenseResult;
+    let license: MonoDriversLicenseResult;
     try {
-      license = await this.premblyService.verifyDriversLicense(
+      license = await this.monoService.verifyDriversLicense(
         driversLicenseNumber,
         verification.identityFirstName,
         verification.identityLastName,
+        verification.dateOfBirth,
       );
     } catch (error) {
       const mapped = this.mapLicenseError(error);
@@ -499,9 +505,13 @@ export class ChauffeurService {
       if (license.expiresAt < this.startOfTodayUtc()) {
         throw new ChauffeurLicenseExpiredException();
       }
+      const officialPhoto = license.officialPhoto ?? verification.identityOfficialPhoto;
+      if (!officialPhoto) {
+        throw new ChauffeurBiometricNotVerifiedException();
+      }
       const selfieBase64 = processedSelfie.toString("base64");
       const liveness = await this.premblyService.verifyFaceLiveness(selfieBase64);
-      const faceMatch = await this.premblyService.compareFaces(license.officialPhoto, selfieBase64);
+      const faceMatch = await this.premblyService.compareFaces(officialPhoto, selfieBase64);
       if (
         liveness.confidence < MINIMUM_LIVENESS_CONFIDENCE ||
         faceMatch.confidence < MINIMUM_FACE_MATCH_CONFIDENCE
@@ -547,7 +557,7 @@ export class ChauffeurService {
   }: {
     verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>;
     requestId: string;
-    license: Awaited<ReturnType<PremblyService["verifyDriversLicense"]>>;
+    license: MonoDriversLicenseResult;
     liveness: Awaited<ReturnType<PremblyService["verifyFaceLiveness"]>>;
     faceMatch: Awaited<ReturnType<PremblyService["compareFaces"]>>;
     selfieObjectKey: string;
@@ -742,14 +752,14 @@ export class ChauffeurService {
   }
 
   private mapNinError(error: unknown): ChauffeurException {
-    if (error instanceof PremblyError && error.kind === "REJECTED") {
+    if (error instanceof MonoError && error.kind === "REJECTED") {
       return new ChauffeurNinNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();
   }
 
   private mapLicenseError(error: unknown): ChauffeurException {
-    if (error instanceof PremblyError && error.kind === "REJECTED") {
+    if (error instanceof MonoError && error.kind === "REJECTED") {
       return new ChauffeurLicenseNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();
@@ -774,7 +784,7 @@ export class ChauffeurService {
 
   private assertIdentityMatches(
     verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>,
-    license: Awaited<ReturnType<PremblyService["verifyDriversLicense"]>>,
+    license: MonoDriversLicenseResult,
   ): void {
     if (
       this.normalizeName(verification.identityFirstName ?? "") !==
@@ -825,7 +835,7 @@ export class ChauffeurService {
       steps: {
         consent: verification.termsAcceptedAt !== null && verification.privacyAcceptedAt !== null,
         phone: verification.phoneVerifiedAt !== null,
-        nin: verification.identityProviderRef !== null,
+        nin: verification.identityProviderRef !== null && verification.dateOfBirth !== null,
         driving: verification.status === ChauffeurVerificationStatus.APPROVED,
       },
       complianceRequirements: COMPLIANCE_REQUIREMENTS,

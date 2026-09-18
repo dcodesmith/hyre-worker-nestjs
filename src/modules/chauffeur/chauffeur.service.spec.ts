@@ -13,6 +13,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { USER } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
+import { MonoError, MonoService } from "../mono/mono.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -97,6 +98,7 @@ function invitation(overrides: Record<string, unknown> = {}) {
     identityFirstName: null,
     identityMiddleName: null,
     identityLastName: null,
+    identityOfficialPhoto: null,
     identityProviderRef: null,
     driversLicenseHash: null,
     driversLicenseLast4: null,
@@ -138,7 +140,9 @@ function identityVerified(overrides: Record<string, unknown> = {}) {
     ninHash: hash("12345678901"),
     identityFirstName: "ADA",
     identityLastName: "LOVELACE",
+    identityOfficialPhoto: "nin-photo",
     identityProviderRef: "nin-ref",
+    dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
     status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
     ...overrides,
   });
@@ -180,9 +184,11 @@ describe("ChauffeurService", () => {
     sendCode: ReturnType<typeof vi.fn>;
     checkCode: ReturnType<typeof vi.fn>;
   };
-  let premblyService: {
+  let monoService: {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
+  };
+  let premblyService: {
     verifyFaceLiveness: ReturnType<typeof vi.fn>;
     compareFaces: ReturnType<typeof vi.fn>;
   };
@@ -229,9 +235,11 @@ describe("ChauffeurService", () => {
     });
     emailService = { sendEmail: vi.fn().mockResolvedValue(undefined) };
     phoneVerificationService = { sendCode: vi.fn(), checkCode: vi.fn() };
-    premblyService = {
+    monoService = {
       verifyNin: vi.fn(),
       verifyDriversLicense: vi.fn(),
+    };
+    premblyService = {
       verifyFaceLiveness: vi.fn(),
       compareFaces: vi.fn(),
     };
@@ -247,6 +255,7 @@ describe("ChauffeurService", () => {
         { provide: DatabaseService, useValue: databaseService },
         { provide: EmailService, useValue: emailService },
         { provide: PhoneVerificationService, useValue: phoneVerificationService },
+        { provide: MonoService, useValue: monoService },
         { provide: PremblyService, useValue: premblyService },
         { provide: ChauffeurImageService, useValue: imageService },
         { provide: StorageService, useValue: storageService },
@@ -699,7 +708,7 @@ describe("ChauffeurService", () => {
         status: ChauffeurVerificationStatus.APPROVED,
         steps: expect.objectContaining({ driving: true }),
       });
-      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(monoService.verifyNin).not.toHaveBeenCalled();
       expect(databaseService.chauffeurVerificationStageRequest.create).not.toHaveBeenCalled();
       expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
     });
@@ -716,7 +725,7 @@ describe("ChauffeurService", () => {
       await expect(
         service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
-      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(monoService.verifyNin).not.toHaveBeenCalled();
       expect(databaseService.user.update).not.toHaveBeenCalled();
       expect(databaseService.user.updateMany).not.toHaveBeenCalled();
     });
@@ -729,7 +738,7 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurStepIncompleteException);
     });
 
-    it("persists identity details after Prembly succeeds", async () => {
+    it("persists identity details after Mono succeeds", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow
         .mockResolvedValueOnce(phoneVerified())
         .mockResolvedValueOnce(identityVerified());
@@ -737,10 +746,12 @@ describe("ChauffeurService", () => {
       databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
         id: "stage-1",
       });
-      premblyService.verifyNin.mockResolvedValueOnce({
+      monoService.verifyNin.mockResolvedValueOnce({
         firstName: "ADA",
         middleName: null,
         lastName: "LOVELACE",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "nin-photo",
         reference: "nin-ref",
       });
 
@@ -755,12 +766,14 @@ describe("ChauffeurService", () => {
           ninLast4: "8901",
           identityFirstName: "ADA",
           identityLastName: "LOVELACE",
+          identityOfficialPhoto: "nin-photo",
+          dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
           status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
         }),
       });
     });
 
-    it("maps a Prembly rejection and stores the failed stage", async () => {
+    it("maps a Mono rejection and stores the failed stage", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
         phoneVerified(),
       );
@@ -768,7 +781,7 @@ describe("ChauffeurService", () => {
       databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
         id: "stage-1",
       });
-      premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("REJECTED"));
 
       await expect(
         service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
@@ -794,7 +807,7 @@ describe("ChauffeurService", () => {
       await expect(
         service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
       ).resolves.toMatchObject({ id: VERIFICATION_ID });
-      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(monoService.verifyNin).not.toHaveBeenCalled();
 
       databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce({
         id: "stage-1",
@@ -839,7 +852,7 @@ describe("ChauffeurService", () => {
       await expect(
         service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
       ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
-      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+      expect(monoService.verifyNin).not.toHaveBeenCalled();
     });
   });
 
@@ -868,7 +881,7 @@ describe("ChauffeurService", () => {
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
       expect(imageService.processSelfie).not.toHaveBeenCalled();
-      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
       expect(databaseService.user.create).not.toHaveBeenCalled();
     });
@@ -910,10 +923,36 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurStepIncompleteException);
     });
 
+    it("treats a Prembly-era NIN record without a date of birth as incomplete", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ dateOfBirth: null }),
+      );
+
+      await expect(service.getOnboarding(VERIFICATION_ID)).resolves.toMatchObject({
+        steps: expect.objectContaining({ nin: false }),
+      });
+    });
+
+    it("requires the NIN date of birth before driving verification", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ dateOfBirth: null }),
+      );
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurStepIncompleteException);
+      expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
+    });
+
     it("rejects an identity mismatch, underage driver, and expired licence", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValue(identityVerified());
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...eligibleLicense,
         firstName: "OTHER",
       });
@@ -928,7 +967,7 @@ describe("ChauffeurService", () => {
 
       await claimDrivingStage();
       const today = new Date();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...eligibleLicense,
         dateOfBirth: new Date(
           Date.UTC(today.getUTCFullYear() - 20, today.getUTCMonth(), today.getUTCDate()),
@@ -944,7 +983,7 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurMinimumAgeException);
 
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce({
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...eligibleLicense,
         expiresAt: new Date(
           Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1),
@@ -965,7 +1004,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("REJECTED"));
 
       await expect(
         service.verifyDriving(
@@ -987,7 +1026,7 @@ describe("ChauffeurService", () => {
         .mockResolvedValueOnce(identityVerified())
         .mockResolvedValueOnce(approved);
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.91,
         reference: "live-ref",
@@ -1041,7 +1080,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: scores.liveness,
         reference: "live-ref",
@@ -1066,6 +1105,61 @@ describe("ChauffeurService", () => {
       });
     });
 
+    it("uses the persisted NIN photo when Mono returns no licence photo", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(identityVerified())
+        .mockResolvedValueOnce(
+          identityVerified({
+            chauffeurId: "new-user",
+            status: ChauffeurVerificationStatus.APPROVED,
+          }),
+        );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
+        ...eligibleLicense,
+        officialPhoto: null,
+      });
+      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
+        confidence: 0.9,
+        reference: "live-ref",
+      });
+      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
+      databaseService.user.findFirst.mockResolvedValueOnce(null);
+      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
+      expect(premblyService.compareFaces).toHaveBeenCalledWith("nin-photo", expect.any(String));
+    });
+
+    it("rejects biometrics when neither licence nor NIN photo is available", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ identityOfficialPhoto: null }),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
+        ...eligibleLicense,
+        officialPhoto: null,
+      });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
+      expect(premblyService.verifyFaceLiveness).not.toHaveBeenCalled();
+      expect(premblyService.compareFaces).not.toHaveBeenCalled();
+    });
+
     it("accepts boundary liveness 0.8 and face match 80", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow
         .mockResolvedValueOnce(identityVerified())
@@ -1076,7 +1170,7 @@ describe("ChauffeurService", () => {
           }),
         );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.8,
         reference: "live-ref",
@@ -1100,7 +1194,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.9,
         reference: "live-ref",
@@ -1134,7 +1228,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.9,
         reference: "live-ref",
@@ -1173,7 +1267,7 @@ describe("ChauffeurService", () => {
         status: ProviderVerificationStatus.FAILED,
         failureReason: ChauffeurErrorCode.OPERATION_FAILED,
       });
-      premblyService.verifyDriversLicense.mockClear();
+      monoService.verifyDriversLicense.mockClear();
       storageService.uploadBuffer.mockClear();
 
       await expect(
@@ -1184,7 +1278,7 @@ describe("ChauffeurService", () => {
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
-      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
     });
 
@@ -1198,7 +1292,7 @@ describe("ChauffeurService", () => {
           }),
         );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.9,
         reference: "live-ref",
@@ -1254,7 +1348,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockResolvedValueOnce({
         confidence: 0.9,
         reference: "live-ref",
@@ -1279,7 +1373,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
       premblyService.verifyFaceLiveness.mockRejectedValueOnce(new PremblyError("REJECTED"));
 
       await expect(
@@ -1297,7 +1391,7 @@ describe("ChauffeurService", () => {
         identityVerified(),
       );
       await claimDrivingStage();
-      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
 
       await expect(
         service.verifyDriving(

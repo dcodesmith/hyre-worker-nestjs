@@ -53,54 +53,6 @@ export const premblyInsuranceResponseSchema = z.looseObject({
   verification: verificationSchema,
 });
 
-const premblyNinIdentitySchema = z.looseObject({
-  firstname: z.string().min(1),
-  middlename: z.string().nullish(),
-  surname: z.string().min(1),
-  nin: z.string().regex(/^\d{11}$/),
-  nin_suspension_status: z.boolean(),
-});
-
-export const premblyNinResponseSchema = z
-  .looseObject({
-    status: z.literal(true),
-    response_code: z.literal("00"),
-    data: premblyNinIdentitySchema.optional(),
-    nin_data: premblyNinIdentitySchema.optional(),
-    verification: verificationSchema,
-  })
-  .transform((payload, ctx) => {
-    const data = payload.nin_data ?? payload.data;
-    if (!data) {
-      ctx.addIssue({ code: "custom", message: "Missing nin identity payload" });
-      return z.NEVER;
-    }
-
-    return {
-      status: payload.status,
-      response_code: payload.response_code,
-      data,
-      verification: payload.verification,
-    };
-  });
-
-const frscDateSchema = z.string().regex(/^\d{2}-\d{2}-\d{4}$/);
-
-export const premblyDriversLicenseResponseSchema = z.looseObject({
-  status: z.literal(true),
-  response_code: z.literal("00"),
-  frsc_data: z.looseObject({
-    driversLicense: z.string().min(1),
-    firstname: z.string().min(1),
-    middlename: z.string().nullish(),
-    lastname: z.string().min(1),
-    birthdate: frscDateSchema,
-    photo: z.string().min(1),
-    expiry_date: frscDateSchema,
-  }),
-  verification: verificationSchema,
-});
-
 export const premblyLivenessResponseSchema = z.looseObject({
   status: z.literal(true),
   response_code: z.literal("00"),

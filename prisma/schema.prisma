@@ -126,6 +126,7 @@ model ChauffeurVerification {
   identityFirstName         String?
   identityMiddleName        String?
   identityLastName          String?
+  identityOfficialPhoto     String?
   identityProviderRef       String?
   driversLicenseHash        String?
   driversLicenseLast4       String?
@@ -882,6 +883,7 @@ model FleetOwnerAccountVerification {
   processingExpiresAt       DateTime
   identityFirstName         String?
   identityLastName          String?
+  identityDateOfBirth       DateTime?
   legalName                 String?
   businessName              String?
   businessNameMatch         NameMatchStatus?
