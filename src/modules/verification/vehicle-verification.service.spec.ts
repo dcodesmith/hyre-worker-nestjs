@@ -715,9 +715,7 @@ describe("VehicleVerificationService", () => {
           failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
         }),
       );
-      databaseService.vehicleVerification.update
-        .mockResolvedValueOnce(processingRecord())
-        .mockResolvedValueOnce(succeededRecord());
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
       premblyService.verifyVin.mockResolvedValueOnce(mockVin);
 
@@ -726,8 +724,12 @@ describe("VehicleVerificationService", () => {
         chassisNumber: CHASSIS,
       });
 
-      expect(databaseService.vehicleVerification.update).toHaveBeenNthCalledWith(1, {
-        where: { id: VERIFICATION_ID },
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
+        },
         data: {
           status: ProviderVerificationStatus.PROCESSING,
           failureReason: null,
@@ -736,6 +738,28 @@ describe("VehicleVerificationService", () => {
       expect(premblyService.verifyPlate).toHaveBeenCalledWith(NORMALIZED_PLATE);
       expect(premblyService.verifyVin).toHaveBeenCalledWith(CHASSIS);
       expect(result).toMatchObject(succeededResponse);
+    });
+
+    it("does not retry providers when another request claims the unavailable failure", async () => {
+      databaseService.vehicleVerification.create.mockRejectedValueOnce(uniqueConstraintError());
+      databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(
+        processingRecord({
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
+        }),
+      );
+      databaseService.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+
+      expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+      expect(premblyService.verifyVin).not.toHaveBeenCalled();
+      expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
     });
 
     it("conflicts when an identical request is still processing", async () => {

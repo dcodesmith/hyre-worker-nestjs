@@ -104,10 +104,22 @@ export class VehicleVerificationService {
         if (existing.failureReason !== VerificationErrorCode.PROVIDER_UNAVAILABLE) {
           throw this.failureException(existing.failureReason);
         }
-        verification = await this.databaseService.vehicleVerification.update({
-          where: { id: existing.id },
+        const claim = await this.databaseService.vehicleVerification.updateMany({
+          where: {
+            id: existing.id,
+            status: ProviderVerificationStatus.FAILED,
+            failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
+          },
           data: { status: ProviderVerificationStatus.PROCESSING, failureReason: null },
         });
+        if (claim.count === 0) {
+          throw new VerificationRequestInProgressException();
+        }
+        verification = {
+          ...existing,
+          status: ProviderVerificationStatus.PROCESSING,
+          failureReason: null,
+        };
       } else {
         return this.toVehicleResponse(existing);
       }
