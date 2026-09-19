@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma, ProviderVerificationStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { minimumVehicleYear } from "../car/car.const";
 import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService } from "../database/database.service";
@@ -635,12 +636,13 @@ describe("VehicleVerificationService", () => {
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
     });
 
-    it("marks a vehicle under 2015 as ineligible after a successful provider lookup", async () => {
+    it("marks a vehicle older than 15 years as ineligible after a successful provider lookup", async () => {
+      const tooOld = minimumVehicleYear() - 1;
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
-      premblyService.verifyVin.mockResolvedValueOnce({ ...mockVin, year: 2014 });
+      premblyService.verifyVin.mockResolvedValueOnce({ ...mockVin, year: tooOld });
       databaseService.vehicleVerification.update.mockResolvedValueOnce(
-        succeededRecord({ year: 2014 }),
+        succeededRecord({ year: tooOld }),
       );
 
       const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
@@ -740,9 +742,9 @@ describe("VehicleVerificationService", () => {
       expect(carService.createDraftCarFromVerification).not.toHaveBeenCalled();
     });
 
-    it("blocks draft creation for an under-2015 vehicle", async () => {
+    it("blocks draft creation for a vehicle older than 15 years", async () => {
       databaseService.vehicleVerification.findFirst.mockResolvedValueOnce(
-        succeededRecord({ year: 2010 }),
+        succeededRecord({ year: minimumVehicleYear() - 1 }),
       );
 
       await expect(service.createDraftCar(OWNER_ID, VERIFICATION_ID)).rejects.toBeInstanceOf(

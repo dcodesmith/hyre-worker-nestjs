@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
+import { minimumVehicleYear } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { NhtsaError, NhtsaService } from "../src/modules/nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
@@ -382,7 +383,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
   });
 
-  it("returns 410 for an expired verification and 422 for an under-2015 vehicle", async () => {
+  it("returns 410 for an expired verification and 422 for a vehicle older than 15 years", async () => {
     const expired = await databaseService.vehicleVerification.create({
       data: {
         ownerId,
@@ -407,7 +408,7 @@ describe("Vehicle verification E2E Tests", () => {
 
     const oldPlate = uniquePlate();
     const oldChassis = uniqueChassis();
-    mockSuccessfulProviders(oldPlate, 2014, oldChassis);
+    mockSuccessfulProviders(oldPlate, minimumVehicleYear() - 1, oldChassis);
     const ineligible = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
