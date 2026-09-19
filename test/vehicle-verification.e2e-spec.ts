@@ -229,7 +229,7 @@ describe("Vehicle verification E2E Tests", () => {
         color: "Black",
         passengerCapacity: 5,
       },
-      eligibility: { isEligible: true, reasons: [] },
+      eligibility: { isEligible: true, reasons: [], minimumYear: minimumVehicleYear() },
       carId: null,
     });
     expect(created.body).not.toHaveProperty("insurance");
@@ -422,6 +422,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(ineligible.body.eligibility).toEqual({
       isEligible: false,
       reasons: ["VEHICLE_YEAR_BELOW_MINIMUM"],
+      minimumYear: minimumVehicleYear(),
     });
     expect(ineligibleCar.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(ineligibleCar.body.errorCode).toBe("VEHICLE_NOT_ELIGIBLE");

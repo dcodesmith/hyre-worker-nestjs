@@ -97,7 +97,7 @@ const succeededResponse = {
     color: "Black",
     passengerCapacity: 5,
   },
-  eligibility: { isEligible: true, reasons: [] },
+  eligibility: { isEligible: true, reasons: [], minimumYear: minimumVehicleYear() },
   carId: null,
 };
 
@@ -653,6 +653,7 @@ describe("VehicleVerificationService", () => {
       expect(result.eligibility).toEqual({
         isEligible: false,
         reasons: ["VEHICLE_YEAR_BELOW_MINIMUM"],
+        minimumYear: minimumVehicleYear(),
       });
     });
 

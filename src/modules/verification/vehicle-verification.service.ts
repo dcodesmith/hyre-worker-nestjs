@@ -267,11 +267,12 @@ export class VehicleVerificationService {
   }
 
   private getEligibility(year: number | null) {
-    const reasons =
-      year !== null && year < minimumVehicleYear() ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
+    const minimumYear = minimumVehicleYear();
+    const reasons = year !== null && year < minimumYear ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
     return {
       isEligible: year !== null && reasons.length === 0,
       reasons,
+      minimumYear,
     };
   }
 
