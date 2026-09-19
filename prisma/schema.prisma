@@ -30,7 +30,7 @@ model Car {
   airportPickupRate      Int?
   vehicleType            VehicleType             @default(SEDAN)
   serviceTier            ServiceTier             @default(STANDARD)
-  passengerCapacity      Int                     @default(4)
+  passengerCapacity      Int?
   pricingIncludesFuel    Boolean                 @default(false)
   bookings               Booking[]
   owner                  User                    @relation(fields: [ownerId], references: [id], onDelete: Cascade)

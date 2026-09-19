@@ -38,6 +38,7 @@ import {
   CarStatusUpdateNotAllowedException,
   CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
+  CarValidationException,
   ChassisNumberAlreadyExistsException,
   FileNotRejectedException,
   FleetOwnerNotFoundException,
@@ -226,8 +227,7 @@ export class CarService {
           !verification?.chassisNumber ||
           !verification.make ||
           !verification.model ||
-          !verification.year ||
-          !verification.passengerCapacity
+          !verification.year
         ) {
           throw new CarCreateFailedException();
         }
@@ -372,7 +372,7 @@ export class CarService {
   }
 
   async updateDraftCarPricing(carId: string, ownerId: string, dto: UpdateCarPricingDto) {
-    return this.updateCar(carId, ownerId, dto);
+    return this.updateCar(carId, ownerId, dto, true);
   }
 
   async submitCar(carId: string, ownerId: string) {
@@ -400,6 +400,7 @@ export class CarService {
       car.nightRate !== null &&
       car.fullDayRate !== null &&
       car.airportPickupRate !== null &&
+      car.passengerCapacity != null &&
       (car.pricingIncludesFuel || car.fuelUpgradeRate !== null);
     const requirements = {
       hasDocuments: REQUIRED_CAR_DOCUMENT_TYPES.every((documentType) =>
@@ -422,9 +423,14 @@ export class CarService {
     return { success: true, requirements };
   }
 
-  async updateCar(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
+  async updateCar(
+    carId: string,
+    ownerId: string,
+    dto: UpdateCarBodyDto,
+    requirePassengerCapacity = false,
+  ) {
     try {
-      return await this.applyCarUpdate(carId, ownerId, dto);
+      return await this.applyCarUpdate(carId, ownerId, dto, requirePassengerCapacity);
     } catch (error) {
       if (error instanceof CarException) {
         throw error;
@@ -447,7 +453,12 @@ export class CarService {
     }
   }
 
-  private async applyCarUpdate(carId: string, ownerId: string, dto: UpdateCarBodyDto) {
+  private async applyCarUpdate(
+    carId: string,
+    ownerId: string,
+    dto: UpdateCarBodyDto,
+    requirePassengerCapacity = false,
+  ) {
     const existingCar = await this.databaseService.car.findFirst({
       where: { id: carId, ownerId },
       select: {
@@ -459,6 +470,7 @@ export class CarService {
         model: true,
         year: true,
         color: true,
+        passengerCapacity: true,
       },
     });
 
@@ -489,14 +501,25 @@ export class CarService {
       await this.assertRegistrationNumberUnique(dto.registrationNumber, carId);
     }
 
-    const updatesListingDetails = Object.keys(dto).some((field) => field !== "status");
+    const { passengerCapacity, ...updatableDto } = dto;
+    if (
+      requirePassengerCapacity &&
+      existingCar.passengerCapacity == null &&
+      passengerCapacity == null
+    ) {
+      throw new CarValidationException("Passenger capacity is required");
+    }
+    const updatesListingDetails = Object.keys(updatableDto).some((field) => field !== "status");
     const car = await this.databaseService.car.update({
       where: {
         id: carId,
         ...(dto.status !== undefined && { status: { not: Status.BOOKED } }),
       },
       data: {
-        ...dto,
+        ...updatableDto,
+        ...(existingCar.passengerCapacity == null && passengerCapacity != null
+          ? { passengerCapacity }
+          : {}),
         ...(normalizedRegistrationNumber && {
           registrationNumber: normalizedRegistrationNumber,
         }),

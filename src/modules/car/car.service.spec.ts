@@ -24,6 +24,7 @@ import {
   CarStatusUpdateNotAllowedException,
   CarSubmissionRequirementsNotMetException,
   CarUpdateFailedException,
+  CarValidationException,
   ChassisNumberAlreadyExistsException,
   FileNotRejectedException,
   RegistrationNumberAlreadyExistsException,
@@ -764,17 +765,31 @@ describe("CarService", () => {
       expect(databaseServiceMock.insuranceVerification.create).not.toHaveBeenCalled();
     });
 
-    it("fails when the verification is missing trusted passenger capacity", async () => {
+    it("creates a draft car when passenger capacity is still unknown", async () => {
       databaseServiceMock.user.findUnique.mockResolvedValueOnce({ isOwnerDriver: false });
       databaseServiceMock.vehicleVerification.findFirst.mockResolvedValueOnce({
         ...verification,
         passengerCapacity: null,
       });
+      databaseServiceMock.car.create.mockResolvedValueOnce({
+        id: "car-1",
+        ownerId: "owner-1",
+        registrationNumber: "KJA123AB",
+        chassisNumber: verification.chassisNumber,
+        passengerCapacity: null,
+        dayRate: null,
+        hourlyRate: null,
+      });
+      databaseServiceMock.vehicleVerification.updateMany.mockResolvedValueOnce({ count: 1 });
 
       await expect(
         service.createDraftCarFromVerification("owner-1", "ver-1"),
-      ).rejects.toBeInstanceOf(CarCreateFailedException);
-      expect(databaseServiceMock.car.create).not.toHaveBeenCalled();
+      ).resolves.toMatchObject({ id: "car-1", passengerCapacity: null });
+      expect(databaseServiceMock.car.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ passengerCapacity: null }),
+        }),
+      );
     });
 
     it("defaults a missing plate color to an empty string and never writes insurance", async () => {
@@ -846,6 +861,7 @@ describe("CarService", () => {
       airportPickupRate: null,
       pricingIncludesFuel: false,
       fuelUpgradeRate: null,
+      passengerCapacity: null,
       submittedAt: null,
       vehicleVerification: { id: "ver-1" },
       documents: [],
@@ -878,6 +894,7 @@ describe("CarService", () => {
         airportPickupRate: 30_000,
         pricingIncludesFuel: true,
         fuelUpgradeRate: null,
+        passengerCapacity: 5,
         documents: requiredDocuments,
         _count: { images: 3 },
       });
@@ -906,6 +923,7 @@ describe("CarService", () => {
         fullDayRate: 100_000,
         airportPickupRate: 30_000,
         pricingIncludesFuel: true,
+        passengerCapacity: 5,
         documents: requiredDocuments.slice(1),
         _count: { images: 3 },
       });
@@ -923,6 +941,32 @@ describe("CarService", () => {
       expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
     });
 
+    it("treats pricing as incomplete until passenger capacity is set", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        ...draftCar,
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        passengerCapacity: null,
+        documents: requiredDocuments,
+        _count: { images: 3 },
+      });
+
+      const error = await service.submitCar("car-1", "owner-1").catch((reason) => reason);
+
+      expect(error).toBeInstanceOf(CarSubmissionRequirementsNotMetException);
+      expect((error as CarSubmissionRequirementsNotMetException).getDetails()).toEqual({
+        requirements: {
+          hasDocuments: true,
+          hasImages: true,
+          hasPricing: false,
+        },
+      });
+    });
+
     it("blocks submission until at least three images are present", async () => {
       databaseServiceMock.car.findFirst.mockResolvedValueOnce({
         ...draftCar,
@@ -932,6 +976,7 @@ describe("CarService", () => {
         fullDayRate: 100_000,
         airportPickupRate: 30_000,
         pricingIncludesFuel: true,
+        passengerCapacity: 5,
         documents: requiredDocuments,
         _count: { images: 2 },
       });
@@ -1074,6 +1119,7 @@ describe("CarService", () => {
         id: "car-1",
         registrationNumber: "KJA123AB",
         status: Status.HOLD,
+        passengerCapacity: 5,
       });
       databaseServiceMock.car.update.mockResolvedValueOnce({
         id: "car-1",
@@ -1090,9 +1136,61 @@ describe("CarService", () => {
         pricingIncludesFuel: true,
         vehicleType: VehicleType.SEDAN,
         serviceTier: ServiceTier.STANDARD,
+        passengerCapacity: 5,
       });
 
       expect(result).toMatchObject({ id: "car-1", hourlyRate: 5000, dayRate: 50_000 });
+      expect(databaseServiceMock.car.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ passengerCapacity: 5 }),
+        }),
+      );
+    });
+
+    it("writes passenger capacity once when the draft still has none", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        id: "car-1",
+        registrationNumber: "KJA123AB",
+        status: Status.HOLD,
+        passengerCapacity: null,
+      });
+      databaseServiceMock.car.update.mockResolvedValueOnce({ id: "car-1", passengerCapacity: 7 });
+
+      await service.updateDraftCarPricing("car-1", "owner-1", {
+        hourlyRate: 5000,
+        dayRate: 50_000,
+        nightRate: 60_000,
+        fullDayRate: 100_000,
+        airportPickupRate: 30_000,
+        pricingIncludesFuel: true,
+        vehicleType: VehicleType.SEDAN,
+        serviceTier: ServiceTier.STANDARD,
+        passengerCapacity: 7,
+      });
+
+      expect(databaseServiceMock.car.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ passengerCapacity: 7 }),
+        }),
+      );
+    });
+
+    it("rejects pricing without passenger capacity when the draft has none", async () => {
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({ passengerCapacity: null });
+
+      await expect(
+        service.updateDraftCarPricing("car-1", "owner-1", {
+          hourlyRate: 5000,
+          dayRate: 50_000,
+          nightRate: 60_000,
+          fullDayRate: 100_000,
+          airportPickupRate: 30_000,
+          pricingIncludesFuel: true,
+          vehicleType: VehicleType.SEDAN,
+          serviceTier: ServiceTier.STANDARD,
+        }),
+      ).rejects.toBeInstanceOf(CarValidationException);
+      expect(databaseServiceMock.car.update).not.toHaveBeenCalled();
     });
   });
 });
