@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   GoneException,
+  HttpCode,
+  HttpStatus,
   Patch,
   Post,
   Put,
@@ -65,6 +67,7 @@ export class FleetOwnerCarController {
   }
 
   @Post(":carId/documents")
+  @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileFieldsInterceptor([...CAR_DOCUMENT_UPLOAD_FIELD_CONFIG]))
   async uploadDraftCarDocuments(
     @ZodParam("carId", carIdParamSchema) carId: string,

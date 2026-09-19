@@ -995,13 +995,14 @@ describe("CarService", () => {
   });
 
   describe("draft asset and pricing updates", () => {
-    it("uploads draft documents once and returns the owner car", async () => {
+    it("uploads draft documents once and returns the created car id", async () => {
       databaseServiceMock.$transaction.mockImplementationOnce((arg) =>
         Array.isArray(arg) ? Promise.all(arg) : arg(databaseServiceMock),
       );
-      databaseServiceMock.car.findFirst
-        .mockResolvedValueOnce({ id: "car-1", publicRef: "0123456789abcdef" })
-        .mockResolvedValueOnce({ id: "car-1", documents: [] });
+      databaseServiceMock.car.findFirst.mockResolvedValueOnce({
+        id: "car-1",
+        publicRef: "0123456789abcdef",
+      });
       storageServiceMock.uploadBuffer
         .mockResolvedValueOnce({
           key: "owner-1/car-1/documents/registration.pdf",
@@ -1024,7 +1025,7 @@ describe("CarService", () => {
         insuranceCertificate: createMockFile("insurance.pdf", "application/pdf"),
       });
 
-      expect(result).toMatchObject({ id: "car-1" });
+      expect(result).toEqual({ id: "car-1" });
       expect(storageServiceMock.uploadBuffer).toHaveBeenNthCalledWith(
         1,
         expect.any(Buffer),
