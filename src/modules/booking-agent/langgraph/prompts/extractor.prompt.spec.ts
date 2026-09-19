@@ -15,5 +15,7 @@ describe("extractor.prompt contract", () => {
     expect(prompt).toContain("RECENT CONVERSATION HISTORY:");
     expect(prompt).toContain("RULES:");
     expect(prompt).toContain("NEVER assume dropoffLocation equals pickupLocation");
+    expect(prompt).toContain("ABUSE AND JARGON");
+    expect(prompt).toContain("LAGOS / LOCAL LANGUAGE");
   });
 });

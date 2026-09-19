@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -178,6 +179,20 @@ describe("LangGraphGraphService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string) => {
+              if (key === "TWILIO_VEHICLE_CARD_CONTENT_SID") {
+                return "HX43448303892f9f4026057adb597e0c22";
+              }
+              if (key === "TWILIO_CHECKOUT_LINK_CONTENT_SID") {
+                return "HX34269684dbcb609ab817c66c719eaba3";
+              }
+              return undefined;
+            },
+          },
+        },
         ExtractNode,
         MergeNode,
         RouteNode,

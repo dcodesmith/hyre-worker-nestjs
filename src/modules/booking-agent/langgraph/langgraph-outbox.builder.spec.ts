@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { buildState, buildVehicleOption } from "./langgraph.factory";
 import { buildOutboxItems } from "./langgraph-outbox.builder";
 
+const DEV_TEMPLATES = {
+  vehicleCardContentSid: "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  checkoutLinkContentSid: "HXbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+};
+
 describe("langgraph-outbox.builder", () => {
   it("builds intro + template cards mapped by vehicleId", () => {
     const veh1 = buildVehicleOption({ id: "veh_1", make: "Toyota", model: "Prado" });
@@ -32,15 +37,43 @@ describe("langgraph-outbox.builder", () => {
           },
         ],
       },
+      DEV_TEMPLATES,
     );
 
     expect(outbox).toHaveLength(3);
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[1].mode).toBe("TEMPLATE");
+    expect(outbox[1].templateName).toBe(DEV_TEMPLATES.vehicleCardContentSid);
     expect(outbox[1].templateVariables?.["1"]).toBe("Lexus GX");
     expect(outbox[1].templateVariables?.["2"]).toContain("incl. VAT");
     expect(outbox[2].templateVariables?.["1"]).toBe("Toyota Prado");
     expect(outbox[2].templateVariables?.["2"]).toContain("incl. VAT");
+  });
+
+  it("falls back to free-form when vehicle card template SID is not configured", () => {
+    const vehicle = buildVehicleOption({ id: "veh_1" });
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "presenting_options",
+        inboundMessage: "show me options",
+        availableOptions: [vehicle],
+      }),
+      {
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "veh_1",
+            imageUrl: null,
+            caption: "Card",
+            buttonId: "select_vehicle:veh_1",
+            buttonTitle: "Select",
+          },
+        ],
+      },
+    );
+
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].mode).toBe("FREE_FORM");
   });
 
   it("falls back to single free-form message when cards do not map to available options", () => {
@@ -97,6 +130,7 @@ describe("langgraph-outbox.builder", () => {
           },
         ],
       },
+      DEV_TEMPLATES,
     );
 
     expect(outbox).toHaveLength(2);
@@ -113,10 +147,12 @@ describe("langgraph-outbox.builder", () => {
       {
         text: "Booking created. I have sent your secure checkout link below.",
       },
+      DEV_TEMPLATES,
     );
 
     expect(outbox).toHaveLength(1);
     expect(outbox[0].mode).toBe("TEMPLATE");
+    expect(outbox[0].templateName).toBe(DEV_TEMPLATES.checkoutLinkContentSid);
     expect(outbox[0].templateVariables).toEqual({
       "1": "Booking created. I have sent your secure checkout link below.",
       "2": "c60612d08d53343872af",
@@ -137,5 +173,23 @@ describe("langgraph-outbox.builder", () => {
     expect(outbox).toHaveLength(1);
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[0].textBody).toContain("invalid-url");
+  });
+
+  it("falls back to free-form checkout when the template SID is not configured", () => {
+    const paymentLink =
+      "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/c60612d08d53343872af";
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "awaiting_payment",
+        paymentLink,
+      }),
+      {
+        text: "Booking created. I have sent your secure checkout link below.",
+      },
+    );
+
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].mode).toBe("FREE_FORM");
+    expect(outbox[0].textBody).toContain(paymentLink);
   });
 });
