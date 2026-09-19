@@ -13,7 +13,7 @@ import {
   createInsuranceVerificationSchema,
   createVehicleVerificationSchema,
 } from "./vehicle-verification.dto";
-import { VehicleVerificationService } from "./vehicle-verification.service";
+import { PREMBLY_VIN_BUDGET_MS, VehicleVerificationService } from "./vehicle-verification.service";
 import {
   InsuranceInactiveException,
   InsuranceVehicleMismatchException,
@@ -264,7 +264,7 @@ describe("VehicleVerificationService", () => {
       });
       expect(premblyService.verifyPlate).toHaveBeenCalledWith(NORMALIZED_PLATE);
       expect(premblyService.verifyVin).toHaveBeenCalledWith(CHASSIS);
-      expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
+      expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
       expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
       expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
@@ -366,10 +366,11 @@ describe("VehicleVerificationService", () => {
       expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
     });
 
-    it("does not fall back to NHTSA when Prembly VIN is rejected", async () => {
+    it("does not use NHTSA when Prembly VIN is rejected", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
       premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+      nhtsaService.verifyVin.mockResolvedValueOnce(mockNhtsaVin);
 
       await expect(
         service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
@@ -377,7 +378,38 @@ describe("VehicleVerificationService", () => {
           chassisNumber: CHASSIS,
         }),
       ).rejects.toBeInstanceOf(ProviderVerificationException);
-      expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
+      expect(databaseService.vehicleVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("uses NHTSA when Prembly VIN exceeds the budget", async () => {
+      vi.useFakeTimers();
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
+      premblyService.verifyVin.mockReturnValueOnce(new Promise(() => {}));
+      nhtsaService.verifyVin.mockResolvedValueOnce(mockNhtsaVin);
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(
+        succeededRecord({ vinProviderRef: null }),
+      );
+
+      try {
+        const pending = service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        });
+        await vi.advanceTimersByTimeAsync(PREMBLY_VIN_BUDGET_MS);
+        await pending;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          passengerCapacity: 5,
+          vinProviderRef: null,
+        }),
+      });
     });
 
     it("succeeds with null passenger capacity when neither decoder returns seats", async () => {
@@ -673,6 +705,37 @@ describe("VehicleVerificationService", () => {
         }),
       ).rejects.toBeInstanceOf(VehicleMismatchException);
       expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+    });
+
+    it("retries a PROVIDER_UNAVAILABLE failure with the same key", async () => {
+      databaseService.vehicleVerification.create.mockRejectedValueOnce(uniqueConstraintError());
+      databaseService.vehicleVerification.findUnique.mockResolvedValueOnce(
+        processingRecord({
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
+        }),
+      );
+      databaseService.vehicleVerification.update
+        .mockResolvedValueOnce(processingRecord())
+        .mockResolvedValueOnce(succeededRecord());
+      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
+      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+
+      const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
+      });
+
+      expect(databaseService.vehicleVerification.update).toHaveBeenNthCalledWith(1, {
+        where: { id: VERIFICATION_ID },
+        data: {
+          status: ProviderVerificationStatus.PROCESSING,
+          failureReason: null,
+        },
+      });
+      expect(premblyService.verifyPlate).toHaveBeenCalledWith(NORMALIZED_PLATE);
+      expect(premblyService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+      expect(result).toMatchObject(succeededResponse);
     });
 
     it("conflicts when an identical request is still processing", async () => {
