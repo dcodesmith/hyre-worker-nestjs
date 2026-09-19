@@ -360,41 +360,46 @@ describe("VehicleVerificationService", () => {
       expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
     });
 
-    it("fails when neither trusted decoder returns passenger capacity", async () => {
+    it("succeeds with null passenger capacity when neither decoder returns seats", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
       premblyService.verifyVin.mockResolvedValueOnce({ ...mockVin, passengerCapacity: 0 });
       nhtsaService.verifyVin.mockResolvedValueOnce({ ...mockNhtsaVin, passengerCapacity: null });
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(
+        succeededRecord({ passengerCapacity: null }),
+      );
 
-      await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
-          plateNumber: PLATE,
-          chassisNumber: CHASSIS,
-        }),
-      ).rejects.toBeInstanceOf(ProviderVerificationException);
-
-      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
-        data: {
-          status: ProviderVerificationStatus.FAILED,
-          failureReason: VerificationErrorCode.PROVIDER_INVALID_RESPONSE,
-        },
+      const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
       });
+
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: ProviderVerificationStatus.SUCCEEDED,
+          passengerCapacity: null,
+        }),
+      });
+      expect(result.vehicle.passengerCapacity).toBeNull();
     });
 
-    it("fails the NHTSA fallback when it also lacks passenger capacity", async () => {
+    it("keeps a Prembly VIN when NHTSA has no seat count either", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
       premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
       nhtsaService.verifyVin.mockResolvedValueOnce({ ...mockNhtsaVin, passengerCapacity: null });
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(
+        succeededRecord({ passengerCapacity: null, vinProviderRef: null }),
+      );
 
-      await expect(
-        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
-          plateNumber: PLATE,
-          chassisNumber: CHASSIS,
-        }),
-      ).rejects.toBeInstanceOf(ProviderVerificationException);
+      const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
+      });
+
       expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+      expect(result.vehicle.passengerCapacity).toBeNull();
     });
 
     it("accepts a plate vehicle name that includes the VIN make and model", async () => {

@@ -12,7 +12,9 @@ export const updateCarPricingSchema = carBaseBodySchema
     pricingIncludesFuel: true,
     vehicleType: true,
     serviceTier: true,
+    passengerCapacity: true,
   })
+  .partial({ passengerCapacity: true })
   .superRefine(validateFuelUpgradeRate);
 
 export type UpdateCarPricingDto = z.infer<typeof updateCarPricingSchema>;

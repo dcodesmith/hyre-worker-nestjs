@@ -319,12 +319,12 @@ export class VehicleVerificationService {
       if (vin.passengerCapacity) {
         return vin;
       }
-
-      const nhtsaVin = await this.nhtsaService.verifyVin(chassisNumber);
-      if (!nhtsaVin.passengerCapacity) {
-        throw new NhtsaError("INVALID_RESPONSE");
+      try {
+        const nhtsaVin = await this.nhtsaService.verifyVin(chassisNumber);
+        return { ...vin, passengerCapacity: nhtsaVin.passengerCapacity };
+      } catch {
+        return vin;
       }
-      return { ...vin, passengerCapacity: nhtsaVin.passengerCapacity };
     } catch (error) {
       if (
         !(error instanceof PremblyError) ||
@@ -333,9 +333,6 @@ export class VehicleVerificationService {
         throw error;
       }
       const vin = await this.nhtsaService.verifyVin(chassisNumber);
-      if (!vin.passengerCapacity) {
-        throw new NhtsaError("INVALID_RESPONSE");
-      }
       return { ...vin, reference: null };
     }
   }
