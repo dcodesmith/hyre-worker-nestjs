@@ -37,11 +37,22 @@ import {
 } from "./verification.error";
 
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+export const PREMBLY_VIN_BUDGET_MS = 5_000;
 
 function usablePassengerCapacity(value: number | null) {
   return value != null && value >= MIN_PASSENGER_CAPACITY && value <= MAX_PASSENGER_CAPACITY
     ? value
     : null;
+}
+
+function withPremblyVinBudget<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => undefined);
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new PremblyError("UNAVAILABLE")), PREMBLY_VIN_BUDGET_MS);
+    }),
+  ]);
 }
 
 @Injectable()
@@ -90,9 +101,28 @@ export class VehicleVerificationService {
         throw new VerificationRequestInProgressException();
       }
       if (existing.status === ProviderVerificationStatus.FAILED) {
-        throw this.failureException(existing.failureReason);
+        if (existing.failureReason !== VerificationErrorCode.PROVIDER_UNAVAILABLE) {
+          throw this.failureException(existing.failureReason);
+        }
+        const claim = await this.databaseService.vehicleVerification.updateMany({
+          where: {
+            id: existing.id,
+            status: ProviderVerificationStatus.FAILED,
+            failureReason: VerificationErrorCode.PROVIDER_UNAVAILABLE,
+          },
+          data: { status: ProviderVerificationStatus.PROCESSING, failureReason: null },
+        });
+        if (claim.count === 0) {
+          throw new VerificationRequestInProgressException();
+        }
+        verification = {
+          ...existing,
+          status: ProviderVerificationStatus.PROCESSING,
+          failureReason: null,
+        };
+      } else {
+        return this.toVehicleResponse(existing);
       }
-      return this.toVehicleResponse(existing);
     }
 
     try {
@@ -325,13 +355,16 @@ export class VehicleVerificationService {
   }
 
   private async verifyVin(chassisNumber: string) {
+    const nhtsaPromise = Promise.resolve(this.nhtsaService.verifyVin(chassisNumber));
+    void nhtsaPromise.catch(() => undefined);
+
     try {
-      const vin = await this.premblyService.verifyVin(chassisNumber);
+      const vin = await withPremblyVinBudget(this.premblyService.verifyVin(chassisNumber));
       if (usablePassengerCapacity(vin.passengerCapacity) != null) {
         return vin;
       }
       try {
-        const nhtsaVin = await this.nhtsaService.verifyVin(chassisNumber);
+        const nhtsaVin = await nhtsaPromise;
         return { ...vin, passengerCapacity: usablePassengerCapacity(nhtsaVin.passengerCapacity) };
       } catch {
         return { ...vin, passengerCapacity: null };
@@ -343,7 +376,7 @@ export class VehicleVerificationService {
       ) {
         throw error;
       }
-      const vin = await this.nhtsaService.verifyVin(chassisNumber);
+      const vin = await nhtsaPromise;
       return { ...vin, reference: null };
     }
   }
