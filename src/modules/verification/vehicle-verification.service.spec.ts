@@ -283,6 +283,25 @@ describe("VehicleVerificationService", () => {
       expect(result).not.toHaveProperty("policyNumber");
     });
 
+    it("treats a Prembly seat count below 4 as missing and uses NHTSA when it is in range", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);
+      premblyService.verifyVin.mockResolvedValueOnce({ ...mockVin, passengerCapacity: 3 });
+      nhtsaService.verifyVin.mockResolvedValueOnce(mockNhtsaVin);
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
+
+      await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
+      });
+
+      expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({ passengerCapacity: 5 }),
+      });
+    });
+
     it("supplements Prembly VIN with NHTSA seats when Prembly omits passenger capacity", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       premblyService.verifyPlate.mockResolvedValueOnce(mockPlate);

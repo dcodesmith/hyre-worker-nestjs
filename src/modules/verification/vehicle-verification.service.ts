@@ -6,6 +6,7 @@ import {
   type VehicleVerification,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY } from "../car/car.const";
 import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
@@ -33,6 +34,12 @@ import {
 
 const MINIMUM_VEHICLE_YEAR = 2015;
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+function usablePassengerCapacity(value: number | null) {
+  return value != null && value >= MIN_PASSENGER_CAPACITY && value <= MAX_PASSENGER_CAPACITY
+    ? value
+    : null;
+}
 
 @Injectable()
 export class VehicleVerificationService {
@@ -100,7 +107,7 @@ export class VehicleVerificationService {
           model: vin.model,
           year: vin.year,
           color: plate.color,
-          passengerCapacity: vin.passengerCapacity,
+          passengerCapacity: usablePassengerCapacity(vin.passengerCapacity),
           plateProviderRef: plate.reference,
           vinProviderRef: vin.reference,
         },
@@ -316,14 +323,14 @@ export class VehicleVerificationService {
   private async verifyVin(chassisNumber: string) {
     try {
       const vin = await this.premblyService.verifyVin(chassisNumber);
-      if (vin.passengerCapacity) {
+      if (usablePassengerCapacity(vin.passengerCapacity) != null) {
         return vin;
       }
       try {
         const nhtsaVin = await this.nhtsaService.verifyVin(chassisNumber);
-        return { ...vin, passengerCapacity: nhtsaVin.passengerCapacity };
+        return { ...vin, passengerCapacity: usablePassengerCapacity(nhtsaVin.passengerCapacity) };
       } catch {
-        return vin;
+        return { ...vin, passengerCapacity: null };
       }
     } catch (error) {
       if (
