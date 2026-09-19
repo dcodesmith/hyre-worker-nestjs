@@ -332,7 +332,7 @@ export class CarService {
       }
       throw error;
     }
-    return this.getOwnerCarById(carId, ownerId);
+    return { id: carId };
   }
 
   async uploadDraftCarImages(carId: string, ownerId: string, images: UploadedCarFile[]) {

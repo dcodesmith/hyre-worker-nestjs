@@ -1,4 +1,5 @@
-import { GoneException } from "@nestjs/common";
+import { GoneException, HttpStatus } from "@nestjs/common";
+import { HTTP_CODE_METADATA } from "@nestjs/common/constants";
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,6 +104,9 @@ describe("FleetOwnerCarController", () => {
         controller.uploadDraftCarDocuments("car-1", files as never, mockUser),
       ).resolves.toEqual({ id: "car-1" });
       expect(carService.uploadDraftCarDocuments).toHaveBeenCalledWith("car-1", "owner-1", files);
+      expect(Reflect.getMetadata(HTTP_CODE_METADATA, controller.uploadDraftCarDocuments)).toBe(
+        HttpStatus.CREATED,
+      );
     });
 
     it("uploads draft images", async () => {
