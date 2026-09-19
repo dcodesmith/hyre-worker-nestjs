@@ -6,7 +6,11 @@ import {
   type VehicleVerification,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY } from "../car/car.const";
+import {
+  MAX_PASSENGER_CAPACITY,
+  MIN_PASSENGER_CAPACITY,
+  minimumVehicleYear,
+} from "../car/car.const";
 import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
@@ -32,7 +36,6 @@ import {
   VerificationRequestInProgressException,
 } from "./verification.error";
 
-const MINIMUM_VEHICLE_YEAR = 2015;
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function usablePassengerCapacity(value: number | null) {
@@ -264,11 +267,12 @@ export class VehicleVerificationService {
   }
 
   private getEligibility(year: number | null) {
-    const reasons =
-      year !== null && year < MINIMUM_VEHICLE_YEAR ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
+    const minimumYear = minimumVehicleYear();
+    const reasons = year !== null && year < minimumYear ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
     return {
       isEligible: year !== null && reasons.length === 0,
       reasons,
+      minimumYear,
     };
   }
 

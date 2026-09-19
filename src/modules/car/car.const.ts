@@ -1,10 +1,19 @@
 import { DocumentType } from "@prisma/client";
+import { TIMEZONE } from "../../config/constants";
 
 export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 export const MIN_IMAGE_COUNT = 3;
 export const MAX_IMAGE_COUNT = 5;
 export const MIN_PASSENGER_CAPACITY = 4;
 export const MAX_PASSENGER_CAPACITY = 60;
+export const MAX_VEHICLE_AGE_YEARS = 15;
+
+export function minimumVehicleYear(now = new Date()) {
+  const year = Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, year: "numeric" }).format(now),
+  );
+  return year - MAX_VEHICLE_AGE_YEARS;
+}
 
 /**
  * Car documents that must exist and be APPROVED before a car can be listed.

@@ -1,6 +1,10 @@
 import { ServiceTier, Status, VehicleType } from "@prisma/client";
 import { z } from "zod";
-import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY } from "../car.const";
+import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY, minimumVehicleYear } from "../car.const";
+
+function isAllowedVehicleYear(year: number) {
+  return year >= minimumVehicleYear() && year <= new Date().getFullYear() + 1;
+}
 
 export const registrationNumberSchema = z
   .string()
@@ -28,11 +32,7 @@ export const registrationNumberSchema = z
 export const carBaseBodySchema = z.object({
   make: z.string().trim().min(1),
   model: z.string().trim().min(1),
-  year: z
-    .number()
-    .int()
-    .min(2015)
-    .max(new Date().getFullYear() + 1),
+  year: z.number().int().refine(isAllowedVehicleYear),
   color: z.string().trim().default(""),
   registrationNumber: registrationNumberSchema,
   status: z.enum([Status.AVAILABLE, Status.HOLD, Status.IN_SERVICE]).optional(),
@@ -90,11 +90,7 @@ export const createCarMultipartBodySchema = z
   .object({
     make: z.string().trim().min(1),
     model: z.string().trim().min(1),
-    year: z.coerce
-      .number()
-      .int()
-      .min(2015)
-      .max(new Date().getFullYear() + 1),
+    year: z.coerce.number().int().refine(isAllowedVehicleYear),
     color: z.string().trim().default(""),
     registrationNumber: registrationNumberSchema,
     status: z
