@@ -1,5 +1,6 @@
 import { ServiceTier, Status, VehicleType } from "@prisma/client";
 import { z } from "zod";
+import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY } from "../car.const";
 
 export const registrationNumberSchema = z
   .string()
@@ -44,7 +45,7 @@ export const carBaseBodySchema = z.object({
   pricingIncludesFuel: z.boolean(),
   vehicleType: z.enum(Object.values(VehicleType)),
   serviceTier: z.enum(Object.values(ServiceTier)),
-  passengerCapacity: z.number().int().min(1).max(15),
+  passengerCapacity: z.number().int().min(MIN_PASSENGER_CAPACITY).max(MAX_PASSENGER_CAPACITY),
 });
 
 type FuelUpgradeValidationInput = {
@@ -113,7 +114,11 @@ export const createCarMultipartBodySchema = z
     pricingIncludesFuel: z.preprocess(parseBoolean, z.boolean()),
     vehicleType: z.enum(Object.values(VehicleType)),
     serviceTier: z.enum(Object.values(ServiceTier)),
-    passengerCapacity: z.coerce.number().int().min(1).max(15),
+    passengerCapacity: z.coerce
+      .number()
+      .int()
+      .min(MIN_PASSENGER_CAPACITY)
+      .max(MAX_PASSENGER_CAPACITY),
   })
   .superRefine(validateFuelUpgradeRate);
 
