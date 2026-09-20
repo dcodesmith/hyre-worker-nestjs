@@ -201,7 +201,7 @@ describe("StorageService", () => {
 });
 
 describe("prepareStorageObject", () => {
-  it("resizes public rasters to 2560 and encodes lossy WebP", async () => {
+  it("keeps public rasters full size and encodes lossy WebP", async () => {
     const buffer = await sharp({
       create: { width: 3000, height: 2000, channels: 3, background: { r: 10, g: 20, b: 30 } },
     })
@@ -218,8 +218,7 @@ describe("prepareStorageObject", () => {
     });
     expect(isWebp(prepared.buffer)).toBe(true);
     expect(["VP8 ", "VP8X"]).toContain(prepared.buffer.subarray(12, 16).toString("ascii"));
-    expect(metadata.width).toBe(2560);
-    expect(metadata.height).toBe(1707);
+    expect(metadata).toMatchObject({ width: 3000, height: 2000, format: "webp" });
   });
 
   it("keeps private document rasters lossless and full size", async () => {
