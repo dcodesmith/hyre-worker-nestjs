@@ -385,6 +385,7 @@ FLUTTERWAVE_WEBHOOK_URL=https://yourdomain.com/webhooks/flutterwave
 PREMBLY_API_KEY=xxxxxxxxxxxxxxxx
 PREMBLY_APP_ID=xxxxxxxxxxxxxxxx  # Optional
 PREMBLY_BASE_URL=https://api.prembly.com
+REGCHECK_USERNAME=you@example.com
 
 # Identity lookup (Mono)
 MONO_SECRET_KEY=xxxxxxxxxxxxxxxx

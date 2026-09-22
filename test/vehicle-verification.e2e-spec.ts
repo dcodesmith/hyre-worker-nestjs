@@ -10,6 +10,7 @@ import { minimumVehicleYear } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { NhtsaError, NhtsaService } from "../src/modules/nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
+import { RegCheckService } from "../src/modules/regcheck/regcheck.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { VerificationErrorCode } from "../src/modules/verification/verification.error";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -40,6 +41,9 @@ describe("Vehicle verification E2E Tests", () => {
   const nhtsaService = {
     verifyVin: vi.fn(),
   };
+  const regCheckService = {
+    verifyPlate: vi.fn(),
+  };
 
   const uniquePlate = () => {
     plateSequence += 1;
@@ -57,12 +61,12 @@ describe("Vehicle verification E2E Tests", () => {
     chassisNumber = uniqueChassis(),
   ) => {
     const normalizedPlate = plateNumber.replace("-", "");
-    premblyService.verifyPlate.mockResolvedValue({
+    regCheckService.verifyPlate.mockResolvedValue({
       plateNumber: normalizedPlate,
       vehicleName: "Toyota Camry",
       chassisNumber: null,
       color: "Black",
-      reference: "plate-ref",
+      reference: null,
     });
     premblyService.verifyVin.mockResolvedValue({
       year,
@@ -109,6 +113,8 @@ describe("Vehicle verification E2E Tests", () => {
       .useValue(premblyService)
       .overrideProvider(NhtsaService)
       .useValue(nhtsaService)
+      .overrideProvider(RegCheckService)
+      .useValue(regCheckService)
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
@@ -168,6 +174,8 @@ describe("Vehicle verification E2E Tests", () => {
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     expect(premblyService.verifyVin).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+    expect(regCheckService.verifyPlate).not.toHaveBeenCalled();
+    expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
   });
 
   it("POST /api/fleet-owner/vehicle-verifications returns 403 for a non-fleet owner", async () => {
@@ -181,6 +189,8 @@ describe("Vehicle verification E2E Tests", () => {
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     expect(premblyService.verifyVin).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+    expect(regCheckService.verifyPlate).not.toHaveBeenCalled();
+    expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
   });
 
   it("rejects a missing Idempotency-Key, invalid plate, and missing chassis", async () => {
@@ -204,6 +214,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(missingChassis.status).toBe(HttpStatus.BAD_REQUEST);
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
     expect(premblyService.verifyPlate).not.toHaveBeenCalled();
+    expect(regCheckService.verifyPlate).not.toHaveBeenCalled();
   });
 
   it("creates a verification, replays the same key, then creates a draft car once", async () => {
@@ -241,7 +252,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(stored).toMatchObject({
       color: "Black",
       passengerCapacity: 5,
-      plateProviderRef: "plate-ref",
+      plateProviderRef: null,
       vinProviderRef: "vin-ref",
       insurancePolicyNumber: null,
       insurancePolicyStatus: null,
@@ -256,8 +267,10 @@ describe("Vehicle verification E2E Tests", () => {
 
     expect(replay.status).toBe(HttpStatus.CREATED);
     expect(replay.body.id).toBe(created.body.id);
-    expect(premblyService.verifyPlate).toHaveBeenCalledTimes(1);
+    expect(regCheckService.verifyPlate).toHaveBeenCalledTimes(1);
     expect(premblyService.verifyVin).toHaveBeenCalledTimes(1);
+    expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
 
     const otherOwner = await request(app.getHttpServer())
@@ -301,12 +314,12 @@ describe("Vehicle verification E2E Tests", () => {
   it("returns VEHICLE_MISMATCH when the plate vehicle name does not match the VIN", async () => {
     const plateNumber = uniquePlate();
     const chassisNumber = uniqueChassis();
-    premblyService.verifyPlate.mockResolvedValueOnce({
+    regCheckService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Honda Accord",
       chassisNumber: null,
       color: "Black",
-      reference: "plate-ref",
+      reference: null,
     });
     premblyService.verifyVin.mockResolvedValueOnce({
       year: 2020,
@@ -326,15 +339,15 @@ describe("Vehicle verification E2E Tests", () => {
     expect(response.body.errorCode).toBe("VEHICLE_MISMATCH");
   });
 
-  it("maps an invalid VIN response after trying the NHTSA fallback", async () => {
+  it("maps an invalid VIN response after Prembly and NHTSA both fail", async () => {
     const plateNumber = uniquePlate();
     const chassisNumber = uniqueChassis();
-    premblyService.verifyPlate.mockResolvedValueOnce({
+    regCheckService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Toyota Camry",
       chassisNumber: null,
       color: "Black",
-      reference: "plate-ref",
+      reference: null,
     });
     premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("INVALID_RESPONSE"));
     nhtsaService.verifyVin.mockRejectedValueOnce(new NhtsaError("INVALID_RESPONSE"));
@@ -348,6 +361,8 @@ describe("Vehicle verification E2E Tests", () => {
     expect(response.status).toBe(HttpStatus.BAD_GATEWAY);
     expect(response.body.errorCode).toBe("PROVIDER_INVALID_RESPONSE");
     expect(nhtsaService.verifyVin).toHaveBeenCalledWith(chassisNumber);
+    expect(premblyService.verifyVin).toHaveBeenCalledWith(chassisNumber);
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
   });
 
   it("conflicts when the same idempotency key is reused with a different plate or chassis", async () => {
@@ -379,7 +394,8 @@ describe("Vehicle verification E2E Tests", () => {
     expect(plateConflict.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
     expect(chassisConflict.status).toBe(HttpStatus.CONFLICT);
     expect(chassisConflict.body.errorCode).toBe("VERIFICATION_IDEMPOTENCY_KEY_REUSED");
-    expect(premblyService.verifyPlate).toHaveBeenCalledTimes(1);
+    expect(regCheckService.verifyPlate).toHaveBeenCalledTimes(1);
+    expect(premblyService.verifyPlate).not.toHaveBeenCalled();
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
   });
 

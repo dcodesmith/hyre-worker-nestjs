@@ -16,6 +16,7 @@ import { CarService } from "../car/car.service";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { NhtsaError, NhtsaService } from "../nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
+import { RegCheckError, RegCheckService } from "../regcheck/regcheck.service";
 import type {
   CreateInsuranceVerificationDto,
   CreateVehicleVerificationDto,
@@ -37,22 +38,11 @@ import {
 } from "./verification.error";
 
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
-export const PREMBLY_VIN_BUDGET_MS = 5_000;
 
 function usablePassengerCapacity(value: number | null) {
   return value != null && value >= MIN_PASSENGER_CAPACITY && value <= MAX_PASSENGER_CAPACITY
     ? value
     : null;
-}
-
-function withPremblyVinBudget<T>(promise: Promise<T>): Promise<T> {
-  void promise.catch(() => undefined);
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new PremblyError("UNAVAILABLE")), PREMBLY_VIN_BUDGET_MS);
-    }),
-  ]);
 }
 
 @Injectable()
@@ -61,6 +51,7 @@ export class VehicleVerificationService {
     private readonly databaseService: DatabaseService,
     private readonly premblyService: PremblyService,
     private readonly nhtsaService: NhtsaService,
+    private readonly regCheckService: RegCheckService,
     private readonly carService: CarService,
     private readonly logger: PinoLogger,
   ) {
@@ -127,7 +118,7 @@ export class VehicleVerificationService {
 
     try {
       const [plate, vin] = await Promise.all([
-        this.premblyService.verifyPlate(plateNumber),
+        this.verifyPlate(plateNumber),
         this.verifyVin(chassisNumber),
       ]);
       this.assertVehicleDetailsMatch(plateNumber, chassisNumber, plate, vin);
@@ -141,7 +132,7 @@ export class VehicleVerificationService {
           year: vin.year,
           color: plate.color,
           passengerCapacity: usablePassengerCapacity(vin.passengerCapacity),
-          plateProviderRef: plate.reference,
+          plateProviderRef: "reference" in plate ? plate.reference : null,
           vinProviderRef: vin.reference,
         },
       });
@@ -320,7 +311,7 @@ export class VehicleVerificationService {
   private assertVehicleDetailsMatch(
     requestedPlate: string,
     requestedChassis: string,
-    plate: { plateNumber: string; vehicleName: string; chassisNumber: string | null },
+    plate: { plateNumber: string; vehicleName: string; chassisNumber?: string | null },
     vin: { make: string; model: string },
   ): void {
     if (this.normalizePlate(plate.plateNumber) !== requestedPlate) {
@@ -354,29 +345,21 @@ export class VehicleVerificationService {
     }
   }
 
-  private async verifyVin(chassisNumber: string) {
-    const nhtsaPromise = Promise.resolve(this.nhtsaService.verifyVin(chassisNumber));
-    void nhtsaPromise.catch(() => undefined);
-
+  private async verifyPlate(plateNumber: string) {
     try {
-      const vin = await withPremblyVinBudget(this.premblyService.verifyVin(chassisNumber));
-      if (usablePassengerCapacity(vin.passengerCapacity) != null) {
-        return vin;
-      }
-      try {
-        const nhtsaVin = await nhtsaPromise;
-        return { ...vin, passengerCapacity: usablePassengerCapacity(nhtsaVin.passengerCapacity) };
-      } catch {
-        return { ...vin, passengerCapacity: null };
-      }
+      return await this.regCheckService.verifyPlate(plateNumber);
     } catch (error) {
-      if (
-        !(error instanceof PremblyError) ||
-        !["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
-      ) {
-        throw error;
-      }
-      const vin = await nhtsaPromise;
+      if (!(error instanceof RegCheckError)) throw error;
+      return this.premblyService.verifyPlate(plateNumber);
+    }
+  }
+
+  private async verifyVin(chassisNumber: string) {
+    try {
+      return await this.premblyService.verifyVin(chassisNumber);
+    } catch (error) {
+      if (!(error instanceof PremblyError)) throw error;
+      const vin = await this.nhtsaService.verifyVin(chassisNumber);
       return { ...vin, reference: null };
     }
   }
@@ -424,7 +407,7 @@ export class VehicleVerificationService {
     if (error instanceof PremblyError) {
       return new ProviderVerificationException(error.kind);
     }
-    if (error instanceof NhtsaError) {
+    if (error instanceof NhtsaError || error instanceof RegCheckError) {
       return new ProviderVerificationException(error.kind);
     }
     this.logger.error(
