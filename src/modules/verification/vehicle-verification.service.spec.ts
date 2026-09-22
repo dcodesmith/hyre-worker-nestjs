@@ -7,7 +7,7 @@ import { minimumVehicleYear } from "../car/car.const";
 import { CarNotFoundException } from "../car/car.error";
 import { CarService } from "../car/car.service";
 import { DatabaseService } from "../database/database.service";
-import { NhtsaError, NhtsaService } from "../nhtsa/nhtsa.service";
+import { NhtsaService } from "../nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { RegCheckError, RegCheckService } from "../regcheck/regcheck.service";
 import {
@@ -312,10 +312,10 @@ describe("VehicleVerificationService", () => {
       });
     });
 
-    it("uses NHTSA only when Prembly VIN fails", async () => {
+    it("uses NHTSA only when Prembly VIN is unavailable", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       regCheckService.verifyPlate.mockResolvedValueOnce({ ...mockPlate, reference: null });
-      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
       nhtsaService.verifyVin.mockResolvedValueOnce(mockNhtsaVin);
       databaseService.vehicleVerification.update.mockResolvedValueOnce(
         succeededRecord({ plateProviderRef: null, vinProviderRef: null }),
@@ -507,11 +507,10 @@ describe("VehicleVerificationService", () => {
       });
     });
 
-    it("maps an NHTSA VIN fallback failure", async () => {
+    it("does not fall back to NHTSA when Prembly rejects the VIN", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
       regCheckService.verifyPlate.mockResolvedValueOnce({ ...mockPlate, reference: null });
       premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("REJECTED"));
-      nhtsaService.verifyVin.mockRejectedValueOnce(new NhtsaError("REJECTED"));
 
       await expect(
         service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
@@ -519,6 +518,7 @@ describe("VehicleVerificationService", () => {
           chassisNumber: CHASSIS,
         }),
       ).rejects.toBeInstanceOf(ProviderVerificationException);
+      expect(nhtsaService.verifyVin).not.toHaveBeenCalled();
 
       expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },

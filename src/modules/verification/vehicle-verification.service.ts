@@ -358,7 +358,12 @@ export class VehicleVerificationService {
     try {
       return await this.premblyService.verifyVin(chassisNumber);
     } catch (error) {
-      if (!(error instanceof PremblyError)) throw error;
+      if (
+        !(error instanceof PremblyError) ||
+        !["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+      ) {
+        throw error;
+      }
       const vin = await this.nhtsaService.verifyVin(chassisNumber);
       return { ...vin, reference: null };
     }
