@@ -196,11 +196,12 @@ export class BookingCreationService {
           normalizedBooking.bookingType,
           car.ownerId,
         ),
-        this.eligibilityService.getReferralCreditBalanceForPricing(
-          sessionUser,
-          normalizedBooking.useCredits,
-          baseFinancials.netTotal,
-        ),
+        normalizedBooking.useCredits > 0
+          ? this.eligibilityService.getReferralCreditBalanceForPricing(
+              sessionUser,
+              baseFinancials.netTotal,
+            )
+          : Promise.resolve(new Decimal(0)),
       ]);
       const financials =
         preliminaryReferralEligibility.discountAmount.gt(0) ||

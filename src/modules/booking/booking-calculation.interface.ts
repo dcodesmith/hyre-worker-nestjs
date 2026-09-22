@@ -112,6 +112,8 @@ export interface BookingFinancials {
   subtotalBeforeDiscounts: Decimal;
   referralDiscountAmount: Decimal;
   creditsUsed: Decimal;
+  /** Max credits this booking can take if the customer applies them. */
+  creditsApplicable: Decimal;
   subtotalAfterDiscounts: Decimal;
 
   // VAT

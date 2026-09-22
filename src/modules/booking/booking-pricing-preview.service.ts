@@ -104,7 +104,6 @@ export class BookingPricingPreviewService {
       ),
       this.bookingEligibilityService.getReferralCreditBalanceForPricing(
         sessionUser,
-        input.useCredits,
         baseFinancials.netTotal,
       ),
     ]);
@@ -186,6 +185,7 @@ export class BookingPricingPreviewService {
       compareAtSubtotalBeforeDiscounts: compareAtSubtotalBeforeDiscounts.toNumber(),
       referralDiscountAmount: financials.referralDiscountAmount.toNumber(),
       creditsUsed: financials.creditsUsed.toNumber(),
+      creditsApplicable: financials.creditsApplicable.toNumber(),
       subtotalAfterDiscounts: financials.subtotalAfterDiscounts.toNumber(),
       vatRatePercent: financials.vatRatePercent.toNumber(),
       vatAmount: financials.vatAmount.toNumber(),

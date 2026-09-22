@@ -526,6 +526,7 @@ describe("BookingCalculationService", () => {
       const result = await service.calculateBookingCost(input);
 
       expect(result.creditsUsed.equals(new Decimal(5000))).toBe(true);
+      expect(result.creditsApplicable.equals(new Decimal(10000))).toBe(true);
     });
 
     it("should cap credits at user balance", async () => {
@@ -562,6 +563,7 @@ describe("BookingCalculationService", () => {
       // After referral: 27,500 - 20,000 = 7,500
       // Credits leave ₦1 for the provider-backed payment flow.
       expect(result.creditsUsed.equals(new Decimal(7499))).toBe(true);
+      expect(result.creditsApplicable.equals(new Decimal(7499))).toBe(true);
       expect(result.totalAmount.gt(0)).toBe(true);
     });
 
@@ -600,6 +602,7 @@ describe("BookingCalculationService", () => {
       const result = await service.calculateBookingCost(input);
 
       expect(result.creditsUsed.equals(new Decimal(0))).toBe(true);
+      expect(result.creditsApplicable.equals(new Decimal(10000))).toBe(true);
     });
 
     it("should return zero credits when user balance is negative", async () => {

@@ -89,6 +89,7 @@ describe("BookingController", () => {
     compareAtSubtotalBeforeDiscounts: 157500,
     referralDiscountAmount: 0,
     creditsUsed: 0,
+    creditsApplicable: 0,
     subtotalAfterDiscounts: 147000,
     vatRatePercent: 7.5,
     vatAmount: 11025,
