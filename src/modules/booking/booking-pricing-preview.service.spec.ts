@@ -146,6 +146,7 @@ describe("BookingPricingPreviewService", () => {
       subtotalBeforeDiscounts: new Decimal(147000),
       referralDiscountAmount: new Decimal(0),
       creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
       subtotalAfterDiscounts: new Decimal(147000),
       vatRatePercent: new Decimal(7.5),
       vatAmount: new Decimal(11025),
@@ -191,6 +192,7 @@ describe("BookingPricingPreviewService", () => {
     expect(result.baseTotal).toBe(140000);
     expect(result.referralDiscountAmount).toBe(0);
     expect(result.creditsUsed).toBe(0);
+    expect(result.creditsApplicable).toBe(0);
     expect(result.subtotalAfterDiscounts).toBe(147000);
     expect(result.savingsAmount).toBeGreaterThan(0);
   });
@@ -238,6 +240,7 @@ describe("BookingPricingPreviewService", () => {
       subtotalBeforeDiscounts: new Decimal(63000),
       referralDiscountAmount: new Decimal(0),
       creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
       subtotalAfterDiscounts: new Decimal(63000),
       vatRatePercent: new Decimal(7.5),
       vatAmount: new Decimal(4725),
@@ -316,6 +319,7 @@ describe("BookingPricingPreviewService", () => {
       subtotalBeforeDiscounts: new Decimal(52500),
       referralDiscountAmount: new Decimal(0),
       creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
       subtotalAfterDiscounts: new Decimal(52500),
       vatRatePercent: new Decimal(7.5),
       vatAmount: new Decimal(3937.5),
@@ -328,6 +332,7 @@ describe("BookingPricingPreviewService", () => {
       ...baseFinancials,
       referralDiscountAmount: new Decimal(5000),
       creditsUsed: new Decimal(2000),
+      creditsApplicable: new Decimal(2000),
       subtotalAfterDiscounts: new Decimal(45500),
       vatAmount: new Decimal(3412.5),
       totalAmount: new Decimal(48912.5),
@@ -383,10 +388,111 @@ describe("BookingPricingPreviewService", () => {
         creditsToUse: new Decimal(2000),
       }),
     );
+    expect(bookingEligibilityService.getReferralCreditBalanceForPricing).toHaveBeenCalledWith(
+      sessionUser,
+      new Decimal(50000),
+    );
     expect(result.referralDiscountAmount).toBe(5000);
     expect(result.creditsUsed).toBe(2000);
+    expect(result.creditsApplicable).toBe(2000);
     expect(result.subtotalAfterDiscounts).toBe(45500);
     expect(result.totalAmount).toBe(48912.5);
+  });
+
+  it("returns applicable credits without applying them when useCredits is 0", async () => {
+    vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
+      id: "car-1",
+      ownerId: "owner-1",
+      dayRate: 50000,
+      nightRate: 45000,
+      fullDayRate: 80000,
+      airportPickupRate: 60000,
+      fuelUpgradeRate: 0,
+      pricingIncludesFuel: false,
+    });
+    vi.mocked(bookingLegService.generateLegs).mockReturnValue([
+      {
+        legDate: new Date("2026-05-01T00:00:00.000Z"),
+        legStartTime: new Date("2026-05-01T09:00:00.000Z"),
+        legEndTime: new Date("2026-05-01T21:00:00.000Z"),
+      },
+    ]);
+
+    const baseFinancials: BookingFinancials = {
+      legPrices: [
+        {
+          legDate: new Date("2026-05-01T00:00:00.000Z"),
+          price: new Decimal(50000),
+          basePrice: new Decimal(50000),
+          promotion: null,
+        },
+      ],
+      numberOfLegs: 1,
+      netTotal: new Decimal(50000),
+      compareAtNetTotal: new Decimal(50000),
+      appliedPromotion: null,
+      addons: [],
+      addonTotal: new Decimal(0),
+      fuelUpgradeCost: new Decimal(0),
+      netTotalWithAddons: new Decimal(50000),
+      platformFeeBase: new Decimal(50000),
+      platformCustomerServiceFeeRatePercent: new Decimal(5),
+      platformCustomerServiceFeeAmount: new Decimal(2500),
+      subtotalBeforeDiscounts: new Decimal(52500),
+      referralDiscountAmount: new Decimal(0),
+      creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
+      subtotalAfterDiscounts: new Decimal(52500),
+      vatRatePercent: new Decimal(7.5),
+      vatAmount: new Decimal(3937.5),
+      totalAmount: new Decimal(56437.5),
+      platformFleetOwnerCommissionRatePercent: new Decimal(5),
+      platformFleetOwnerCommissionAmount: new Decimal(2500),
+      fleetOwnerPayoutAmountNet: new Decimal(47500),
+    };
+    const applicableFinancials: BookingFinancials = {
+      ...baseFinancials,
+      creditsApplicable: new Decimal(2000),
+    };
+    vi.mocked(bookingCalculationService.calculateBookingCost)
+      .mockResolvedValueOnce(baseFinancials)
+      .mockResolvedValueOnce(applicableFinancials);
+    vi.mocked(bookingEligibilityService.getReferralCreditBalanceForPricing).mockResolvedValue(
+      new Decimal(2000),
+    );
+
+    const result = await service.preview(
+      {
+        carId: "car-1",
+        bookingType: BookingType.DAY,
+        startDate: new Date("2026-05-01T00:00:00.000Z"),
+        endDate: new Date("2026-05-01T23:59:00.000Z"),
+        pickupTime: "9:00 AM",
+        addonIds: [],
+        requiresFullTank: false,
+        useCredits: 0,
+      },
+      {
+        id: "user-1",
+        email: "user@example.com",
+        name: "User",
+        emailVerified: true,
+        image: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        roles: ["user" as const],
+      },
+    );
+
+    expect(bookingCalculationService.calculateBookingCost).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        userCreditsBalance: new Decimal(2000),
+        creditsToUse: new Decimal(0),
+      }),
+    );
+    expect(result.creditsUsed).toBe(0);
+    expect(result.creditsApplicable).toBe(2000);
+    expect(result.totalAmount).toBe(56437.5);
   });
 
   it("evaluates referral eligibility on post-promotion netTotal, not fees, add-ons, or VAT", async () => {
@@ -423,6 +529,7 @@ describe("BookingPricingPreviewService", () => {
       subtotalBeforeDiscounts: new Decimal(49000),
       referralDiscountAmount: new Decimal(0),
       creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
       subtotalAfterDiscounts: new Decimal(49000),
       vatRatePercent: new Decimal(7.5),
       vatAmount: new Decimal(3675),
@@ -517,6 +624,7 @@ describe("BookingPricingPreviewService", () => {
       subtotalBeforeDiscounts: new Decimal(65000),
       referralDiscountAmount: new Decimal(0),
       creditsUsed: new Decimal(0),
+      creditsApplicable: new Decimal(0),
       subtotalAfterDiscounts: new Decimal(65000),
       vatRatePercent: new Decimal(7.5),
       vatAmount: new Decimal(4875),

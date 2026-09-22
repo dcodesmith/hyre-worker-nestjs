@@ -100,9 +100,15 @@ export class BookingCalculationService {
 
     const afterReferral = subtotalBeforeDiscounts.sub(effectiveReferralDiscount);
 
+    const creditBalance = userCreditsBalance ?? new Decimal(0);
+    const creditsApplicable = this.calculateEffectiveCredits(
+      creditBalance,
+      creditBalance,
+      afterReferral,
+    );
     const effectiveCredits = this.calculateEffectiveCredits(
       creditsToUse ?? new Decimal(0),
-      userCreditsBalance ?? new Decimal(0),
+      creditBalance,
       afterReferral,
     );
 
@@ -167,6 +173,7 @@ export class BookingCalculationService {
       subtotalBeforeDiscounts,
       referralDiscountAmount: effectiveReferralDiscount,
       creditsUsed: effectiveCredits,
+      creditsApplicable,
       subtotalAfterDiscounts,
 
       vatRatePercent,

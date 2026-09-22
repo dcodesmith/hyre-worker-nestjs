@@ -13,5 +13,13 @@ ignore:
     - "better-auth > next > postcss > nanoid":
         reason: "Transitive via better-auth > next > postcss; Snyk only lists a nanoid 5.x fix, which is ESM-only and unsafe to force onto postcss's nanoid@3 range. Exploit requires attacker-controlled negative size into nanoid/non-secure, which postcss does not do."
         expires: 2026-11-02T00:00:00.000Z
+  SNYK-JS-IOREDIS-19963957:
+    - "*":
+        reason: "Fix is ioredis 6 / bullmq 6 (RESP3 by default). Exploit needs a malicious Redis endpoint. Track the major upgrade separately."
+        expires: 2026-12-22T00:00:00.000Z
+  SNYK-JS-DEEPMERGE-19964053:
+    - "*":
+        reason: "Transitive via react-email > html-to-text; no upgrade or patch available. That path does not merge untrusted objects."
+        expires: 2026-12-22T00:00:00.000Z
 
 patch: {}

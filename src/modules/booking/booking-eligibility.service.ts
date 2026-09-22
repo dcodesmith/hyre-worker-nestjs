@@ -113,10 +113,9 @@ export class BookingEligibilityService {
 
   async getReferralCreditBalanceForPricing(
     sessionUser: AuthSession["user"] | null,
-    requestedCredits: number,
     bookingAmount: Decimal,
   ): Promise<Decimal> {
-    if (!sessionUser || requestedCredits <= 0) {
+    if (!sessionUser) {
       return new Decimal(0);
     }
     const program = await this.referralProgramService.getProgram();

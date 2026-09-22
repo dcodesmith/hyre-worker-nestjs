@@ -454,6 +454,7 @@ export function createBookingFinancials(
     subtotalBeforeDiscounts: new Decimal(52500),
     referralDiscountAmount: new Decimal(0),
     creditsUsed: new Decimal(0),
+    creditsApplicable: new Decimal(0),
     subtotalAfterDiscounts: new Decimal(52500),
     vatRatePercent: new Decimal(7.5),
     vatAmount: new Decimal(3937.5),

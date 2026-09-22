@@ -316,11 +316,7 @@ describe("BookingEligibilityService", () => {
       });
 
       await expect(
-        service.getReferralCreditBalanceForPricing(
-          { id: USER_ID } as never,
-          5000,
-          new Decimal(100000),
-        ),
+        service.getReferralCreditBalanceForPricing({ id: USER_ID } as never, new Decimal(100000)),
       ).resolves.toEqual(new Decimal(0));
     });
 
@@ -339,7 +335,6 @@ describe("BookingEligibilityService", () => {
 
       await service.getReferralCreditBalanceForPricing(
         { id: USER_ID } as never,
-        1000,
         new Decimal(50000),
       );
 
@@ -375,11 +370,7 @@ describe("BookingEligibilityService", () => {
 
       // available = 40000, amount cap 30000, 50% of 40000 = 20000 → 20000
       await expect(
-        service.getReferralCreditBalanceForPricing(
-          { id: USER_ID } as never,
-          5000,
-          new Decimal(40000),
-        ),
+        service.getReferralCreditBalanceForPricing({ id: USER_ID } as never, new Decimal(40000)),
       ).resolves.toEqual(new Decimal(20000));
     });
 
