@@ -381,7 +381,7 @@ FLUTTERWAVE_BASE_URL=https://api.flutterwave.com
 FLUTTERWAVE_WEBHOOK_SECRET=xxxxxxxxxxxxxxxx
 FLUTTERWAVE_WEBHOOK_URL=https://yourdomain.com/webhooks/flutterwave
 
-# Vehicle verification (Prembly)
+# Vehicle verification (RegCheck and Prembly)
 PREMBLY_API_KEY=xxxxxxxxxxxxxxxx
 PREMBLY_APP_ID=xxxxxxxxxxxxxxxx  # Optional
 PREMBLY_BASE_URL=https://api.prembly.com
