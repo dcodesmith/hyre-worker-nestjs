@@ -9,7 +9,12 @@ import {
   STORAGE_SETTINGS,
   type StorageSettings,
 } from "./storage.client";
-import { MAX_IMAGE_PIXELS, prepareStorageObject, StorageService } from "./storage.service";
+import {
+  MAX_IMAGE_PIXELS,
+  prepareStorageObject,
+  StorageService,
+  WEBP_MAX_DIMENSION,
+} from "./storage.service";
 
 function isWebp(buffer: Buffer): boolean {
   return (
@@ -201,7 +206,7 @@ describe("StorageService", () => {
 });
 
 describe("prepareStorageObject", () => {
-  it("resizes public rasters to 2560 and encodes lossy WebP", async () => {
+  it("keeps public rasters full size and encodes lossy WebP", async () => {
     const buffer = await sharp({
       create: { width: 3000, height: 2000, channels: 3, background: { r: 10, g: 20, b: 30 } },
     })
@@ -218,8 +223,7 @@ describe("prepareStorageObject", () => {
     });
     expect(isWebp(prepared.buffer)).toBe(true);
     expect(["VP8 ", "VP8X"]).toContain(prepared.buffer.subarray(12, 16).toString("ascii"));
-    expect(metadata.width).toBe(2560);
-    expect(metadata.height).toBe(1707);
+    expect(metadata).toMatchObject({ width: 3000, height: 2000, format: "webp" });
   });
 
   it("keeps private document rasters lossless and full size", async () => {
@@ -243,6 +247,45 @@ describe("prepareStorageObject", () => {
     expect(prepared.cacheControl).toBeUndefined();
     expect(prepared.buffer.subarray(12, 16).toString("ascii")).toBe("VP8L");
     expect(metadata).toMatchObject({ width: 3000, height: 2000, format: "webp" });
+  });
+
+  it("shrinks an image whose side exceeds the WebP limit", async () => {
+    const buffer = await sharp({
+      create: {
+        width: WEBP_MAX_DIMENSION + 1,
+        height: 500,
+        channels: 3,
+        background: { r: 7, g: 8, b: 9 },
+      },
+    })
+      .jpeg({ quality: 30 })
+      .toBuffer();
+
+    const publicImage = await prepareStorageObject(
+      buffer,
+      "owner/car/images/wide.jpg",
+      "image/jpeg",
+    );
+    const privateImage = await prepareStorageObject(
+      buffer,
+      "owner/car/documents/wide.png",
+      "image/jpeg",
+    );
+    const publicMetadata = await sharp(publicImage.buffer).metadata();
+    const privateMetadata = await sharp(privateImage.buffer).metadata();
+
+    expect(["VP8 ", "VP8X"]).toContain(publicImage.buffer.subarray(12, 16).toString("ascii"));
+    expect(privateImage.buffer.subarray(12, 16).toString("ascii")).toBe("VP8L");
+    expect(publicMetadata).toMatchObject({
+      width: WEBP_MAX_DIMENSION,
+      height: 500,
+      format: "webp",
+    });
+    expect(privateMetadata).toMatchObject({
+      width: WEBP_MAX_DIMENSION,
+      height: 500,
+      format: "webp",
+    });
   });
 
   it("applies EXIF rotation before encoding", async () => {

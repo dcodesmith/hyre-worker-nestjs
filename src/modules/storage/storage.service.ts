@@ -14,7 +14,7 @@ const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const PRIVATE_OBJECT_KEY_MARKER = "/documents/";
 const WEBP_CONTENT_TYPE = "image/webp";
 export const MAX_IMAGE_PIXELS = 25_000_000;
-const MAX_PUBLIC_IMAGE_DIMENSION = 2560;
+export const WEBP_MAX_DIMENSION = 16_383;
 
 export async function prepareStorageObject(
   buffer: Buffer,
@@ -31,17 +31,15 @@ export async function prepareStorageObject(
     };
   }
 
-  const image = sharp(buffer, { failOn: "error", limitInputPixels: MAX_IMAGE_PIXELS }).rotate();
-  const encoded = isPrivate
-    ? image.webp({ lossless: true })
-    : image
-        .resize({
-          width: MAX_PUBLIC_IMAGE_DIMENSION,
-          height: MAX_PUBLIC_IMAGE_DIMENSION,
-          fit: "inside",
-          withoutEnlargement: true,
-        })
-        .webp({ quality: 85 });
+  const image = sharp(buffer, { failOn: "error", limitInputPixels: MAX_IMAGE_PIXELS })
+    .rotate()
+    .resize({
+      width: WEBP_MAX_DIMENSION,
+      height: WEBP_MAX_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+  const encoded = isPrivate ? image.webp({ lossless: true }) : image.webp({ quality: 90 });
 
   return {
     buffer: await encoded.toBuffer(),
