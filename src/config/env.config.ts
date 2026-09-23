@@ -198,6 +198,7 @@ export const envSchema = z
     PREMBLY_BASE_URL: z
       .url("PREMBLY_BASE_URL must be a valid URL")
       .default("https://api.prembly.com"),
+    REGCHECK_USERNAME: z.string().min(1, "REGCHECK_USERNAME is required"),
 
     MONO_SECRET_KEY: z.string().min(1, "MONO_SECRET_KEY is required"),
     MONO_BASE_URL: z.preprocess(

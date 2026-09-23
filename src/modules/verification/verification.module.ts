@@ -4,6 +4,7 @@ import { CarModule } from "../car/car.module";
 import { MonoModule } from "../mono/mono.module";
 import { NhtsaModule } from "../nhtsa/nhtsa.module";
 import { PremblyModule } from "../prembly/prembly.module";
+import { RegCheckModule } from "../regcheck/regcheck.module";
 import { StorageModule } from "../storage/storage.module";
 import {
   AccountVerificationController,
@@ -19,7 +20,15 @@ import { VehicleVerificationService } from "./vehicle-verification.service";
 import { VerificationThrottlerGuard } from "./verification-throttler.guard";
 
 @Module({
-  imports: [AuthModule, CarModule, MonoModule, NhtsaModule, PremblyModule, StorageModule],
+  imports: [
+    AuthModule,
+    CarModule,
+    MonoModule,
+    NhtsaModule,
+    PremblyModule,
+    RegCheckModule,
+    StorageModule,
+  ],
   controllers: [
     VehicleVerificationController,
     InsuranceVerificationController,
