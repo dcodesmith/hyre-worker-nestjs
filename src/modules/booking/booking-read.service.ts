@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PaymentAttemptStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { FLEET_OWNER, USER } from "../auth/auth.const";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -24,8 +24,13 @@ import type { BookingPaymentStatusQueryDto } from "./dto/get-booking-payment-sta
 
 @Injectable()
 export class BookingReadService {
-  private readonly bookingDetailsInclude = {
-    car: { include: { owner: true, images: true } },
+  private readonly bookingDetailsInclude = Prisma.validator<Prisma.BookingInclude>()({
+    car: {
+      include: {
+        owner: true,
+        images: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
+      },
+    },
     user: true,
     chauffeur: true,
     flight: true,
@@ -57,7 +62,7 @@ export class BookingReadService {
         extensions: true,
       },
     },
-  } as const;
+  });
 
   constructor(
     private readonly databaseService: DatabaseService,

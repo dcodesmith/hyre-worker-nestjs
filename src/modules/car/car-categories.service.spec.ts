@@ -250,6 +250,24 @@ describe("CarCategoriesService", () => {
       expect(findCategory(result.categories, "popular")?.cars).toHaveLength(3);
     });
 
+    it("puts the cover image ahead of the other photos", async () => {
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      await service.getCategorizedCars({ limit: 50 });
+
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            images: {
+              select: { url: true },
+              orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+              take: 3,
+            },
+          }),
+        }),
+      );
+    });
+
     it("respects the limit parameter", async () => {
       databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
 
