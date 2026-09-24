@@ -1,9 +1,11 @@
+import type { IncomingHttpHeaders } from "node:http";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Booking, Prisma } from "@prisma/client";
 import { format } from "date-fns";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
+import { type ClientRequestContext, readClientRequest } from "../../common/client-request";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
@@ -60,6 +62,7 @@ export type CreateBookingRequest = {
   sessionUser: AuthSession["user"] | null;
   idempotencyKey: string;
   context?: BookingCreationContext;
+  requestHeaders?: IncomingHttpHeaders;
 };
 
 /**
@@ -109,6 +112,10 @@ export class BookingCreationService {
    */
   async createBooking(request: CreateBookingRequest): Promise<CreateBookingResponse> {
     const { input, sessionUser, idempotencyKey, context } = request;
+    const client = readClientRequest(
+      request.requestHeaders,
+      this.configService.get("EDGE_CLIENT_SECRET", { infer: true }),
+    );
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
     validateCreditsRequireAuthentication(normalizedBooking.useCredits, sessionUser);
@@ -231,6 +238,7 @@ export class BookingCreationService {
         customerDetails,
         flightData,
         preliminaryReferralEligibility,
+        client,
       });
 
       this.logger.info({ bookingId: result.bookingId }, "Booking created successfully");
@@ -422,6 +430,7 @@ export class BookingCreationService {
     customerDetails: CustomerDetails;
     flightData: FlightDataForBooking | null;
     preliminaryReferralEligibility: ReferralEligibility;
+    client: ClientRequestContext;
   }): Promise<CreateBookingResponse> {
     const {
       idempotencyId,
@@ -433,6 +442,7 @@ export class BookingCreationService {
       customerDetails,
       flightData,
       preliminaryReferralEligibility,
+      client,
     } = params;
 
     const preferredNotificationChannel = this.resolvePreferredNotificationChannel(
@@ -574,6 +584,7 @@ export class BookingCreationService {
           referralEligibility: appliedReferralEligibility,
           flightRecordId,
           legs,
+          client,
         });
 
         // Create pending referral reward record for the reserved discount.

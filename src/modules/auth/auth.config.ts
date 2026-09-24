@@ -4,6 +4,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { v7 as uuidv7 } from "uuid";
+import { countryFromHeaders, withoutSessionClientContext } from "../../common/client-request";
 import { isValidRole, MOBILE, USER } from "./auth.const";
 import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.interface";
 
@@ -321,13 +322,15 @@ export function createAuth(options: AuthConfigOptions) {
                 const roles = await roleValidation.getUserRoles(returned.user.id);
 
                 // Enrich user object with roles and return using ctx.json
-                return ctx.json({
-                  ...returned,
-                  user: {
-                    ...returned.user,
-                    roles,
-                  },
-                });
+                return ctx.json(
+                  withoutSessionClientContext({
+                    ...returned,
+                    user: {
+                      ...returned.user,
+                      roles,
+                    },
+                  }),
+                );
               }),
             },
           ],
@@ -347,31 +350,49 @@ export function createAuth(options: AuthConfigOptions) {
         enabled: true,
         maxAge: 60 * 5, // 5 minutes
       },
+      additionalFields: {
+        country: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+      },
     },
     hooks: beforeHook
       ? {
           before: beforeHook,
         }
       : undefined,
-    databaseHooks: roleValidation
-      ? {
-          user: {
-            create: {
-              async after(user) {
-                // Retrieve the role that was stored by the before hook.
-                // Better Auth's email-otp plugin strips custom fields from the body,
-                // so we use the pendingRoles cache to pass the role between hooks.
-                const role = consumePendingRole(user.email);
+    databaseHooks: {
+      session: {
+        create: {
+          async before(session, context) {
+            const country = countryFromHeaders(context?.headers);
+            if (!country) return { data: session };
+            return { data: { ...session, country } };
+          },
+        },
+      },
+      ...(roleValidation
+        ? {
+            user: {
+              create: {
+                async after(user) {
+                  // Retrieve the role that was stored by the before hook.
+                  // Better Auth's email-otp plugin strips custom fields from the body,
+                  // so we use the pendingRoles cache to pass the role between hooks.
+                  const role = consumePendingRole(user.email);
 
-                // Assign the role to the newly created user
-                // Protected roles were already rejected in the before hook via validateExistingUserRole()
-                await roleValidation.assignRoleToNewUser(user.id, role);
-                await roleValidation.assignReferralCodeToNewUser(user.id);
+                  // Assign the role to the newly created user
+                  // Protected roles were already rejected in the before hook via validateExistingUserRole()
+                  await roleValidation.assignRoleToNewUser(user.id, role);
+                  await roleValidation.assignReferralCodeToNewUser(user.id);
+                },
               },
             },
-          },
-        }
-      : undefined,
+          }
+        : {}),
+    },
     plugins: [
       emailOTP({
         expiresIn: EMAIL_OTP_EXPIRY_SECONDS,
@@ -406,6 +427,9 @@ export function createAuth(options: AuthConfigOptions) {
         sameSite: "lax",
         // __Host- cookies require path to be "/"
         ...(secureCookies && { path: "/" }),
+      },
+      ipAddress: {
+        ipAddressHeaders: ["x-hyre-client-ip"],
       },
     },
   });

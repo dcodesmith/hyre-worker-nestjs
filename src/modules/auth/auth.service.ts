@@ -52,6 +52,10 @@ export class AuthService implements OnModuleInit {
     this.logger.setContext(AuthService.name);
   }
 
+  edgeClientSecret(): string | undefined {
+    return this.configService.get("EDGE_CLIENT_SECRET", { infer: true });
+  }
+
   onModuleInit() {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });

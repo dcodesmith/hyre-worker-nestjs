@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { All, Controller, Get, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { stampClientHeaders, withoutSessionClientContext } from "../../common/client-request";
 import { AuthErrorCode, AuthUnauthorizedException } from "./auth.error";
 import { AuthService } from "./auth.service";
 
@@ -30,6 +31,7 @@ export class AuthController {
    */
   @All("api/auth/*path")
   async handleAuthRequest(@Req() req: Request, @Res() res: Response): Promise<void> {
+    stampClientHeaders(req.headers, this.authService.edgeClientSecret());
     const { toNodeHandler } = await import("better-auth/node");
     const handler = toNodeHandler(this.authService.auth);
     await handler(req, res);
@@ -58,9 +60,9 @@ export class AuthController {
     // Fetch user roles from database
     const roles = await this.authService.getUserRoles(session.user.id);
 
-    return {
+    return withoutSessionClientContext({
       user: { ...session.user, roles },
       session: session.session,
-    };
+    });
   }
 }

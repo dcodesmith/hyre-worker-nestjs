@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, type Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { omitStoredClientContext } from "../../common/client-request";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
@@ -138,7 +139,7 @@ export class BookingCancellationService {
 
         const responseNow = await getDatabaseNow(tx);
         return {
-          ...updatedBooking,
+          ...omitStoredClientContext(updatedBooking),
           ...this.bookingModificationPolicyService.getEligibility(
             updatedBooking,
             true,
