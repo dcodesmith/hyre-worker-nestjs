@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { omitStoredClientContext } from "../../common/client-request";
 import { FLEET_OWNER, USER } from "../auth/auth.const";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -357,7 +358,7 @@ export class BookingReadService {
     legEligibilities: Map<string, BookingLegExtensionEligibility>,
   ) {
     const bookingWithLegEligibility = {
-      ...booking,
+      ...omitStoredClientContext(booking),
       legs: booking.legs.map((leg) => ({
         ...leg,
         ...(legEligibilities.get(leg.id) ?? {

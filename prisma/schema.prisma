@@ -456,6 +456,9 @@ model Booking {
   referralCreditsReserved                 Decimal                     @default(0) @db.Decimal(10, 2)
   flightNumber                            String?
   estimatedDuration                       Int?
+  ipAddress                               String?
+  userAgent                               String?
+  country                                 String?
   flightId                                String?                     @db.Uuid
   deletedAt                               DateTime?
   acquisitionChannel                      BookingAcquisitionChannel   @default(GLOBAL)
@@ -1052,6 +1055,7 @@ model Session {
   updatedAt DateTime @updatedAt
   ipAddress String?
   userAgent String?
+  country   String?
   userId    String   @db.Uuid
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 

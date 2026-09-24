@@ -7,6 +7,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { omitStoredClientContext } from "../../common/client-request";
 import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
@@ -219,7 +220,7 @@ export class BookingUpdateService {
           );
         }
 
-        return updatedBooking;
+        return omitStoredClientContext(updatedBooking);
       });
 
       return booking;
@@ -607,7 +608,7 @@ export class BookingUpdateService {
     now: Date,
   ) {
     return {
-      ...booking,
+      ...omitStoredClientContext(booking),
       ...this.bookingModificationPolicyService.getEligibility(booking, true, now),
     };
   }

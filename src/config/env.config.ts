@@ -236,6 +236,10 @@ export const envSchema = z
 
     // Auth configuration (optional - only required when AuthModule is used)
     SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
+    EDGE_CLIENT_SECRET: z
+      .string()
+      .min(16, "EDGE_CLIENT_SECRET must be at least 16 characters")
+      .optional(),
     AUTH_BASE_URL: z.url("AUTH_BASE_URL must be a valid URL"),
     TRUSTED_ORIGINS: z
       .string()

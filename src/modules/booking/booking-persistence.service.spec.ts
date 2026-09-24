@@ -293,6 +293,7 @@ describe("BookingPersistenceService", () => {
             rewardAmount: new Decimal(0),
           },
           flightRecordId: null,
+          client: { ipAddress: null, userAgent: null, country: null },
           legs: [],
         },
       ),
@@ -378,6 +379,7 @@ describe("BookingPersistenceService", () => {
           rewardAmount: new Decimal(0),
         },
         flightRecordId: null,
+        client: { ipAddress: null, userAgent: null, country: null },
         legs,
       }),
     ).resolves.toEqual({ id: "booking-1" });
@@ -511,6 +513,7 @@ describe("BookingPersistenceService", () => {
         rewardAmount: new Decimal(0),
       },
       flightRecordId: null,
+      client: { ipAddress: null, userAgent: null, country: null },
       legs: [firstLeg, secondLeg],
     });
 
@@ -575,6 +578,7 @@ describe("BookingPersistenceService", () => {
         rewardAmount: new Decimal(0),
       },
       flightRecordId: null,
+      client: { ipAddress: null, userAgent: null, country: null },
       legs: [
         {
           legDate: new Date("2026-03-03T00:00:00.000Z"),
@@ -644,6 +648,7 @@ describe("BookingPersistenceService", () => {
             rewardAmount: new Decimal(0),
           },
           flightRecordId: null,
+          client: { ipAddress: null, userAgent: null, country: null },
           legs: [
             {
               legDate: new Date("2026-03-03T00:00:00.000Z"),

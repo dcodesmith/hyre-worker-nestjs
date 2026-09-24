@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Cron } from "@nestjs/schedule";
 import {
   Booking,
   BookingReferralStatus,
@@ -10,9 +11,14 @@ import {
   Prisma,
 } from "@prisma/client";
 import Decimal from "decimal.js";
+import type { ClientRequestContext } from "../../common/client-request";
+import { observeBackgroundOperation } from "../../common/observability/background-operation";
 import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
-import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "./booking.const";
+import {
+  BOOKING_CLIENT_CONTEXT_RETENTION_MS,
+  BOOKING_PAYMENT_SESSION_DURATION_MS,
+} from "./booking.const";
 import { BookingCreationFailedException, CarNotFoundException } from "./booking.error";
 import type {
   CarWithPricing,
@@ -152,6 +158,7 @@ export class BookingPersistenceService {
       referralEligibility: ReferralEligibility;
       flightRecordId: string | null;
       legs: GeneratedLeg[];
+      client: ClientRequestContext;
     },
   ): Promise<Booking> {
     const data = this.buildBookingData(params);
@@ -174,6 +181,7 @@ export class BookingPersistenceService {
     referralEligibility: ReferralEligibility;
     flightRecordId: string | null;
     legs: GeneratedLeg[];
+    client: ClientRequestContext;
   }) {
     const {
       bookingReference,
@@ -185,6 +193,7 @@ export class BookingPersistenceService {
       referralEligibility,
       flightRecordId,
       legs,
+      client,
     } = params;
 
     if (!financials.numberOfLegs) {
@@ -210,6 +219,9 @@ export class BookingPersistenceService {
         booking.sameLocation === false ? booking.dropOffAddress : booking.pickupAddress,
       specialRequests: booking.specialRequests ?? null,
       flightNumber: booking.flightNumber ?? null,
+      ipAddress: client.ipAddress,
+      userAgent: client.userAgent,
+      country: client.country,
       flightId: flightRecordId,
       totalAmount: financials.totalAmount,
       netTotal: financials.netTotal,
@@ -282,5 +294,32 @@ export class BookingPersistenceService {
         fleetOwnerEarningForLeg: earningsPerLeg,
       })),
     };
+  }
+
+  @Cron("30 3 * * *")
+  async clearExpiredClientContext(): Promise<number> {
+    return observeBackgroundOperation(
+      "BookingPersistenceService.clearExpiredClientContext",
+      "scheduler",
+      () => this.deleteExpiredClientContext(),
+    );
+  }
+
+  private async deleteExpiredClientContext(): Promise<number> {
+    const cutoff = new Date(Date.now() - BOOKING_CLIENT_CONTEXT_RETENTION_MS);
+    const result = await this.databaseService.booking.updateMany({
+      where: {
+        OR: [{ endDate: { lt: cutoff } }, { cancelledAt: { lt: cutoff } }],
+        AND: {
+          OR: [
+            { ipAddress: { not: null } },
+            { userAgent: { not: null } },
+            { country: { not: null } },
+          ],
+        },
+      },
+      data: { ipAddress: null, userAgent: null, country: null },
+    });
+    return result.count;
   }
 }

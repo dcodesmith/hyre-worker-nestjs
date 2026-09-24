@@ -7,12 +7,13 @@ import {
   HttpStatus,
   Patch,
   Post,
+  Req,
   Res,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
@@ -100,12 +101,14 @@ export class BookingController {
     @CurrentUser() sessionUser: AuthSession["user"] | null,
     @IdempotencyKey() idempotencyKey: string,
     @Res({ passthrough: true }) response: Response,
+    @Req() request?: Request,
   ): Promise<CreateBookingResponse> {
     try {
       return await this.bookingCreationService.createBooking({
         input: booking,
         sessionUser,
         idempotencyKey,
+        requestHeaders: request?.headers,
       });
     } catch (error) {
       if (error instanceof BookingRequestInProgressException) {
