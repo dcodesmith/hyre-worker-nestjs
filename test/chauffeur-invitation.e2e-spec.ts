@@ -126,6 +126,13 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     return { cookie: auth.cookie, id: auth.user.id };
   }
 
+  function splitInvitedName(name: string) {
+    const splitAt = name.indexOf(" ");
+    return splitAt === -1
+      ? { firstName: name, lastName: name }
+      : { firstName: name.slice(0, splitAt), lastName: name.slice(splitAt + 1) };
+  }
+
   async function invite(
     cookie: string,
     extras: { email?: string; idempotencyKey?: string; name?: string } = {},
@@ -135,7 +142,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .set("Cookie", cookie)
       .set("Idempotency-Key", extras.idempotencyKey ?? `invite-${Date.now()}-${Math.random()}`)
       .send({
-        name: extras.name ?? "Ada Driver",
+        ...splitInvitedName(extras.name ?? "Ada Driver"),
         email,
         phoneNumber: PHONE,
       });
@@ -192,6 +199,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
         fleetOwnerId,
         chauffeurId: chauffeur.id,
         name: "Hired Driver",
+        firstName: "Hired",
+        lastName: "Driver",
         email: chauffeur.email,
         phoneNumber: PHONE,
         invitationIdempotencyKey: hash(`seed-${chauffeur.id}`),
@@ -483,7 +492,12 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
 
     const missingKey = await http("post", "/api/fleet-owner/chauffeur-invitations")
       .set("Cookie", ownerCookie)
-      .send({ name: "Ada Driver", email: uniqueEmail("no-key"), phoneNumber: PHONE });
+      .send({
+        firstName: "Ada",
+        lastName: "Driver",
+        email: uniqueEmail("no-key"),
+        phoneNumber: PHONE,
+      });
     expect(missingKey.status).toBe(HttpStatus.BAD_REQUEST);
 
     const email = uniqueEmail("idempotent-invite");
