@@ -16,6 +16,7 @@ export const ChauffeurErrorCode = {
   LICENSE_EXPIRED: "CHAUFFEUR_LICENSE_EXPIRED",
   MINIMUM_AGE_NOT_MET: "CHAUFFEUR_MINIMUM_AGE_NOT_MET",
   IDENTITY_MISMATCH: "CHAUFFEUR_IDENTITY_MISMATCH",
+  INVITED_NAME_MISMATCH: "CHAUFFEUR_INVITED_NAME_MISMATCH",
   BIOMETRIC_NOT_VERIFIED: "CHAUFFEUR_BIOMETRIC_NOT_VERIFIED",
   INVALID_SELFIE: "CHAUFFEUR_INVALID_SELFIE",
   PROVIDER_UNAVAILABLE: "CHAUFFEUR_VERIFICATION_PROVIDER_UNAVAILABLE",
@@ -179,6 +180,17 @@ export class ChauffeurIdentityMismatchException extends ChauffeurException {
       "The driver's licence identity does not match the verified NIN",
       HttpStatus.UNPROCESSABLE_ENTITY,
       { title: "Identity Mismatch" },
+    );
+  }
+}
+
+export class ChauffeurInvitedNameMismatchException extends ChauffeurException {
+  constructor() {
+    super(
+      ChauffeurErrorCode.INVITED_NAME_MISMATCH,
+      "The NIN name does not match the name on the invitation",
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      { title: "Name Mismatch" },
     );
   }
 }

@@ -12,15 +12,17 @@ import {
 } from "./chauffeur.dto";
 
 const validInvite = {
-  name: "Ada Lovelace",
+  firstName: "Ada",
+  lastName: "Lovelace",
   email: "ada@example.com",
   phoneNumber: "+2348012345678",
 };
 
 describe("createChauffeurInvitationSchema", () => {
-  it("trims name and phone and lowercases the email", () => {
+  it("trims both names and phone and lowercases the email", () => {
     const parsed = createChauffeurInvitationSchema.safeParse({
-      name: "  Ada Lovelace  ",
+      firstName: "  Ada  ",
+      lastName: "  Lovelace  ",
       email: "  ADA@Example.COM  ",
       phoneNumber: "  +2348012345678  ",
     });
@@ -32,10 +34,10 @@ describe("createChauffeurInvitationSchema", () => {
     }
   });
 
-  it("rejects a short name, invalid email, and non-E.164 phone", () => {
-    expect(createChauffeurInvitationSchema.safeParse({ ...validInvite, name: "A" }).success).toBe(
-      false,
-    );
+  it("rejects an empty name, invalid email, and non-E.164 phone", () => {
+    expect(
+      createChauffeurInvitationSchema.safeParse({ ...validInvite, firstName: "" }).success,
+    ).toBe(false);
     expect(
       createChauffeurInvitationSchema.safeParse({ ...validInvite, email: "not-an-email" }).success,
     ).toBe(false);
