@@ -292,12 +292,15 @@ describe("ChauffeurService", () => {
         id: VERIFICATION_ID,
         chauffeurId: null,
         name: `${INVITE_INPUT.firstName} ${INVITE_INPUT.lastName}`,
+        firstName: INVITE_INPUT.firstName,
+        lastName: INVITE_INPUT.lastName,
         email: INVITE_INPUT.email,
         phoneNumber: INVITE_INPUT.phoneNumber,
         status: ChauffeurVerificationStatus.INVITED,
         isActive: false,
         image: null,
         invitedAt: created.createdAt,
+        canReinvite: false,
       });
       expect(JSON.stringify(result)).not.toContain("token=");
       const createData = databaseService.chauffeurVerification.create.mock.calls[0][0].data;
@@ -496,7 +499,13 @@ describe("ChauffeurService", () => {
 
       const result = await service.list(OWNER_ID, { page: 1, limit: 20 });
 
-      expect(result.items).toHaveLength(1);
+      expect(result.items).toEqual([
+        expect.objectContaining({
+          firstName: "Ada",
+          lastName: "Lovelace",
+          canReinvite: false,
+        }),
+      ]);
       expect(result.meta).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
       expect(result.complianceRequirements).toEqual(
         expect.arrayContaining([
@@ -505,6 +514,21 @@ describe("ChauffeurService", () => {
           expect.objectContaining({ type: "DRIVER_BADGE", required: false }),
         ]),
       );
+    });
+
+    it("marks an expired invitation as replaceable", async () => {
+      databaseService.chauffeurVerification.findMany.mockResolvedValueOnce([
+        invitation({
+          inviteAcceptedAt: new Date(Date.now() - 60_000),
+          sessionExpiresAt: new Date(Date.now() - 1000),
+          status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
+        }),
+      ]);
+      databaseService.chauffeurVerification.count.mockResolvedValueOnce(1);
+
+      const result = await service.list(OWNER_ID, { page: 1, limit: 20 });
+
+      expect(result.items[0]?.canReinvite).toBe(true);
     });
 
     it("deactivates an approved chauffeur", async () => {
