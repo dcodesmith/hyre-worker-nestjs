@@ -10,6 +10,11 @@ import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.i
 
 export const generateAuthId = (): string => uuidv7();
 
+export function filterGetSessionResponse(path: string, returned: unknown): unknown {
+  if (path !== "/get-session" || !returned || returned instanceof Error) return;
+  return withoutSessionClientContext(returned);
+}
+
 export type ReferralSignupValidation =
   | { referrerUserId: string; referralCode: string }
   | { programInactive: true }
@@ -358,11 +363,13 @@ export function createAuth(options: AuthConfigOptions) {
         },
       },
     },
-    hooks: beforeHook
-      ? {
-          before: beforeHook,
-        }
-      : undefined,
+    hooks: {
+      ...(beforeHook ? { before: beforeHook } : {}),
+      after: createAuthMiddleware(async (ctx) => {
+        const response = filterGetSessionResponse(ctx.path, ctx.context.returned);
+        if (response) return ctx.json(response);
+      }),
+    },
     databaseHooks: {
       session: {
         create: {
