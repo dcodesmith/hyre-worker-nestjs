@@ -15,6 +15,20 @@ export type ClientRequestContext = {
   country: string | null;
 };
 
+export type StoredClientContext = {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  country?: string | null;
+};
+
+type PublicSessionResponse<T> = T extends { session?: infer Session }
+  ? Omit<T, "session"> & {
+      session: Session extends StoredClientContext | null | undefined
+        ? Omit<NonNullable<Session>, keyof StoredClientContext> | Extract<Session, null | undefined>
+        : Session;
+    }
+  : T;
+
 type HeaderSource = IncomingHttpHeaders | Headers | undefined;
 
 export function readClientRequest(
@@ -51,23 +65,32 @@ export function countryFromHeaders(headers: HeaderSource): string | null {
   return countryCode(headerValue(headers, CLIENT_COUNTRY_HEADER));
 }
 
-export function omitStoredClientContext<T extends object>(value: T): T {
-  const record = { ...value } as Record<string, unknown>;
-  delete record.ipAddress;
-  delete record.userAgent;
-  delete record.country;
-  return record as T;
+export function omitStoredClientContext<T extends object>(
+  value: T,
+): Omit<T, keyof StoredClientContext> {
+  const {
+    ipAddress: _ipAddress,
+    userAgent: _userAgent,
+    country: _country,
+    ...rest
+  } = value as T & StoredClientContext;
+  return rest;
 }
 
-export function withoutSessionClientContext<T>(value: T): T {
-  const record = value as { session?: object | null };
-  if (!record.session) return value;
-  const session = record.session as Record<string, unknown>;
-  if (!("ipAddress" in session) && !("userAgent" in session) && !("country" in session)) {
-    return value;
+export function withoutSessionClientContext<T extends object>(value: T): PublicSessionResponse<T> {
+  const response = value as T & { session?: StoredClientContext | null };
+  if (!response.session || !hasStoredClientContext(response.session)) {
+    return value as PublicSessionResponse<T>;
   }
-  const { ipAddress: _ipAddress, userAgent: _userAgent, country: _country, ...rest } = session;
-  return { ...record, session: rest } as T;
+
+  return {
+    ...response,
+    session: omitStoredClientContext(response.session),
+  } as PublicSessionResponse<T>;
+}
+
+function hasStoredClientContext(session: StoredClientContext): boolean {
+  return "ipAddress" in session || "userAgent" in session || "country" in session;
 }
 
 function headerMatches(headers: HeaderSource, name: string, expected: string): boolean {

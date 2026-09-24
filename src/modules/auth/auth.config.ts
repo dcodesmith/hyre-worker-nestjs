@@ -7,6 +7,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   countryFromHeaders,
   omitStoredClientContext,
+  type StoredClientContext,
   withoutSessionClientContext,
 } from "../../common/client-request";
 import { isValidRole, MOBILE, USER } from "./auth.const";
@@ -14,14 +15,31 @@ import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.i
 
 export const generateAuthId = (): string => uuidv7();
 
-export function filterSessionResponse(path: string, returned: unknown): unknown {
+type SessionRecord = StoredClientContext & { id: string };
+type SessionEnvelope = { session?: SessionRecord | null };
+
+export function filterSessionResponse(path: string, returned: unknown) {
   if (!returned || returned instanceof Error) return;
-  if (path === "/list-sessions" && Array.isArray(returned)) {
+  if (path === "/list-sessions" && isSessionList(returned)) {
     return returned.map(omitStoredClientContext);
   }
-  if (path === "/get-session" || path === "/update-session") {
+  if ((path === "/get-session" || path === "/update-session") && isSessionEnvelope(returned)) {
     return withoutSessionClientContext(returned);
   }
+}
+
+function isSessionList(value: unknown): value is SessionRecord[] {
+  return Array.isArray(value) && value.every(isSessionRecord);
+}
+
+function isSessionRecord(value: unknown): value is SessionRecord {
+  return typeof value === "object" && value !== null && "id" in value;
+}
+
+function isSessionEnvelope(value: unknown): value is SessionEnvelope {
+  if (typeof value !== "object" || value === null || !("session" in value)) return false;
+  const session = value.session;
+  return session == null || isSessionRecord(session);
 }
 
 export type ReferralSignupValidation =
