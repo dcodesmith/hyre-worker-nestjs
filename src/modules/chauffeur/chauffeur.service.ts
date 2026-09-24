@@ -49,6 +49,7 @@ import {
   ChauffeurInvitationExistsException,
   ChauffeurInvitationInvalidException,
   ChauffeurInvitationNotAllowedException,
+  ChauffeurInvitedNameMismatchException,
   ChauffeurLicenseExpiredException,
   ChauffeurLicenseNotVerifiedException,
   ChauffeurMinimumAgeException,
@@ -140,7 +141,9 @@ export class ChauffeurService {
       invitation = await this.databaseService.chauffeurVerification.create({
         data: {
           fleetOwnerId,
-          name: input.name,
+          name: `${input.firstName} ${input.lastName}`,
+          firstName: input.firstName,
+          lastName: input.lastName,
           email: input.email,
           phoneNumber: input.phoneNumber,
           invitationIdempotencyKey: idempotencyHash,
@@ -424,6 +427,7 @@ export class ChauffeurService {
 
     try {
       const identity = await this.monoService.verifyNin(input.nin);
+      this.assertInvitedNameMatches(verification, identity);
       await this.databaseService.$transaction([
         this.databaseService.chauffeurVerification.update({
           where: { id: verificationId },
@@ -740,6 +744,8 @@ export class ChauffeurService {
         return new ChauffeurMinimumAgeException();
       case ChauffeurErrorCode.IDENTITY_MISMATCH:
         return new ChauffeurIdentityMismatchException();
+      case ChauffeurErrorCode.INVITED_NAME_MISMATCH:
+        return new ChauffeurInvitedNameMismatchException();
       case ChauffeurErrorCode.BIOMETRIC_NOT_VERIFIED:
         return new ChauffeurBiometricNotVerifiedException();
       case ChauffeurErrorCode.ACCOUNT_CONFLICT:
@@ -752,6 +758,7 @@ export class ChauffeurService {
   }
 
   private mapNinError(error: unknown): ChauffeurException {
+    if (error instanceof ChauffeurException) return error;
     if (error instanceof MonoError && error.kind === "REJECTED") {
       return new ChauffeurNinNotVerifiedException();
     }
@@ -782,6 +789,26 @@ export class ChauffeurService {
     return new ChauffeurOperationFailedException();
   }
 
+  private assertInvitedNameMatches(
+    verification: { firstName: string; lastName: string },
+    identity: { firstName: string; lastName: string },
+  ): void {
+    const invitedFirstName = this.normalizeName(verification.firstName);
+    const identityFirstName = this.normalizeName(identity.firstName);
+    const invitedLastName = this.normalizeName(verification.lastName);
+    const identityLastName = this.normalizeName(identity.lastName);
+    if (
+      !invitedFirstName ||
+      !identityFirstName ||
+      !invitedLastName ||
+      !identityLastName ||
+      invitedFirstName !== identityFirstName ||
+      invitedLastName !== identityLastName
+    ) {
+      throw new ChauffeurInvitedNameMismatchException();
+    }
+  }
+
   private assertIdentityMatches(
     verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>,
     license: MonoDriversLicenseResult,
@@ -790,7 +817,9 @@ export class ChauffeurService {
       this.normalizeName(verification.identityFirstName ?? "") !==
         this.normalizeName(license.firstName) ||
       this.normalizeName(verification.identityLastName ?? "") !==
-        this.normalizeName(license.lastName)
+        this.normalizeName(license.lastName) ||
+      verification.dateOfBirth?.toISOString().slice(0, 10) !==
+        license.dateOfBirth.toISOString().slice(0, 10)
     ) {
       throw new ChauffeurIdentityMismatchException();
     }

@@ -94,7 +94,12 @@ describe("FleetOwnerChauffeurController", () => {
   });
 
   it("delegates invitation creation with the idempotency key", async () => {
-    const body = { name: "Ada Lovelace", email: "ada@example.com", phoneNumber: "+2348012345678" };
+    const body = {
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+    };
     chauffeurService.createInvitation.mockResolvedValueOnce({ id: "ver-1" });
 
     await expect(controller.createInvitation("invite-key-1", body, mockUser)).resolves.toEqual({

@@ -2492,9 +2492,10 @@ describe("AccountVerificationService", () => {
     });
 
     it.each([
-      ["first", { firstName: "JANE", lastName: "DOE" }],
-      ["last", { firstName: "JOHN", lastName: "SMITH" }],
-    ] as const)("rejects a licence %s-name mismatch", async (_label, overrides) => {
+      ["first name", { firstName: "JANE", lastName: "DOE" }],
+      ["last name", { firstName: "JOHN", lastName: "SMITH" }],
+      ["date of birth", { dateOfBirth: new Date(Date.UTC(1991, 0, 1)) }],
+    ] as const)("rejects a licence %s mismatch", async (_label, overrides) => {
       monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...driversLicense,
         ...overrides,

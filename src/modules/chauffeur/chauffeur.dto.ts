@@ -2,7 +2,8 @@ import { z } from "zod";
 import { driversLicenseNumberSchema } from "../../shared/drivers-license-number";
 
 export const createChauffeurInvitationSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().min(1).max(80),
   email: z.string().trim().toLowerCase().pipe(z.email()),
   phoneNumber: z
     .string()

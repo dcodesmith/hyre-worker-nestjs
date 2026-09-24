@@ -30,6 +30,7 @@ import {
   ChauffeurInvitationExistsException,
   ChauffeurInvitationInvalidException,
   ChauffeurInvitationNotAllowedException,
+  ChauffeurInvitedNameMismatchException,
   ChauffeurLicenseExpiredException,
   ChauffeurLicenseNotVerifiedException,
   ChauffeurMinimumAgeException,
@@ -49,7 +50,8 @@ const HMAC_KEY = "test-hmac-key";
 const OWNER_ID = "owner-1";
 const VERIFICATION_ID = "ver-1";
 const INVITE_INPUT = {
-  name: "Ada Lovelace",
+  firstName: "Ada",
+  lastName: "Lovelace",
   email: "ada@example.com",
   phoneNumber: "+2348012345678",
 };
@@ -80,7 +82,9 @@ function invitation(overrides: Record<string, unknown> = {}) {
     id: VERIFICATION_ID,
     fleetOwnerId: OWNER_ID,
     chauffeurId: null,
-    name: INVITE_INPUT.name,
+    name: `${INVITE_INPUT.firstName} ${INVITE_INPUT.lastName}`,
+    firstName: INVITE_INPUT.firstName,
+    lastName: INVITE_INPUT.lastName,
     email: INVITE_INPUT.email,
     phoneNumber: INVITE_INPUT.phoneNumber,
     invitationIdempotencyKey: hash("invite-key-1"),
@@ -287,7 +291,7 @@ describe("ChauffeurService", () => {
       expect(result).toEqual({
         id: VERIFICATION_ID,
         chauffeurId: null,
-        name: INVITE_INPUT.name,
+        name: `${INVITE_INPUT.firstName} ${INVITE_INPUT.lastName}`,
         email: INVITE_INPUT.email,
         phoneNumber: INVITE_INPUT.phoneNumber,
         status: ChauffeurVerificationStatus.INVITED,
@@ -344,7 +348,7 @@ describe("ChauffeurService", () => {
     it("rejects a reused idempotency key with different details", async () => {
       databaseService.chauffeurVerification.findUnique.mockResolvedValueOnce(
         invitation({
-          invitationRequestHash: hash(JSON.stringify({ ...INVITE_INPUT, name: "Other" })),
+          invitationRequestHash: hash(JSON.stringify({ ...INVITE_INPUT, firstName: "Other" })),
         }),
       );
 
@@ -748,7 +752,7 @@ describe("ChauffeurService", () => {
       });
       monoService.verifyNin.mockResolvedValueOnce({
         firstName: "ADA",
-        middleName: null,
+        middleName: "AUGUSTA",
         lastName: "LOVELACE",
         dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
         officialPhoto: "nin-photo",
@@ -771,6 +775,52 @@ describe("ChauffeurService", () => {
           status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
         }),
       });
+    });
+
+    it("rejects a NIN whose official name differs from the invitation", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        phoneVerified(),
+      );
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockResolvedValueOnce({
+        firstName: "GRACE",
+        middleName: null,
+        lastName: "HOPPER",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "nin-photo",
+        reference: "nin-ref",
+      });
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).rejects.toBeInstanceOf(ChauffeurInvitedNameMismatchException);
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects a NIN when the invitation has no last name", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        phoneVerified({ lastName: "" }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockResolvedValueOnce({
+        firstName: "ADA",
+        middleName: null,
+        lastName: "LOVELACE",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "nin-photo",
+        reference: "nin-ref",
+      });
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).rejects.toBeInstanceOf(ChauffeurInvitedNameMismatchException);
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
     });
 
     it("maps a Mono rejection and stores the failed stage", async () => {
@@ -966,12 +1016,30 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurIdentityMismatchException);
 
       await claimDrivingStage();
-      const today = new Date();
       monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...eligibleLicense,
-        dateOfBirth: new Date(
-          Date.UTC(today.getUTCFullYear() - 20, today.getUTCMonth(), today.getUTCDate()),
+        dateOfBirth: new Date(Date.UTC(1991, 0, 1)),
+      });
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-dob",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
         ),
+      ).rejects.toBeInstanceOf(ChauffeurIdentityMismatchException);
+
+      await claimDrivingStage();
+      const today = new Date();
+      const underage = new Date(
+        Date.UTC(today.getUTCFullYear() - 20, today.getUTCMonth(), today.getUTCDate()),
+      );
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ dateOfBirth: underage }),
+      );
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
+        ...eligibleLicense,
+        dateOfBirth: underage,
       });
       await expect(
         service.verifyDriving(

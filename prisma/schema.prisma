@@ -109,6 +109,8 @@ model ChauffeurVerification {
   fleetOwnerId              String                              @db.Uuid
   chauffeurId               String?                             @unique @db.Uuid
   name                      String
+  firstName                 String
+  lastName                  String
   email                     String
   phoneNumber               String
   invitationIdempotencyKey  String
