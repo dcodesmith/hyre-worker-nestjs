@@ -216,13 +216,7 @@ export class ChauffeurService {
       return;
     }
 
-    const now = new Date();
-    const canReplace =
-      existing.status !== ChauffeurVerificationStatus.APPROVED &&
-      ((!existing.inviteAcceptedAt && existing.inviteExpiresAt <= now) ||
-        (existing.inviteAcceptedAt &&
-          (!existing.sessionExpiresAt || existing.sessionExpiresAt <= now)));
-    if (!canReplace) {
+    if (!this.canReinvite(existing)) {
       throw new ChauffeurInvitationExistsException();
     }
 
@@ -871,15 +865,35 @@ export class ChauffeurService {
     };
   }
 
+  private canReinvite(verification: {
+    status: ChauffeurVerificationStatus;
+    inviteAcceptedAt: Date | null;
+    inviteExpiresAt: Date;
+    sessionExpiresAt: Date | null;
+  }): boolean {
+    const now = new Date();
+    return (
+      verification.status !== ChauffeurVerificationStatus.APPROVED &&
+      ((!verification.inviteAcceptedAt && verification.inviteExpiresAt <= now) ||
+        (verification.inviteAcceptedAt !== null &&
+          (verification.sessionExpiresAt === null || verification.sessionExpiresAt <= now)))
+    );
+  }
+
   private toOwnerRecord<
     T extends {
       id: string;
       chauffeurId: string | null;
       name: string;
+      firstName: string;
+      lastName: string;
       email: string;
       phoneNumber: string;
       status: ChauffeurVerificationStatus;
       createdAt: Date;
+      inviteAcceptedAt: Date | null;
+      inviteExpiresAt: Date;
+      sessionExpiresAt: Date | null;
       chauffeur?: { image: string | null; chauffeurDisabledAt: Date | null } | null;
     },
   >(verification: T) {
@@ -887,6 +901,8 @@ export class ChauffeurService {
       id: verification.id,
       chauffeurId: verification.chauffeurId,
       name: verification.name,
+      firstName: verification.firstName,
+      lastName: verification.lastName,
       email: verification.email,
       phoneNumber: verification.phoneNumber,
       status: verification.status,
@@ -895,6 +911,7 @@ export class ChauffeurService {
         verification.chauffeur?.chauffeurDisabledAt === null,
       image: verification.chauffeur?.image ?? null,
       invitedAt: verification.createdAt,
+      canReinvite: this.canReinvite(verification),
     };
   }
 
