@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterGetSessionResponse, generateAuthId } from "./auth.config";
+import { filterSessionResponse, generateAuthId } from "./auth.config";
 
 describe("generateAuthId", () => {
   it("generates unique UUIDv7 identifiers", () => {
@@ -11,8 +11,8 @@ describe("generateAuthId", () => {
   });
 });
 
-describe("filterGetSessionResponse", () => {
-  it("removes stored client context only from get-session responses", () => {
+describe("filterSessionResponse", () => {
+  it("removes stored client context from session responses", () => {
     const response = {
       user: { id: "user-1" },
       session: {
@@ -23,10 +23,17 @@ describe("filterGetSessionResponse", () => {
       },
     };
 
-    expect(filterGetSessionResponse("/get-session", response)).toEqual({
+    expect(filterSessionResponse("/get-session", response)).toEqual({
       user: { id: "user-1" },
       session: { id: "session-1" },
     });
-    expect(filterGetSessionResponse("/sign-in/email-otp", response)).toBeUndefined();
+    expect(filterSessionResponse("/update-session", response)).toEqual({
+      user: { id: "user-1" },
+      session: { id: "session-1" },
+    });
+    expect(filterSessionResponse("/list-sessions", [response.session])).toEqual([
+      { id: "session-1" },
+    ]);
+    expect(filterSessionResponse("/sign-in/email-otp", response)).toBeUndefined();
   });
 });

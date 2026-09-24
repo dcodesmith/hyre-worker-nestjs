@@ -4,15 +4,24 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { v7 as uuidv7 } from "uuid";
-import { countryFromHeaders, withoutSessionClientContext } from "../../common/client-request";
+import {
+  countryFromHeaders,
+  omitStoredClientContext,
+  withoutSessionClientContext,
+} from "../../common/client-request";
 import { isValidRole, MOBILE, USER } from "./auth.const";
 import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.interface";
 
 export const generateAuthId = (): string => uuidv7();
 
-export function filterGetSessionResponse(path: string, returned: unknown): unknown {
-  if (path !== "/get-session" || !returned || returned instanceof Error) return;
-  return withoutSessionClientContext(returned);
+export function filterSessionResponse(path: string, returned: unknown): unknown {
+  if (!returned || returned instanceof Error) return;
+  if (path === "/list-sessions" && Array.isArray(returned)) {
+    return returned.map(omitStoredClientContext);
+  }
+  if (path === "/get-session" || path === "/update-session") {
+    return withoutSessionClientContext(returned);
+  }
 }
 
 export type ReferralSignupValidation =
@@ -366,7 +375,7 @@ export function createAuth(options: AuthConfigOptions) {
     hooks: {
       ...(beforeHook ? { before: beforeHook } : {}),
       after: createAuthMiddleware(async (ctx) => {
-        const response = filterGetSessionResponse(ctx.path, ctx.context.returned);
+        const response = filterSessionResponse(ctx.path, ctx.context.returned);
         if (response) return ctx.json(response);
       }),
     },
