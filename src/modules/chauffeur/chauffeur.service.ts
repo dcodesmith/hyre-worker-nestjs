@@ -793,9 +793,17 @@ export class ChauffeurService {
     verification: { firstName: string; lastName: string },
     identity: { firstName: string; lastName: string },
   ): void {
+    const invitedFirstName = this.normalizeName(verification.firstName);
+    const identityFirstName = this.normalizeName(identity.firstName);
+    const invitedLastName = this.normalizeName(verification.lastName);
+    const identityLastName = this.normalizeName(identity.lastName);
     if (
-      this.normalizeName(verification.firstName) !== this.normalizeName(identity.firstName) ||
-      this.normalizeName(verification.lastName) !== this.normalizeName(identity.lastName)
+      !invitedFirstName ||
+      !identityFirstName ||
+      !invitedLastName ||
+      !identityLastName ||
+      invitedFirstName !== identityFirstName ||
+      invitedLastName !== identityLastName
     ) {
       throw new ChauffeurInvitedNameMismatchException();
     }

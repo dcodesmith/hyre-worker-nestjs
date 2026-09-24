@@ -5,7 +5,7 @@ UPDATE "ChauffeurVerification"
 SET
   "firstName" = split_part("name", ' ', 1),
   "lastName" = CASE
-    WHEN strpos("name", ' ') = 0 THEN "name"
+    WHEN strpos(btrim("name"), ' ') = 0 THEN ''
     ELSE regexp_replace("name", '^.* ', '')
   END;
 

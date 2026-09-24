@@ -800,6 +800,29 @@ describe("ChauffeurService", () => {
       expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
     });
 
+    it("rejects a NIN when the invitation has no last name", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        phoneVerified({ lastName: "" }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockResolvedValueOnce({
+        firstName: "ADA",
+        middleName: null,
+        lastName: "LOVELACE",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "nin-photo",
+        reference: "nin-ref",
+      });
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).rejects.toBeInstanceOf(ChauffeurInvitedNameMismatchException);
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+    });
+
     it("maps a Mono rejection and stores the failed stage", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
         phoneVerified(),
