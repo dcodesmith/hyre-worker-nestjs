@@ -809,7 +809,9 @@ export class ChauffeurService {
       this.normalizeName(verification.identityFirstName ?? "") !==
         this.normalizeName(license.firstName) ||
       this.normalizeName(verification.identityLastName ?? "") !==
-        this.normalizeName(license.lastName)
+        this.normalizeName(license.lastName) ||
+      verification.dateOfBirth?.toISOString().slice(0, 10) !==
+        license.dateOfBirth.toISOString().slice(0, 10)
     ) {
       throw new ChauffeurIdentityMismatchException();
     }

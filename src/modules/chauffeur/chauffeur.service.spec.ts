@@ -993,12 +993,30 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurIdentityMismatchException);
 
       await claimDrivingStage();
-      const today = new Date();
       monoService.verifyDriversLicense.mockResolvedValueOnce({
         ...eligibleLicense,
-        dateOfBirth: new Date(
-          Date.UTC(today.getUTCFullYear() - 20, today.getUTCMonth(), today.getUTCDate()),
+        dateOfBirth: new Date(Date.UTC(1991, 0, 1)),
+      });
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-dob",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
         ),
+      ).rejects.toBeInstanceOf(ChauffeurIdentityMismatchException);
+
+      await claimDrivingStage();
+      const today = new Date();
+      const underage = new Date(
+        Date.UTC(today.getUTCFullYear() - 20, today.getUTCMonth(), today.getUTCDate()),
+      );
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ dateOfBirth: underage }),
+      );
+      monoService.verifyDriversLicense.mockResolvedValueOnce({
+        ...eligibleLicense,
+        dateOfBirth: underage,
       });
       await expect(
         service.verifyDriving(

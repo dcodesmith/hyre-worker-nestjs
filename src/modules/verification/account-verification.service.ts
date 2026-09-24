@@ -1376,7 +1376,9 @@ export class AccountVerificationService {
 
     if (
       this.normalizeName(identity.firstName) !== this.normalizeName(license.firstName) ||
-      this.normalizeName(identity.lastName) !== this.normalizeName(license.lastName)
+      this.normalizeName(identity.lastName) !== this.normalizeName(license.lastName) ||
+      identity.dateOfBirth.toISOString().slice(0, 10) !==
+        license.dateOfBirth.toISOString().slice(0, 10)
     ) {
       throw new OwnerDriverLicenseIdentityMismatchException();
     }
