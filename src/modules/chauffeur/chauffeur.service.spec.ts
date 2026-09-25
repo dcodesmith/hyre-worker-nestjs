@@ -1134,8 +1134,8 @@ describe("ChauffeurService", () => {
         }),
       );
       expect(databaseService.user.create).not.toHaveBeenCalled();
-      expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, livenessProviderRef: "pending:stage-drive" },
         data: expect.objectContaining({
           livenessProviderRef: "job-1",
           selfieObjectKey: STORED_SELFIE_KEY,
@@ -1145,6 +1145,33 @@ describe("ChauffeurService", () => {
         where: { id: "stage-drive" },
         data: { processingExpiresAt: expect.any(Date) },
       });
+    });
+
+    it("does not restore a Smile job after the reservation is released", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified(),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      smileIdService.compareSelfieToImage.mockResolvedValueOnce({
+        jobId: "job-1",
+        createdAt: null,
+      });
+      databaseService.chauffeurVerification.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurRequestInProgressException);
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerificationStageRequest.update).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
     });
 
     it("rejects a second driving submission while a Smile comparison is still open", async () => {

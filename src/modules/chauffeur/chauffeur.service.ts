@@ -549,9 +549,9 @@ export class ChauffeurService {
             stageRequestId: claim.requestId,
           },
         });
-        await this.databaseService.$transaction([
-          this.databaseService.chauffeurVerification.update({
-            where: { id: verification.id },
+        const submitted = await this.databaseService.$transaction(async (tx) => {
+          const updated = await tx.chauffeurVerification.updateMany({
+            where: { id: verification.id, livenessProviderRef: reservation },
             data: {
               driversLicenseHash: this.hash(driversLicenseNumber),
               driversLicenseLast4: driversLicenseNumber.slice(-4).toUpperCase(),
@@ -561,12 +561,15 @@ export class ChauffeurService {
               livenessProviderRef: compared.jobId,
               selfieObjectKey,
             },
-          }),
-          this.databaseService.chauffeurVerificationStageRequest.update({
+          });
+          if (updated.count === 0) return false;
+          await tx.chauffeurVerificationStageRequest.update({
             where: { id: claim.requestId },
             data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
-          }),
-        ]);
+          });
+          return true;
+        });
+        if (!submitted) throw new ChauffeurRequestInProgressException();
       } catch (error) {
         await this.databaseService.chauffeurVerification.updateMany({
           where: { id: verification.id, livenessProviderRef: reservation },
