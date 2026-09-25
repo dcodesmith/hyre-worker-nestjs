@@ -1,6 +1,7 @@
 import {
   getDefaultPickupTime,
   normalizeBookingTimeWindow,
+  toApiPickupTime,
 } from "../../../shared/booking-time-window.helper";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type {
@@ -49,7 +50,7 @@ export function buildBookingInputFromDraft(
       endDate,
       pickupAddress: draft.pickupLocation ?? "",
       bookingType,
-      pickupTime: normalizePickupTimeTo12Hour(pickupTime),
+      pickupTime: toApiPickupTime(pickupTime),
       flightNumber: draft.flightNumber,
       addonIds: [],
       requiresFullTank: false,
@@ -70,68 +71,6 @@ export function buildBookingInputFromDraft(
     normalizedStartDate: startDate,
     normalizedEndDate: endDate,
   };
-}
-
-function normalizePickupTimeTo12Hour(pickupTime: string): string {
-  if (hasMeridiemSuffix(pickupTime)) {
-    return pickupTime;
-  }
-
-  const parsed = parse24HourTime(pickupTime);
-  if (parsed) {
-    return to12HourTime(parsed.hours24, parsed.minutes);
-  }
-
-  return pickupTime;
-}
-
-function parse24HourTime(value: string): { hours24: number; minutes: number } | null {
-  const parts = value.split(":");
-  if (parts.length !== 2 || !isAsciiDigits(parts[0], 1, 2) || !isAsciiDigits(parts[1], 2, 2)) {
-    return null;
-  }
-
-  const hours24 = Number.parseInt(parts[0], 10);
-  const minutes = Number.parseInt(parts[1], 10);
-  if (hours24 < 0 || hours24 > 23 || minutes < 0 || minutes > 59) {
-    return null;
-  }
-
-  return { hours24, minutes };
-}
-
-function to12HourTime(hours24: number, minutes: number): string {
-  let hours12 = hours24;
-  const period = hours24 >= 12 ? "PM" : "AM";
-  if (hours12 === 0) {
-    hours12 = 12;
-  } else if (hours12 > 12) {
-    hours12 -= 12;
-  }
-
-  const minuteStr = minutes > 0 ? `:${minutes.toString().padStart(2, "0")}` : "";
-  return `${hours12}${minuteStr} ${period}`;
-}
-
-function hasMeridiemSuffix(value: string): boolean {
-  const trimmed = value.trimEnd().toUpperCase();
-  return trimmed.endsWith("AM") || trimmed.endsWith("PM");
-}
-
-function isAsciiDigits(value: string, minLength: number, maxLength: number): boolean {
-  if (value.length < minLength || value.length > maxLength) {
-    return false;
-  }
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.codePointAt(index);
-    if (code === undefined) {
-      return false;
-    }
-    if (code < 48 || code > 57) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function stripNonDigits(value: string): string {

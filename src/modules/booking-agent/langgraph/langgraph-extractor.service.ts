@@ -14,6 +14,7 @@ import {
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./langgraph-control-intent.policy";
+import { isLikelyGibberish } from "./langgraph-message-quality.policy";
 import { buildExtractorSystemPrompt } from "./prompts/extractor.prompt";
 
 const extractionSchema = z.object({
@@ -29,6 +30,8 @@ const extractionSchema = z.object({
     "new_booking",
     "ask_question",
     "request_agent",
+    "off_topic",
+    "abuse",
     "unknown",
   ]),
   draftPatch: z.object({
@@ -79,6 +82,10 @@ export class LangGraphExtractorService {
     const deterministicResult = this.getDeterministicTextResult(inboundMessage, stage);
     if (deterministicResult) {
       return deterministicResult;
+    }
+
+    if (isLikelyGibberish(inboundMessage)) {
+      return { intent: "unknown", draftPatch: {}, confidence: 0.2 };
     }
 
     try {
