@@ -455,12 +455,15 @@ export class ChauffeurService {
     input: VerifyChauffeurDrivingDto,
     selfie: UploadedChauffeurSelfie,
   ) {
-    const verification = await this.getVerification(verificationId);
+    let verification = await this.getVerification(verificationId);
     if (verification.status === ChauffeurVerificationStatus.APPROVED) {
       return this.toOnboardingState(verification);
     }
     if (verification.livenessProviderRef) {
-      throw new ChauffeurRequestInProgressException();
+      const outcome = await this.reconcileExpiredSmileJob(verification);
+      if (outcome === "open") throw new ChauffeurRequestInProgressException();
+      if (outcome === "approved") return this.getOnboarding(verificationId);
+      verification = await this.getVerification(verificationId);
     }
     if (
       !verification.ninHash ||
@@ -575,6 +578,65 @@ export class ChauffeurService {
       const mapped = this.mapDrivingError(error);
       await this.failStage(claim.requestId, mapped.getErrorCode());
       throw mapped;
+    }
+  }
+
+  private async reconcileExpiredSmileJob(
+    verification: ChauffeurVerification,
+  ): Promise<"open" | "approved" | "released"> {
+    const jobId = verification.livenessProviderRef;
+    if (!jobId) return "released";
+    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+      where: {
+        verificationId: verification.id,
+        stage: ChauffeurVerificationStage.DRIVING,
+        status: ProviderVerificationStatus.PROCESSING,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (stage && stage.processingExpiresAt > new Date()) return "open";
+
+    if (!jobId.startsWith("pending:")) {
+      let status: Awaited<ReturnType<SmileIdService["comparisonStatus"]>>;
+      try {
+        status = await this.smileIdService.comparisonStatus(jobId);
+      } catch (error) {
+        if (!(error instanceof SmileIdError)) throw new ChauffeurProviderUnavailableException();
+        status = "not_found";
+      }
+      if (status !== "processing" && status !== "not_found" && stage) {
+        await this.applySmileCompareResult({
+          jobId,
+          verificationId: verification.id,
+          stageRequestId: stage.id,
+          status,
+        });
+        const refreshed = await this.getVerification(verification.id);
+        if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
+        return "released";
+      }
+    }
+
+    await this.releaseSmileReservation(verification, jobId, stage?.id);
+    return "released";
+  }
+
+  private async releaseSmileReservation(
+    verification: ChauffeurVerification,
+    jobId: string,
+    stageId: string | undefined,
+  ): Promise<void> {
+    await this.databaseService.chauffeurVerification.updateMany({
+      where: { id: verification.id, livenessProviderRef: jobId },
+      data: { livenessProviderRef: null, selfieObjectKey: null },
+    });
+    if (stageId) {
+      await this.failStage(stageId, ChauffeurErrorCode.PROVIDER_UNAVAILABLE);
+    }
+    if (verification.selfieObjectKey) {
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
     }
   }
 

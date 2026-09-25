@@ -81,15 +81,17 @@ export class SmileIdService {
 
   async comparisonStatus(
     jobId: string,
-  ): Promise<"clear" | "block" | "attention" | "error" | "processing"> {
+  ): Promise<"clear" | "block" | "attention" | "error" | "processing" | "not_found"> {
     const token = await this.token();
     try {
-      const { data } = await this.client.get(`/v3/status/${encodeURIComponent(jobId)}`, {
+      const { data, status } = await this.client.get(`/v3/status/${encodeURIComponent(jobId)}`, {
         headers: { "SmileID-Token": token },
-        validateStatus: (status) => status === 200 || status === 202,
+        validateStatus: (httpStatus) =>
+          httpStatus === 200 || httpStatus === 202 || httpStatus === 404,
       });
+      if (status === 404) return "not_found";
       const parsed = smileIdJobStatusSchema.safeParse(data);
-      if (!parsed.success || parsed.data.job_id !== jobId || parsed.data.status === "not_found") {
+      if (!parsed.success || parsed.data.job_id !== jobId) {
         throw new SmileIdError("INVALID_RESPONSE");
       }
       return parsed.data.status;
