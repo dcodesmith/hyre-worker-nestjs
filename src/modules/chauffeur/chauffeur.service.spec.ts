@@ -1238,10 +1238,49 @@ describe("ChauffeurService", () => {
         ),
       ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.IDENTITY_VERIFIED });
       expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID, livenessProviderRef: "job-old" },
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-old",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
         data: { livenessProviderRef: null, selfieObjectKey: null },
       });
       expect(smileIdService.compareSelfieToImage).toHaveBeenCalled();
+    });
+
+    it("keeps the selfie when a callback approves before the expired job is released", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(
+          identityVerified({
+            livenessProviderRef: "job-1",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        )
+        .mockResolvedValue(
+          identityVerified({
+            status: ChauffeurVerificationStatus.APPROVED,
+            chauffeurId: "new-user",
+            livenessProviderRef: "job-1",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus.mockResolvedValueOnce("processing");
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
     });
 
     it("rejects biometrics when the NIN photo is missing", async () => {

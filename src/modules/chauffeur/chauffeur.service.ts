@@ -617,7 +617,10 @@ export class ChauffeurService {
       }
     }
 
-    await this.releaseSmileReservation(verification, jobId, stage?.id);
+    const released = await this.releaseSmileReservation(verification, jobId, stage?.id);
+    if (released) return "released";
+    const refreshed = await this.getVerification(verification.id);
+    if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
     return "released";
   }
 
@@ -625,11 +628,16 @@ export class ChauffeurService {
     verification: ChauffeurVerification,
     jobId: string,
     stageId: string | undefined,
-  ): Promise<void> {
-    await this.databaseService.chauffeurVerification.updateMany({
-      where: { id: verification.id, livenessProviderRef: jobId },
+  ): Promise<boolean> {
+    const released = await this.databaseService.chauffeurVerification.updateMany({
+      where: {
+        id: verification.id,
+        livenessProviderRef: jobId,
+        status: { not: ChauffeurVerificationStatus.APPROVED },
+      },
       data: { livenessProviderRef: null, selfieObjectKey: null },
     });
+    if (released.count === 0) return false;
     if (stageId) {
       await this.failStage(stageId, ChauffeurErrorCode.PROVIDER_UNAVAILABLE);
     }
@@ -638,6 +646,7 @@ export class ChauffeurService {
         .deleteObjectByKey(verification.selfieObjectKey)
         .catch(() => undefined);
     }
+    return true;
   }
 
   async applySmileCompareResult(input: {
