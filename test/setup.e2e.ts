@@ -53,7 +53,11 @@ async function initializeWorkerIsolation(): Promise<void> {
 
   const workerId = getWorkerId();
   const workerIdNumber = parseWorkerId(workerId);
-  const schema = `e2e_w${workerId}`;
+  // Include the process id. Vitest can start a replacement worker with the same
+  // pool id before the previous process finishes, and both would otherwise share
+  // one schema. Setup drops indexes while a payout transaction locks the stage
+  // request and then the verification row, which deadlocks and surfaces as 500.
+  const schema = `e2e_w${workerId}_p${process.pid}`;
   const workerDatabaseUrl = withSchema(baseDatabaseUrl, schema);
   // Redis default database count is 16 (0-15). Keep worker DB index in-range.
   const workerRedisDb = Math.abs(workerIdNumber % 16);

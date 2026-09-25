@@ -14,7 +14,7 @@ import { USER } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import { MonoError, MonoService } from "../mono/mono.service";
-import { PremblyError, PremblyService } from "../prembly/prembly.service";
+import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
   PhoneVerificationCodeInvalidException,
@@ -22,7 +22,6 @@ import {
 } from "../verification/account-verification.error";
 import { PhoneVerificationService } from "../verification/phone-verification.service";
 import {
-  ChauffeurAccountConflictException,
   ChauffeurBiometricNotVerifiedException,
   ChauffeurErrorCode,
   ChauffeurIdempotencyKeyReusedException,
@@ -158,9 +157,6 @@ const selfie = {
   buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
 };
 
-const REQUESTED_SELFIE_KEY_PATTERN = new RegExp(
-  `^fleet-owners/${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/[0-9a-f-]{36}\\.webp$`,
-);
 const STORED_SELFIE_KEY = `stored/fleet-owners/${OWNER_ID}/chauffeurs/${VERIFICATION_ID}/documents/selfie.webp`;
 
 const eligibleLicense = {
@@ -192,9 +188,9 @@ describe("ChauffeurService", () => {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
-  let premblyService: {
-    verifyFaceLiveness: ReturnType<typeof vi.fn>;
-    compareFaces: ReturnType<typeof vi.fn>;
+  let smileIdService: {
+    compareSelfieToImage: ReturnType<typeof vi.fn>;
+    comparisonStatus: ReturnType<typeof vi.fn>;
   };
   let imageService: { processSelfie: ReturnType<typeof vi.fn> };
   let storageService: {
@@ -206,6 +202,7 @@ describe("ChauffeurService", () => {
     databaseService = {
       chauffeurVerification: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         findUniqueOrThrow: vi.fn(),
         findFirstOrThrow: vi.fn(),
         findMany: vi.fn(),
@@ -217,6 +214,7 @@ describe("ChauffeurService", () => {
       },
       chauffeurVerificationStageRequest: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
         updateMany: vi.fn(),
@@ -243,10 +241,11 @@ describe("ChauffeurService", () => {
       verifyNin: vi.fn(),
       verifyDriversLicense: vi.fn(),
     };
-    premblyService = {
-      verifyFaceLiveness: vi.fn(),
-      compareFaces: vi.fn(),
+    smileIdService = {
+      compareSelfieToImage: vi.fn(),
+      comparisonStatus: vi.fn().mockResolvedValue("clear"),
     };
+    databaseService.chauffeurVerification.updateMany.mockResolvedValue({ count: 1 });
     imageService = { processSelfie: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")) };
     storageService = {
       uploadBuffer: vi.fn().mockResolvedValue({ key: STORED_SELFIE_KEY, url: STORED_SELFIE_KEY }),
@@ -260,7 +259,7 @@ describe("ChauffeurService", () => {
         { provide: EmailService, useValue: emailService },
         { provide: PhoneVerificationService, useValue: phoneVerificationService },
         { provide: MonoService, useValue: monoService },
-        { provide: PremblyService, useValue: premblyService },
+        { provide: SmileIdService, useValue: smileIdService },
         { provide: ChauffeurImageService, useValue: imageService },
         { provide: StorageService, useValue: storageService },
         {
@@ -1108,24 +1107,16 @@ describe("ChauffeurService", () => {
       ).rejects.toBeInstanceOf(ChauffeurLicenseNotVerifiedException);
     });
 
-    it("creates a new approved chauffeur user when no account exists", async () => {
-      const approved = identityVerified({
-        chauffeurId: "new-user",
-        status: ChauffeurVerificationStatus.APPROVED,
-        identityProviderRef: "nin-ref",
-      });
+    it("queues a Smile ID portrait comparison and waits for the callback", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow
         .mockResolvedValueOnce(identityVerified())
-        .mockResolvedValueOnce(approved);
+        .mockResolvedValueOnce(identityVerified());
       await claimDrivingStage();
       monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.91,
-        reference: "live-ref",
+      smileIdService.compareSelfieToImage.mockResolvedValueOnce({
+        jobId: "job-1",
+        createdAt: null,
       });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 88 });
-      databaseService.user.findFirst.mockResolvedValueOnce(null);
-      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
 
       await expect(
         service.verifyDriving(
@@ -1134,10 +1125,248 @@ describe("ChauffeurService", () => {
           { driversLicenseNumber: "ABC12345DE67" },
           selfie,
         ),
-      ).resolves.toMatchObject({
-        status: ChauffeurVerificationStatus.APPROVED,
-        steps: expect.objectContaining({ driving: true }),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.IDENTITY_VERIFIED });
+      expect(smileIdService.compareSelfieToImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comparisonImageType: "PORTRAIT",
+          comparisonImage: Buffer.from("nin-photo", "base64"),
+          partnerParams: { verificationId: VERIFICATION_ID, stageRequestId: "stage-drive" },
+        }),
+      );
+      expect(databaseService.user.create).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, livenessProviderRef: "pending:stage-drive" },
+        data: expect.objectContaining({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
       });
+      expect(databaseService.chauffeurVerificationStageRequest.update).toHaveBeenCalledWith({
+        where: { id: "stage-drive" },
+        data: { processingExpiresAt: expect.any(Date) },
+      });
+    });
+
+    it("does not restore a Smile job after the reservation is released", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified(),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      smileIdService.compareSelfieToImage.mockResolvedValueOnce({
+        jobId: "job-1",
+        createdAt: null,
+      });
+      databaseService.chauffeurVerification.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurRequestInProgressException);
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerificationStageRequest.update).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+    });
+
+    it("rejects a second driving submission while a Smile comparison is still open", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ livenessProviderRef: "job-1" }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() + 60_000),
+      });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurRequestInProgressException);
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+      expect(smileIdService.comparisonStatus).not.toHaveBeenCalled();
+    });
+
+    it("applies a finished Smile job after the callback lease expires", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(
+          identityVerified({
+            livenessProviderRef: "job-1",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        )
+        .mockResolvedValue(
+          identityVerified({
+            status: ChauffeurVerificationStatus.APPROVED,
+            chauffeurId: "new-user",
+          }),
+        );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValue({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.user.findFirst.mockResolvedValueOnce(null);
+      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
+      smileIdService.comparisonStatus.mockResolvedValue("clear");
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
+    it("replaces a Smile job that is still unfinished after the callback lease", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(
+          identityVerified({
+            livenessProviderRef: "job-old",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        )
+        .mockResolvedValueOnce(identityVerified())
+        .mockResolvedValueOnce(identityVerified());
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-old",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus.mockResolvedValueOnce("processing");
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      smileIdService.compareSelfieToImage.mockResolvedValueOnce({
+        jobId: "job-2",
+        createdAt: null,
+      });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.IDENTITY_VERIFIED });
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-old",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
+      expect(smileIdService.compareSelfieToImage).toHaveBeenCalled();
+    });
+
+    it("keeps the selfie when a callback approves before the expired job is released", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(
+          identityVerified({
+            livenessProviderRef: "job-1",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        )
+        .mockResolvedValue(
+          identityVerified({
+            status: ChauffeurVerificationStatus.APPROVED,
+            chauffeurId: "new-user",
+            livenessProviderRef: "job-1",
+            selfieObjectKey: STORED_SELFIE_KEY,
+          }),
+        );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus.mockResolvedValueOnce("processing");
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
+    it("rejects biometrics when the NIN photo is missing", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({ identityOfficialPhoto: null }),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
+    it("maps a Smile ID outage while the comparison is submitted", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified(),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      smileIdService.compareSelfieToImage.mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+    });
+
+    it("approves the chauffeur when Smile ID reports a clear comparison", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      databaseService.user.findFirst.mockResolvedValueOnce(null);
+      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
+
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
       expect(databaseService.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           email: INVITE_INPUT.email,
@@ -1149,247 +1378,57 @@ describe("ChauffeurService", () => {
         select: { id: true },
       });
       expect(databaseService.user.create.mock.calls[0][0].data).not.toHaveProperty("image");
-      expect(storageService.uploadBuffer).toHaveBeenCalledWith(
-        expect.any(Buffer),
-        expect.stringMatching(REQUESTED_SELFIE_KEY_PATTERN),
-        "image/jpeg",
-      );
-      expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: expect.objectContaining({
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: {
           chauffeurId: "new-user",
           selfieObjectKey: STORED_SELFIE_KEY,
           status: ChauffeurVerificationStatus.APPROVED,
+        },
+      });
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("does not clear the selfie when the approval claim loses the reservation", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
         }),
-      });
-    });
-
-    it.each([
-      ["liveness below 0.8", { liveness: 0.799, face: 90 }],
-      ["face match below 80", { liveness: 0.9, face: 79.9 }],
-    ] as const)("rejects %s biometric confidence", async (_label, scores) => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
       );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: scores.liveness,
-        reference: "live-ref",
-      });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: scores.face });
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
-      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
-        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
-        data: {
-          status: ProviderVerificationStatus.FAILED,
-          failureReason: ChauffeurErrorCode.BIOMETRIC_NOT_VERIFIED,
-        },
-      });
-    });
-
-    it("uses the persisted NIN photo when Mono returns no licence photo", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow
-        .mockResolvedValueOnce(identityVerified())
-        .mockResolvedValueOnce(
-          identityVerified({
-            chauffeurId: "new-user",
-            status: ChauffeurVerificationStatus.APPROVED,
-          }),
-        );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce({
-        ...eligibleLicense,
-        officialPhoto: null,
-      });
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.9,
-        reference: "live-ref",
-      });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
-      databaseService.user.findFirst.mockResolvedValueOnce(null);
-      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
-      expect(premblyService.compareFaces).toHaveBeenCalledWith("nin-photo", expect.any(String));
-    });
-
-    it("rejects biometrics when neither licence nor NIN photo is available", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified({ identityOfficialPhoto: null }),
-      );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce({
-        ...eligibleLicense,
-        officialPhoto: null,
-      });
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
-      expect(premblyService.verifyFaceLiveness).not.toHaveBeenCalled();
-      expect(premblyService.compareFaces).not.toHaveBeenCalled();
-    });
-
-    it("accepts boundary liveness 0.8 and face match 80", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow
-        .mockResolvedValueOnce(identityVerified())
-        .mockResolvedValueOnce(
-          identityVerified({
-            chauffeurId: "new-user",
-            status: ChauffeurVerificationStatus.APPROVED,
-          }),
-        );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.8,
-        reference: "live-ref",
-      });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 80 });
-      databaseService.user.findFirst.mockResolvedValueOnce(null);
-      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
-    });
-
-    it("maps a unique NIN or licence collision to ACCOUNT_CONFLICT", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
-      );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.9,
-        reference: "live-ref",
-      });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
-      databaseService.$transaction.mockRejectedValueOnce(uniqueConstraintError());
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
-      expect(storageService.deleteObjectByKey).not.toHaveBeenCalledWith(
-        expect.stringMatching(REQUESTED_SELFIE_KEY_PATTERN),
-      );
-      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
-        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
-        data: {
-          status: ProviderVerificationStatus.FAILED,
-          failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
-        },
-      });
-    });
-
-    it("stores and replays OPERATION_FAILED after an unexpected completion error", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
-      );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.9,
-        reference: "live-ref",
-      });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
-      databaseService.$transaction.mockRejectedValueOnce(new Error("tx exploded"));
-
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
-      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
-        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
-        data: {
-          status: ProviderVerificationStatus.FAILED,
-          failureReason: ChauffeurErrorCode.OPERATION_FAILED,
-        },
-      });
-
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
-      );
-      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce({
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
         id: "stage-drive",
-        stage: ChauffeurVerificationStage.DRIVING,
-        requestHash: hash(
-          JSON.stringify({
-            driversLicenseNumber: "ABC12345DE67",
-            selfie: hash(Buffer.from("processed-selfie").toString()),
-          }),
-        ),
-        status: ProviderVerificationStatus.FAILED,
-        failureReason: ChauffeurErrorCode.OPERATION_FAILED,
       });
-      monoService.verifyDriversLicense.mockClear();
-      storageService.uploadBuffer.mockClear();
+      databaseService.user.findFirst.mockResolvedValueOnce(null);
+      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurOperationFailedException);
-      expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(databaseService.chauffeurVerificationStageRequest.update).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
     });
 
-    it("links an existing user account that is eligible", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow
-        .mockResolvedValueOnce(identityVerified())
-        .mockResolvedValueOnce(
-          identityVerified({
-            chauffeurId: "existing-user",
-            status: ChauffeurVerificationStatus.APPROVED,
-          }),
-        );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.9,
-        reference: "live-ref",
+    it("links an existing eligible user when Smile ID reports a clear comparison", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
       });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
       databaseService.user.findFirst.mockResolvedValueOnce({ id: "existing-user" });
       databaseService.user.findUnique.mockResolvedValueOnce({
         id: "existing-user",
@@ -1399,14 +1438,13 @@ describe("ChauffeurService", () => {
       });
       databaseService.user.update.mockResolvedValueOnce({ id: "existing-user" });
 
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.APPROVED });
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
       expect(databaseService.user.update).toHaveBeenCalledWith({
         where: { id: "existing-user" },
         data: expect.objectContaining({
@@ -1435,47 +1473,144 @@ describe("ChauffeurService", () => {
         "a non-user role",
         { id: "other", fleetOwnerId: null, isOwnerDriver: false, roles: [{ name: "fleetOwner" }] },
       ],
-    ] as const)("rejects linking %s", async (_label, existing) => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
+    ] as const)("rejects linking %s when the comparison is clear", async (_label, existing) => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
       );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockResolvedValueOnce({
-        confidence: 0.9,
-        reference: "live-ref",
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
       });
-      premblyService.compareFaces.mockResolvedValueOnce({ confidence: 90 });
       databaseService.user.findFirst.mockResolvedValueOnce({ id: existing.id });
       databaseService.user.findUnique.mockResolvedValueOnce(existing);
 
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurAccountConflictException);
-      expect(storageService.deleteObjectByKey).toHaveBeenCalled();
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        },
+      });
     });
 
-    it("maps a rejected biometric check", async () => {
-      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
-        identityVerified(),
+    it("does not delete the selfie when a completion failure loses the reservation", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
       );
-      await claimDrivingStage();
-      monoService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
-      premblyService.verifyFaceLiveness.mockRejectedValueOnce(new PremblyError("REJECTED"));
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      databaseService.user.findFirst.mockResolvedValueOnce({ id: OWNER_ID });
+      databaseService.user.findUnique.mockResolvedValueOnce({
+        id: OWNER_ID,
+        fleetOwnerId: null,
+        isOwnerDriver: false,
+        roles: [{ name: USER }],
+      });
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(
-        service.verifyDriving(
-          VERIFICATION_ID,
-          "drive-key-1",
-          { driversLicenseNumber: "ABC12345DE67" },
-          selfie,
-        ),
-      ).rejects.toBeInstanceOf(ChauffeurBiometricNotVerifiedException);
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        },
+      });
+    });
+
+    it("records a biometric failure when Smile ID blocks the comparison", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      smileIdService.comparisonStatus.mockResolvedValueOnce("block");
+
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "block",
+      });
+
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: ChauffeurErrorCode.BIOMETRIC_NOT_VERIFIED,
+        },
+      });
+      expect(databaseService.user.create).not.toHaveBeenCalled();
+    });
+
+    it("maps a unique licence collision on the callback to ACCOUNT_CONFLICT", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      databaseService.$transaction.mockRejectedValueOnce(uniqueConstraintError());
+
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        },
+      });
     });
 
     it("maps an unexpected Prembly outage", async () => {

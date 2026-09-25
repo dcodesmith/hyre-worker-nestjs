@@ -28,6 +28,8 @@ const productionEnv = {
   FLUTTERWAVE_WEBHOOK_SECRET: "webhook-secret",
   FLUTTERWAVE_WEBHOOK_URL: "https://example.com/webhooks/flutterwave",
   PREMBLY_API_KEY: "prembly-key",
+  SMILE_ID_PARTNER_ID: "123",
+  SMILE_ID_API_KEY: "smile-key",
   REGCHECK_USERNAME: "regcheck-user",
   MONO_SECRET_KEY: "mono-secret-key",
   HMAC_KEY: "hmac-key",
@@ -59,6 +61,26 @@ describe("envSchema operations email", () => {
           expect.objectContaining({
             path: ["OPERATIONS_EMAIL"],
             message: "OPERATIONS_EMAIL is required in production",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects the Smile ID sandbox API when APP_ENV is production", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      APP_ENV: "production",
+      OPERATIONS_EMAIL: "ops@example.com",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["SMILE_ID_BASE_URL"],
+            message: "SMILE_ID_BASE_URL must be the production Smile ID API",
           }),
         ]),
       );
@@ -285,6 +307,7 @@ describe("envSchema APP_ENV", () => {
       ...productionEnv,
       OPERATIONS_EMAIL: "operations@example.com",
       APP_ENV: "production",
+      SMILE_ID_BASE_URL: "https://api.smileidentity.com",
     });
 
     expect(result.APP_ENV).toBe("production");
