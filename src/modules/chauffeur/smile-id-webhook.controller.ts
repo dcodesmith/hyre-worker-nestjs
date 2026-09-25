@@ -37,6 +37,7 @@ export class SmileIdWebhookController {
     await this.chauffeurService.applySmileCompareResult({
       jobId,
       verificationId: parsed.data.partner_params.verificationId,
+      stageRequestId: parsed.data.partner_params.stageRequestId,
       status: parsed.data.status,
     });
     return { status: "ok" };

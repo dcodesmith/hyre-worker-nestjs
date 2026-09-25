@@ -460,15 +460,7 @@ export class ChauffeurService {
       return this.toOnboardingState(verification);
     }
     if (verification.livenessProviderRef) {
-      const pending = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
-        where: {
-          verificationId,
-          stage: ChauffeurVerificationStage.DRIVING,
-          status: ProviderVerificationStatus.PROCESSING,
-          processingExpiresAt: { gt: new Date() },
-        },
-      });
-      if (pending) throw new ChauffeurRequestInProgressException();
+      throw new ChauffeurRequestInProgressException();
     }
     if (
       !verification.ninHash ||
@@ -523,6 +515,15 @@ export class ChauffeurService {
         imageKey,
         "image/jpeg",
       );
+      const reservation = `pending:${claim.requestId}`;
+      const reserved = await this.databaseService.chauffeurVerification.updateMany({
+        where: { id: verification.id, livenessProviderRef: null },
+        data: { livenessProviderRef: reservation },
+      });
+      if (reserved.count === 0) {
+        await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
+        throw new ChauffeurRequestInProgressException();
+      }
       try {
         const compared = await this.smileIdService.compareSelfieToImage({
           selfie: processedSelfie,
@@ -538,25 +539,34 @@ export class ChauffeurService {
             lastName: verification.identityLastName,
             email: verification.email,
           },
-          partnerParams: { verificationId: verification.id },
-        });
-        await this.databaseService.chauffeurVerification.update({
-          where: { id: verification.id },
-          data: {
-            driversLicenseHash: this.hash(driversLicenseNumber),
-            driversLicenseLast4: driversLicenseNumber.slice(-4).toUpperCase(),
-            driversLicenseExpiresAt: license.expiresAt,
-            driversLicenseProviderRef: license.reference,
-            dateOfBirth: license.dateOfBirth,
-            livenessProviderRef: compared.jobId,
-            selfieObjectKey,
+          partnerParams: {
+            verificationId: verification.id,
+            stageRequestId: claim.requestId,
           },
         });
-        await this.databaseService.chauffeurVerificationStageRequest.update({
-          where: { id: claim.requestId },
-          data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
-        });
+        await this.databaseService.$transaction([
+          this.databaseService.chauffeurVerification.update({
+            where: { id: verification.id },
+            data: {
+              driversLicenseHash: this.hash(driversLicenseNumber),
+              driversLicenseLast4: driversLicenseNumber.slice(-4).toUpperCase(),
+              driversLicenseExpiresAt: license.expiresAt,
+              driversLicenseProviderRef: license.reference,
+              dateOfBirth: license.dateOfBirth,
+              livenessProviderRef: compared.jobId,
+              selfieObjectKey,
+            },
+          }),
+          this.databaseService.chauffeurVerificationStageRequest.update({
+            where: { id: claim.requestId },
+            data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
+          }),
+        ]);
       } catch (error) {
+        await this.databaseService.chauffeurVerification.updateMany({
+          where: { id: verification.id, livenessProviderRef: reservation },
+          data: { livenessProviderRef: null },
+        });
         await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
         throw error;
       }
@@ -571,8 +581,12 @@ export class ChauffeurService {
   async applySmileCompareResult(input: {
     jobId: string;
     verificationId: string;
+    stageRequestId: string;
     status: "clear" | "attention" | "block" | "error";
   }): Promise<void> {
+    const confirmed = await this.smileIdService.comparisonStatus(input.jobId);
+    if (confirmed === "processing") throw new ChauffeurProviderUnavailableException();
+    const status = confirmed;
     const verification = await this.databaseService.chauffeurVerification.findFirst({
       where: { livenessProviderRef: input.jobId },
     });
@@ -583,20 +597,24 @@ export class ChauffeurService {
 
     const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
       where: {
+        id: input.stageRequestId,
         verificationId: verification.id,
         stage: ChauffeurVerificationStage.DRIVING,
         status: ProviderVerificationStatus.PROCESSING,
       },
-      orderBy: { createdAt: "desc" },
     });
     if (!stage) return;
 
-    if (input.status !== "clear") {
+    if (status !== "clear") {
       const failure =
-        input.status === "block"
+        status === "block"
           ? new ChauffeurBiometricNotVerifiedException()
           : new ChauffeurProviderUnavailableException();
       await this.failStage(stage.id, failure.getErrorCode());
+      await this.databaseService.chauffeurVerification.updateMany({
+        where: { id: verification.id, livenessProviderRef: input.jobId },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
       await this.storageService
         .deleteObjectByKey(verification.selfieObjectKey)
         .catch(() => undefined);
@@ -610,6 +628,10 @@ export class ChauffeurService {
         selfieObjectKey: verification.selfieObjectKey,
       });
     } catch (error) {
+      await this.databaseService.chauffeurVerification.updateMany({
+        where: { id: verification.id, livenessProviderRef: input.jobId },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
       await this.storageService
         .deleteObjectByKey(verification.selfieObjectKey)
         .catch(() => undefined);

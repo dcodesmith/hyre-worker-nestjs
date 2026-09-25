@@ -188,7 +188,10 @@ describe("ChauffeurService", () => {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
-  let smileIdService: { compareSelfieToImage: ReturnType<typeof vi.fn> };
+  let smileIdService: {
+    compareSelfieToImage: ReturnType<typeof vi.fn>;
+    comparisonStatus: ReturnType<typeof vi.fn>;
+  };
   let imageService: { processSelfie: ReturnType<typeof vi.fn> };
   let storageService: {
     uploadBuffer: ReturnType<typeof vi.fn>;
@@ -238,7 +241,11 @@ describe("ChauffeurService", () => {
       verifyNin: vi.fn(),
       verifyDriversLicense: vi.fn(),
     };
-    smileIdService = { compareSelfieToImage: vi.fn() };
+    smileIdService = {
+      compareSelfieToImage: vi.fn(),
+      comparisonStatus: vi.fn().mockResolvedValue("clear"),
+    };
+    databaseService.chauffeurVerification.updateMany.mockResolvedValue({ count: 1 });
     imageService = { processSelfie: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")) };
     storageService = {
       uploadBuffer: vi.fn().mockResolvedValue({ key: STORED_SELFIE_KEY, url: STORED_SELFIE_KEY }),
@@ -1123,7 +1130,7 @@ describe("ChauffeurService", () => {
         expect.objectContaining({
           comparisonImageType: "PORTRAIT",
           comparisonImage: Buffer.from("nin-photo", "base64"),
-          partnerParams: { verificationId: VERIFICATION_ID },
+          partnerParams: { verificationId: VERIFICATION_ID, stageRequestId: "stage-drive" },
         }),
       );
       expect(databaseService.user.create).not.toHaveBeenCalled();
@@ -1212,6 +1219,7 @@ describe("ChauffeurService", () => {
       await service.applySmileCompareResult({
         jobId: "job-1",
         verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
         status: "clear",
       });
 
@@ -1258,6 +1266,7 @@ describe("ChauffeurService", () => {
       await service.applySmileCompareResult({
         jobId: "job-1",
         verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
         status: "clear",
       });
 
@@ -1305,6 +1314,7 @@ describe("ChauffeurService", () => {
       await service.applySmileCompareResult({
         jobId: "job-1",
         verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
         status: "clear",
       });
 
@@ -1328,10 +1338,12 @@ describe("ChauffeurService", () => {
       databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
         id: "stage-drive",
       });
+      smileIdService.comparisonStatus.mockResolvedValueOnce("block");
 
       await service.applySmileCompareResult({
         jobId: "job-1",
         verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
         status: "block",
       });
 
@@ -1360,6 +1372,7 @@ describe("ChauffeurService", () => {
       await service.applySmileCompareResult({
         jobId: "job-1",
         verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
         status: "clear",
       });
 

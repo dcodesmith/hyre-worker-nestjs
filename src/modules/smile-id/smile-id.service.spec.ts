@@ -114,6 +114,21 @@ describe("SmileIdService", () => {
     expect(service.webhookAuthentic("2020-01-01T00:00:00.000Z", signature)).toBe(false);
   });
 
+  it("confirms a compare callback against the Smile ID job status", async () => {
+    mockAxiosInstance.post.mockResolvedValueOnce({ data: { token: "smile-token" } });
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: { status: "clear", job_id: "job-1" },
+    });
+
+    await expect(service.comparisonStatus("job-1")).resolves.toBe("clear");
+    expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+      "/v3/status/job-1",
+      expect.objectContaining({
+        headers: { "SmileID-Token": "smile-token" },
+      }),
+    );
+  });
+
   it("reports Smile ID as unavailable when authentication fails", async () => {
     mockAxiosInstance.post.mockRejectedValueOnce(
       createAxiosErrorWithResponse(HttpStatus.UNAUTHORIZED),

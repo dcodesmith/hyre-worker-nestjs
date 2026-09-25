@@ -10,7 +10,7 @@ import { ChauffeurImageService } from "../src/modules/chauffeur/chauffeur-image.
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { MonoService } from "../src/modules/mono/mono.service";
-import { PremblyService } from "../src/modules/prembly/prembly.service";
+import { SmileIdService } from "../src/modules/smile-id/smile-id.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -92,10 +92,12 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     verifyNin: vi.fn(),
     verifyDriversLicense: vi.fn(),
   };
-  const premblyService = {
-    verifyFaceLiveness: vi.fn(),
-    compareFaces: vi.fn(),
+  const smileIdService = {
+    compareSelfieToImage: vi.fn(),
+    comparisonStatus: vi.fn(),
+    webhookAuthentic: vi.fn().mockReturnValue(true),
   };
+  let smileJob: { jobId: string; verificationId: string; stageRequestId: string } | undefined;
 
   function http(method: "get" | "post" | "put" | "patch", path: string) {
     return request(app.getHttpServer())[method](path).set("X-Forwarded-For", clientIp);
@@ -165,6 +167,20 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     );
   }
 
+  function deliverSmileResult(status: "clear" | "block") {
+    if (!smileJob) throw new Error("Smile ID comparison was not submitted");
+    smileIdService.comparisonStatus.mockResolvedValueOnce(status);
+    return http("post", "/api/webhook/smile-id").send({
+      status,
+      product: "smart_selfie_compare",
+      partner_params: {
+        job_id: smileJob.jobId,
+        verificationId: smileJob.verificationId,
+        stageRequestId: smileJob.stageRequestId,
+      },
+    });
+  }
+
   async function completeOnboarding(
     session: string,
     extras: { nin?: string; license?: string; prefix?: string } = {},
@@ -182,6 +198,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .set("Idempotency-Key", `${extras.prefix ?? "drive"}-${Date.now()}-${Math.random()}`)
       .field("driversLicenseNumber", extras.license ?? "ABC12345DE67")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
+    if (driving.status < 300) await deliverSmileResult("clear");
     return { nin, driving };
   }
 
@@ -224,8 +241,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .useValue(emailService)
       .overrideProvider(MonoService)
       .useValue(monoService)
-      .overrideProvider(PremblyService)
-      .useValue(premblyService)
+      .overrideProvider(SmileIdService)
+      .useValue(smileIdService)
       .overrideProvider(StorageService)
       .useValue(storageService)
       .overrideProvider(ChauffeurImageService)
@@ -255,8 +272,20 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
     monoService.verifyNin.mockReset();
     monoService.verifyDriversLicense.mockReset();
-    premblyService.verifyFaceLiveness.mockReset();
-    premblyService.compareFaces.mockReset();
+    smileIdService.compareSelfieToImage.mockReset();
+    smileIdService.comparisonStatus.mockReset();
+    smileIdService.webhookAuthentic.mockReset();
+    smileIdService.webhookAuthentic.mockReturnValue(true);
+    smileIdService.compareSelfieToImage.mockImplementation(
+      async (input: { partnerParams?: { verificationId?: string; stageRequestId?: string } }) => {
+        smileJob = {
+          jobId: `job-${Date.now()}-${Math.random()}`,
+          verificationId: input.partnerParams?.verificationId ?? "",
+          stageRequestId: input.partnerParams?.stageRequestId ?? "",
+        };
+        return { jobId: smileJob.jobId, createdAt: null };
+      },
+    );
     monoService.verifyNin.mockResolvedValue({
       firstName: "ADA",
       middleName: null,
@@ -275,11 +304,6 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       officialPhoto: "official-photo",
       reference: "lic-ref",
     });
-    premblyService.verifyFaceLiveness.mockResolvedValue({
-      confidence: 0.93,
-      reference: "live-ref",
-    });
-    premblyService.compareFaces.mockResolvedValue({ confidence: 91 });
     storageService.uploadBuffer.mockClear();
   });
 
@@ -538,8 +562,14 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .field("driversLicenseNumber", "ABC12345DE67")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
     expect(driving.status).toBe(HttpStatus.CREATED);
-    expect(driving.body.status).toBe("APPROVED");
-    expect(driving.body.steps.driving).toBe(true);
+    expect(driving.body.status).toBe("IDENTITY_VERIFIED");
+
+    const compared = await deliverSmileResult("clear");
+    expect(compared.status).toBe(HttpStatus.OK);
+    const approved = await onboarding("get", "", session);
+    expect(approved.status).toBe(HttpStatus.OK);
+    expect(approved.body.status).toBe("APPROVED");
+    expect(approved.body.steps.driving).toBe(true);
 
     const user = await databaseService.user.findUnique({
       where: { email },
@@ -627,6 +657,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
 
     expect(driving.status).toBe(HttpStatus.CREATED);
+    expect((await deliverSmileResult("clear")).status).toBe(HttpStatus.OK);
     const linked = await databaseService.user.findUnique({
       where: { email },
       select: { id: true, fleetOwnerId: true, chauffeurApprovalStatus: true },
@@ -676,8 +707,17 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       { prefix: "uniq-b", nin: "34567890123", license: "UNQ22222AB00" },
     );
     expect(second.nin.status).toBe(HttpStatus.CREATED);
-    expect(second.driving.status).toBe(HttpStatus.CONFLICT);
-    expect(second.driving.body.errorCode).toBe("CHAUFFEUR_ACCOUNT_CONFLICT");
+    expect(second.driving.status).toBe(HttpStatus.CREATED);
+    const rejected = await databaseService.chauffeurVerification.findFirst({
+      where: { email: secondEmail },
+      select: { status: true, stageRequests: { select: { failureReason: true } } },
+    });
+    expect(rejected?.status).not.toBe(ChauffeurVerificationStatus.APPROVED);
+    expect(rejected?.stageRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ failureReason: "CHAUFFEUR_ACCOUNT_CONFLICT" }),
+      ]),
+    );
   });
 
   it("enforces overlapping chauffeur reservations at the database boundary", async () => {

@@ -10,7 +10,13 @@ export const smileIdCompareWebhookSchema = z.object({
   partner_params: z.object({
     job_id: z.string().min(1),
     verificationId: z.string().min(1),
+    stageRequestId: z.string().min(1),
   }),
+});
+
+export const smileIdJobStatusSchema = z.object({
+  status: z.enum(["clear", "block", "attention", "error", "processing", "not_found"]),
+  job_id: z.string().min(1),
 });
 
 export const smileIdAcceptedResponseSchema = z.object({

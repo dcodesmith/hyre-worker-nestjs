@@ -9,7 +9,11 @@ import type {
   CompareSelfieToImageResult,
   SmileIdErrorKind,
 } from "./smile-id.interface";
-import { smileIdAcceptedResponseSchema, smileIdTokenResponseSchema } from "./smile-id.schema";
+import {
+  smileIdAcceptedResponseSchema,
+  smileIdJobStatusSchema,
+  smileIdTokenResponseSchema,
+} from "./smile-id.schema";
 
 export class SmileIdError extends Error {
   constructor(readonly kind: SmileIdErrorKind) {
@@ -69,6 +73,26 @@ export class SmileIdService {
       const accepted = smileIdAcceptedResponseSchema.safeParse(data);
       if (!accepted.success) throw new SmileIdError("INVALID_RESPONSE");
       return { jobId: accepted.data.job_id, createdAt: accepted.data.created_at ?? null };
+    } catch (error) {
+      if (error instanceof SmileIdError) throw error;
+      throw this.mapHttpError(error);
+    }
+  }
+
+  async comparisonStatus(
+    jobId: string,
+  ): Promise<"clear" | "block" | "attention" | "error" | "processing"> {
+    const token = await this.token();
+    try {
+      const { data } = await this.client.get(`/v3/status/${encodeURIComponent(jobId)}`, {
+        headers: { "SmileID-Token": token },
+        validateStatus: (status) => status === 200 || status === 202,
+      });
+      const parsed = smileIdJobStatusSchema.safeParse(data);
+      if (!parsed.success || parsed.data.job_id !== jobId || parsed.data.status === "not_found") {
+        throw new SmileIdError("INVALID_RESPONSE");
+      }
+      return parsed.data.status;
     } catch (error) {
       if (error instanceof SmileIdError) throw error;
       throw this.mapHttpError(error);
