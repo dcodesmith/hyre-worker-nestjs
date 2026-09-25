@@ -78,6 +78,8 @@ const COMPLIANCE_REQUIREMENTS = [
 
 type StageClaim = { requestId: string; replay: boolean };
 
+class SmileReservationLostError extends Error {}
+
 @Injectable()
 export class ChauffeurService {
   private readonly hashKey: string;
@@ -697,15 +699,23 @@ export class ChauffeurService {
         verification,
         requestId: stage.id,
         selfieObjectKey: verification.selfieObjectKey,
+        jobId: input.jobId,
       });
     } catch (error) {
-      await this.databaseService.chauffeurVerification.updateMany({
-        where: { id: verification.id, livenessProviderRef: input.jobId },
+      if (error instanceof SmileReservationLostError) return;
+      const released = await this.databaseService.chauffeurVerification.updateMany({
+        where: {
+          id: verification.id,
+          livenessProviderRef: input.jobId,
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
         data: { livenessProviderRef: null, selfieObjectKey: null },
       });
-      await this.storageService
-        .deleteObjectByKey(verification.selfieObjectKey)
-        .catch(() => undefined);
+      if (released.count > 0) {
+        await this.storageService
+          .deleteObjectByKey(verification.selfieObjectKey)
+          .catch(() => undefined);
+      }
       const mapped = this.mapDrivingError(error);
       await this.failStage(stage.id, mapped.getErrorCode());
     }
@@ -722,10 +732,12 @@ export class ChauffeurService {
     verification,
     requestId,
     selfieObjectKey,
+    jobId,
   }: {
     verification: ChauffeurVerification;
     requestId: string;
     selfieObjectKey: string;
+    jobId: string;
   }): Promise<void> {
     await this.databaseService.$transaction(async (tx) => {
       const found = await tx.user.findFirst({
@@ -796,14 +808,19 @@ export class ChauffeurService {
             select: { id: true },
           });
 
-      await tx.chauffeurVerification.update({
-        where: { id: verification.id },
+      const claimed = await tx.chauffeurVerification.updateMany({
+        where: {
+          id: verification.id,
+          livenessProviderRef: jobId,
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
         data: {
           chauffeurId: chauffeur.id,
           selfieObjectKey,
           status: ChauffeurVerificationStatus.APPROVED,
         },
       });
+      if (claimed.count === 0) throw new SmileReservationLostError();
       await tx.chauffeurVerificationStageRequest.update({
         where: { id: requestId },
         data: { status: ProviderVerificationStatus.SUCCEEDED },

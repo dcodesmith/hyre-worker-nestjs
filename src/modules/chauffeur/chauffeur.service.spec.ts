@@ -1351,14 +1351,45 @@ describe("ChauffeurService", () => {
         select: { id: true },
       });
       expect(databaseService.user.create.mock.calls[0][0].data).not.toHaveProperty("image");
-      expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: expect.objectContaining({
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: {
           chauffeurId: "new-user",
           selfieObjectKey: STORED_SELFIE_KEY,
           status: ChauffeurVerificationStatus.APPROVED,
-        }),
+        },
       });
+      expect(databaseService.chauffeurVerification.update).not.toHaveBeenCalled();
+    });
+
+    it("does not clear the selfie when the approval claim loses the reservation", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      databaseService.user.findFirst.mockResolvedValueOnce(null);
+      databaseService.user.create.mockResolvedValueOnce({ id: "new-user" });
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(databaseService.chauffeurVerificationStageRequest.update).not.toHaveBeenCalled();
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
     });
 
     it("links an existing eligible user when Smile ID reports a clear comparison", async () => {
@@ -1435,7 +1466,51 @@ describe("ChauffeurService", () => {
         status: "clear",
       });
 
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
+      expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        },
+      });
+    });
+
+    it("does not delete the selfie when a completion failure loses the reservation", async () => {
+      databaseService.chauffeurVerification.findFirst.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+      });
+      databaseService.user.findFirst.mockResolvedValueOnce({ id: OWNER_ID });
+      databaseService.user.findUnique.mockResolvedValueOnce({
+        id: OWNER_ID,
+        fleetOwnerId: null,
+        isOwnerDriver: false,
+        roles: [{ name: USER }],
+      });
+      databaseService.chauffeurVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await service.applySmileCompareResult({
+        jobId: "job-1",
+        verificationId: VERIFICATION_ID,
+        stageRequestId: "stage-drive",
+        status: "clear",
+      });
+
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
       expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
         where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
         data: {
@@ -1493,6 +1568,14 @@ describe("ChauffeurService", () => {
         status: "clear",
       });
 
+      expect(databaseService.chauffeurVerification.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: VERIFICATION_ID,
+          livenessProviderRef: "job-1",
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(STORED_SELFIE_KEY);
       expect(databaseService.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
         where: { id: "stage-drive", status: ProviderVerificationStatus.PROCESSING },
