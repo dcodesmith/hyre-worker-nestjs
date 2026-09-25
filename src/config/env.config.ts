@@ -96,6 +96,18 @@ function validateProductionConfiguration(env: Record<string, unknown>, ctx: EnvI
       });
     }
   }
+
+  if (
+    env.APP_ENV === "production" &&
+    (typeof env.SMILE_ID_BASE_URL !== "string" ||
+      env.SMILE_ID_BASE_URL.includes("testapi.smileidentity.com"))
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["SMILE_ID_BASE_URL"],
+      message: "SMILE_ID_BASE_URL must be the production Smile ID API",
+    });
+  }
 }
 
 export const envSchema = z
@@ -199,6 +211,14 @@ export const envSchema = z
       .url("PREMBLY_BASE_URL must be a valid URL")
       .default("https://api.prembly.com"),
     REGCHECK_USERNAME: z.string().min(1, "REGCHECK_USERNAME is required"),
+
+    SMILE_ID_PARTNER_ID: z.string().min(1, "SMILE_ID_PARTNER_ID is required"),
+    SMILE_ID_API_KEY: z.string().min(1, "SMILE_ID_API_KEY is required"),
+    SMILE_ID_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.url("SMILE_ID_BASE_URL must be a valid URL").default("https://testapi.smileidentity.com"),
+    ),
+    SMILE_ID_CALLBACK_URL: optionalUrl(/^https$/, "SMILE_ID_CALLBACK_URL must use https://"),
 
     MONO_SECRET_KEY: z.string().min(1, "MONO_SECRET_KEY is required"),
     MONO_BASE_URL: z.preprocess(

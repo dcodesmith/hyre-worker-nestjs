@@ -24,7 +24,7 @@ import {
 import { EmailService } from "../email/email.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
-import { PremblyError, PremblyService } from "../prembly/prembly.service";
+import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
   PhoneVerificationCodeInvalidException,
@@ -67,9 +67,8 @@ import { ChauffeurImageService } from "./chauffeur-image.service";
 const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
+const SMILE_CALLBACK_LEASE_MS = 15 * 60 * 1000;
 const MINIMUM_CHAUFFEUR_AGE = 21;
-const MINIMUM_LIVENESS_CONFIDENCE = 0.8;
-const MINIMUM_FACE_MATCH_CONFIDENCE = 80;
 
 const COMPLIANCE_REQUIREMENTS = [
   { type: "LASDRI", label: "LASDRI certificate or card", required: false },
@@ -89,7 +88,7 @@ export class ChauffeurService {
     private readonly emailService: EmailService,
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly monoService: MonoService,
-    private readonly premblyService: PremblyService,
+    private readonly smileIdService: SmileIdService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
     private readonly logger: PinoLogger,
@@ -460,6 +459,17 @@ export class ChauffeurService {
     if (verification.status === ChauffeurVerificationStatus.APPROVED) {
       return this.toOnboardingState(verification);
     }
+    if (verification.livenessProviderRef) {
+      const pending = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+        where: {
+          verificationId,
+          stage: ChauffeurVerificationStage.DRIVING,
+          status: ProviderVerificationStatus.PROCESSING,
+          processingExpiresAt: { gt: new Date() },
+        },
+      });
+      if (pending) throw new ChauffeurRequestInProgressException();
+    }
     if (
       !verification.ninHash ||
       !verification.identityFirstName ||
@@ -503,17 +513,8 @@ export class ChauffeurService {
       if (license.expiresAt < this.startOfTodayUtc()) {
         throw new ChauffeurLicenseExpiredException();
       }
-      const officialPhoto = license.officialPhoto ?? verification.identityOfficialPhoto;
-      if (!officialPhoto) {
-        throw new ChauffeurBiometricNotVerifiedException();
-      }
-      const selfieBase64 = processedSelfie.toString("base64");
-      const liveness = await this.premblyService.verifyFaceLiveness(selfieBase64);
-      const faceMatch = await this.premblyService.compareFaces(officialPhoto, selfieBase64);
-      if (
-        liveness.confidence < MINIMUM_LIVENESS_CONFIDENCE ||
-        faceMatch.confidence < MINIMUM_FACE_MATCH_CONFIDENCE
-      ) {
+      const ninPhoto = verification.identityOfficialPhoto;
+      if (!ninPhoto || !verification.privacyAcceptedAt) {
         throw new ChauffeurBiometricNotVerifiedException();
       }
       const imageKey = `fleet-owners/${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/${randomUUID()}.webp`;
@@ -523,14 +524,37 @@ export class ChauffeurService {
         "image/jpeg",
       );
       try {
-        await this.completeDrivingVerification({
-          verification,
-          requestId: claim.requestId,
-          license,
-          liveness,
-          faceMatch,
-          selfieObjectKey,
-          licenseNumber: driversLicenseNumber,
+        const compared = await this.smileIdService.compareSelfieToImage({
+          selfie: processedSelfie,
+          comparisonImage: this.portrait(ninPhoto),
+          comparisonImageType: "PORTRAIT",
+          consent: {
+            grantedAt: verification.privacyAcceptedAt,
+            noticeLanguage: "EN",
+            privacyPolicyUrl: `${getEmailPublicEnv().websiteUrl.replace(/\/$/, "")}/privacy`,
+          },
+          user: {
+            givenNames: verification.identityFirstName,
+            lastName: verification.identityLastName,
+            email: verification.email,
+          },
+          partnerParams: { verificationId: verification.id },
+        });
+        await this.databaseService.chauffeurVerification.update({
+          where: { id: verification.id },
+          data: {
+            driversLicenseHash: this.hash(driversLicenseNumber),
+            driversLicenseLast4: driversLicenseNumber.slice(-4).toUpperCase(),
+            driversLicenseExpiresAt: license.expiresAt,
+            driversLicenseProviderRef: license.reference,
+            dateOfBirth: license.dateOfBirth,
+            livenessProviderRef: compared.jobId,
+            selfieObjectKey,
+          },
+        });
+        await this.databaseService.chauffeurVerificationStageRequest.update({
+          where: { id: claim.requestId },
+          data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
         });
       } catch (error) {
         await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
@@ -544,22 +568,71 @@ export class ChauffeurService {
     }
   }
 
+  async applySmileCompareResult(input: {
+    jobId: string;
+    verificationId: string;
+    status: "clear" | "attention" | "block" | "error";
+  }): Promise<void> {
+    const verification = await this.databaseService.chauffeurVerification.findFirst({
+      where: { livenessProviderRef: input.jobId },
+    });
+    if (!verification?.selfieObjectKey || verification.id !== input.verificationId) {
+      throw new ChauffeurNotFoundException();
+    }
+    if (verification.status === ChauffeurVerificationStatus.APPROVED) return;
+
+    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+      where: {
+        verificationId: verification.id,
+        stage: ChauffeurVerificationStage.DRIVING,
+        status: ProviderVerificationStatus.PROCESSING,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!stage) return;
+
+    if (input.status !== "clear") {
+      const failure =
+        input.status === "block"
+          ? new ChauffeurBiometricNotVerifiedException()
+          : new ChauffeurProviderUnavailableException();
+      await this.failStage(stage.id, failure.getErrorCode());
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
+      return;
+    }
+
+    try {
+      await this.completeDrivingVerification({
+        verification,
+        requestId: stage.id,
+        selfieObjectKey: verification.selfieObjectKey,
+      });
+    } catch (error) {
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
+      const mapped = this.mapDrivingError(error);
+      await this.failStage(stage.id, mapped.getErrorCode());
+    }
+  }
+
+  private portrait(photo: string): Buffer {
+    const encoded = photo.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
+    const buffer = Buffer.from(encoded, "base64");
+    if (buffer.length === 0) throw new ChauffeurBiometricNotVerifiedException();
+    return buffer;
+  }
+
   private async completeDrivingVerification({
     verification,
     requestId,
-    license,
-    liveness,
-    faceMatch,
     selfieObjectKey,
-    licenseNumber,
   }: {
-    verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>;
+    verification: ChauffeurVerification;
     requestId: string;
-    license: MonoDriversLicenseResult;
-    liveness: Awaited<ReturnType<PremblyService["verifyFaceLiveness"]>>;
-    faceMatch: Awaited<ReturnType<PremblyService["compareFaces"]>>;
     selfieObjectKey: string;
-    licenseNumber: string;
   }): Promise<void> {
     await this.databaseService.$transaction(async (tx) => {
       const found = await tx.user.findFirst({
@@ -634,14 +707,6 @@ export class ChauffeurService {
         where: { id: verification.id },
         data: {
           chauffeurId: chauffeur.id,
-          driversLicenseHash: this.hash(licenseNumber),
-          driversLicenseLast4: licenseNumber.slice(-4).toUpperCase(),
-          driversLicenseExpiresAt: license.expiresAt,
-          driversLicenseProviderRef: license.reference,
-          dateOfBirth: license.dateOfBirth,
-          livenessProviderRef: liveness.reference,
-          livenessConfidence: liveness.confidence,
-          faceMatchConfidence: faceMatch.confidence,
           selfieObjectKey,
           status: ChauffeurVerificationStatus.APPROVED,
         },
@@ -770,10 +835,7 @@ export class ChauffeurService {
     if (error instanceof ChauffeurException) {
       return error;
     }
-    if (error instanceof PremblyError && error.kind === "REJECTED") {
-      return new ChauffeurBiometricNotVerifiedException();
-    }
-    if (error instanceof PremblyError) {
+    if (error instanceof SmileIdError) {
       return new ChauffeurProviderUnavailableException();
     }
     if (isUniqueConstraintError(error)) {
