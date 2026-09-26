@@ -14,6 +14,7 @@ import { USER } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import { MonoError, MonoService } from "../mono/mono.service";
+import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -188,6 +189,9 @@ describe("ChauffeurService", () => {
     verifyNin: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
+  let premblyService: {
+    verifyNin: ReturnType<typeof vi.fn>;
+  };
   let smileIdService: {
     compareSelfieToImage: ReturnType<typeof vi.fn>;
     comparisonStatus: ReturnType<typeof vi.fn>;
@@ -241,6 +245,9 @@ describe("ChauffeurService", () => {
       verifyNin: vi.fn(),
       verifyDriversLicense: vi.fn(),
     };
+    premblyService = {
+      verifyNin: vi.fn(),
+    };
     smileIdService = {
       compareSelfieToImage: vi.fn(),
       comparisonStatus: vi.fn().mockResolvedValue("clear"),
@@ -259,6 +266,7 @@ describe("ChauffeurService", () => {
         { provide: EmailService, useValue: emailService },
         { provide: PhoneVerificationService, useValue: phoneVerificationService },
         { provide: MonoService, useValue: monoService },
+        { provide: PremblyService, useValue: premblyService },
         { provide: SmileIdService, useValue: smileIdService },
         { provide: ChauffeurImageService, useValue: imageService },
         { provide: StorageService, useValue: storageService },
@@ -787,6 +795,7 @@ describe("ChauffeurService", () => {
       ).resolves.toMatchObject({
         steps: expect.objectContaining({ nin: true }),
       });
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
       expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
         data: expect.objectContaining({
@@ -866,6 +875,57 @@ describe("ChauffeurService", () => {
           failureReason: ChauffeurErrorCode.NIN_NOT_VERIFIED,
         },
       });
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    });
+
+    it("uses Prembly when Mono is unavailable", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(phoneVerified())
+        .mockResolvedValueOnce(identityVerified());
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyNin.mockResolvedValueOnce({
+        firstName: "ADA",
+        middleName: null,
+        lastName: "LOVELACE",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "prembly-photo",
+        reference: "prembly-nin-ref",
+      });
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).resolves.toMatchObject({
+        steps: expect.objectContaining({ nin: true }),
+      });
+      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+      expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          identityProviderRef: "prembly-nin-ref",
+          identityOfficialPhoto: "prembly-photo",
+          status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
+        }),
+      });
+    });
+
+    it("keeps a Prembly rejection as not verified", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        phoneVerified(),
+      );
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("INVALID_RESPONSE"));
+      premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).rejects.toBeInstanceOf(ChauffeurNinNotVerifiedException);
     });
 
     it("replays a succeeded stage and rejects an in-progress lease", async () => {
@@ -1273,6 +1333,60 @@ describe("ChauffeurService", () => {
         data: { livenessProviderRef: null, selfieObjectKey: null },
       });
       expect(smileIdService.compareSelfieToImage).toHaveBeenCalled();
+    });
+
+    it("keeps the selfie when Smile ID is unavailable after the callback lease", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus.mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);
+      expect(databaseService.chauffeurVerification.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
+    it("keeps the selfie when the Smile ID confirmation fails", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus
+        .mockResolvedValueOnce("clear")
+        .mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);
+      expect(databaseService.chauffeurVerification.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
     });
 
     it("keeps the selfie when a callback approves before the expired job is released", async () => {

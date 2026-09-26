@@ -11,6 +11,20 @@ export const premblyEnvelopeSchema = z.looseObject({
   response_code: z.string().optional(),
 });
 
+export const premblyNinResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  data: z.looseObject({
+    firstname: z.string().trim().min(1),
+    middlename: z.string().nullish(),
+    surname: z.string().trim().min(1),
+    birthdate: z.string().min(1),
+    photo: z.string().nullish(),
+    nin: z.string().min(1),
+  }),
+  verification: verificationSchema,
+});
+
 export const premblyPlateResponseSchema = z.looseObject({
   status: z.literal(true),
   response_code: z.literal("00"),

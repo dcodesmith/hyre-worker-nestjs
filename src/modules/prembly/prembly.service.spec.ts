@@ -87,6 +87,57 @@ describe("PremblyService", () => {
     service = module.get(PremblyService);
   });
 
+  describe("verifyNin", () => {
+    it("maps the identity fields and ignores the rest of the registry payload", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: true,
+          response_code: "00",
+          data: {
+            firstname: "Ada",
+            middlename: "",
+            surname: "Lovelace",
+            birthdate: "22-05-1998",
+            photo: "data:image/jpeg;base64,abc",
+            nin: "12345678901",
+            telephoneno: "08000000000",
+          },
+          verification,
+        },
+      });
+
+      await expect(service.verifyNin("12345678901")).resolves.toEqual({
+        firstName: "Ada",
+        middleName: null,
+        lastName: "Lovelace",
+        dateOfBirth: new Date(Date.UTC(1998, 4, 22)),
+        officialPhoto: "abc",
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/verification/vnin", {
+        number_nin: "12345678901",
+      });
+    });
+
+    it("rejects a record for a different NIN", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: true,
+          response_code: "00",
+          data: {
+            firstname: "Ada",
+            surname: "Lovelace",
+            birthdate: "22-05-1998",
+            nin: "10987654321",
+          },
+          verification,
+        },
+      });
+
+      await expect(service.verifyNin("12345678901")).rejects.toEqual(new PremblyError("REJECTED"));
+    });
+  });
+
   describe("verifyPlate", () => {
     it("returns plate number, vehicle name, color, and reference without requiring a chassis", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({ data: plateSuccess() });

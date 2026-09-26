@@ -24,6 +24,7 @@ import {
 import { EmailService } from "../email/email.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
+import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -90,6 +91,7 @@ export class ChauffeurService {
     private readonly emailService: EmailService,
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly monoService: MonoService,
+    private readonly premblyService: PremblyService,
     private readonly smileIdService: SmileIdService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
@@ -421,7 +423,7 @@ export class ChauffeurService {
     }
 
     try {
-      const identity = await this.monoService.verifyNin(input.nin);
+      const identity = await this.lookupNin(input.nin);
       this.assertInvitedNameMatches(verification, identity);
       await this.databaseService.$transaction([
         this.databaseService.chauffeurVerification.update({
@@ -605,17 +607,21 @@ export class ChauffeurService {
       let status: Awaited<ReturnType<SmileIdService["comparisonStatus"]>>;
       try {
         status = await this.smileIdService.comparisonStatus(jobId);
-      } catch (error) {
-        if (!(error instanceof SmileIdError)) throw new ChauffeurProviderUnavailableException();
-        status = "not_found";
+      } catch {
+        throw new ChauffeurProviderUnavailableException();
       }
       if (status !== "processing" && status !== "not_found" && stage) {
-        await this.applySmileCompareResult({
-          jobId,
-          verificationId: verification.id,
-          stageRequestId: stage.id,
-          status,
-        });
+        try {
+          await this.applySmileCompareResult({
+            jobId,
+            verificationId: verification.id,
+            stageRequestId: stage.id,
+            status,
+          });
+        } catch (error) {
+          if (error instanceof ChauffeurException) throw error;
+          throw new ChauffeurProviderUnavailableException();
+        }
         const refreshed = await this.getVerification(verification.id);
         if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
         return "released";
@@ -929,9 +935,26 @@ export class ChauffeurService {
     }
   }
 
+  private async lookupNin(nin: string) {
+    try {
+      return await this.monoService.verifyNin(nin);
+    } catch (error) {
+      if (
+        !(error instanceof MonoError) ||
+        !["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+      ) {
+        throw error;
+      }
+      return this.premblyService.verifyNin(nin);
+    }
+  }
+
   private mapNinError(error: unknown): ChauffeurException {
     if (error instanceof ChauffeurException) return error;
-    if (error instanceof MonoError && error.kind === "REJECTED") {
+    if (
+      (error instanceof MonoError || error instanceof PremblyError) &&
+      error.kind === "REJECTED"
+    ) {
       return new ChauffeurNinNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();

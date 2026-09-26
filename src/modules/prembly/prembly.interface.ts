@@ -1,3 +1,12 @@
+export type PremblyNinResult = {
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+  dateOfBirth: Date;
+  officialPhoto: string | null;
+  reference: string;
+};
+
 export type PremblyPlateResult = {
   plateNumber: string;
   vehicleName: string;
