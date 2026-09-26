@@ -12,6 +12,9 @@ import {
   NameMatchStatus,
   Prisma,
   ProviderVerificationStatus,
+  VerificationDecisionStatus,
+  VerificationInterventionKind,
+  VerificationInterventionStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
@@ -21,8 +24,10 @@ import { DatabaseService, isUniqueConstraintError } from "../database/database.s
 import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { InterventionService } from "../intervention/intervention.service";
 import type { MonoDriversLicenseResult, MonoNinResult } from "../mono/mono.interface";
-import { MonoError, MonoService } from "../mono/mono.service";
+import { MonoError } from "../mono/mono.service";
+import { NinLookupService } from "../nin/nin-lookup.service";
 import type { PremblyCacResult } from "../prembly/prembly.interface";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
@@ -92,6 +97,7 @@ type VerifiedAccountIdentity = {
 };
 
 type StageResponse = Prisma.InputJsonObject;
+type OwnerDriverLicenseResult = MonoDriversLicenseResult | "OUTAGE" | null;
 
 type IdentityStageClaim =
   | { kind: "CLAIMED"; verification: FleetOwnerAccountVerification }
@@ -253,11 +259,12 @@ export class AccountVerificationService {
   constructor(
     configService: ConfigService<EnvConfig, true>,
     private readonly databaseService: DatabaseService,
-    private readonly monoService: MonoService,
+    private readonly ninLookupService: NinLookupService,
     private readonly premblyService: PremblyService,
     private readonly driversLicenseLookupService: DriversLicenseLookupService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly storageService: StorageService,
+    private readonly interventionService: InterventionService,
     private readonly logger: PinoLogger,
   ) {
     this.hashKey = configService.get("HMAC_KEY", { infer: true });
@@ -330,6 +337,7 @@ export class AccountVerificationService {
 
       const verifiedAt = new Date();
       const needsReview =
+        driversLicense === "OUTAGE" ||
         bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
         businessNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
         representativeNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
@@ -345,7 +353,7 @@ export class AccountVerificationService {
         },
         select: { documentType: true, documentUrl: true },
       });
-      const completed = await this.databaseService.$transaction(async (tx) => {
+      const result = await this.databaseService.$transaction(async (tx) => {
         const lease = await tx.fleetOwnerAccountVerification.updateMany({
           where: {
             id: verification.id,
@@ -378,8 +386,9 @@ export class AccountVerificationService {
           },
         });
 
+        let driversLicenseDocumentId: string | null = null;
         for (const document of uploaded) {
-          await tx.documentApproval.upsert({
+          const approvedDocument = await tx.documentApproval.upsert({
             where: {
               documentType_userId: { documentType: document.type, userId },
             },
@@ -396,6 +405,9 @@ export class AccountVerificationService {
               approvedById: null,
             },
           });
+          if (document.type === DocumentType.DRIVERS_LICENSE) {
+            driversLicenseDocumentId = approvedDocument.id;
+          }
         }
 
         await tx.user.update({
@@ -411,7 +423,7 @@ export class AccountVerificationService {
           },
         });
 
-        return tx.fleetOwnerAccountVerification.update({
+        const completed = await tx.fleetOwnerAccountVerification.update({
           where: { id: verification.id },
           data: {
             status,
@@ -442,10 +454,26 @@ export class AccountVerificationService {
             submittedAt: verifiedAt,
           },
         });
+        let interventionId: string | null = null;
+        if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
+          if (!driversLicenseDocumentId) throw new AccountVerificationOperationFailedException();
+          const intervention = await this.interventionService.bindOwnerLicense(
+            tx,
+            completed.id,
+            driversLicenseDocumentId,
+            normalizeDriversLicenseNumber(input.driversLicenseNumber),
+          );
+          if (!intervention) throw new AccountVerificationChangedException();
+          interventionId = intervention.id;
+        }
+        return { completed, interventionId };
       });
 
       await this.deleteReplacedDocuments(previousDocuments, uploaded);
-      return this.toResponse(completed);
+      if (result.interventionId) {
+        await this.interventionService.dispatchIntervention(result.interventionId);
+      }
+      return this.toResponse(result.completed);
     } catch (error) {
       await this.deleteUploaded(uploaded);
       throw await this.fail(verification.id, error);
@@ -649,6 +677,15 @@ export class AccountVerificationService {
     if (replay) return replay;
 
     const verification = await this.findDraft(userId);
+    const openLicenseIntervention = await this.databaseService.verificationIntervention.findFirst({
+      where: {
+        accountVerificationId: verification.id,
+        kind: "OWNER_DRIVER_LICENSE",
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    if (openLicenseIntervention) throw new VerificationRequestInProgressException();
     if (!verification.payoutVerifiedAt) {
       throw new AccountVerificationStepIncompleteException("PAYOUT");
     }
@@ -676,7 +713,7 @@ export class AccountVerificationService {
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
     try {
-      let driversLicense = null;
+      let driversLicense: OwnerDriverLicenseResult = null;
       if (input.isOwnerDriver) {
         if (!verification.identityFirstName || !verification.identityLastName) {
           throw new AccountVerificationOperationFailedException();
@@ -724,7 +761,7 @@ export class AccountVerificationService {
           lasdri: documents.lasdri ? "PENDING" : null,
         },
       };
-      await this.databaseService.$transaction(async (tx) => {
+      const interventionId = await this.databaseService.$transaction(async (tx) => {
         const completedAt = new Date();
         const lease = await tx.fleetOwnerAccountVerificationStageRequest.updateMany({
           where: {
@@ -746,8 +783,9 @@ export class AccountVerificationService {
         });
         if (advanced.count === 0) throw new AccountVerificationChangedException();
 
+        let driversLicenseDocumentId: string | null = null;
         for (const document of uploaded) {
-          await tx.documentApproval.upsert({
+          const approvedDocument = await tx.documentApproval.upsert({
             where: {
               documentType_userId: { documentType: document.type, userId },
             },
@@ -764,13 +802,29 @@ export class AccountVerificationService {
               approvedById: null,
             },
           });
+          if (document.type === DocumentType.DRIVERS_LICENSE) {
+            driversLicenseDocumentId = approvedDocument.id;
+          }
         }
         await tx.fleetOwnerAccountVerificationStageRequest.update({
           where: { id: claim.requestId },
           data: { status: ProviderVerificationStatus.SUCCEEDED, response },
         });
+        if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
+          if (!driversLicenseDocumentId) throw new AccountVerificationOperationFailedException();
+          const intervention = await this.interventionService.bindOwnerLicense(
+            tx,
+            verification.id,
+            driversLicenseDocumentId,
+            normalizeDriversLicenseNumber(input.driversLicenseNumber),
+          );
+          if (!intervention) throw new AccountVerificationChangedException();
+          return intervention.id;
+        }
+        return null;
       });
       await this.deleteReplacedDocuments(previousDocuments, uploaded);
+      if (interventionId) await this.interventionService.dispatchIntervention(interventionId);
       return response;
     } catch (error) {
       await this.deleteUploaded(uploaded);
@@ -840,7 +894,9 @@ export class AccountVerificationService {
 
         const needsReview =
           current.identityRequiresReview ||
-          current.bankNameMatch === NameMatchStatus.REVIEW_REQUIRED;
+          current.bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
+          (current.isOwnerDriver &&
+            current.driversLicenseDecision === VerificationDecisionStatus.PENDING);
         const status = needsReview
           ? AccountVerificationStatus.REVIEW_REQUIRED
           : AccountVerificationStatus.SUCCEEDED;
@@ -1345,6 +1401,21 @@ export class AccountVerificationService {
     if (!current.driversLicenseHash) {
       throw new OwnerDriverLicenseNotVerifiedException();
     }
+    if (current.driversLicenseDecision === VerificationDecisionStatus.REJECTED) {
+      throw new OwnerDriverLicenseNotVerifiedException();
+    }
+    if (current.driversLicenseDecision === VerificationDecisionStatus.PENDING) {
+      const intervention = await tx.verificationIntervention.findFirst({
+        where: {
+          accountVerificationId: current.id,
+          kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
+          status: VerificationInterventionStatus.OPEN,
+        },
+        select: { id: true },
+      });
+      if (!intervention) throw new OwnerDriverLicenseNotVerifiedException();
+      return;
+    }
     if (
       current.driversLicenseExpiresAt &&
       current.driversLicenseExpiresAt < this.startOfTodayUtc()
@@ -1356,7 +1427,7 @@ export class AccountVerificationService {
   private async verifyOwnerDriverLicense(
     input: Pick<DrivingCredentialsDto, "isOwnerDriver" | "driversLicenseNumber">,
     identity: Pick<MonoNinResult, "firstName" | "lastName" | "dateOfBirth">,
-  ): Promise<MonoDriversLicenseResult | null> {
+  ): Promise<OwnerDriverLicenseResult> {
     if (!input.isOwnerDriver) return null;
     if (!input.driversLicenseNumber) throw new OwnerDriverLicenseNotVerifiedException();
     const licenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
@@ -1375,6 +1446,12 @@ export class AccountVerificationService {
         error.kind === "REJECTED"
       ) {
         throw new OwnerDriverLicenseNotVerifiedException();
+      }
+      if (
+        (error instanceof MonoError || error instanceof PremblyError) &&
+        ["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+      ) {
+        return "OUTAGE";
       }
       throw error;
     }
@@ -1399,8 +1476,8 @@ export class AccountVerificationService {
   }
 
   private driverLicenseData(
-    license: MonoDriversLicenseResult | null,
-    licenseNumber = license?.licenseNumber,
+    license: OwnerDriverLicenseResult,
+    licenseNumber = license && license !== "OUTAGE" ? license.licenseNumber : undefined,
   ) {
     const hashedNumber = licenseNumber ? normalizeDriversLicenseNumber(licenseNumber) : null;
     return {
@@ -1408,8 +1485,12 @@ export class AccountVerificationService {
         ? createHmac("sha256", this.hashKey).update(hashedNumber).digest("hex")
         : null,
       driversLicenseLast4: hashedNumber?.slice(-4) ?? null,
-      driversLicenseExpiresAt: license?.expiresAt ?? null,
-      driversLicenseProviderRef: license?.reference ?? null,
+      driversLicenseExpiresAt: license && license !== "OUTAGE" ? license.expiresAt : null,
+      driversLicenseProviderRef: license && license !== "OUTAGE" ? license.reference : null,
+      driversLicenseDecision:
+        license && license !== "OUTAGE"
+          ? VerificationDecisionStatus.APPROVED
+          : VerificationDecisionStatus.PENDING,
     };
   }
 
@@ -1418,9 +1499,12 @@ export class AccountVerificationService {
   ): Promise<VerifiedAccountIdentity> {
     let identity: MonoNinResult;
     try {
-      identity = await this.monoService.verifyNin(input.nin);
+      identity = await this.ninLookupService.lookup(input.nin);
     } catch (error) {
-      if (error instanceof MonoError && error.kind === "REJECTED") {
+      if (
+        (error instanceof MonoError || error instanceof PremblyError) &&
+        error.kind === "REJECTED"
+      ) {
         throw new NinNotVerifiedException();
       }
       throw error;
@@ -1631,6 +1715,9 @@ export class AccountVerificationService {
           select: { status: true },
         });
         if (driversLicense?.status !== DocumentStatus.APPROVED) {
+          throw new OwnerDriverLicenseNotApprovedException();
+        }
+        if (verification.driversLicenseDecision !== VerificationDecisionStatus.APPROVED) {
           throw new OwnerDriverLicenseNotApprovedException();
         }
       }

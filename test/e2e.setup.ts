@@ -65,6 +65,8 @@ export async function setup() {
     process.env.AUTH_BASE_URL = "http://localhost:3000";
     process.env.TRUSTED_ORIGINS = "http://localhost:3000, http://localhost:5173";
     process.env.FLIGHTAWARE_WEBHOOK_SECRET = "e2e-test-flightaware-webhook-secret";
+    process.env.VERIFICATION_INTERVENTION_ENCRYPTION_KEY =
+      "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
 
     const prismaEnv = { ...process.env, DATABASE_URL: databaseUrl };
 

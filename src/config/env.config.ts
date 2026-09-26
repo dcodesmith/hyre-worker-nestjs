@@ -13,6 +13,13 @@ const optionalNonEmptyString = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
 );
+const encryptionKeySchema = z.string().refine((value) => {
+  try {
+    return /^[A-Za-z0-9+/]{43}=$/.test(value) && Buffer.from(value, "base64").length === 32;
+  } catch {
+    return false;
+  }
+}, "VERIFICATION_INTERVENTION_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
 const optionalUrl = (protocol: RegExp, error: string) =>
   z.preprocess(
     (value) => (value === "" ? undefined : value),
@@ -227,6 +234,7 @@ export const envSchema = z
     ),
 
     HMAC_KEY: z.string().min(1, "HMAC_KEY is required"),
+    VERIFICATION_INTERVENTION_ENCRYPTION_KEY: encryptionKeySchema,
 
     ENABLE_MANUAL_TRIGGERS: z
       .union([z.boolean(), z.string()])
