@@ -420,7 +420,7 @@ export class ChauffeurService {
     }
 
     try {
-      const identity = await this.monoService.verifyNin(input.nin);
+      const identity = await this.lookupNin(input.nin);
       this.assertInvitedNameMatches(verification, identity);
       await this.databaseService.$transaction([
         this.databaseService.chauffeurVerification.update({
@@ -751,9 +751,26 @@ export class ChauffeurService {
     }
   }
 
+  private async lookupNin(nin: string) {
+    try {
+      return await this.monoService.verifyNin(nin);
+    } catch (error) {
+      if (
+        !(error instanceof MonoError) ||
+        !["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+      ) {
+        throw error;
+      }
+      return this.premblyService.verifyNin(nin);
+    }
+  }
+
   private mapNinError(error: unknown): ChauffeurException {
     if (error instanceof ChauffeurException) return error;
-    if (error instanceof MonoError && error.kind === "REJECTED") {
+    if (
+      (error instanceof MonoError || error instanceof PremblyError) &&
+      error.kind === "REJECTED"
+    ) {
       return new ChauffeurNinNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();

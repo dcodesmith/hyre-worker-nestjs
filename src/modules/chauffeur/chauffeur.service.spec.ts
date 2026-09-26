@@ -193,6 +193,7 @@ describe("ChauffeurService", () => {
     verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
   let premblyService: {
+    verifyNin: ReturnType<typeof vi.fn>;
     verifyFaceLiveness: ReturnType<typeof vi.fn>;
     compareFaces: ReturnType<typeof vi.fn>;
   };
@@ -244,6 +245,7 @@ describe("ChauffeurService", () => {
       verifyDriversLicense: vi.fn(),
     };
     premblyService = {
+      verifyNin: vi.fn(),
       verifyFaceLiveness: vi.fn(),
       compareFaces: vi.fn(),
     };
@@ -788,6 +790,7 @@ describe("ChauffeurService", () => {
       ).resolves.toMatchObject({
         steps: expect.objectContaining({ nin: true }),
       });
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
       expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
         data: expect.objectContaining({
@@ -867,6 +870,57 @@ describe("ChauffeurService", () => {
           failureReason: ChauffeurErrorCode.NIN_NOT_VERIFIED,
         },
       });
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
+    });
+
+    it("uses Prembly when Mono is unavailable", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(phoneVerified())
+        .mockResolvedValueOnce(identityVerified());
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyNin.mockResolvedValueOnce({
+        firstName: "ADA",
+        middleName: null,
+        lastName: "LOVELACE",
+        dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
+        officialPhoto: "prembly-photo",
+        reference: "prembly-nin-ref",
+      });
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).resolves.toMatchObject({
+        steps: expect.objectContaining({ nin: true }),
+      });
+      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+      expect(databaseService.chauffeurVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          identityProviderRef: "prembly-nin-ref",
+          identityOfficialPhoto: "prembly-photo",
+          status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
+        }),
+      });
+    });
+
+    it("keeps a Prembly rejection as not verified", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        phoneVerified(),
+      );
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce(null);
+      databaseService.chauffeurVerificationStageRequest.create.mockResolvedValueOnce({
+        id: "stage-1",
+      });
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("INVALID_RESPONSE"));
+      premblyService.verifyNin.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.verifyNin(VERIFICATION_ID, "nin-key-1", { nin: "12345678901" }),
+      ).rejects.toBeInstanceOf(ChauffeurNinNotVerifiedException);
     });
 
     it("replays a succeeded stage and rejects an in-progress lease", async () => {

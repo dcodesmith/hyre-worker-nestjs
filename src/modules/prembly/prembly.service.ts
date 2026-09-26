@@ -10,6 +10,7 @@ import {
   PremblyFaceComparisonResult,
   PremblyInsuranceResult,
   PremblyLivenessResult,
+  PremblyNinResult,
   PremblyPlateResult,
   PremblyVinResult,
 } from "./prembly.interface";
@@ -19,6 +20,7 @@ import {
   premblyFaceComparisonResponseSchema,
   premblyInsuranceResponseSchema,
   premblyLivenessResponseSchema,
+  premblyNinResponseSchema,
   premblyPlateResponseSchema,
   premblyVinResponseSchema,
 } from "./prembly.schema";
@@ -46,6 +48,27 @@ export class PremblyService {
         ...(appId && { "app-id": appId }),
       },
     });
+  }
+
+  async verifyNin(nin: string): Promise<PremblyNinResult> {
+    const response = await this.post(
+      "/verification/vnin",
+      { number_nin: nin },
+      premblyNinResponseSchema,
+    );
+    if (response.data.nin.replaceAll(/\D/g, "") !== nin.replaceAll(/\D/g, "")) {
+      throw new PremblyError("REJECTED");
+    }
+    const photo =
+      response.data.photo?.trim().replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "") || null;
+    return {
+      firstName: response.data.firstname.trim(),
+      middleName: response.data.middlename?.trim() || null,
+      lastName: response.data.surname.trim(),
+      dateOfBirth: this.parseDate(response.data.birthdate),
+      officialPhoto: photo,
+      reference: response.verification.reference,
+    };
   }
 
   async verifyPlate(plateNumber: string): Promise<PremblyPlateResult> {
@@ -190,6 +213,27 @@ export class PremblyService {
         .filter((director) => director.firstName || director.lastName),
       reference: response.verification.reference,
     };
+  }
+
+  private parseDate(value: string): Date {
+    const dayFirst = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value.trim());
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    const parts = dayFirst
+      ? [Number(dayFirst[3]), Number(dayFirst[2]), Number(dayFirst[1])]
+      : iso
+        ? [Number(iso[1]), Number(iso[2]), Number(iso[3])]
+        : null;
+    if (!parts) throw new PremblyError("INVALID_RESPONSE");
+    const [year, month, day] = parts;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      throw new PremblyError("INVALID_RESPONSE");
+    }
+    return date;
   }
 
   private readPlateChassis(data: {
