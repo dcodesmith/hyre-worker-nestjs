@@ -191,6 +191,7 @@ describe("ChauffeurService", () => {
   };
   let premblyService: {
     verifyNin: ReturnType<typeof vi.fn>;
+    verifyDriversLicense: ReturnType<typeof vi.fn>;
   };
   let smileIdService: {
     compareSelfieToImage: ReturnType<typeof vi.fn>;
@@ -247,6 +248,7 @@ describe("ChauffeurService", () => {
     };
     premblyService = {
       verifyNin: vi.fn(),
+      verifyDriversLicense: vi.fn(),
     };
     smileIdService = {
       compareSelfieToImage: vi.fn(),
@@ -1165,6 +1167,54 @@ describe("ChauffeurService", () => {
           selfie,
         ),
       ).rejects.toBeInstanceOf(ChauffeurLicenseNotVerifiedException);
+      expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+    });
+
+    it("uses Prembly when Mono cannot look up the licence", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow
+        .mockResolvedValueOnce(identityVerified())
+        .mockResolvedValueOnce(identityVerified());
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockResolvedValueOnce(eligibleLicense);
+      smileIdService.compareSelfieToImage.mockResolvedValueOnce({
+        jobId: "job-1",
+        createdAt: null,
+      });
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).resolves.toMatchObject({ status: ChauffeurVerificationStatus.IDENTITY_VERIFIED });
+      expect(premblyService.verifyDriversLicense).toHaveBeenCalledWith(
+        "ABC12345DE67",
+        "ADA",
+        "LOVELACE",
+      );
+      expect(smileIdService.compareSelfieToImage).toHaveBeenCalled();
+    });
+
+    it("maps a Prembly licence rejection to not verified", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified(),
+      );
+      await claimDrivingStage();
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-1",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurLicenseNotVerifiedException);
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
     });
 
     it("queues a Smile ID portrait comparison and waits for the callback", async () => {
@@ -1733,6 +1783,7 @@ describe("ChauffeurService", () => {
       );
       await claimDrivingStage();
       monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
 
       await expect(
         service.verifyDriving(

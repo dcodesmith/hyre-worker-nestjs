@@ -14,6 +14,7 @@ import type { EnvConfig } from "../../config/env.config";
 import { getEmailPublicEnv } from "../../email-public-env";
 import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { maskEmail } from "../../shared/helper";
+import { lookupDriversLicense } from "../../shared/lookup-drivers-license";
 import { renderChauffeurInvitationEmail } from "../../templates/emails";
 import { USER } from "../auth/auth.const";
 import {
@@ -494,7 +495,9 @@ export class ChauffeurService {
 
     let license: MonoDriversLicenseResult;
     try {
-      license = await this.monoService.verifyDriversLicense(
+      license = await lookupDriversLicense(
+        this.monoService,
+        this.premblyService,
         driversLicenseNumber,
         verification.identityFirstName,
         verification.identityLastName,
@@ -961,7 +964,10 @@ export class ChauffeurService {
   }
 
   private mapLicenseError(error: unknown): ChauffeurException {
-    if (error instanceof MonoError && error.kind === "REJECTED") {
+    if (
+      (error instanceof MonoError || error instanceof PremblyError) &&
+      error.kind === "REJECTED"
+    ) {
       return new ChauffeurLicenseNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();

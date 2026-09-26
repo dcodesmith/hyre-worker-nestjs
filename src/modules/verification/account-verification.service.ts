@@ -17,6 +17,7 @@ import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
+import { lookupDriversLicense } from "../../shared/lookup-drivers-license";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
@@ -1361,14 +1362,19 @@ export class AccountVerificationService {
 
     let license: MonoDriversLicenseResult;
     try {
-      license = await this.monoService.verifyDriversLicense(
+      license = await lookupDriversLicense(
+        this.monoService,
+        this.premblyService,
         licenseNumber,
         identity.firstName,
         identity.lastName,
         identity.dateOfBirth,
       );
     } catch (error) {
-      if (error instanceof MonoError && error.kind === "REJECTED") {
+      if (
+        (error instanceof MonoError || error instanceof PremblyError) &&
+        error.kind === "REJECTED"
+      ) {
         throw new OwnerDriverLicenseNotVerifiedException();
       }
       throw error;
