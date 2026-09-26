@@ -125,10 +125,8 @@ export interface VehicleSearchPrecondition {
 }
 
 export interface VehicleSearchToolResult {
-  interpretation: string;
   extracted: ExtractedAiSearchParams;
   exactMatches: VehicleSearchOption[];
   alternatives: VehicleSearchAlternative[];
   precondition: VehicleSearchPrecondition | null;
-  shouldClarifyBookingType: boolean;
 }
