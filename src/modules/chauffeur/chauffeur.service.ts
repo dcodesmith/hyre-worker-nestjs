@@ -607,17 +607,21 @@ export class ChauffeurService {
       let status: Awaited<ReturnType<SmileIdService["comparisonStatus"]>>;
       try {
         status = await this.smileIdService.comparisonStatus(jobId);
-      } catch (error) {
-        if (!(error instanceof SmileIdError)) throw new ChauffeurProviderUnavailableException();
-        status = "not_found";
+      } catch {
+        throw new ChauffeurProviderUnavailableException();
       }
       if (status !== "processing" && status !== "not_found" && stage) {
-        await this.applySmileCompareResult({
-          jobId,
-          verificationId: verification.id,
-          stageRequestId: stage.id,
-          status,
-        });
+        try {
+          await this.applySmileCompareResult({
+            jobId,
+            verificationId: verification.id,
+            stageRequestId: stage.id,
+            status,
+          });
+        } catch (error) {
+          if (error instanceof ChauffeurException) throw error;
+          throw new ChauffeurProviderUnavailableException();
+        }
         const refreshed = await this.getVerification(verification.id);
         if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
         return "released";

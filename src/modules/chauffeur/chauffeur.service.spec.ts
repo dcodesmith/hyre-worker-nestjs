@@ -1335,6 +1335,60 @@ describe("ChauffeurService", () => {
       expect(smileIdService.compareSelfieToImage).toHaveBeenCalled();
     });
 
+    it("keeps the selfie when Smile ID is unavailable after the callback lease", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus.mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);
+      expect(databaseService.chauffeurVerification.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
+    it("keeps the selfie when the Smile ID confirmation fails", async () => {
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
+        identityVerified({
+          livenessProviderRef: "job-1",
+          selfieObjectKey: STORED_SELFIE_KEY,
+        }),
+      );
+      databaseService.chauffeurVerificationStageRequest.findFirst.mockResolvedValueOnce({
+        id: "stage-drive",
+        processingExpiresAt: new Date(Date.now() - 1000),
+      });
+      smileIdService.comparisonStatus
+        .mockResolvedValueOnce("clear")
+        .mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
+
+      await expect(
+        service.verifyDriving(
+          VERIFICATION_ID,
+          "drive-key-2",
+          { driversLicenseNumber: "ABC12345DE67" },
+          selfie,
+        ),
+      ).rejects.toBeInstanceOf(ChauffeurProviderUnavailableException);
+      expect(databaseService.chauffeurVerification.updateMany).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(smileIdService.compareSelfieToImage).not.toHaveBeenCalled();
+    });
+
     it("keeps the selfie when a callback approves before the expired job is released", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow
         .mockResolvedValueOnce(
