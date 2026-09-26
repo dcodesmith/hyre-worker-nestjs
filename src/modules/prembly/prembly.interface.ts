@@ -7,6 +7,17 @@ export type PremblyNinResult = {
   reference: string;
 };
 
+export type PremblyDriversLicenseResult = {
+  licenseNumber: string;
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+  dateOfBirth: Date;
+  expiresAt: Date;
+  officialPhoto: string | null;
+  reference: string;
+};
+
 export type PremblyPlateResult = {
   plateNumber: string;
   vehicleName: string;

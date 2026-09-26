@@ -18,6 +18,7 @@ import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
+import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { MonoDriversLicenseResult, MonoNinResult } from "../mono/mono.interface";
@@ -254,6 +255,7 @@ export class AccountVerificationService {
     private readonly databaseService: DatabaseService,
     private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
+    private readonly driversLicenseLookupService: DriversLicenseLookupService,
     private readonly flutterwaveService: FlutterwaveService,
     private readonly storageService: StorageService,
     private readonly logger: PinoLogger,
@@ -1361,14 +1363,17 @@ export class AccountVerificationService {
 
     let license: MonoDriversLicenseResult;
     try {
-      license = await this.monoService.verifyDriversLicense(
+      license = await this.driversLicenseLookupService.lookup(
         licenseNumber,
         identity.firstName,
         identity.lastName,
         identity.dateOfBirth,
       );
     } catch (error) {
-      if (error instanceof MonoError && error.kind === "REJECTED") {
+      if (
+        (error instanceof MonoError || error instanceof PremblyError) &&
+        error.kind === "REJECTED"
+      ) {
         throw new OwnerDriverLicenseNotVerifiedException();
       }
       throw error;

@@ -21,6 +21,7 @@ import {
   isUniqueConstraintError,
   lockUserRow,
 } from "../database/database.service";
+import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { EmailService } from "../email/email.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
@@ -92,6 +93,7 @@ export class ChauffeurService {
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
+    private readonly driversLicenseLookupService: DriversLicenseLookupService,
     private readonly smileIdService: SmileIdService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
@@ -494,7 +496,7 @@ export class ChauffeurService {
 
     let license: MonoDriversLicenseResult;
     try {
-      license = await this.monoService.verifyDriversLicense(
+      license = await this.driversLicenseLookupService.lookup(
         driversLicenseNumber,
         verification.identityFirstName,
         verification.identityLastName,
@@ -961,7 +963,10 @@ export class ChauffeurService {
   }
 
   private mapLicenseError(error: unknown): ChauffeurException {
-    if (error instanceof MonoError && error.kind === "REJECTED") {
+    if (
+      (error instanceof MonoError || error instanceof PremblyError) &&
+      error.kind === "REJECTED"
+    ) {
       return new ChauffeurLicenseNotVerifiedException();
     }
     return new ChauffeurProviderUnavailableException();

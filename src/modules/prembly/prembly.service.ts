@@ -7,6 +7,7 @@ import { VIN_PATTERN } from "../../shared/vehicle-validation";
 import { HttpClientService } from "../http-client/http-client.service";
 import {
   PremblyCacResult,
+  PremblyDriversLicenseResult,
   PremblyFaceComparisonResult,
   PremblyInsuranceResult,
   PremblyLivenessResult,
@@ -16,6 +17,7 @@ import {
 } from "./prembly.interface";
 import {
   premblyCacResponseSchema,
+  premblyDriversLicenseResponseSchema,
   premblyEnvelopeSchema,
   premblyFaceComparisonResponseSchema,
   premblyInsuranceResponseSchema,
@@ -66,6 +68,34 @@ export class PremblyService {
       middleName: response.data.middlename?.trim() || null,
       lastName: response.data.surname.trim(),
       dateOfBirth: this.parseDate(response.data.birthdate),
+      officialPhoto: photo,
+      reference: response.verification.reference,
+    };
+  }
+
+  async verifyDriversLicense(
+    licenseNumber: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<PremblyDriversLicenseResult> {
+    const response = await this.post(
+      "/verification/drivers_license/advance/v2",
+      { number: licenseNumber, first_name: firstName, last_name: lastName },
+      premblyDriversLicenseResponseSchema,
+    );
+    const returned = response.frsc_data.driversLicense;
+    if (this.normalizeName(returned) !== this.normalizeName(licenseNumber)) {
+      throw new PremblyError("REJECTED");
+    }
+    const photo =
+      response.frsc_data.photo?.trim().replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "") || null;
+    return {
+      licenseNumber: returned.trim().toUpperCase(),
+      firstName: response.frsc_data.firstname.trim(),
+      middleName: response.frsc_data.middlename?.trim() || null,
+      lastName: response.frsc_data.lastname.trim(),
+      dateOfBirth: this.parseDate(response.frsc_data.birthdate),
+      expiresAt: this.parseDate(response.frsc_data.expiry_date),
       officialPhoto: photo,
       reference: response.verification.reference,
     };

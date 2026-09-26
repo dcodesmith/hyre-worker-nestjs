@@ -138,6 +138,58 @@ describe("PremblyService", () => {
     });
   });
 
+  describe("verifyDriversLicense", () => {
+    const licenseRecord = {
+      status: true,
+      response_code: "00",
+      frsc_data: {
+        driversLicense: "ABC12345DE67",
+        firstname: "Ada",
+        middlename: "",
+        lastname: "Lovelace",
+        birthdate: "22-05-1998",
+        expiry_date: "01-01-2029",
+        photo: "data:image/jpeg;base64,abc",
+        gender: "Female",
+      },
+      verification,
+    };
+
+    it("maps the licence fields and ignores the rest of the registry payload", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: licenseRecord });
+
+      await expect(
+        service.verifyDriversLicense("abc12345de67", "Ada", "Lovelace"),
+      ).resolves.toEqual({
+        licenseNumber: "ABC12345DE67",
+        firstName: "Ada",
+        middleName: null,
+        lastName: "Lovelace",
+        dateOfBirth: new Date(Date.UTC(1998, 4, 22)),
+        expiresAt: new Date(Date.UTC(2029, 0, 1)),
+        officialPhoto: "abc",
+        reference: "prembly-ref-1",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        "/verification/drivers_license/advance/v2",
+        { number: "abc12345de67", first_name: "Ada", last_name: "Lovelace" },
+      );
+    });
+
+    it("rejects a record for a different licence number", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          ...licenseRecord,
+          frsc_data: { ...licenseRecord.frsc_data, driversLicense: "XYZ12345DE67" },
+        },
+      });
+
+      await expect(service.verifyDriversLicense("ABC12345DE67", "Ada", "Lovelace")).rejects.toEqual(
+        new PremblyError("REJECTED"),
+      );
+    });
+  });
+
   describe("verifyPlate", () => {
     it("returns plate number, vehicle name, color, and reference without requiring a chassis", async () => {
       mockAxiosInstance.post.mockResolvedValueOnce({ data: plateSuccess() });

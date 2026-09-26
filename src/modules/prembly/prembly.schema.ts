@@ -11,6 +11,21 @@ export const premblyEnvelopeSchema = z.looseObject({
   response_code: z.string().optional(),
 });
 
+export const premblyDriversLicenseResponseSchema = z.looseObject({
+  status: z.literal(true),
+  response_code: z.literal("00"),
+  frsc_data: z.looseObject({
+    driversLicense: z.string().trim().min(1),
+    firstname: z.string().trim().min(1),
+    lastname: z.string().trim().min(1),
+    middlename: z.string().nullish(),
+    birthdate: z.string().min(1),
+    expiry_date: z.string().min(1),
+    photo: z.string().nullish(),
+  }),
+  verification: verificationSchema,
+});
+
 export const premblyNinResponseSchema = z.looseObject({
   status: z.literal(true),
   response_code: z.literal("00"),

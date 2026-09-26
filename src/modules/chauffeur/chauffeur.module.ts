@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
+import { DriversLicenseModule } from "../drivers-license/drivers-license.module";
 import { EmailModule } from "../email/email.module";
 import { MonoModule } from "../mono/mono.module";
 import { PremblyModule } from "../prembly/prembly.module";
@@ -18,6 +19,7 @@ import { SmileIdWebhookController } from "./smile-id-webhook.controller";
 @Module({
   imports: [
     AuthModule,
+    DriversLicenseModule,
     EmailModule,
     MonoModule,
     PremblyModule,
