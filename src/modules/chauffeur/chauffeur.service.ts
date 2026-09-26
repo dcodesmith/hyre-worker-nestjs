@@ -25,6 +25,7 @@ import { EmailService } from "../email/email.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
+import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
   PhoneVerificationCodeInvalidException,
@@ -67,9 +68,8 @@ import { ChauffeurImageService } from "./chauffeur-image.service";
 const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
+const SMILE_CALLBACK_LEASE_MS = 15 * 60 * 1000;
 const MINIMUM_CHAUFFEUR_AGE = 21;
-const MINIMUM_LIVENESS_CONFIDENCE = 0.8;
-const MINIMUM_FACE_MATCH_CONFIDENCE = 80;
 
 const COMPLIANCE_REQUIREMENTS = [
   { type: "LASDRI", label: "LASDRI certificate or card", required: false },
@@ -78,6 +78,8 @@ const COMPLIANCE_REQUIREMENTS = [
 ] as const;
 
 type StageClaim = { requestId: string; replay: boolean };
+
+class SmileReservationLostError extends Error {}
 
 @Injectable()
 export class ChauffeurService {
@@ -90,6 +92,7 @@ export class ChauffeurService {
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
+    private readonly smileIdService: SmileIdService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
     private readonly logger: PinoLogger,
@@ -456,9 +459,15 @@ export class ChauffeurService {
     input: VerifyChauffeurDrivingDto,
     selfie: UploadedChauffeurSelfie,
   ) {
-    const verification = await this.getVerification(verificationId);
+    let verification = await this.getVerification(verificationId);
     if (verification.status === ChauffeurVerificationStatus.APPROVED) {
       return this.toOnboardingState(verification);
+    }
+    if (verification.livenessProviderRef) {
+      const outcome = await this.reconcileExpiredSmileJob(verification);
+      if (outcome === "open") throw new ChauffeurRequestInProgressException();
+      if (outcome === "approved") return this.getOnboarding(verificationId);
+      verification = await this.getVerification(verificationId);
     }
     if (
       !verification.ninHash ||
@@ -503,17 +512,8 @@ export class ChauffeurService {
       if (license.expiresAt < this.startOfTodayUtc()) {
         throw new ChauffeurLicenseExpiredException();
       }
-      const officialPhoto = license.officialPhoto ?? verification.identityOfficialPhoto;
-      if (!officialPhoto) {
-        throw new ChauffeurBiometricNotVerifiedException();
-      }
-      const selfieBase64 = processedSelfie.toString("base64");
-      const liveness = await this.premblyService.verifyFaceLiveness(selfieBase64);
-      const faceMatch = await this.premblyService.compareFaces(officialPhoto, selfieBase64);
-      if (
-        liveness.confidence < MINIMUM_LIVENESS_CONFIDENCE ||
-        faceMatch.confidence < MINIMUM_FACE_MATCH_CONFIDENCE
-      ) {
+      const ninPhoto = verification.identityOfficialPhoto;
+      if (!ninPhoto || !verification.privacyAcceptedAt) {
         throw new ChauffeurBiometricNotVerifiedException();
       }
       const imageKey = `fleet-owners/${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/${randomUUID()}.webp`;
@@ -522,17 +522,61 @@ export class ChauffeurService {
         imageKey,
         "image/jpeg",
       );
+      const reservation = `pending:${claim.requestId}`;
+      const reserved = await this.databaseService.chauffeurVerification.updateMany({
+        where: { id: verification.id, livenessProviderRef: null },
+        data: { livenessProviderRef: reservation },
+      });
+      if (reserved.count === 0) {
+        await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
+        throw new ChauffeurRequestInProgressException();
+      }
       try {
-        await this.completeDrivingVerification({
-          verification,
-          requestId: claim.requestId,
-          license,
-          liveness,
-          faceMatch,
-          selfieObjectKey,
-          licenseNumber: driversLicenseNumber,
+        const compared = await this.smileIdService.compareSelfieToImage({
+          selfie: processedSelfie,
+          comparisonImage: this.portrait(ninPhoto),
+          comparisonImageType: "PORTRAIT",
+          consent: {
+            grantedAt: verification.privacyAcceptedAt,
+            noticeLanguage: "EN",
+            privacyPolicyUrl: `${getEmailPublicEnv().websiteUrl.replace(/\/$/, "")}/privacy`,
+          },
+          user: {
+            givenNames: verification.identityFirstName,
+            lastName: verification.identityLastName,
+            email: verification.email,
+          },
+          partnerParams: {
+            verificationId: verification.id,
+            stageRequestId: claim.requestId,
+          },
         });
+        const submitted = await this.databaseService.$transaction(async (tx) => {
+          const updated = await tx.chauffeurVerification.updateMany({
+            where: { id: verification.id, livenessProviderRef: reservation },
+            data: {
+              driversLicenseHash: this.hash(driversLicenseNumber),
+              driversLicenseLast4: driversLicenseNumber.slice(-4).toUpperCase(),
+              driversLicenseExpiresAt: license.expiresAt,
+              driversLicenseProviderRef: license.reference,
+              dateOfBirth: license.dateOfBirth,
+              livenessProviderRef: compared.jobId,
+              selfieObjectKey,
+            },
+          });
+          if (updated.count === 0) return false;
+          await tx.chauffeurVerificationStageRequest.update({
+            where: { id: claim.requestId },
+            data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
+          });
+          return true;
+        });
+        if (!submitted) throw new ChauffeurRequestInProgressException();
       } catch (error) {
+        await this.databaseService.chauffeurVerification.updateMany({
+          where: { id: verification.id, livenessProviderRef: reservation },
+          data: { livenessProviderRef: null },
+        });
         await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
         throw error;
       }
@@ -544,22 +588,161 @@ export class ChauffeurService {
     }
   }
 
+  private async reconcileExpiredSmileJob(
+    verification: ChauffeurVerification,
+  ): Promise<"open" | "approved" | "released"> {
+    const jobId = verification.livenessProviderRef;
+    if (!jobId) return "released";
+    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+      where: {
+        verificationId: verification.id,
+        stage: ChauffeurVerificationStage.DRIVING,
+        status: ProviderVerificationStatus.PROCESSING,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (stage && stage.processingExpiresAt > new Date()) return "open";
+
+    if (!jobId.startsWith("pending:")) {
+      let status: Awaited<ReturnType<SmileIdService["comparisonStatus"]>>;
+      try {
+        status = await this.smileIdService.comparisonStatus(jobId);
+      } catch (error) {
+        if (!(error instanceof SmileIdError)) throw new ChauffeurProviderUnavailableException();
+        status = "not_found";
+      }
+      if (status !== "processing" && status !== "not_found" && stage) {
+        await this.applySmileCompareResult({
+          jobId,
+          verificationId: verification.id,
+          stageRequestId: stage.id,
+          status,
+        });
+        const refreshed = await this.getVerification(verification.id);
+        if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
+        return "released";
+      }
+    }
+
+    const released = await this.releaseSmileReservation(verification, jobId, stage?.id);
+    if (released) return "released";
+    const refreshed = await this.getVerification(verification.id);
+    if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
+    return "released";
+  }
+
+  private async releaseSmileReservation(
+    verification: ChauffeurVerification,
+    jobId: string,
+    stageId: string | undefined,
+  ): Promise<boolean> {
+    const released = await this.databaseService.chauffeurVerification.updateMany({
+      where: {
+        id: verification.id,
+        livenessProviderRef: jobId,
+        status: { not: ChauffeurVerificationStatus.APPROVED },
+      },
+      data: { livenessProviderRef: null, selfieObjectKey: null },
+    });
+    if (released.count === 0) return false;
+    if (stageId) {
+      await this.failStage(stageId, ChauffeurErrorCode.PROVIDER_UNAVAILABLE);
+    }
+    if (verification.selfieObjectKey) {
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
+    }
+    return true;
+  }
+
+  async applySmileCompareResult(input: {
+    jobId: string;
+    verificationId: string;
+    stageRequestId: string;
+    status: "clear" | "attention" | "block" | "error";
+  }): Promise<void> {
+    const confirmed = await this.smileIdService.comparisonStatus(input.jobId);
+    if (confirmed === "processing") throw new ChauffeurProviderUnavailableException();
+    const status = confirmed;
+    const verification = await this.databaseService.chauffeurVerification.findFirst({
+      where: { livenessProviderRef: input.jobId },
+    });
+    if (!verification?.selfieObjectKey || verification.id !== input.verificationId) {
+      throw new ChauffeurNotFoundException();
+    }
+    if (verification.status === ChauffeurVerificationStatus.APPROVED) return;
+
+    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+      where: {
+        id: input.stageRequestId,
+        verificationId: verification.id,
+        stage: ChauffeurVerificationStage.DRIVING,
+        status: ProviderVerificationStatus.PROCESSING,
+      },
+    });
+    if (!stage) return;
+
+    if (status !== "clear") {
+      const failure =
+        status === "block"
+          ? new ChauffeurBiometricNotVerifiedException()
+          : new ChauffeurProviderUnavailableException();
+      await this.failStage(stage.id, failure.getErrorCode());
+      await this.databaseService.chauffeurVerification.updateMany({
+        where: { id: verification.id, livenessProviderRef: input.jobId },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
+      return;
+    }
+
+    try {
+      await this.completeDrivingVerification({
+        verification,
+        requestId: stage.id,
+        selfieObjectKey: verification.selfieObjectKey,
+        jobId: input.jobId,
+      });
+    } catch (error) {
+      if (error instanceof SmileReservationLostError) return;
+      const released = await this.databaseService.chauffeurVerification.updateMany({
+        where: {
+          id: verification.id,
+          livenessProviderRef: input.jobId,
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
+        data: { livenessProviderRef: null, selfieObjectKey: null },
+      });
+      if (released.count > 0) {
+        await this.storageService
+          .deleteObjectByKey(verification.selfieObjectKey)
+          .catch(() => undefined);
+      }
+      const mapped = this.mapDrivingError(error);
+      await this.failStage(stage.id, mapped.getErrorCode());
+    }
+  }
+
+  private portrait(photo: string): Buffer {
+    const encoded = photo.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
+    const buffer = Buffer.from(encoded, "base64");
+    if (buffer.length === 0) throw new ChauffeurBiometricNotVerifiedException();
+    return buffer;
+  }
+
   private async completeDrivingVerification({
     verification,
     requestId,
-    license,
-    liveness,
-    faceMatch,
     selfieObjectKey,
-    licenseNumber,
+    jobId,
   }: {
-    verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>;
+    verification: ChauffeurVerification;
     requestId: string;
-    license: MonoDriversLicenseResult;
-    liveness: Awaited<ReturnType<PremblyService["verifyFaceLiveness"]>>;
-    faceMatch: Awaited<ReturnType<PremblyService["compareFaces"]>>;
     selfieObjectKey: string;
-    licenseNumber: string;
+    jobId: string;
   }): Promise<void> {
     await this.databaseService.$transaction(async (tx) => {
       const found = await tx.user.findFirst({
@@ -630,22 +813,19 @@ export class ChauffeurService {
             select: { id: true },
           });
 
-      await tx.chauffeurVerification.update({
-        where: { id: verification.id },
+      const claimed = await tx.chauffeurVerification.updateMany({
+        where: {
+          id: verification.id,
+          livenessProviderRef: jobId,
+          status: { not: ChauffeurVerificationStatus.APPROVED },
+        },
         data: {
           chauffeurId: chauffeur.id,
-          driversLicenseHash: this.hash(licenseNumber),
-          driversLicenseLast4: licenseNumber.slice(-4).toUpperCase(),
-          driversLicenseExpiresAt: license.expiresAt,
-          driversLicenseProviderRef: license.reference,
-          dateOfBirth: license.dateOfBirth,
-          livenessProviderRef: liveness.reference,
-          livenessConfidence: liveness.confidence,
-          faceMatchConfidence: faceMatch.confidence,
           selfieObjectKey,
           status: ChauffeurVerificationStatus.APPROVED,
         },
       });
+      if (claimed.count === 0) throw new SmileReservationLostError();
       await tx.chauffeurVerificationStageRequest.update({
         where: { id: requestId },
         data: { status: ProviderVerificationStatus.SUCCEEDED },
@@ -787,10 +967,7 @@ export class ChauffeurService {
     if (error instanceof ChauffeurException) {
       return error;
     }
-    if (error instanceof PremblyError && error.kind === "REJECTED") {
-      return new ChauffeurBiometricNotVerifiedException();
-    }
-    if (error instanceof PremblyError) {
+    if (error instanceof SmileIdError) {
       return new ChauffeurProviderUnavailableException();
     }
     if (isUniqueConstraintError(error)) {

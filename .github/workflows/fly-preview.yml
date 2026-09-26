@@ -57,6 +57,8 @@ env:
   REGCHECK_USERNAME: ${{ secrets.REGCHECK_USERNAME }}
   MONO_SECRET_KEY: ${{ secrets.MONO_SECRET_KEY }}
   MONO_BASE_URL: https://api.withmono.com
+  SMILE_ID_PARTNER_ID: ${{ secrets.SMILE_ID_PARTNER_ID }}
+  SMILE_ID_API_KEY: ${{ secrets.SMILE_ID_API_KEY }}
   HMAC_KEY: ${{ secrets.HMAC_KEY }}
   FLIGHTAWARE_API_KEY: ${{ secrets.FLIGHTAWARE_API_KEY }}
   FLIGHTAWARE_WEBHOOK_SECRET: ${{ secrets.FLIGHTAWARE_WEBHOOK_SECRET }}
@@ -379,6 +381,8 @@ jobs:
           PREMBLY_API_KEY: preview-validation-placeholder
           REGCHECK_USERNAME: preview-validation-placeholder
           MONO_SECRET_KEY: preview-validation-placeholder
+          SMILE_ID_PARTNER_ID: preview-validation-placeholder
+          SMILE_ID_API_KEY: preview-validation-placeholder
         run: |
           node -e "const fs = require('fs'); const path = './dist/config/env.config.js'; if (!fs.existsSync(path)) { console.error('Missing build output: ' + path + '. Ensure build step succeeded before env validation.'); process.exit(1); } const { validateEnvironment } = require(path); validateEnvironment(process.env); console.log('Environment schema validation passed.');"
 
@@ -472,6 +476,8 @@ jobs:
             PREMBLY_BASE_URL=${{ env.PREMBLY_BASE_URL }}
             MONO_SECRET_KEY=${{ secrets.MONO_SECRET_KEY }}
             MONO_BASE_URL=${{ env.MONO_BASE_URL }}
+            SMILE_ID_PARTNER_ID=${{ secrets.SMILE_ID_PARTNER_ID }}
+            SMILE_ID_API_KEY=${{ secrets.SMILE_ID_API_KEY }}
             HMAC_KEY=${{ env.HMAC_KEY }}
             FLIGHTAWARE_API_KEY=${{ env.FLIGHTAWARE_API_KEY }}
             FLIGHTAWARE_WEBHOOK_SECRET=${{ env.FLIGHTAWARE_WEBHOOK_SECRET }}
