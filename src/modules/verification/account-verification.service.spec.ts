@@ -16,6 +16,7 @@ import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
+import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
@@ -477,6 +478,7 @@ describe("AccountVerificationService", () => {
         { provide: DatabaseService, useValue: databaseService },
         { provide: MonoService, useValue: monoService },
         { provide: PremblyService, useValue: premblyService },
+        DriversLicenseLookupService,
         { provide: FlutterwaveService, useValue: flutterwaveService },
         { provide: StorageService, useValue: storageService },
         {

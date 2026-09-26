@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { USER } from "../auth/auth.const";
 import { DatabaseService } from "../database/database.service";
+import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { EmailService } from "../email/email.service";
 import { MonoError, MonoService } from "../mono/mono.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
@@ -269,6 +270,7 @@ describe("ChauffeurService", () => {
         { provide: PhoneVerificationService, useValue: phoneVerificationService },
         { provide: MonoService, useValue: monoService },
         { provide: PremblyService, useValue: premblyService },
+        DriversLicenseLookupService,
         { provide: SmileIdService, useValue: smileIdService },
         { provide: ChauffeurImageService, useValue: imageService },
         { provide: StorageService, useValue: storageService },

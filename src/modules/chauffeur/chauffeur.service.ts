@@ -14,7 +14,6 @@ import type { EnvConfig } from "../../config/env.config";
 import { getEmailPublicEnv } from "../../email-public-env";
 import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { maskEmail } from "../../shared/helper";
-import { lookupDriversLicense } from "../../shared/lookup-drivers-license";
 import { renderChauffeurInvitationEmail } from "../../templates/emails";
 import { USER } from "../auth/auth.const";
 import {
@@ -22,6 +21,7 @@ import {
   isUniqueConstraintError,
   lockUserRow,
 } from "../database/database.service";
+import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { EmailService } from "../email/email.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
@@ -93,6 +93,7 @@ export class ChauffeurService {
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly monoService: MonoService,
     private readonly premblyService: PremblyService,
+    private readonly driversLicenseLookupService: DriversLicenseLookupService,
     private readonly smileIdService: SmileIdService,
     private readonly imageService: ChauffeurImageService,
     private readonly storageService: StorageService,
@@ -495,9 +496,7 @@ export class ChauffeurService {
 
     let license: MonoDriversLicenseResult;
     try {
-      license = await lookupDriversLicense(
-        this.monoService,
-        this.premblyService,
+      license = await this.driversLicenseLookupService.lookup(
         driversLicenseNumber,
         verification.identityFirstName,
         verification.identityLastName,

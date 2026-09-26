@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { CarModule } from "../car/car.module";
+import { DriversLicenseModule } from "../drivers-license/drivers-license.module";
 import { MonoModule } from "../mono/mono.module";
 import { NhtsaModule } from "../nhtsa/nhtsa.module";
 import { PremblyModule } from "../prembly/prembly.module";
@@ -23,6 +24,7 @@ import { VerificationThrottlerGuard } from "./verification-throttler.guard";
   imports: [
     AuthModule,
     CarModule,
+    DriversLicenseModule,
     MonoModule,
     NhtsaModule,
     PremblyModule,
