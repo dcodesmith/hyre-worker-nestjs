@@ -343,6 +343,17 @@ describe("LangGraphExtractorService", () => {
       },
     );
 
+    it("returns unknown without calling the LLM for vowel-less keyboard smash", async () => {
+      const state = buildState({ inboundMessage: "qwrtypsdfghjkl" });
+
+      const result = await service.extract(state);
+
+      expect(result.intent).toBe("unknown");
+      expect(result.draftPatch).toEqual({});
+      expect(result.confidence).toBe(0.2);
+      expect(openaiMock.invoke).not.toHaveBeenCalled();
+    });
+
     it("extracts greeting intent", async () => {
       openaiMock.invoke.mockResolvedValue({
         content: JSON.stringify({

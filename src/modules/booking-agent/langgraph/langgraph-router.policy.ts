@@ -114,6 +114,12 @@ function resolveIntentDecision(state: BookingAgentState): LangGraphRouteDecision
   switch (extraction.intent) {
     case "request_agent":
       return { nextNode: LANGGRAPH_NODE_NAMES.HANDOFF };
+    case "abuse":
+      return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage };
+    case "off_topic":
+    case "ask_question":
+    case "unknown":
+      return buildClarifyDecision(state);
     case "cancel":
       if (shouldClarifyCancelIntent(state)) {
         return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "confirming" };
@@ -148,6 +154,18 @@ function resolveFallbackDecision(
   }
 
   return { nextNode: LANGGRAPH_NODE_NAMES.RESPOND, stage: "collecting" };
+}
+
+function buildClarifyDecision(state: BookingAgentState): LangGraphRouteDecision {
+  const keepStage =
+    state.stage === "presenting_options" ||
+    state.stage === "confirming" ||
+    state.stage === "awaiting_payment" ||
+    state.stage === "greeting";
+  return {
+    nextNode: LANGGRAPH_NODE_NAMES.RESPOND,
+    stage: keepStage ? state.stage : "collecting",
+  };
 }
 
 function buildResetDecision(): LangGraphRouteDecision {

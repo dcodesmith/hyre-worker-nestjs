@@ -125,6 +125,51 @@ describe("langgraph-router.policy", () => {
     expect(decision.availableOptions).toEqual([]);
   });
 
+  it("routes unknown and questions to respond without searching", () => {
+    const completeDraft = {
+      bookingType: "DAY" as const,
+      pickupDate: "2026-03-01",
+      pickupTime: "09:00",
+      pickupLocation: "Victoria Island",
+      dropoffDate: "2026-03-01",
+      dropoffLocation: "Lekki",
+    };
+
+    const unknownDecision = resolveRouteDecision(
+      buildState({
+        draft: completeDraft,
+        extraction: { intent: "unknown", draftPatch: { notes: "asdf" }, confidence: 0.2 },
+      }),
+    );
+    expect(unknownDecision.nextNode).toBe("respond");
+    expect(unknownDecision.nextNode).not.toBe("search");
+
+    const questionDecision = resolveRouteDecision(
+      buildState({
+        stage: "presenting_options",
+        draft: completeDraft,
+        availableOptions: [buildVehicleOption()],
+        extraction: { intent: "ask_question", draftPatch: {}, confidence: 0.9 },
+      }),
+    );
+    expect(questionDecision.nextNode).toBe("respond");
+    expect(questionDecision.stage).toBe("presenting_options");
+  });
+
+  it("keeps the current stage for abuse instead of creating a booking", () => {
+    const decision = resolveRouteDecision(
+      buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+        extraction: { intent: "abuse", draftPatch: {}, confidence: 0.95 },
+      }),
+    );
+
+    expect(decision.nextNode).toBe("respond");
+    expect(decision.stage).toBe("confirming");
+    expect(decision.nextNode).not.toBe("create_booking");
+  });
+
   it("routes reject+show_alternatives to search when required fields are complete", () => {
     const state = buildState({
       draft: {

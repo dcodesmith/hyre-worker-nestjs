@@ -75,6 +75,17 @@ describe("VehicleSearchQueryBuilder", () => {
     expect(query.to).toBeInstanceOf(Date);
   });
 
+  it("converts 24-hour extractor pickup times to the public search DTO format", () => {
+    const query = builder.buildExactQuery({
+      from: "2026-03-10",
+      to: "2026-03-12",
+      bookingType: "DAY",
+      pickupTime: "09:00",
+    });
+
+    expect(query.pickupTime).toBe("9 AM");
+  });
+
   it("handles invalid date strings in exact query by skipping invalid temporal fields", () => {
     const query = builder.buildExactQuery({
       from: "invalid-date",

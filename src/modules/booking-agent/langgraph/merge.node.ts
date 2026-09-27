@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
+import { LANGGRAPH_DRAFT_PATCH_MIN_CONFIDENCE } from "./langgraph.const";
 import {
   type BookingAgentLocationValidationState,
   type BookingAgentState,
@@ -25,12 +26,18 @@ export class MergeNode {
       return {};
     }
 
-    const baseDraft = shouldApplyDraftPatch(extraction.intent)
-      ? { ...draft, ...extraction.draftPatch }
-      : { ...draft };
+    const applyPatch = shouldApplyDraftPatch(extraction.intent, extraction.confidence);
+    const baseDraft = applyPatch ? { ...draft, ...extraction.draftPatch } : { ...draft };
     const newDraft = applyDerivedDraftFields(baseDraft, state.inboundMessage);
 
-    const newPreferences = this.mergePreferencesWithHint(preferences, extraction.preferenceHint);
+    const skipPreferenceMerge =
+      extraction.intent === "abuse" ||
+      extraction.intent === "unknown" ||
+      extraction.intent === "off_topic" ||
+      extraction.confidence < LANGGRAPH_DRAFT_PATCH_MIN_CONFIDENCE;
+    const newPreferences = skipPreferenceMerge
+      ? preferences
+      : this.mergePreferencesWithHint(preferences, extraction.preferenceHint);
 
     const draftChanged = hasDraftChanged(draft, newDraft);
     const pickupLocationChanged = draft.pickupLocation !== newDraft.pickupLocation;

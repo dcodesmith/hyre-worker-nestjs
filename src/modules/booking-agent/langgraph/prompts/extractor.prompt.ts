@@ -57,7 +57,7 @@ YOUR TASK:
 Extract structured booking information from the user's message. Return a JSON object with:
 
 {
-  "intent": "greeting" | "provide_info" | "update_info" | "select_option" | "confirm" | "reject" | "cancel" | "reset" | "new_booking" | "ask_question" | "request_agent" | "unknown",
+  "intent": "greeting" | "provide_info" | "update_info" | "select_option" | "confirm" | "reject" | "cancel" | "reset" | "new_booking" | "ask_question" | "request_agent" | "off_topic" | "abuse" | "unknown",
   "draftPatch": {
     // Only include fields mentioned in the message
     "bookingType": "DAY" | "NIGHT" | "FULL_DAY" | "AIRPORT_PICKUP",
@@ -118,7 +118,10 @@ INTENT DETECTION:
 - Cancels ("cancel", "never mind", "forget it") → cancel
 - Resets booking ("reset", "start over", "start fresh", "new search") → reset
 - STARTING A NEW BOOKING ("I need a car", "I want a sedan", "looking for SUV", "book a car") → new_booking
-- Asks question ("what's the price?", "do you have?") → ask_question
+- Asks question ("what's the price?", "do you have?", "how much") → ask_question
+- Off-topic but civil ("what's the weather?", "tell me a joke") → off_topic
+- Abuse, slurs, sexual harassment, or threats toward the assistant or staff → abuse
+- Gibberish / keyboard smash with no booking meaning ("asdfgh", "qwrtypsdf") → unknown, empty draftPatch, confidence ≤ 0.3
 
 NEW BOOKING vs PROVIDE INFO:
 - Use "new_booking" when user is STARTING a fresh request (no dates/times given): "I need a sedan", "book a car for me", "looking for an SUV", "I want a car"
@@ -133,6 +136,21 @@ STAGE-SPECIFIC INTENT RULES:
 - If CURRENT STAGE is "confirming" and user says "no" or rejects → intent is "reject"
 - Requests agent ("speak to agent", "human please") → request_agent
 
+LAGOS / LOCAL LANGUAGE:
+- Map common place shorthand to a searchable area name when the user clearly means a location:
+  - "VI" / "V.I." → "Victoria Island"
+  - "Lekki phase 1" / "phase 1" (when talking about pickup) → "Lekki Phase 1"
+  - "MMIA" / "Murtala" / "the airport" → "Murtala Muhammed International Airport"
+- Nigerian Pidgin that is clearly a booking request is provide_info or new_booking, not unknown:
+  - "I wan book motor" / "I need ride" → new_booking
+  - "how much" → ask_question
+- Do NOT invent a location from slang you cannot map.
+
+ABUSE AND JARGON:
+- Insults, slurs, sexual content directed at the assistant, or threats → intent "abuse", empty draftPatch
+- Industry jargon you cannot map to a required field (deadhead, SLA, etc.) → ask_question or off_topic, do NOT stuff it into notes/locations
+- If the message has no date, time, location, booking type, vehicle preference, or clear question → unknown with empty draftPatch
+
 RULES:
 1. Only include fields in draftPatch that are EXPLICITLY mentioned - do NOT assume or infer missing fields
 2. Parse relative dates to absolute YYYY-MM-DD format
@@ -146,10 +164,11 @@ RULES:
    - with DAY bookingType -> pickupDate=tomorrow, dropoffDate=pickupDate+2days
    - with FULL_DAY bookingType -> pickupDate=tomorrow, dropoffDate=pickupDate+3days
 7. NEVER assume dropoffLocation equals pickupLocation unless user explicitly says so
-8. Be conservative with confidence - if unsure, use lower value
+8. Be conservative with confidence - if unsure, use lower value (≤ 0.5). Never apply high confidence to guessed fields
 9. If message is ambiguous, prefer ask_question intent
 10. If user explicitly says a brand/model with vehicle type, extract it:
    - "Toyota SUV" -> make: "Toyota"
    - "Toyota Highlander SUV" -> make: "Toyota", model: "Highlander"
-11. If user does NOT explicitly mention make/model, do NOT invent them`;
+11. If user does NOT explicitly mention make/model, do NOT invent them
+12. NEVER put gibberish, insults, or unmapped jargon into draftPatch fields`;
 }

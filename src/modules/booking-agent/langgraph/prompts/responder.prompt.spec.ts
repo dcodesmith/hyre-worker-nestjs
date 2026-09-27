@@ -32,6 +32,7 @@ describe("responder.prompt contract", () => {
     expect(prompt).toContain("YOUR PERSONALITY:");
     expect(prompt).toContain("REQUIRED FIELDS FOR SEARCH");
     expect(prompt).toContain("NEVER ASK FOR:");
+    expect(prompt).toContain("Off-topic questions");
   });
 
   it("builds stage-aware user context", () => {
