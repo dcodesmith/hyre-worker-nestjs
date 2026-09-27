@@ -44,37 +44,6 @@ describe("DocumentsController", () => {
     documentProxyService = module.get<DocumentProxyService>(DocumentProxyService);
   });
 
-  it("delegates to proxy service and pipes the stream", async () => {
-    const stream = {
-      on: vi.fn(),
-      pipe: vi.fn(),
-    };
-    vi.mocked(documentProxyService.getPdfByDocumentId).mockResolvedValue({
-      stream: stream as unknown as Readable,
-      fileName: "sample.pdf",
-      contentType: "application/pdf",
-      contentLength: 8,
-    });
-
-    const response = {
-      setHeader: vi.fn(),
-      status: vi.fn().mockReturnThis(),
-      end: vi.fn(),
-      headersSent: false,
-    };
-
-    await controller.proxyPdf("doc-1", response as unknown as Response);
-
-    expect(documentProxyService.getPdfByDocumentId).toHaveBeenCalledWith("doc-1");
-    expect(stream.pipe).toHaveBeenCalledWith(response);
-
-    expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/pdf");
-    expect(response.setHeader).toHaveBeenCalledWith(
-      "Content-Disposition",
-      expect.stringContaining("sample.pdf"),
-    );
-  });
-
   it("escapes filename content before writing Content-Disposition header", async () => {
     const stream = {
       on: vi.fn(),

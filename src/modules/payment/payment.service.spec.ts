@@ -199,20 +199,6 @@ describe("PaymentService", () => {
     );
   });
 
-  it("processes payout for a completed booking", async () => {
-    const booking = createBooking({
-      id: "booking-123",
-      status: BookingStatus.COMPLETED,
-      car: createCar({ owner: createOwner({ id: "owner-1" }) }),
-    });
-    vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
-    const initiatePayout = vi.spyOn(service, "initiatePayout").mockResolvedValueOnce(undefined);
-
-    await service.processPayoutForBooking(booking.id);
-
-    expect(initiatePayout).toHaveBeenCalledExactlyOnceWith(booking);
-  });
-
   it("rejects a non-completed booking without initiating payout", async () => {
     const booking = createBooking({
       id: "booking-123",

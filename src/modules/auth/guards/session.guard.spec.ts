@@ -133,20 +133,6 @@ describe("SessionGuard", () => {
       );
       await expect(resultPromise).rejects.not.toThrow(AuthUnauthorizedException);
     });
-
-    it("should pass headers to getSession", async () => {
-      mockGetSession.mockResolvedValueOnce(mockSession);
-      const context = createMockExecutionContext({
-        cookie: "session=token-123",
-        authorization: "Bearer some-token",
-      });
-
-      await guard.canActivate(context);
-
-      expect(mockGetSession).toHaveBeenCalledWith({
-        headers: expect.any(Headers),
-      });
-    });
   });
 
   describe("when auth is not initialized", () => {

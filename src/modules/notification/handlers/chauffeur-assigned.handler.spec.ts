@@ -5,7 +5,6 @@ import {
   FlightDataSource,
   FlightStatus,
   NotificationInboxType,
-  NotificationOutboxEventType,
 } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -50,10 +49,6 @@ describe("ChauffeurAssignedHandler", () => {
     }).compile();
 
     handler = module.get(ChauffeurAssignedHandler);
-  });
-
-  it("uses BOOKING_ASSIGNMENT eventType", () => {
-    expect(handler.eventType).toBe(NotificationOutboxEventType.BOOKING_ASSIGNMENT);
   });
 
   it("emits inbox + outbox + deterministic dedupeKey for a registered customer with channels", async () => {

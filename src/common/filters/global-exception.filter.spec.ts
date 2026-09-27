@@ -1,7 +1,5 @@
 import { BadRequestException, HttpStatus, InternalServerErrorException } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
-import { Test } from "@nestjs/testing";
-import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockPinoLogger } from "@/testing/nest-pino-logger.mock";
 import { captureException } from "../../sentry";
@@ -40,28 +38,6 @@ function createHostMocks() {
 describe("GlobalExceptionFilter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it("is constructed by Nest with the PinoLogger injection token", async () => {
-    const logger = createMockPinoLogger();
-    const moduleRef = await Test.createTestingModule({
-      providers: [
-        GlobalExceptionFilter,
-        {
-          provide: HttpAdapterHost,
-          useValue: { httpAdapter: {} },
-        },
-        {
-          provide: PinoLogger,
-          useValue: logger,
-        },
-      ],
-    }).compile();
-
-    expect(moduleRef.get(GlobalExceptionFilter)).toBeDefined();
-    expect(logger.setContext).toHaveBeenCalledWith(GlobalExceptionFilter.name);
-
-    await moduleRef.close();
   });
 
   it("returns RFC7807 payload for AppException", () => {

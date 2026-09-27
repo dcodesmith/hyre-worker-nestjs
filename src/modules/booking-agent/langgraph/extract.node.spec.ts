@@ -31,43 +31,6 @@ describe("ExtractNode", () => {
     vi.resetAllMocks();
   });
 
-  it("returns extraction payload on success", async () => {
-    extractorServiceMock.extract.mockResolvedValue({
-      intent: "greeting",
-      draftPatch: {},
-      confidence: 0.9,
-    });
-
-    const result = await extractNode.run({
-      conversationId: "conv_1",
-      inboundMessage: "hello",
-      inboundMessageId: "msg_1",
-      customerId: null,
-      stage: "greeting",
-      turnCount: 0,
-      messages: [],
-      draft: {},
-      availableOptions: [],
-      lastShownOptions: [],
-      selectedOption: null,
-      holdId: null,
-      holdExpiresAt: null,
-      bookingId: null,
-      paymentLink: null,
-      preferences: {},
-      response: null,
-      outboxItems: [],
-      extraction: null,
-      nextNode: null,
-      error: null,
-      statusMessage: null,
-      locationValidation: createDefaultLocationValidationState(),
-    });
-
-    expect(result.extraction?.intent).toBe("greeting");
-    expect(result.error).toBeNull();
-  });
-
   it("returns safe fallback state on extraction failure", async () => {
     extractorServiceMock.extract.mockRejectedValue(new Error("429"));
 

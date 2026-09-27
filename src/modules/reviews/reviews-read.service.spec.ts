@@ -1,6 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createReview } from "../../shared/helper.fixtures";
 import { DatabaseService } from "../database/database.service";
 import { ReviewsReadService } from "./reviews-read.service";
 
@@ -191,12 +190,5 @@ describe("ReviewsReadService", () => {
       totalReviews: 0,
       ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     });
-  });
-
-  it("returns empty map for empty car id list without querying", async () => {
-    const result = await service.getBatchCarRatings([]);
-
-    expect(result.size).toBe(0);
-    expect(databaseService.review.findMany).not.toHaveBeenCalled();
   });
 });

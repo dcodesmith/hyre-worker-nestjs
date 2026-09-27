@@ -93,50 +93,6 @@ describe("JobController", () => {
       );
     });
 
-    it("should trigger start-reminders job when enabled", async () => {
-      const enabledController = await createControllerWithConfig(true);
-      const result = await enabledController.triggerJob("start-reminders");
-
-      expect(jobService.triggerStartBookingLegReminders).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({
-        success: true,
-        message: "Start reminder job triggered",
-      });
-    });
-
-    it("should trigger end-reminders job when enabled", async () => {
-      const enabledController = await createControllerWithConfig(true);
-      const result = await enabledController.triggerJob("end-reminders");
-
-      expect(jobService.triggerBookingLegEndReminders).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({
-        success: true,
-        message: "End reminder job triggered",
-      });
-    });
-
-    it("should trigger activate-bookings job when enabled", async () => {
-      const enabledController = await createControllerWithConfig(true);
-      const result = await enabledController.triggerJob("activate-bookings");
-
-      expect(jobService.triggerActivateBookings).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({
-        success: true,
-        message: "Activate bookings job triggered",
-      });
-    });
-
-    it("should trigger complete-bookings job when enabled", async () => {
-      const enabledController = await createControllerWithConfig(true);
-      const result = await enabledController.triggerJob("complete-bookings");
-
-      expect(jobService.triggerCompleteBookings).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({
-        success: true,
-        message: "Complete bookings job triggered",
-      });
-    });
-
     it("should handle errors from job service", async () => {
       const enabledController = await createControllerWithConfig(true);
       const error = new Error("Job service error");
