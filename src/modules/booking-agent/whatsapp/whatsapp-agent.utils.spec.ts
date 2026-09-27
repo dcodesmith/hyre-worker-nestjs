@@ -69,23 +69,6 @@ describe("whatsapp-agent utils", () => {
   });
 
   describe("parseInteractiveReply", () => {
-    it("returns null for null/undefined payload", () => {
-      expect(parseInteractiveReply(null)).toBeNull();
-      expect(parseInteractiveReply(undefined)).toBeNull();
-    });
-
-    it("returns null for non-object payload", () => {
-      expect(parseInteractiveReply("string")).toBeNull();
-      expect(parseInteractiveReply(123)).toBeNull();
-      expect(parseInteractiveReply(true)).toBeNull();
-    });
-
-    it("returns null for payload without interactive data", () => {
-      expect(parseInteractiveReply({})).toBeNull();
-      expect(parseInteractiveReply({ Body: "hello" })).toBeNull();
-      expect(parseInteractiveReply({ MessageSid: "SM123" })).toBeNull();
-    });
-
     it("parses button reply with ButtonPayload and ButtonText", () => {
       const result = parseInteractiveReply({
         ButtonPayload: "vehicle:abc123",

@@ -53,41 +53,6 @@ describe("SmtpEmailTransport", () => {
     transport = module.get<SmtpEmailTransport>(SmtpEmailTransport);
   });
 
-  it("should initialize SMTP transporter once", () => {
-    expect(mockCreateTransport).toHaveBeenCalledTimes(1);
-    expect(mockCreateTransport).toHaveBeenCalledWith({
-      host: "127.0.0.1",
-      port: 1025,
-      secure: false,
-      auth: undefined,
-    });
-  });
-
-  it("should send email through SMTP transport", async () => {
-    mockSendMail.mockResolvedValueOnce({
-      messageId: "smtp-message-id",
-      response: "250 Accepted",
-    });
-
-    const result = await transport.sendEmail({
-      to: "recipient@example.com",
-      subject: "Test Subject",
-      html: "<p>Test HTML</p>",
-    });
-
-    expect(mockSendMail).toHaveBeenCalledWith({
-      from: "Test Sender from Test App <smtp@example.com>",
-      to: "recipient@example.com",
-      subject: "Test Subject",
-      html: "<p>Test HTML</p>",
-    });
-    expect(result).toEqual({
-      data: {
-        id: "smtp-message-id",
-      },
-    });
-  });
-
   it("should throw EmailDeliveryFailedException when SMTP send fails", async () => {
     mockSendMail.mockRejectedValueOnce(new Error("Connection refused"));
 

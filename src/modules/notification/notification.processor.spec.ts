@@ -197,70 +197,6 @@ describe("NotificationProcessor", () => {
     logger = module.get<PinoLogger>(PinoLogger);
   });
 
-  it("should process notification job with EMAIL channel successfully", async () => {
-    const job = createJob("job-1", {
-      id: "notification-1",
-      type: NotificationType.BOOKING_STATUS_CHANGE,
-      channels: [NotificationChannel.EMAIL],
-      bookingId: "booking-123",
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          email: "client@example.com",
-        },
-      },
-      templateData: {
-        templateKind: BOOKING_STATUS_TEMPLATE_KIND,
-        id: "booking-123",
-        bookingReference: "BR-123",
-        customerName: "John Doe",
-        ownerName: "Owner Name",
-        chauffeurName: "Chauffeur Name",
-        chauffeurPhoneNumber: "1234567890",
-        carName: "Car Name",
-        pickupLocation: "Pickup Location",
-        returnLocation: "Return Location",
-        startDate: "2024-01-01",
-        endDate: "2024-01-02",
-        totalAmount: "10000",
-        title: "Booking Title",
-        status: "ACTIVE",
-        cancellationReason: "",
-        subject: "Booking Status Update",
-        oldStatus: "CONFIRMED",
-        newStatus: "ACTIVE",
-      },
-    });
-
-    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
-      data: { id: "email-msg-1" },
-      error: null,
-      headers: {},
-    });
-
-    const results = await processor.process(job);
-
-    expect(emailService.sendEmail).toHaveBeenCalledWith({
-      to: "client@example.com",
-      subject: "Booking Status Update",
-      html: "<html>Status email</html>",
-    });
-    expect(results).toHaveLength(1);
-    expect(results[0]).toEqual({
-      channel: NotificationChannel.EMAIL,
-      success: true,
-      messageId: "email-sent",
-      perRecipientResults: [
-        {
-          recipient: CLIENT_RECIPIENT_TYPE,
-          channel: NotificationChannel.EMAIL,
-          email: "client@example.com",
-          success: true,
-          messageId: "email-msg-1",
-        },
-      ],
-    });
-  });
-
   it("sends failed payout notifications only to operations email", async () => {
     const job = createJob("payout-failed-job", {
       id: "payout-status-payout-123-failed",
@@ -339,61 +275,6 @@ describe("NotificationProcessor", () => {
     });
     expect(whatsAppService.sendMessage).not.toHaveBeenCalled();
     expect(pushService.sendPushNotifications).not.toHaveBeenCalled();
-  });
-
-  it("should process notification job with WHATSAPP channel successfully", async () => {
-    const job = createJob("job-2", {
-      id: "notification-2",
-      type: NotificationType.BOOKING_REMINDER_START,
-      channels: [NotificationChannel.WHATSAPP],
-      bookingId: "booking-456",
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          phoneNumber: "+1234567890",
-        },
-      },
-      templateData: {
-        templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
-        bookingLegId: "leg-1",
-        bookingId: "booking-456",
-        bookingReference: "BR-456",
-        customerName: "John Doe",
-        chauffeurName: "Chauffeur Name",
-        customerPhone: "+1234567890",
-        legDate: "2024-01-01",
-        legStartTime: "10:00",
-        legEndTime: "18:00",
-        carName: "Car Name",
-        pickupLocation: "Pickup Location",
-        returnLocation: "Return Location",
-        subject: "Booking Reminder",
-        recipientType: CLIENT_RECIPIENT_TYPE,
-      },
-    });
-
-    vi.mocked(whatsAppService.sendMessage).mockResolvedValueOnce(undefined);
-
-    const results = await processor.process(job);
-
-    expect(whatsAppService.sendMessage).toHaveBeenCalledWith({
-      to: "+1234567890",
-      templateKey: expect.any(String),
-      variables: expect.objectContaining({
-        "1": "John Doe",
-        "2": "Car Name",
-        "3": "10:00",
-        "4": "18:00",
-        "5": "Pickup Location",
-        "6": "Return Location",
-        "7": "Chauffeur Name",
-      }),
-    });
-    expect(results).toHaveLength(1);
-    expect(results[0]).toEqual({
-      channel: NotificationChannel.WHATSAPP,
-      success: true,
-      messageId: "whatsapp-sent",
-    });
   });
 
   it("renders operational flight updates for email and WhatsApp", async () => {
@@ -546,65 +427,6 @@ describe("NotificationProcessor", () => {
         "3": "Booking update",
       }),
     });
-  });
-
-  it("should process notification job with both EMAIL and WHATSAPP channels", async () => {
-    const job = createJob("job-3", {
-      id: "notification-3",
-      type: NotificationType.BOOKING_REMINDER_END,
-      channels: [NotificationChannel.EMAIL, NotificationChannel.WHATSAPP],
-      bookingId: "booking-789",
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          email: "client@example.com",
-          phoneNumber: "+1234567890",
-        },
-      },
-      templateData: {
-        templateKind: BOOKING_REMINDER_TEMPLATE_KIND,
-        bookingLegId: "leg-1",
-        bookingId: "booking-789",
-        bookingReference: "BR-789",
-        customerName: "John Doe",
-        chauffeurName: "Chauffeur Name",
-        customerPhone: "+1234567890",
-        legDate: "2024-01-01",
-        legStartTime: "10:00",
-        legEndTime: "18:00",
-        carName: "Car Name",
-        pickupLocation: "Pickup Location",
-        returnLocation: "Return Location",
-        subject: "Booking End Reminder",
-        recipientType: CLIENT_RECIPIENT_TYPE,
-      },
-    });
-
-    vi.mocked(emailService.sendEmail).mockResolvedValueOnce({
-      data: { id: "email-msg-2" },
-      error: null,
-      headers: {},
-    });
-    vi.mocked(whatsAppService.sendMessage).mockResolvedValueOnce(undefined);
-
-    const results = await processor.process(job);
-
-    expect(emailService.sendEmail).toHaveBeenCalledWith({
-      to: "client@example.com",
-      subject: "Booking End Reminder",
-      html: "<html>Reminder email</html>",
-    });
-    expect(whatsAppService.sendMessage).toHaveBeenCalledWith({
-      to: "+1234567890",
-      templateKey: expect.any(String),
-      variables: expect.objectContaining({
-        "1": "John Doe",
-        "2": "Car Name",
-      }),
-    });
-    expect(results).toHaveLength(2);
-    expect(results[0]?.channel).toBe(NotificationChannel.EMAIL);
-    expect(results[1]?.channel).toBe(NotificationChannel.WHATSAPP);
-    expect(results.every((r) => r.success)).toBe(true);
   });
 
   it("should return empty results when no recipients are provided", async () => {
@@ -983,34 +805,6 @@ describe("NotificationProcessor", () => {
         tokens: ["ExponentPushToken[latest]"],
       }),
     );
-  });
-
-  it("logs when no active push tokens are found", async () => {
-    const job = createJob("job-no-token", {
-      id: "notification-no-token",
-      type: NotificationType.BOOKING_STATUS_CHANGE,
-      audience: NotificationAudience.CUSTOMER,
-      channels: [NotificationChannel.PUSH],
-      bookingId: "booking-push",
-      recipients: {
-        [CLIENT_RECIPIENT_TYPE]: {
-          userId: "customer-no-token",
-        },
-      },
-      templateData: pushTemplateData,
-    });
-
-    await expect(processor.process(job)).resolves.toEqual([]);
-
-    expect(logger.debug).toHaveBeenCalledWith(
-      {
-        bookingId: "booking-push",
-        type: NotificationType.BOOKING_STATUS_CHANGE,
-        recipientCount: 1,
-      },
-      "Push notification skipped: no active tokens found",
-    );
-    expect(pushService.sendPushNotifications).not.toHaveBeenCalled();
   });
 
   it("does not deliver push to an explicitly unsupported audience", async () => {

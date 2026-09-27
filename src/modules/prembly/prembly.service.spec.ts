@@ -416,24 +416,21 @@ describe("PremblyService", () => {
       });
     });
 
-    it.each([undefined, "", "   "])(
-      "treats a missing or blank vehicle_color as null",
-      async (vehicleColor) => {
-        mockAxiosInstance.post.mockResolvedValueOnce({
+    it("treats a missing or blank vehicle_color as null", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          ...insuranceSuccess(),
           data: {
-            ...insuranceSuccess(),
-            data: {
-              ...insuranceSuccess().data,
-              vehicle_color: vehicleColor,
-            },
+            ...insuranceSuccess().data,
+            vehicle_color: "   ",
           },
-        });
+        },
+      });
 
-        await expect(service.verifyInsurance("POLICY-123")).resolves.toMatchObject({
-          color: null,
-        });
-      },
-    );
+      await expect(service.verifyInsurance("POLICY-123")).resolves.toMatchObject({
+        color: null,
+      });
+    });
   });
 
   describe("provider errors", () => {

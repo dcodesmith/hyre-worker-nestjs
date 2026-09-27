@@ -79,20 +79,6 @@ describe("AuthController", () => {
 
         await expect(controller.getSession(req)).rejects.toThrow(AuthUnauthorizedException);
       });
-
-      it("should pass converted headers to getSession", async () => {
-        mockGetSession.mockResolvedValueOnce(mockSession);
-        const req = createMockRequest({
-          cookie: "session=token-123",
-          "accept-language": "en-US",
-        });
-
-        await controller.getSession(req);
-
-        expect(mockGetSession).toHaveBeenCalledWith({
-          headers: expect.any(Headers),
-        });
-      });
     });
 
     describe("when auth is not initialized", () => {

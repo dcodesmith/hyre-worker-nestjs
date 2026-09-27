@@ -51,10 +51,6 @@ describe("ReferralThrottlerGuard", () => {
     guard = module.get<ReferralThrottlerGuard>(ReferralThrottlerGuard);
   });
 
-  it("resolves with throttler storage dependency", () => {
-    expect(guard).toBeDefined();
-  });
-
   it("allows request under rate limits", async () => {
     await expect(guard.canActivate(createContext({}))).resolves.toBe(true);
   });

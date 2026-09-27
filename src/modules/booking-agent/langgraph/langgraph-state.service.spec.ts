@@ -77,12 +77,6 @@ describe("LangGraphStateService", () => {
       expect(state.preferences).toEqual({});
       expect(state.error).toBeNull();
     });
-
-    it("creates initial state with null customerId", () => {
-      const state = service.createInitialState(conversationId, "msg_1", "hi", null);
-
-      expect(state.customerId).toBeNull();
-    });
   });
 
   describe("mergeWithExisting", () => {

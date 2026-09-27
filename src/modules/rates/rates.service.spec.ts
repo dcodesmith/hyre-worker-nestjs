@@ -60,19 +60,6 @@ describe("RatesService", () => {
     databaseService.taxRate.findFirst.mockResolvedValue(mockVatRate);
   });
   describe("getRates", () => {
-    it("should fetch and return all platform rates", async () => {
-      const rates = await service.getRates();
-
-      expect(rates).toEqual({
-        platformCustomerServiceFeeRatePercent: new Decimal("10.00"),
-        platformFleetOwnerCommissionRatePercent: new Decimal("5.00"),
-        vatRatePercent: new Decimal("7.50"),
-      });
-
-      expect(databaseService.platformFeeRate.findMany).toHaveBeenCalledTimes(1);
-      expect(databaseService.taxRate.findFirst).toHaveBeenCalledTimes(1);
-    });
-
     it("should cache rates and return cached data on subsequent calls", async () => {
       // First call - fetches from database
       const rates1 = await service.getRates();

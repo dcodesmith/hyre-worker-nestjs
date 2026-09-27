@@ -81,58 +81,6 @@ describe("BookingAgentOrchestratorService", () => {
     expect(langGraphService.invoke).not.toHaveBeenCalled();
   });
 
-  it("delegates normal text conversations to LangGraph", async () => {
-    langGraphService.invoke.mockResolvedValue({
-      outboxItems: [
-        {
-          conversationId: "conv_1",
-          dedupeKey: "langgraph:outbox:1",
-          mode: WhatsAppDeliveryMode.FREE_FORM,
-          textBody: "Sure, let's continue your booking.",
-        },
-      ],
-      response: { text: "Sure, let's continue your booking." },
-      stage: "collecting",
-      draft: {},
-      error: null,
-    });
-
-    const result = await service.decide(buildContext({ body: "Need an SUV tomorrow" }));
-
-    expect(langGraphService.invoke).toHaveBeenCalledWith({
-      conversationId: "conv_1",
-      messageId: "msg_1",
-      message: "Need an SUV tomorrow",
-      customerId: null,
-      interactive: undefined,
-    });
-    expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:outbox:1");
-  });
-
-  it("passes linked customerId through to LangGraph invocation", async () => {
-    langGraphService.invoke.mockResolvedValue({
-      outboxItems: [],
-      response: { text: "ok" },
-      stage: "collecting",
-      draft: {},
-      error: null,
-    });
-
-    await service.decide(
-      buildContext({
-        body: "Need an SUV tomorrow",
-        customerId: "user_linked_123",
-      }),
-    );
-
-    expect(langGraphService.invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customerId: "user_linked_123",
-      }),
-    );
-  });
-
   it("marks conversation as handoff when LangGraph returns handoff outbox", async () => {
     langGraphService.invoke.mockResolvedValue({
       outboxItems: [

@@ -36,18 +36,6 @@ describe("OpenAiAiSearchExtractorService", () => {
     service = module.get<OpenAiAiSearchExtractorService>(OpenAiAiSearchExtractorService);
   });
 
-  it("builds parity system prompt with timezone and mapping rules", () => {
-    const prompt = (
-      service as unknown as { buildSystemPrompt: (now: Date) => string }
-    ).buildSystemPrompt(new Date("2026-03-01T12:00:00.000Z"));
-
-    expect(prompt).toContain("Timezone: Africa/Lagos (WAT)");
-    expect(prompt).toContain("Vehicle type mapping:");
-    expect(prompt).toContain('"Benz" = "Mercedes"');
-    expect(prompt).toContain("today");
-    expect(prompt).toContain("tomorrow");
-  });
-
   it("throws invalid response error when OpenAI returns empty content", async () => {
     create.mockResolvedValue({ choices: [{ message: { content: "" } }] });
 

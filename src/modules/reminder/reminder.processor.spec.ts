@@ -3,13 +3,7 @@ import { Job } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import {
-  BOOKING_LEG_END_REMINDER,
-  BOOKING_LEG_START_REMINDER,
-  REMINDERS_QUEUE,
-  TRIP_END,
-  TRIP_START,
-} from "../../config/constants";
+import { REMINDERS_QUEUE, TRIP_START } from "../../config/constants";
 import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
 
 const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
@@ -26,7 +20,6 @@ import { ReminderService } from "./reminder.service";
 
 describe("ReminderProcessor", () => {
   let processor: ReminderProcessor;
-  let reminderService: ReminderService;
   let logger: PinoLogger;
 
   beforeEach(async () => {
@@ -46,86 +39,7 @@ describe("ReminderProcessor", () => {
       .compile();
 
     processor = module.get<ReminderProcessor>(ReminderProcessor);
-    reminderService = module.get<ReminderService>(ReminderService);
     logger = module.get<PinoLogger>(PinoLogger);
-  });
-
-  it("should process BOOKING_LEG_START_REMINDER job and call sendBookingStartReminders", async () => {
-    const job = {
-      id: "job-1",
-      name: BOOKING_LEG_START_REMINDER,
-      data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    vi.mocked(reminderService.sendBookingStartReminders).mockResolvedValueOnce(
-      "Queued 10 start reminder notifications.",
-    );
-
-    const result = await processor.process(job);
-
-    expect(reminderService.sendBookingStartReminders).toHaveBeenCalledExactlyOnceWith();
-    expect(result).toEqual({
-      success: true,
-      result: "Queued 10 start reminder notifications.",
-    });
-  });
-
-  it("should process BOOKING_LEG_END_REMINDER job and call sendBookingEndReminders", async () => {
-    const job = {
-      id: "job-2",
-      name: BOOKING_LEG_END_REMINDER,
-      data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    vi.mocked(reminderService.sendBookingEndReminders).mockResolvedValueOnce(
-      "Queued 5 end reminder notifications.",
-    );
-
-    const result = await processor.process(job);
-
-    expect(reminderService.sendBookingEndReminders).toHaveBeenCalledExactlyOnceWith();
-    expect(result).toEqual({
-      success: true,
-      result: "Queued 5 end reminder notifications.",
-    });
-  });
-
-  it("should handle empty result from sendBookingStartReminders", async () => {
-    const job = {
-      id: "job-3",
-      name: BOOKING_LEG_START_REMINDER,
-      data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    vi.mocked(reminderService.sendBookingStartReminders).mockResolvedValueOnce(
-      "No relevant booking legs today, so no start reminders to send.",
-    );
-
-    const result = await processor.process(job);
-
-    expect(result).toEqual({
-      success: true,
-      result: "No relevant booking legs today, so no start reminders to send.",
-    });
-  });
-
-  it("should handle empty result from sendBookingEndReminders", async () => {
-    const job = {
-      id: "job-4",
-      name: BOOKING_LEG_END_REMINDER,
-      data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    vi.mocked(reminderService.sendBookingEndReminders).mockResolvedValueOnce(
-      "No relevant booking legs today, so no end reminders to send.",
-    );
-
-    const result = await processor.process(job);
-
-    expect(result).toEqual({
-      success: true,
-      result: "No relevant booking legs today, so no end reminders to send.",
-    });
   });
 
   it("should throw error for unknown job type", async () => {
@@ -138,34 +52,6 @@ describe("ReminderProcessor", () => {
     await expect(processor.process(job)).rejects.toThrow(
       "Unknown reminder job type: unknown-job-type",
     );
-  });
-
-  it("should throw error when sendBookingStartReminders fails", async () => {
-    const job = {
-      id: "job-6",
-      name: BOOKING_LEG_START_REMINDER,
-      data: { type: TRIP_START, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    const serviceError = new Error("Notification service unavailable");
-    vi.mocked(reminderService.sendBookingStartReminders).mockRejectedValueOnce(serviceError);
-
-    await expect(processor.process(job)).rejects.toThrow("Notification service unavailable");
-    expect(reminderService.sendBookingStartReminders).toHaveBeenCalled();
-  });
-
-  it("should throw error when sendBookingEndReminders fails", async () => {
-    const job = {
-      id: "job-7",
-      name: BOOKING_LEG_END_REMINDER,
-      data: { type: TRIP_END, timestamp: new Date().toISOString() },
-    } as Job<ReminderJobData, { success: boolean; result?: string }, string>;
-
-    const serviceError = new Error("Database connection failed");
-    vi.mocked(reminderService.sendBookingEndReminders).mockRejectedValueOnce(serviceError);
-
-    await expect(processor.process(job)).rejects.toThrow("Database connection failed");
-    expect(reminderService.sendBookingEndReminders).toHaveBeenCalled();
   });
 
   it("captures a missing-job worker failure without dereferencing the job", () => {

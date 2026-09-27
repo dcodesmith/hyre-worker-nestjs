@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import { NotificationInboxType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBooking, createCar, createOwner, createUser } from "../../../shared/helper.fixtures";
 import { NotificationService } from "../notification.service";
@@ -37,10 +37,6 @@ describe("BookingCancellationHandler", () => {
     }).compile();
 
     handler = module.get(BookingCancellationHandler);
-  });
-
-  it("uses BOOKING_LIFECYCLE eventType (cancellation is a lifecycle transition)", () => {
-    expect(handler.eventType).toBe(NotificationOutboxEventType.BOOKING_LIFECYCLE);
   });
 
   it("emits a customer event (inbox + outbox) and an owner event (outbox only)", async () => {

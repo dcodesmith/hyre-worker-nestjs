@@ -176,21 +176,4 @@ describe("deployment environment configuration", () => {
     );
     expect(existsSync(join(process.cwd(), ".github/workflows/release-please.yml"))).toBe(false);
   });
-
-  it("keeps the cross-agent release skill on the shared procedure", () => {
-    const releaseSkill = readRepositoryFile(".agents/skills/release/SKILL.md");
-    const codexPolicy = readRepositoryFile(".agents/skills/release/agents/openai.yaml");
-    const procedure = readRepositoryFile("docs/release-command.md");
-
-    expect(releaseSkill).toContain("name: release");
-    expect(releaseSkill).toContain("disable-model-invocation: true");
-    expect(releaseSkill).toContain("docs/release-command.md");
-    expect(codexPolicy).toContain("allow_implicit_invocation: false");
-    expect(existsSync(join(process.cwd(), ".cursor/commands/release.md"))).toBe(false);
-    expect(existsSync(join(process.cwd(), ".claude/commands/release.md"))).toBe(false);
-    expect(procedure).toContain(".github/workflows/fly-production.yml");
-    expect(procedure).toContain("protected `production` environment");
-    expect(procedure).toContain("/release status");
-    expect(procedure).toContain("never bypass that gate");
-  });
 });

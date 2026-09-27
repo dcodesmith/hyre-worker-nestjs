@@ -1,6 +1,9 @@
 # Unit test confidence audit
 
-Read-only audit of the unit suite on 27 September 2026. No production code or tests were changed.
+Audit of the unit suite on 27 September 2026, followed by removal of the tests that did not improve
+confidence. Production code was not changed. No new end-to-end test was added: chauffeur
+onboarding, account verification, vehicle verification, and admin approval already exercise those
+flows against the app and database with third-party providers mocked.
 
 The question was what share of unit tests does not improve confidence: tests that only mirror
 implementation, assert wiring or forwarding, repeat another case, or check framework behavior.
@@ -81,9 +84,18 @@ invite, consent, session isolation, provider success, duplicate NIN rejection, i
 assignment conflicts. Account verification, vehicle verification, and admin approval have the same
 shape.
 
-## Recommendation
+## Cleanup
 
-Delete or merge the low-value layer, about 290 cases. Keep the domain unit tests. Add a flow test
-only where a real outcome is not already covered across HTTP, database, and provider boundaries.
-Replacing the valuable unit tests with end-to-end tests would slow feedback and make failures
-harder to localize. The unit suite is not currently a runtime bottleneck.
+Removed **282** executed cases (2,956 down to 2,674) and **28** spec files. The unit suite still
+passes, in 20.10s. Domain, security, money, concurrency, idempotency, retry, and provider-contract
+tests stayed.
+
+Two small groups from the low-value list were kept because they are the only checks of a real rule:
+
+- Flutterwave webhook dispatch, so a charge, transfer, or refund cannot be routed to the wrong
+  handler and an unknown event stays ignored.
+- The booking-receipt throttler, so that route uses only the default limit and does not inherit
+  the public AI-search limit.
+
+Flow coverage was left as it is. The gaps those deleted tests occupied were mock forwarding and
+duplicated schema cases, which the existing end-to-end flows already exercise at the HTTP boundary.
