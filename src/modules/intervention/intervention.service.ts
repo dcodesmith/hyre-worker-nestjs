@@ -32,6 +32,11 @@ import { MonoError } from "../mono/mono.service";
 import { PremblyError } from "../prembly/prembly.service";
 import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
+import {
+  AccountEmailNotVerifiedException,
+  AccountPhoneNotVerifiedException,
+  AccountVerificationOperationFailedException,
+} from "../verification/account-verification.error";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
 import type { ApproveInterventionDto, ListInterventionsDto } from "./intervention.dto";
 import {
@@ -620,6 +625,11 @@ export class InterventionService {
   ): Promise<void> {
     const verification = await tx.fleetOwnerAccountVerification.findUnique({
       where: { id: verificationId },
+      include: {
+        user: {
+          select: { emailVerified: true, phoneVerifiedAt: true },
+        },
+      },
     });
     if (
       !verification ||
@@ -629,6 +639,8 @@ export class InterventionService {
     ) {
       return;
     }
+    if (!verification.user.emailVerified) throw new AccountEmailNotVerifiedException();
+    if (!verification.user.phoneVerifiedAt) throw new AccountPhoneNotVerifiedException();
     const now = new Date();
     await tx.fleetOwnerAccountVerification.update({
       where: { id: verification.id },
@@ -639,10 +651,11 @@ export class InterventionService {
         reviewNotes: reviewer?.notes,
       },
     });
-    await tx.bankDetails.updateMany({
+    const bank = await tx.bankDetails.updateMany({
       where: { userId: verification.userId },
       data: { isVerified: true, lastVerifiedAt: now },
     });
+    if (bank.count === 0) throw new AccountVerificationOperationFailedException();
     await tx.user.update({
       where: { id: verification.userId },
       data: { hasOnboarded: true, fleetOwnerStatus: FleetOwnerStatus.APPROVED },
@@ -767,24 +780,30 @@ export class InterventionService {
       await this.chauffeurActivationService.activateIfEligible(verificationId);
     } catch (error) {
       if (
-        !reviewer &&
-        status === VerificationInterventionStatus.AUTO_RESOLVED &&
-        outcome.interventionId
+        outcome.interventionId &&
+        ((!reviewer && status === VerificationInterventionStatus.AUTO_RESOLVED) ||
+          (reviewer && status === VerificationInterventionStatus.APPROVED))
       ) {
-        await this.databaseService.verificationIntervention.updateMany({
-          where: {
-            id: outcome.interventionId,
-            status: VerificationInterventionStatus.AUTO_RESOLVED,
-          },
-          data: {
-            status: VerificationInterventionStatus.OPEN,
-            resolvedAt: null,
-            resolutionSource: null,
-          },
-        });
+        await this.reopenAfterActivationFailure(outcome.interventionId, status);
       }
       throw error;
     }
+  }
+
+  private reopenAfterActivationFailure(
+    interventionId: string,
+    status: VerificationInterventionStatus,
+  ) {
+    return this.databaseService.verificationIntervention.updateMany({
+      where: { id: interventionId, status },
+      data: {
+        status: VerificationInterventionStatus.OPEN,
+        resolvedAt: null,
+        resolvedById: null,
+        resolutionNotes: null,
+        resolutionSource: null,
+      },
+    });
   }
 
   private async rejectProviderDecision(
@@ -1121,7 +1140,15 @@ export class InterventionService {
       return true;
     });
     if (!resolved) throw new InterventionAlreadyResolvedException();
-    await this.chauffeurActivationService.activateIfEligible(verificationId);
+    try {
+      await this.chauffeurActivationService.activateIfEligible(verificationId);
+    } catch (error) {
+      await this.reopenAfterActivationFailure(
+        interventionId,
+        VerificationInterventionStatus.APPROVED,
+      );
+      throw error;
+    }
   }
 
   async reject(interventionId: string, reviewerId: string, notes: string): Promise<void> {

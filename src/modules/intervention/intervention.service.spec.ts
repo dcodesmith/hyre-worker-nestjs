@@ -28,6 +28,11 @@ import { MonoError } from "../mono/mono.service";
 import { PremblyError } from "../prembly/prembly.service";
 import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
+import {
+  AccountEmailNotVerifiedException,
+  AccountPhoneNotVerifiedException,
+  AccountVerificationOperationFailedException,
+} from "../verification/account-verification.error";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
 import {
   InterventionAlreadyResolvedException,
@@ -1040,7 +1045,12 @@ describe("InterventionService", () => {
         status: AccountVerificationStatus.REVIEW_REQUIRED,
         identityRequiresReview: false,
         bankNameMatch: NameMatchStatus.MATCHED,
+        user: {
+          emailVerified: true,
+          phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
+        },
       });
+      database.bankDetails.updateMany.mockResolvedValue({ count: 1 });
       licenseLookup.lookup.mockResolvedValueOnce(matchingLicense);
 
       await service.retry(INTERVENTION_ID, 2);
@@ -1177,6 +1187,29 @@ describe("InterventionService", () => {
         data: { faceDecision: VerificationDecisionStatus.APPROVED },
       });
       expect(activation.activateIfEligible).toHaveBeenCalledWith(VERIFICATION_ID);
+    });
+
+    it("reopens an auto-resolved face task when activation fails", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValue(faceIntervention());
+      activation.activateIfEligible.mockRejectedValueOnce(new Error("chauffeur activation failed"));
+
+      await expect(service.recordSmileResult(VERIFICATION_ID, "clear")).rejects.toThrow(
+        "chauffeur activation failed",
+      );
+
+      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: INTERVENTION_ID,
+          status: VerificationInterventionStatus.AUTO_RESOLVED,
+        },
+        data: {
+          status: VerificationInterventionStatus.OPEN,
+          resolvedAt: null,
+          resolvedById: null,
+          resolutionNotes: null,
+          resolutionSource: null,
+        },
+      });
     });
 
     it("does not activate again when the clear result was already applied", async () => {
@@ -1462,6 +1495,38 @@ describe("InterventionService", () => {
       expect(activation.activateIfEligible).toHaveBeenCalledWith(VERIFICATION_ID);
     });
 
+    it("reopens a reviewer-approved chauffeur licence when activation fails", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        chauffeurVerificationId: VERIFICATION_ID,
+      });
+      activation.activateIfEligible.mockRejectedValueOnce(new Error("chauffeur activation failed"));
+
+      await expect(
+        service.approve(INTERVENTION_ID, USER_ID, {
+          notes: "Checked the portal",
+          source: "FRSC",
+          authoritativeSourceAttested: true,
+        }),
+      ).rejects.toThrow("chauffeur activation failed");
+
+      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: INTERVENTION_ID,
+          status: VerificationInterventionStatus.APPROVED,
+        },
+        data: {
+          status: VerificationInterventionStatus.OPEN,
+          resolvedAt: null,
+          resolvedById: null,
+          resolutionNotes: null,
+          resolutionSource: null,
+        },
+      });
+    });
+
     it("refuses direct approval of an owner-driver licence intervention", async () => {
       database.verificationIntervention.findUnique.mockResolvedValue({
         id: INTERVENTION_ID,
@@ -1495,6 +1560,38 @@ describe("InterventionService", () => {
         }),
       ).rejects.toBeInstanceOf(InterventionAlreadyResolvedException);
       expect(activation.activateIfEligible).not.toHaveBeenCalled();
+    });
+
+    it("reopens a reviewer-approved face task when activation fails", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_FACE,
+        status: VerificationInterventionStatus.OPEN,
+        chauffeurVerificationId: VERIFICATION_ID,
+      });
+      activation.activateIfEligible.mockRejectedValueOnce(new Error("chauffeur activation failed"));
+
+      await expect(
+        service.approve(INTERVENTION_ID, USER_ID, {
+          notes: "Faces match",
+          source: "VISUAL_COMPARISON",
+          authoritativeSourceAttested: false,
+        }),
+      ).rejects.toThrow("chauffeur activation failed");
+
+      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: INTERVENTION_ID,
+          status: VerificationInterventionStatus.APPROVED,
+        },
+        data: {
+          status: VerificationInterventionStatus.OPEN,
+          resolvedAt: null,
+          resolvedById: null,
+          resolutionNotes: null,
+          resolutionSource: null,
+        },
+      });
     });
 
     it("rejects an open task, purges the payload and selfie, and conflicts if already resolved", async () => {
@@ -1599,7 +1696,12 @@ describe("InterventionService", () => {
         status: AccountVerificationStatus.REVIEW_REQUIRED,
         identityRequiresReview: false,
         bankNameMatch: NameMatchStatus.MATCHED,
+        user: {
+          emailVerified: true,
+          phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
+        },
       });
+      database.bankDetails.updateMany.mockResolvedValue({ count: 1 });
 
       await service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID);
 
@@ -1688,6 +1790,78 @@ describe("InterventionService", () => {
 
       expect(database.documentApproval.update).toHaveBeenCalledTimes(1);
       expect(database.fleetOwnerAccountVerification.update).not.toHaveBeenCalled();
+      expect(database.user.update).not.toHaveBeenCalled();
+    });
+
+    function stageRecoverableOwnerLicence(user: {
+      emailVerified: boolean;
+      phoneVerifiedAt: Date | null;
+    }) {
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        accountVerificationId: ACCOUNT_ID,
+        documentApprovalId: DOCUMENT_ID,
+        accountVerification: { id: ACCOUNT_ID, userId: USER_ID },
+      });
+      database.documentApproval.findUnique.mockResolvedValue({
+        id: DOCUMENT_ID,
+        userId: USER_ID,
+        documentType: DocumentType.DRIVERS_LICENSE,
+        status: DocumentStatus.PENDING,
+      });
+      database.fleetOwnerAccountVerification.findUnique.mockResolvedValue({
+        id: ACCOUNT_ID,
+        userId: USER_ID,
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+        identityRequiresReview: false,
+        bankNameMatch: NameMatchStatus.MATCHED,
+        user,
+      });
+    }
+
+    it.each([
+      [
+        "email",
+        { emailVerified: false, phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z") },
+        AccountEmailNotVerifiedException,
+      ],
+      ["phone", { emailVerified: true, phoneVerifiedAt: null }, AccountPhoneNotVerifiedException],
+    ] as const)(
+      "does not approve owner onboarding when %s is unverified",
+      async (_contact, user, exception) => {
+        stageRecoverableOwnerLicence(user);
+
+        await expect(
+          service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID),
+        ).rejects.toBeInstanceOf(exception);
+
+        expect(database.bankDetails.updateMany).not.toHaveBeenCalled();
+        expect(database.user.update).not.toHaveBeenCalled();
+        expect(database.fleetOwnerAccountVerification.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: AccountVerificationStatus.SUCCEEDED }),
+          }),
+        );
+      },
+    );
+
+    it("does not approve owner onboarding when no bank row is updated", async () => {
+      stageRecoverableOwnerLicence({
+        emailVerified: true,
+        phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
+      });
+      database.bankDetails.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID),
+      ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
+
+      expect(database.bankDetails.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        data: expect.objectContaining({ isVerified: true }),
+      });
       expect(database.user.update).not.toHaveBeenCalled();
     });
   });
