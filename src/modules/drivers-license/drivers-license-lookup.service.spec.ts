@@ -72,12 +72,29 @@ describe("DriversLicenseLookupService", () => {
     },
   );
 
-  it("returns the Prembly rejection when the fallback fails", async () => {
-    monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
-    premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("REJECTED"));
+  it.each(["UNAVAILABLE", "INVALID_RESPONSE"] as const)(
+    "treats an uncharged record-not-found Prembly fallback as an invalid response when Mono is %s",
+    async (monoKind) => {
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError(monoKind));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(
+        new PremblyError("REJECTED", "UNCHARGED_RECORD_NOT_FOUND"),
+      );
 
-    await expect(service.lookup("ABC12345DE67", "ADA", "LOVELACE", dateOfBirth)).rejects.toEqual(
-      new PremblyError("REJECTED"),
-    );
-  });
+      await expect(service.lookup("ABC12345DE67", "ADA", "LOVELACE", dateOfBirth)).rejects.toEqual(
+        new PremblyError("INVALID_RESPONSE", "UNCHARGED_RECORD_NOT_FOUND"),
+      );
+    },
+  );
+
+  it.each(["REJECTED", "UNAVAILABLE", "INVALID_RESPONSE"] as const)(
+    "returns a Prembly %s fallback unchanged",
+    async (kind) => {
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError(kind));
+
+      await expect(service.lookup("ABC12345DE67", "ADA", "LOVELACE", dateOfBirth)).rejects.toEqual(
+        new PremblyError(kind),
+      );
+    },
+  );
 });

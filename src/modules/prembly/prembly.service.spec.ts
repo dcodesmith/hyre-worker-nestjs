@@ -510,6 +510,51 @@ describe("PremblyService", () => {
         new PremblyError("REJECTED"),
       );
     });
+
+    it("tags an uncharged generic record-not-found envelope", async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: {
+          status: false,
+          response_code: "01",
+          message: "Record not found",
+          detail: "Record not found",
+          billing_info: { was_charged: false },
+        },
+      });
+
+      await expect(service.verifyDriversLicense("ABC12345DE67", "Ada", "Lovelace")).rejects.toEqual(
+        new PremblyError("REJECTED", "UNCHARGED_RECORD_NOT_FOUND"),
+      );
+    });
+
+    it.each([
+      {
+        name: "a charged record-not-found",
+        data: {
+          status: false,
+          response_code: "01",
+          message: "Record not found",
+          detail: "Record not found",
+          billing_info: { was_charged: true },
+        },
+      },
+      {
+        name: "an uncharged rejection with a different message",
+        data: {
+          status: false,
+          response_code: "01",
+          message: "Verification failed",
+          detail: "Licence number is invalid",
+          billing_info: { was_charged: false },
+        },
+      },
+    ])("leaves $name as an ordinary rejection", async ({ data }) => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data });
+
+      await expect(service.verifyDriversLicense("ABC12345DE67", "Ada", "Lovelace")).rejects.toEqual(
+        new PremblyError("REJECTED"),
+      );
+    });
   });
 
   describe("verifyCac", () => {

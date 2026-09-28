@@ -7,8 +7,14 @@ const verificationSchema = z.looseObject({
 
 export const premblyEnvelopeSchema = z.looseObject({
   status: z.boolean(),
+  message: z.string().optional(),
   detail: z.string().optional(),
   response_code: z.string().optional(),
+  billing_info: z
+    .looseObject({
+      was_charged: z.boolean().optional(),
+    })
+    .nullish(),
 });
 
 export const premblyDriversLicenseResponseSchema = z.looseObject({

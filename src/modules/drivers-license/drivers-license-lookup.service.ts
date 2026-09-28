@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
-import { PremblyService } from "../prembly/prembly.service";
+import { PremblyError, PremblyService } from "../prembly/prembly.service";
 
 @Injectable()
 export class DriversLicenseLookupService {
@@ -30,7 +30,18 @@ export class DriversLicenseLookupService {
       ) {
         throw error;
       }
-      return this.premblyService.verifyDriversLicense(licenseNumber, firstName, lastName);
+      try {
+        return await this.premblyService.verifyDriversLicense(licenseNumber, firstName, lastName);
+      } catch (fallbackError) {
+        if (
+          fallbackError instanceof PremblyError &&
+          fallbackError.kind === "REJECTED" &&
+          fallbackError.reason === "UNCHARGED_RECORD_NOT_FOUND"
+        ) {
+          throw new PremblyError("INVALID_RESPONSE", fallbackError.reason);
+        }
+        throw fallbackError;
+      }
     }
   }
 }

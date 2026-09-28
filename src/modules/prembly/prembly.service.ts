@@ -28,9 +28,13 @@ import {
 } from "./prembly.schema";
 
 export type PremblyErrorKind = "REJECTED" | "INVALID_RESPONSE" | "UNAVAILABLE";
+export type PremblyErrorReason = "UNCHARGED_RECORD_NOT_FOUND";
 
 export class PremblyError extends Error {
-  constructor(readonly kind: PremblyErrorKind) {
+  constructor(
+    readonly kind: PremblyErrorKind,
+    readonly reason?: PremblyErrorReason,
+  ) {
     super(kind);
   }
 }
@@ -304,7 +308,15 @@ export class PremblyService {
       }
 
       if (!envelope.data.status || envelope.data.response_code === "01") {
-        throw new PremblyError("REJECTED");
+        const recordNotFound = [envelope.data.message, envelope.data.detail].some((message) =>
+          message?.trim().toLowerCase().startsWith("record not found"),
+        );
+        throw new PremblyError(
+          "REJECTED",
+          envelope.data.billing_info?.was_charged === false && recordNotFound
+            ? "UNCHARGED_RECORD_NOT_FOUND"
+            : undefined,
+        );
       }
 
       if (envelope.data.response_code !== "00") {
