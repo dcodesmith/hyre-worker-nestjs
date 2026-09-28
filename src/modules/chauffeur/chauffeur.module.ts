@@ -2,8 +2,8 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { DriversLicenseModule } from "../drivers-license/drivers-license.module";
 import { EmailModule } from "../email/email.module";
-import { MonoModule } from "../mono/mono.module";
-import { PremblyModule } from "../prembly/prembly.module";
+import { InterventionModule } from "../intervention/intervention.module";
+import { NinModule } from "../nin/nin.module";
 import { SmileIdModule } from "../smile-id/smile-id.module";
 import { StorageModule } from "../storage/storage.module";
 import { VerificationModule } from "../verification/verification.module";
@@ -21,8 +21,8 @@ import { SmileIdWebhookController } from "./smile-id-webhook.controller";
     AuthModule,
     DriversLicenseModule,
     EmailModule,
-    MonoModule,
-    PremblyModule,
+    InterventionModule,
+    NinModule,
     SmileIdModule,
     StorageModule,
     VerificationModule,

@@ -593,8 +593,9 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       where: { email },
       select: { id: true, selfieObjectKey: true },
     });
-    expect(verification?.selfieObjectKey).toBeTruthy();
-    expect(verification?.selfieObjectKey).not.toEqual(user?.image);
+    expect(verification?.selfieObjectKey).toBeNull();
+    expect(user?.image).toBeNull();
+    expect(storageService.deleteObjectByKey).toHaveBeenCalled();
     expect(storageService.uploadBuffer).toHaveBeenCalledWith(
       expect.any(Buffer),
       expect.stringMatching(

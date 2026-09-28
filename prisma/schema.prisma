@@ -139,12 +139,15 @@ model ChauffeurVerification {
   livenessConfidence        Float?
   faceMatchConfidence       Float?
   selfieObjectKey           String?
+  driversLicenseDecision    VerificationDecisionStatus          @default(PENDING)
+  faceDecision              VerificationDecisionStatus          @default(PENDING)
   status                    ChauffeurVerificationStatus         @default(INVITED)
   createdAt                 DateTime                            @default(now())
   updatedAt                 DateTime                            @updatedAt
   fleetOwner                User                                @relation("FleetOwnerChauffeurVerifications", fields: [fleetOwnerId], references: [id], onDelete: Cascade)
   chauffeur                 User?                               @relation("ChauffeurVerificationUser", fields: [chauffeurId], references: [id], onDelete: SetNull)
   stageRequests             ChauffeurVerificationStageRequest[]
+  interventions             VerificationIntervention[]
 
   @@unique([fleetOwnerId, invitationIdempotencyKey], map: "ChauffeurVerification_owner_invitation_idempotency_key")
   @@unique([fleetOwnerId, email])
@@ -169,74 +172,75 @@ model ChauffeurVerificationStageRequest {
 }
 
 model User {
-  id                           String                          @id @default(uuid(7)) @db.Uuid
-  email                        String                          @unique
-  username                     String?                         @unique
-  createdAt                    DateTime                        @default(now())
-  updatedAt                    DateTime                        @updatedAt
-  address                      String?
-  city                         String?
-  fleetOwnerId                 String?                         @db.Uuid
-  name                         String?
-  phoneNumber                  String?
-  fleetOwnerStatus             FleetOwnerStatus?               @default(PROCESSING)
-  chauffeurApprovalStatus      ChauffeurApprovalStatus?        @default(PENDING)
-  hasOnboarded                 Boolean                         @default(false)
-  referralAttributionSource    ReferralAttributionSource?
-  referralCode                 String?                         @unique
-  referralDiscountUsed         Boolean                         @default(false)
-  referralSignupAt             DateTime?
-  referredByUserId             String?                         @db.Uuid
-  isOwnerDriver                Boolean                         @default(false)
-  emailVerified                Boolean                         @default(false)
-  phoneVerifiedAt              DateTime?
-  image                        String?
-  termsAcceptedAt              DateTime?
-  privacyAcceptedAt            DateTime?
-  marketingConsent             Boolean                         @default(false)
-  staffRevokedAt               DateTime?
-  chauffeurDisabledAt          DateTime?
-  bankDetails                  BankDetails?                    @relation("UserBankDetails")
-  attributedBookings           Booking[]                       @relation("BookingAcquisitionPartner")
-  bookingsAsChauffeur          Booking[]                       @relation("BookingChauffeur")
-  bookingsCompleted            Booking[]                       @relation("BookingCompletedBy")
-  bookingReferrals             Booking[]                       @relation("BookingReferrals")
-  bookings                     Booking[]                       @relation("BookingCustomer")
-  cars                         Car[]
-  vehicleVerifications         VehicleVerification[]
-  insuranceVerifications       InsuranceVerification[]
-  accountVerifications         FleetOwnerAccountVerification[] @relation("FleetOwnerAccountVerifications")
-  reviewedAccountVerifications FleetOwnerAccountVerification[] @relation("ReviewedFleetOwnerAccountVerifications")
-  chauffeurVerifications       ChauffeurVerification[]         @relation("FleetOwnerChauffeurVerifications")
-  chauffeurVerification        ChauffeurVerification?          @relation("ChauffeurVerificationUser")
-  approvedDocuments            DocumentApproval[]              @relation("ApprovedBy")
-  documents                    DocumentApproval[]              @relation("UserDocuments")
-  payoutsReceived              PayoutTransaction[]             @relation("FleetOwnerPayouts")
-  referralAttribution          ReferralAttribution?            @relation("RefereeAttribution")
-  referralAttributions         ReferralAttribution[]           @relation("ReferrerAttributions")
-  pendingReferralSignups       PendingReferralSignup[]         @relation("PendingReferralReferrer")
-  referralRewardsFrom          ReferralReward[]                @relation("RefereeRewards")
-  referralRewardsEarned        ReferralReward[]                @relation("ReferrerRewards")
-  moderatedReviews             Review[]                        @relation("ReviewModerator")
-  reviewsWritten               Review[]                        @relation("CustomerReviews")
-  fleetOwner                   User?                           @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  chauffeurs                   User[]                          @relation("FleetOwnerChauffeurs")
-  referredBy                   User?                           @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals                    User[]                          @relation("UserReferrals")
-  referralStats                UserReferralStats?
-  approvedVehicleImages        VehicleImage[]                  @relation("ApprovedVehicleImages")
-  sessions                     Session[]
-  accounts                     Account[]
-  roles                        Role[]                          @relation("RoleToUser")
-  whatsAppConversations        WhatsAppConversation[]          @relation("WhatsAppConversationLinkedUser")
-  promotions                   Promotion[]                     @relation("OwnerPromotions")
-  pushTokens                   UserPushToken[]
-  notificationInboxItems       NotificationInbox[]
-  notificationOutboxEvents     NotificationOutboxEvent[]
-  addonsCreated                Addon[]                         @relation("AddonCreatedBy")
-  addonsUpdated                Addon[]                         @relation("AddonUpdatedBy")
-  addonPricesCreated           AddonPrice[]                    @relation("AddonPriceCreatedBy")
-  addonPricesUpdated           AddonPrice[]                    @relation("AddonPriceUpdatedBy")
+  id                                String                          @id @default(uuid(7)) @db.Uuid
+  email                             String                          @unique
+  username                          String?                         @unique
+  createdAt                         DateTime                        @default(now())
+  updatedAt                         DateTime                        @updatedAt
+  address                           String?
+  city                              String?
+  fleetOwnerId                      String?                         @db.Uuid
+  name                              String?
+  phoneNumber                       String?
+  fleetOwnerStatus                  FleetOwnerStatus?               @default(PROCESSING)
+  chauffeurApprovalStatus           ChauffeurApprovalStatus?        @default(PENDING)
+  hasOnboarded                      Boolean                         @default(false)
+  referralAttributionSource         ReferralAttributionSource?
+  referralCode                      String?                         @unique
+  referralDiscountUsed              Boolean                         @default(false)
+  referralSignupAt                  DateTime?
+  referredByUserId                  String?                         @db.Uuid
+  isOwnerDriver                     Boolean                         @default(false)
+  emailVerified                     Boolean                         @default(false)
+  phoneVerifiedAt                   DateTime?
+  image                             String?
+  termsAcceptedAt                   DateTime?
+  privacyAcceptedAt                 DateTime?
+  marketingConsent                  Boolean                         @default(false)
+  staffRevokedAt                    DateTime?
+  chauffeurDisabledAt               DateTime?
+  bankDetails                       BankDetails?                    @relation("UserBankDetails")
+  attributedBookings                Booking[]                       @relation("BookingAcquisitionPartner")
+  bookingsAsChauffeur               Booking[]                       @relation("BookingChauffeur")
+  bookingsCompleted                 Booking[]                       @relation("BookingCompletedBy")
+  bookingReferrals                  Booking[]                       @relation("BookingReferrals")
+  bookings                          Booking[]                       @relation("BookingCustomer")
+  cars                              Car[]
+  vehicleVerifications              VehicleVerification[]
+  insuranceVerifications            InsuranceVerification[]
+  accountVerifications              FleetOwnerAccountVerification[] @relation("FleetOwnerAccountVerifications")
+  reviewedAccountVerifications      FleetOwnerAccountVerification[] @relation("ReviewedFleetOwnerAccountVerifications")
+  chauffeurVerifications            ChauffeurVerification[]         @relation("FleetOwnerChauffeurVerifications")
+  chauffeurVerification             ChauffeurVerification?          @relation("ChauffeurVerificationUser")
+  approvedDocuments                 DocumentApproval[]              @relation("ApprovedBy")
+  documents                         DocumentApproval[]              @relation("UserDocuments")
+  payoutsReceived                   PayoutTransaction[]             @relation("FleetOwnerPayouts")
+  referralAttribution               ReferralAttribution?            @relation("RefereeAttribution")
+  referralAttributions              ReferralAttribution[]           @relation("ReferrerAttributions")
+  pendingReferralSignups            PendingReferralSignup[]         @relation("PendingReferralReferrer")
+  referralRewardsFrom               ReferralReward[]                @relation("RefereeRewards")
+  referralRewardsEarned             ReferralReward[]                @relation("ReferrerRewards")
+  moderatedReviews                  Review[]                        @relation("ReviewModerator")
+  resolvedVerificationInterventions VerificationIntervention[]      @relation("ResolvedVerificationInterventions")
+  reviewsWritten                    Review[]                        @relation("CustomerReviews")
+  fleetOwner                        User?                           @relation("FleetOwnerChauffeurs", fields: [fleetOwnerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  chauffeurs                        User[]                          @relation("FleetOwnerChauffeurs")
+  referredBy                        User?                           @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals                         User[]                          @relation("UserReferrals")
+  referralStats                     UserReferralStats?
+  approvedVehicleImages             VehicleImage[]                  @relation("ApprovedVehicleImages")
+  sessions                          Session[]
+  accounts                          Account[]
+  roles                             Role[]                          @relation("RoleToUser")
+  whatsAppConversations             WhatsAppConversation[]          @relation("WhatsAppConversationLinkedUser")
+  promotions                        Promotion[]                     @relation("OwnerPromotions")
+  pushTokens                        UserPushToken[]
+  notificationInboxItems            NotificationInbox[]
+  notificationOutboxEvents          NotificationOutboxEvent[]
+  addonsCreated                     Addon[]                         @relation("AddonCreatedBy")
+  addonsUpdated                     Addon[]                         @relation("AddonUpdatedBy")
+  addonPricesCreated                AddonPrice[]                    @relation("AddonPriceCreatedBy")
+  addonPricesUpdated                AddonPrice[]                    @relation("AddonPriceUpdatedBy")
 
   @@index([fleetOwnerId])
   @@index([fleetOwnerStatus, hasOnboarded])
@@ -688,20 +692,21 @@ model FinancialReconciliationAudit {
 }
 
 model DocumentApproval {
-  id           String         @id @default(uuid(7)) @db.Uuid
-  documentType DocumentType
-  status       DocumentStatus @default(PENDING)
-  documentUrl  String
-  notes        String?
-  approvedById String?        @db.Uuid
-  approvedAt   DateTime?
-  carId        String?        @db.Uuid
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  userId       String?        @db.Uuid
-  approvedBy   User?          @relation("ApprovedBy", fields: [approvedById], references: [id])
-  car          Car?           @relation("CarDocuments", fields: [carId], references: [id], onDelete: Cascade)
-  user         User?          @relation("UserDocuments", fields: [userId], references: [id], onDelete: Cascade)
+  id                        String                     @id @default(uuid(7)) @db.Uuid
+  documentType              DocumentType
+  status                    DocumentStatus             @default(PENDING)
+  documentUrl               String
+  notes                     String?
+  approvedById              String?                    @db.Uuid
+  approvedAt                DateTime?
+  carId                     String?                    @db.Uuid
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  userId                    String?                    @db.Uuid
+  approvedBy                User?                      @relation("ApprovedBy", fields: [approvedById], references: [id])
+  car                       Car?                       @relation("CarDocuments", fields: [carId], references: [id], onDelete: Cascade)
+  user                      User?                      @relation("UserDocuments", fields: [userId], references: [id], onDelete: Cascade)
+  verificationInterventions VerificationIntervention[]
 
   @@unique([documentType, userId])
   @@unique([documentType, carId])
@@ -909,6 +914,7 @@ model FleetOwnerAccountVerification {
   driversLicenseLast4       String?
   driversLicenseExpiresAt   DateTime?
   driversLicenseProviderRef String?
+  driversLicenseDecision    VerificationDecisionStatus                  @default(PENDING)
   drivingCompletedAt        DateTime?
   submittedAt               DateTime?
   failureReason             String?
@@ -920,6 +926,7 @@ model FleetOwnerAccountVerification {
   user                      User                                        @relation("FleetOwnerAccountVerifications", fields: [userId], references: [id], onDelete: Cascade)
   reviewedBy                User?                                       @relation("ReviewedFleetOwnerAccountVerifications", fields: [reviewedById], references: [id], onDelete: SetNull)
   stageRequests             FleetOwnerAccountVerificationStageRequest[]
+  interventions             VerificationIntervention[]
 
   @@unique([userId, idempotencyKey])
   // One active DRAFT/PROCESSING/REVIEW_REQUIRED row per user is enforced by a
@@ -950,6 +957,35 @@ model FleetOwnerAccountVerificationStageRequest {
   // partial unique index in the staged account-verification migration.
   @@index([verificationId, stage, createdAt])
   @@index([status, processingExpiresAt])
+}
+
+model VerificationIntervention {
+  id                      String                         @id @default(uuid(7)) @db.Uuid
+  resourceKey             String                         @unique
+  kind                    VerificationInterventionKind
+  status                  VerificationInterventionStatus @default(OPEN)
+  chauffeurVerificationId String?                        @db.Uuid
+  accountVerificationId   String?                        @db.Uuid
+  documentApprovalId      String?                        @db.Uuid
+  encryptedPayload        String?
+  retryAttempt            Int                            @default(0)
+  lastAttemptAt           DateTime?
+  emailNotifiedAt         DateTime?
+  resolutionSource        String?
+  resolutionNotes         String?
+  resolvedAt              DateTime?
+  resolvedById            String?                        @db.Uuid
+  createdAt               DateTime                       @default(now())
+  updatedAt               DateTime                       @updatedAt
+  chauffeurVerification   ChauffeurVerification?         @relation(fields: [chauffeurVerificationId], references: [id], onDelete: Cascade)
+  accountVerification     FleetOwnerAccountVerification? @relation(fields: [accountVerificationId], references: [id], onDelete: Cascade)
+  documentApproval        DocumentApproval?              @relation(fields: [documentApprovalId], references: [id], onDelete: SetNull)
+  resolvedBy              User?                          @relation("ResolvedVerificationInterventions", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([chauffeurVerificationId])
+  @@index([accountVerificationId])
+  @@index([documentApprovalId])
 }
 
 model UserReferralStats {
@@ -1333,6 +1369,25 @@ enum ProviderVerificationStatus {
   PROCESSING
   SUCCEEDED
   FAILED
+}
+
+enum VerificationDecisionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VerificationInterventionKind {
+  CHAUFFEUR_DRIVERS_LICENSE
+  OWNER_DRIVER_LICENSE
+  CHAUFFEUR_FACE
+}
+
+enum VerificationInterventionStatus {
+  OPEN
+  AUTO_RESOLVED
+  APPROVED
+  REJECTED
 }
 
 enum FleetOwnerAccountType {

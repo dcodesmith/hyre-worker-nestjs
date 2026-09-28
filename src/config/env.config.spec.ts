@@ -33,6 +33,7 @@ const productionEnv = {
   REGCHECK_USERNAME: "regcheck-user",
   MONO_SECRET_KEY: "mono-secret-key",
   HMAC_KEY: "hmac-key",
+  VERIFICATION_INTERVENTION_ENCRYPTION_KEY: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
   FLIGHTAWARE_API_KEY: "flightaware-key",
   FLIGHTAWARE_WEBHOOK_SECRET: "flightaware-secret",
   GOOGLE_DISTANCE_MATRIX_API_KEY: "google-key",
@@ -571,6 +572,39 @@ describe("envSchema GRAFANA_TRACES_BASE_URL", () => {
           expect.objectContaining({
             path: ["GRAFANA_TRACES_BASE_URL"],
             message: "GRAFANA_TRACES_BASE_URL must use https://",
+          }),
+        ]),
+      );
+    }
+  });
+});
+
+describe("envSchema verification intervention encryption key", () => {
+  it("requires a base64-encoded 32-byte key", () => {
+    const valid = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+    });
+    expect(valid.success).toBe(true);
+
+    const missing = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      VERIFICATION_INTERVENTION_ENCRYPTION_KEY: undefined,
+    });
+    expect(missing.success).toBe(false);
+
+    const rejected = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      VERIFICATION_INTERVENTION_ENCRYPTION_KEY: Buffer.alloc(16, 7).toString("base64"),
+    });
+    expect(rejected.success).toBe(false);
+    if (!rejected.success) {
+      expect(rejected.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["VERIFICATION_INTERVENTION_ENCRYPTION_KEY"],
           }),
         ]),
       );

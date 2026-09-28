@@ -11,6 +11,7 @@ import {
   NameMatchStatus,
   Prisma,
   ProviderVerificationStatus,
+  VerificationDecisionStatus,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,8 +20,10 @@ import { DatabaseService } from "../database/database.service";
 import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
 import { FlutterwaveService } from "../flutterwave/flutterwave.service";
+import { InterventionService } from "../intervention/intervention.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
+import { NinLookupService } from "../nin/nin-lookup.service";
 import { PremblyError, PremblyService } from "../prembly/prembly.service";
 import { StorageService } from "../storage/storage.service";
 import type {
@@ -60,7 +63,6 @@ import {
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
 import {
-  ProviderVerificationException,
   VerificationIdempotencyKeyReusedException,
   VerificationRequestInProgressException,
 } from "./verification.error";
@@ -204,6 +206,7 @@ const persistedLicenseData = {
   driversLicenseLast4: LICENSE_NUMBER.slice(-4).toUpperCase(),
   driversLicenseExpiresAt: driversLicense.expiresAt,
   driversLicenseProviderRef: driversLicense.reference,
+  driversLicenseDecision: VerificationDecisionStatus.APPROVED,
 };
 
 const clearedLicenseData = {
@@ -211,6 +214,7 @@ const clearedLicenseData = {
   driversLicenseLast4: null,
   driversLicenseExpiresAt: null,
   driversLicenseProviderRef: null,
+  driversLicenseDecision: VerificationDecisionStatus.PENDING,
 };
 
 const ownerDriverInput = (
@@ -384,7 +388,12 @@ describe("AccountVerificationService", () => {
       update: ReturnType<typeof vi.fn>;
     };
     bankDetails: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
+    verificationIntervention: { findFirst: ReturnType<typeof vi.fn> };
     $transaction: ReturnType<typeof vi.fn>;
+  };
+  let interventionService: {
+    bindOwnerLicense: ReturnType<typeof vi.fn>;
+    dispatchIntervention: ReturnType<typeof vi.fn>;
   };
   let logger: { warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
   let monoService: {
@@ -394,6 +403,7 @@ describe("AccountVerificationService", () => {
   let premblyService: {
     verifyCac: ReturnType<typeof vi.fn>;
     verifyDriversLicense: ReturnType<typeof vi.fn>;
+    verifyNin: ReturnType<typeof vi.fn>;
   };
   let flutterwaveService: { resolveBankAccount: ReturnType<typeof vi.fn> };
   let storageService: {
@@ -432,10 +442,11 @@ describe("AccountVerificationService", () => {
       documentApproval: {
         findUnique: vi.fn(),
         findMany: vi.fn().mockResolvedValue([]),
-        upsert: vi.fn(),
+        upsert: vi.fn().mockResolvedValue({ id: "license-doc" }),
         update: vi.fn(),
       },
       bankDetails: { upsert: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      verificationIntervention: { findFirst: vi.fn().mockResolvedValue(null) },
       $transaction: vi.fn(),
     };
     monoService = {
@@ -445,6 +456,11 @@ describe("AccountVerificationService", () => {
     premblyService = {
       verifyCac: vi.fn().mockResolvedValue(cac),
       verifyDriversLicense: vi.fn(),
+      verifyNin: vi.fn(),
+    };
+    interventionService = {
+      bindOwnerLicense: vi.fn().mockResolvedValue({ id: "owner-intervention" }),
+      dispatchIntervention: vi.fn().mockResolvedValue(undefined),
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn().mockResolvedValue(resolvedAccount),
@@ -465,6 +481,7 @@ describe("AccountVerificationService", () => {
       callback({
         bankDetails: databaseService.bankDetails,
         documentApproval: databaseService.documentApproval,
+        verificationIntervention: databaseService.verificationIntervention,
         user: databaseService.user,
         fleetOwnerAccountVerification: databaseService.fleetOwnerAccountVerification,
         fleetOwnerAccountVerificationStageRequest:
@@ -478,9 +495,11 @@ describe("AccountVerificationService", () => {
         { provide: DatabaseService, useValue: databaseService },
         { provide: MonoService, useValue: monoService },
         { provide: PremblyService, useValue: premblyService },
+        NinLookupService,
         DriversLicenseLookupService,
         { provide: FlutterwaveService, useValue: flutterwaveService },
         { provide: StorageService, useValue: storageService },
+        { provide: InterventionService, useValue: interventionService },
         {
           provide: ConfigService,
           useValue: { get: vi.fn((key: string) => (key === "HMAC_KEY" ? HMAC_KEY : undefined)) },
@@ -863,9 +882,97 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("maps an unavailable Mono licence lookup to a provider exception", async () => {
+    it("keeps an owner-driver licence upload in review when both providers are unavailable", async () => {
       monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
       premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: ownerDriverInput(),
+        documents: { driversLicense: licenseFile() },
+      });
+
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          driversLicenseDecision: VerificationDecisionStatus.PENDING,
+          driversLicenseProviderRef: null,
+        }),
+      });
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
+      });
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+          fleetOwnerAccountVerification: databaseService.fleetOwnerAccountVerification,
+        }),
+        VERIFICATION_ID,
+        "license-doc",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it("reuses an existing pending licence when owner-driver providers are unavailable", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        id: "existing-license",
+        status: DocumentStatus.PENDING,
+      });
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: ownerDriverInput(),
+        documents: {},
+      });
+
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+        }),
+        VERIFICATION_ID,
+        "existing-license",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it.each([
+      ["missing", null],
+      ["rejected", { id: "existing-license", status: DocumentStatus.REJECTED }],
+    ] as const)(
+      "requires a licence when the stored document is %s during an owner-driver outage",
+      async (_label, stored) => {
+        databaseService.documentApproval.findUnique
+          .mockResolvedValueOnce({ status: DocumentStatus.PENDING })
+          .mockResolvedValueOnce(stored);
+        monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+        premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+        await expect(
+          service.create({
+            userId: USER_ID,
+            idempotencyKey: IDEMPOTENCY_KEY,
+            input: ownerDriverInput(),
+            documents: {},
+          }),
+        ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
+        expect(interventionService.bindOwnerLicense).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not dispatch when an open owner licence intervention blocks create", async () => {
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      interventionService.bindOwnerLicense.mockResolvedValueOnce(null);
 
       await expect(
         service.create({
@@ -874,8 +981,8 @@ describe("AccountVerificationService", () => {
           input: ownerDriverInput(),
           documents: { driversLicense: licenseFile() },
         }),
-      ).rejects.toBeInstanceOf(ProviderVerificationException);
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(interventionService.dispatchIntervention).not.toHaveBeenCalled();
     });
 
     it("rejects an owner-driver without a number after documents are valid", async () => {
@@ -1277,6 +1384,21 @@ describe("AccountVerificationService", () => {
       });
     });
 
+    it("falls back to Prembly when Mono cannot look up an NIN", async () => {
+      monoService.verifyNin.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyNin.mockResolvedValueOnce(identity);
+
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
+      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
+      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
+    });
+
     it("maps a rejected NIN to a field-specific failure", async () => {
       monoService.verifyNin.mockRejectedValueOnce(new MonoError("REJECTED"));
 
@@ -1288,6 +1410,7 @@ describe("AccountVerificationService", () => {
           documents: {},
         }),
       ).rejects.toBeInstanceOf(NinNotVerifiedException);
+      expect(premblyService.verifyNin).not.toHaveBeenCalled();
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.PROCESSING },
         data: {
@@ -2528,7 +2651,7 @@ describe("AccountVerificationService", () => {
       expectDraftNotAdvanced();
     });
 
-    it("maps an unavailable Mono licence lookup to a provider exception", async () => {
+    it("uploads the private licence and opens review when both providers are unavailable", async () => {
       monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
       premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
 
@@ -2539,9 +2662,76 @@ describe("AccountVerificationService", () => {
           input: ownerDriverDriving(),
           documents: { driversLicense: licenseFile() },
         }),
-      ).rejects.toBeInstanceOf(ProviderVerificationException);
+      ).resolves.toMatchObject({
+        status: "COMPLETED",
+        isOwnerDriver: true,
+        documents: { driversLicense: "PENDING" },
+      });
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          driversLicenseDecision: VerificationDecisionStatus.PENDING,
+          driversLicenseExpiresAt: null,
+          driversLicenseProviderRef: null,
+          driversLicenseHash: hashLicenseNumber(),
+        }),
+      });
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+          fleetOwnerAccountVerification: databaseService.fleetOwnerAccountVerification,
+        }),
+        VERIFICATION_ID,
+        "license-doc",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it("reuses an existing pending licence when staged driving providers are unavailable", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        id: "existing-license",
+        status: DocumentStatus.PENDING,
+      });
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: {},
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
-      expectDraftNotAdvanced();
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+        }),
+        VERIFICATION_ID,
+        "existing-license",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it("does not dispatch when an open owner licence intervention blocks the driving stage", async () => {
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      interventionService.bindOwnerLicense.mockResolvedValueOnce(null);
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile() },
+        }),
+      ).rejects.toBeInstanceOf(AccountVerificationChangedException);
+      expect(interventionService.dispatchIntervention).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -2792,6 +2982,57 @@ describe("AccountVerificationService", () => {
 
       await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
         OwnerDriverLicenseExpiredException,
+      );
+      expect(databaseService.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("submits an owner-driver licence outage as review when the intervention is open", async () => {
+      const ownerDriverDraft = drivingReadyDraft({
+        isOwnerDriver: true,
+        ...persistedLicenseData,
+        driversLicenseDecision: VerificationDecisionStatus.PENDING,
+        driversLicenseExpiresAt: null,
+        driversLicenseProviderRef: null,
+      });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        status: DocumentStatus.PENDING,
+      });
+      databaseService.verificationIntervention.findFirst.mockResolvedValue({
+        id: "intervention-1",
+      });
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
+        succeededRecord({ status: AccountVerificationStatus.REVIEW_REQUIRED }),
+      );
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).resolves.toMatchObject({
+        status: AccountVerificationStatus.REVIEW_REQUIRED,
+      });
+      expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({ status: AccountVerificationStatus.REVIEW_REQUIRED }),
+      });
+      expect(databaseService.user.updateMany).toHaveBeenCalledWith({
+        where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
+      });
+    });
+
+    it("blocks an owner-driver submit when a pending licence has no open intervention", async () => {
+      const ownerDriverDraft = drivingReadyDraft({
+        isOwnerDriver: true,
+        ...persistedLicenseData,
+        driversLicenseDecision: VerificationDecisionStatus.PENDING,
+      });
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        status: DocumentStatus.PENDING,
+      });
+
+      await expect(service.submitStage(USER_ID, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
+        OwnerDriverLicenseNotVerifiedException,
       );
       expect(databaseService.user.updateMany).not.toHaveBeenCalled();
     });
@@ -3571,6 +3812,7 @@ describe("AccountVerificationService", () => {
     const pendingReview = succeededRecord({
       status: AccountVerificationStatus.REVIEW_REQUIRED,
       isOwnerDriver: true,
+      driversLicenseDecision: VerificationDecisionStatus.APPROVED,
       user: { emailVerified: true, phoneVerifiedAt: new Date() },
     });
 
