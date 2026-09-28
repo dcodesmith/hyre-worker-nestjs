@@ -58,7 +58,7 @@ describe("InterventionController", () => {
     expect(reflector.get(ROLES_KEY, InterventionController)).toEqual([ADMIN, STAFF]);
   });
 
-  it("lets staff approve owner licence recovery and reserves rejection for admins", () => {
+  it("lets admin or staff approve and reject every intervention", () => {
     const guard = new RoleGuard(new Reflector());
     const contextFor = (handler: (...args: never[]) => unknown, roles: RoleName[]) =>
       ({
@@ -70,26 +70,16 @@ describe("InterventionController", () => {
           }),
         }),
       }) as unknown as ExecutionContext;
-    const approveDocument = InterventionController.prototype.approveOwnerLicenseDocument;
-    const reject = InterventionController.prototype.reject;
+    const handlers = [
+      InterventionController.prototype.approve,
+      InterventionController.prototype.reject,
+      InterventionController.prototype.approveOwnerLicenseDocument,
+    ];
 
-    expect(guard.canActivate(contextFor(approveDocument, [STAFF]))).toBe(true);
-    expect(guard.canActivate(contextFor(approveDocument, [ADMIN]))).toBe(true);
-    expect(guard.canActivate(contextFor(reject, [ADMIN]))).toBe(true);
-    expect(() => guard.canActivate(contextFor(approveDocument, [USER]))).toThrow(
-      AuthForbiddenException,
-    );
-
-    try {
-      guard.canActivate(contextFor(reject, [STAFF]));
-      throw new Error("Expected staff rejection to be forbidden");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AuthForbiddenException);
-      expect(error).toMatchObject({
-        response: expect.objectContaining({
-          detail: "Access denied. Required roles: admin",
-        }),
-      });
+    for (const handler of handlers) {
+      expect(guard.canActivate(contextFor(handler, [STAFF]))).toBe(true);
+      expect(guard.canActivate(contextFor(handler, [ADMIN]))).toBe(true);
+      expect(() => guard.canActivate(contextFor(handler, [USER]))).toThrow(AuthForbiddenException);
     }
   });
 

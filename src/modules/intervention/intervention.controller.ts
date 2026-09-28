@@ -81,7 +81,6 @@ export class InterventionController {
   }
 
   @Post(":interventionId/reject")
-  @Roles(ADMIN)
   async reject(
     @ZodParam("interventionId", interventionIdSchema) interventionId: string,
     @ZodBody(rejectInterventionSchema) body: RejectInterventionDto,
