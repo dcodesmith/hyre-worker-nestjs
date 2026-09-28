@@ -1,15 +1,17 @@
 import { PassThrough, Readable } from "node:stream";
+import { type ExecutionContext } from "@nestjs/common";
 import { GUARDS_METADATA, HEADERS_METADATA } from "@nestjs/common/constants";
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { ADMIN, STAFF } from "../auth/auth.const";
+import { ADMIN, type RoleName, STAFF, USER } from "../auth/auth.const";
+import { AuthForbiddenException } from "../auth/auth.error";
 import { AuthService } from "../auth/auth.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
-import { SessionGuard } from "../auth/guards/session.guard";
+import { AUTH_SESSION_KEY, SessionGuard } from "../auth/guards/session.guard";
 import { InterventionController } from "./intervention.controller";
 import { InterventionService } from "./intervention.service";
 
@@ -54,6 +56,31 @@ describe("InterventionController", () => {
       RoleGuard,
     ]);
     expect(reflector.get(ROLES_KEY, InterventionController)).toEqual([ADMIN, STAFF]);
+  });
+
+  it("lets admin or staff approve and reject every intervention", () => {
+    const guard = new RoleGuard(new Reflector());
+    const contextFor = (handler: (...args: never[]) => unknown, roles: RoleName[]) =>
+      ({
+        getHandler: () => handler,
+        getClass: () => InterventionController,
+        switchToHttp: () => ({
+          getRequest: () => ({
+            [AUTH_SESSION_KEY]: { user: { roles } },
+          }),
+        }),
+      }) as unknown as ExecutionContext;
+    const handlers = [
+      InterventionController.prototype.approve,
+      InterventionController.prototype.reject,
+      InterventionController.prototype.approveOwnerLicenseDocument,
+    ];
+
+    for (const handler of handlers) {
+      expect(guard.canActivate(contextFor(handler, [STAFF]))).toBe(true);
+      expect(guard.canActivate(contextFor(handler, [ADMIN]))).toBe(true);
+      expect(() => guard.canActivate(contextFor(handler, [USER]))).toThrow(AuthForbiddenException);
+    }
   });
 
   it("marks list and licence reveal responses as private and not stored", () => {
