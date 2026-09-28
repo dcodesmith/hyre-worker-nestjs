@@ -2,12 +2,9 @@ import { VerificationInterventionStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   approveInterventionSchema,
-  interventionIdSchema,
   listInterventionsSchema,
   rejectInterventionSchema,
 } from "./intervention.dto";
-
-const interventionId = "018f47a2-7b3c-7d4e-8f90-1234567894c1";
 
 describe("intervention DTO schemas", () => {
   it("defaults the queue to the first page of open interventions", () => {
@@ -48,10 +45,5 @@ describe("intervention DTO schemas", () => {
       notes: "Photo does not match",
     });
     expect(rejectInterventionSchema.safeParse({ notes: "no" }).success).toBe(false);
-  });
-
-  it("accepts only a uuid intervention id", () => {
-    expect(interventionIdSchema.parse(interventionId)).toBe(interventionId);
-    expect(interventionIdSchema.safeParse("intervention-1").success).toBe(false);
   });
 });

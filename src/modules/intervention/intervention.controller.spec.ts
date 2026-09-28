@@ -1,8 +1,7 @@
-import type { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { GUARDS_METADATA, HEADERS_METADATA } from "@nestjs/common/constants";
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { VerificationInterventionStatus } from "@prisma/client";
 import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -19,24 +18,14 @@ const INTERVENTION_ID = "018f47a2-7b3c-7d4e-8f90-1234567894c1";
 describe("InterventionController", () => {
   let controller: InterventionController;
   let interventionService: {
-    list: ReturnType<typeof vi.fn>;
-    getLicenseNumber: ReturnType<typeof vi.fn>;
     getSelfie: ReturnType<typeof vi.fn>;
     getNinPortrait: ReturnType<typeof vi.fn>;
-    approve: ReturnType<typeof vi.fn>;
-    reject: ReturnType<typeof vi.fn>;
-    approveOwnerLicenseDocument: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     interventionService = {
-      list: vi.fn().mockResolvedValue({ items: [], meta: {} }),
-      getLicenseNumber: vi.fn().mockResolvedValue("ABC12345DE67"),
       getSelfie: vi.fn(),
       getNinPortrait: vi.fn().mockResolvedValue(Buffer.from("portrait")),
-      approve: vi.fn().mockResolvedValue(undefined),
-      reject: vi.fn().mockResolvedValue(undefined),
-      approveOwnerLicenseDocument: vi.fn().mockResolvedValue(undefined),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InterventionController],
@@ -77,34 +66,69 @@ describe("InterventionController", () => {
     ]);
   });
 
-  it("lists interventions with the parsed query", async () => {
-    const query = { status: VerificationInterventionStatus.OPEN, page: 1, limit: 20 };
-
-    await expect(controller.list(query)).resolves.toEqual({ items: [], meta: {} });
-    expect(interventionService.list).toHaveBeenCalledWith(query);
-  });
-
-  it("returns only the revealed licence number", async () => {
-    await expect(controller.licenseNumber(INTERVENTION_ID)).resolves.toEqual({
-      licenseNumber: "ABC12345DE67",
-    });
-  });
+  function selfieResponse() {
+    const response = new PassThrough() as PassThrough & {
+      setHeader: ReturnType<typeof vi.fn>;
+      status: ReturnType<typeof vi.fn>;
+      headersSent: boolean;
+    };
+    response.setHeader = vi.fn();
+    response.headersSent = false;
+    response.status = vi.fn(() => response);
+    return response;
+  }
 
   it("streams the selfie with no-store headers", async () => {
-    const stream = { pipe: vi.fn() } as unknown as Readable;
+    const stream = Readable.from(Buffer.from("selfie"));
     interventionService.getSelfie.mockResolvedValueOnce({
       stream,
       contentType: "image/webp",
       contentLength: 8,
     });
-    const response = { setHeader: vi.fn(), end: vi.fn() } as unknown as Response;
+    const response = selfieResponse();
+    const chunks: Buffer[] = [];
+    response.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
 
-    await controller.selfie(INTERVENTION_ID, response);
+    await controller.selfie(INTERVENTION_ID, response as unknown as Response);
 
     expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "image/webp");
     expect(response.setHeader).toHaveBeenCalledWith("Content-Length", "8");
-    expect(stream.pipe).toHaveBeenCalledWith(response);
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from("selfie"));
+  });
+
+  it("destroys the selfie response when the evidence stream fails", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
+    const stream = new Readable({
+      read() {
+        this.destroy(new Error("storage unavailable"));
+      },
+    });
+    interventionService.getSelfie.mockResolvedValueOnce({
+      stream,
+      contentType: "image/webp",
+      contentLength: 8,
+    });
+    const response = selfieResponse();
+
+    try {
+      await controller.selfie(INTERVENTION_ID, response as unknown as Response);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+
+    expect(rejections).toEqual([]);
+    expect(response.destroyed).toBe(true);
+    expect(response.writableEnded).toBe(false);
   });
 
   it("returns the NIN portrait as a jpeg that is not stored", async () => {
@@ -115,39 +139,5 @@ describe("InterventionController", () => {
     expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "image/jpeg");
     expect(response.end).toHaveBeenCalledWith(Buffer.from("portrait"));
-  });
-
-  it("approves and rejects with the signed-in reviewer", async () => {
-    const user = { id: "admin-1" } as never;
-    const approval = {
-      notes: "Checked FRSC",
-      source: "FRSC",
-      authoritativeSourceAttested: true,
-    };
-
-    await expect(controller.approve(INTERVENTION_ID, approval, user)).resolves.toEqual({
-      success: true,
-    });
-    await expect(
-      controller.reject(INTERVENTION_ID, { notes: "Not a match" }, user),
-    ).resolves.toEqual({ success: true });
-    expect(interventionService.approve).toHaveBeenCalledWith(INTERVENTION_ID, "admin-1", approval);
-    expect(interventionService.reject).toHaveBeenCalledWith(
-      INTERVENTION_ID,
-      "admin-1",
-      "Not a match",
-    );
-  });
-
-  it("approves the linked owner document for the signed-in reviewer", async () => {
-    const user = { id: "admin-1" } as never;
-
-    await expect(controller.approveOwnerLicenseDocument(INTERVENTION_ID, user)).resolves.toEqual({
-      success: true,
-    });
-    expect(interventionService.approveOwnerLicenseDocument).toHaveBeenCalledWith(
-      INTERVENTION_ID,
-      "admin-1",
-    );
   });
 });

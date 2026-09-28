@@ -105,7 +105,7 @@ describe("InterventionService", () => {
     getObjectStream: ReturnType<typeof vi.fn>;
   };
   let activation: { activateIfEligible: ReturnType<typeof vi.fn> };
-  let queue: { add: ReturnType<typeof vi.fn> };
+  let queue: { add: ReturnType<typeof vi.fn>; getJob: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     database = {
@@ -177,7 +177,10 @@ describe("InterventionService", () => {
       getObjectStream: vi.fn(),
     };
     activation = { activateIfEligible: vi.fn().mockResolvedValue(true) };
-    queue = { add: vi.fn().mockResolvedValue({ id: "job" }) };
+    queue = {
+      add: vi.fn().mockResolvedValue({ id: "job" }),
+      getJob: vi.fn().mockResolvedValue(null),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -382,10 +385,14 @@ describe("InterventionService", () => {
       expect(queue.add).toHaveBeenNthCalledWith(
         1,
         VERIFICATION_INTERVENTION_RETRY_JOB,
-        { interventionId: INTERVENTION_ID, attempt: 1 },
+        {
+          interventionId: INTERVENTION_ID,
+          attempt: 1,
+          openedAt: OPENED_AT.getTime(),
+        },
         expect.objectContaining({
           delay: 15 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-1`,
+          jobId: `verification-intervention-${INTERVENTION_ID}-${OPENED_AT.getTime()}-1`,
           attempts: 3,
           backoff: { type: "exponential", delay: 30_000 },
         }),
@@ -393,10 +400,14 @@ describe("InterventionService", () => {
       expect(queue.add).toHaveBeenNthCalledWith(
         2,
         VERIFICATION_INTERVENTION_RETRY_JOB,
-        { interventionId: INTERVENTION_ID, attempt: 2 },
+        {
+          interventionId: INTERVENTION_ID,
+          attempt: 2,
+          openedAt: OPENED_AT.getTime(),
+        },
         expect.objectContaining({
           delay: 30 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-2`,
+          jobId: `verification-intervention-${INTERVENTION_ID}-${OPENED_AT.getTime()}-2`,
         }),
       );
       expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
@@ -435,17 +446,22 @@ describe("InterventionService", () => {
     });
 
     it("skips the email when another worker already claimed notification", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValueOnce({
+      const openTask = {
         id: INTERVENTION_ID,
         status: VerificationInterventionStatus.OPEN,
         kind: VerificationInterventionKind.CHAUFFEUR_FACE,
         createdAt: OPENED_AT,
         retryAttempt: 0,
         emailNotifiedAt: null,
-      });
+      };
+      database.verificationIntervention.findUnique
+        .mockResolvedValueOnce(openTask)
+        .mockResolvedValueOnce(openTask);
       database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
 
       await service.openChauffeurFace(VERIFICATION_ID);
+
+      expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
 
       expect(database.$queryRaw).toHaveBeenCalledTimes(1);
       expectRowLock(database.$queryRaw.mock.calls[0][0], "ChauffeurVerification", VERIFICATION_ID);
@@ -454,6 +470,80 @@ describe("InterventionService", () => {
         data: { emailNotifiedAt: OPENED_AT },
       });
       expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it("reopens a terminal face task and schedules a fresh retry generation", async () => {
+      const previousOpenedAt = new Date("2026-08-01T00:00:00.000Z");
+      const reopenedAt = new Date("2026-09-28T08:00:00.000Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(reopenedAt);
+      const completedJob = {
+        getState: vi.fn().mockResolvedValue("completed"),
+        retry: vi.fn(),
+      };
+      queue.getJob.mockImplementation(async (jobId: string) =>
+        jobId.includes(String(reopenedAt.getTime())) ? null : completedJob,
+      );
+      database.verificationIntervention.findUnique
+        .mockResolvedValueOnce({
+          id: INTERVENTION_ID,
+          status: VerificationInterventionStatus.REJECTED,
+          createdAt: previousOpenedAt,
+        })
+        .mockResolvedValueOnce({
+          id: INTERVENTION_ID,
+          status: VerificationInterventionStatus.OPEN,
+          kind: VerificationInterventionKind.CHAUFFEUR_FACE,
+          createdAt: reopenedAt,
+          retryAttempt: 0,
+          emailNotifiedAt: null,
+        });
+
+      await service.openChauffeurFace(VERIFICATION_ID);
+
+      expect(database.verificationIntervention.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { resourceKey: `chauffeur-face:${VERIFICATION_ID}` },
+          update: expect.objectContaining({
+            status: VerificationInterventionStatus.OPEN,
+            retryAttempt: 0,
+            lastAttemptAt: null,
+            emailNotifiedAt: null,
+            resolutionSource: null,
+            resolutionNotes: null,
+            resolvedAt: null,
+            resolvedById: null,
+            createdAt: reopenedAt,
+          }),
+        }),
+      );
+      expect(queue.add).toHaveBeenNthCalledWith(
+        1,
+        VERIFICATION_INTERVENTION_RETRY_JOB,
+        {
+          interventionId: INTERVENTION_ID,
+          attempt: 1,
+          openedAt: reopenedAt.getTime(),
+        },
+        expect.objectContaining({
+          delay: 15 * 60 * 1000,
+          jobId: `verification-intervention-${INTERVENTION_ID}-${reopenedAt.getTime()}-1`,
+        }),
+      );
+      expect(queue.add).toHaveBeenNthCalledWith(
+        2,
+        VERIFICATION_INTERVENTION_RETRY_JOB,
+        {
+          interventionId: INTERVENTION_ID,
+          attempt: 2,
+          openedAt: reopenedAt.getTime(),
+        },
+        expect.objectContaining({
+          delay: 30 * 60 * 1000,
+          jobId: `verification-intervention-${INTERVENTION_ID}-${reopenedAt.getTime()}-2`,
+        }),
+      );
+      expect(completedJob.retry).not.toHaveBeenCalled();
     });
 
     it("releases the email claim when sending fails so repair can retry it", async () => {
@@ -588,6 +678,7 @@ describe("InterventionService", () => {
         status: VerificationInterventionStatus.OPEN,
         encryptedPayload,
         chauffeurVerificationId: VERIFICATION_ID,
+        createdAt: OPENED_AT,
         retryAttempt: 0,
         lastAttemptAt: null,
         chauffeurVerification: {
@@ -598,7 +689,7 @@ describe("InterventionService", () => {
       });
       database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await service.retry(INTERVENTION_ID, 1);
+      await service.retry(INTERVENTION_ID, 1, OPENED_AT.getTime());
 
       expect(licenseLookup.lookup).not.toHaveBeenCalled();
       expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
@@ -606,9 +697,36 @@ describe("InterventionService", () => {
           id: INTERVENTION_ID,
           status: VerificationInterventionStatus.OPEN,
           retryAttempt: { lt: 1 },
+          createdAt: OPENED_AT,
         },
         data: { retryAttempt: 1, lastAttemptAt: OPENED_AT },
       });
+    });
+
+    it("does not consume a retry or call providers when a delayed job belongs to a previous generation", async () => {
+      const encryptedPayload = await captureLicensePayload();
+      const reopenedAt = new Date("2026-09-28T08:00:00.000Z");
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        encryptedPayload,
+        chauffeurVerificationId: VERIFICATION_ID,
+        createdAt: reopenedAt,
+        retryAttempt: 0,
+        chauffeurVerification: {
+          identityFirstName: "ADA",
+          identityLastName: "LOVELACE",
+          dateOfBirth: DATE_OF_BIRTH,
+        },
+      });
+
+      await expect(service.retry(INTERVENTION_ID, 1, OPENED_AT.getTime())).resolves.toBeUndefined();
+
+      expect(licenseLookup.lookup).not.toHaveBeenCalled();
+      expect(consumedRetryAttempt()).toBe(false);
+      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalled();
+      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
     });
 
     it("auto-resolves a matching chauffeur licence and activates once", async () => {
@@ -761,7 +879,7 @@ describe("InterventionService", () => {
       expect(JSON.stringify(logger.warn.mock.calls.at(-1))).not.toContain(LICENSE_NUMBER);
     });
 
-    it("terminates corrupt licence evidence without consuming a retry attempt", async () => {
+    it("leaves an undecryptable licence open without consuming a retry or rejecting the applicant", async () => {
       database.verificationIntervention.findUnique.mockResolvedValue({
         id: INTERVENTION_ID,
         kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
@@ -773,6 +891,32 @@ describe("InterventionService", () => {
           identityFirstName: "ADA",
           identityLastName: "LOVELACE",
           dateOfBirth: DATE_OF_BIRTH,
+        },
+      });
+
+      await expect(service.retry(INTERVENTION_ID, 1)).resolves.toBeUndefined();
+
+      expect(licenseLookup.lookup).not.toHaveBeenCalled();
+      expect(consumedRetryAttempt()).toBe(false);
+      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalled();
+      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
+      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(JSON.stringify(logger.error.mock.calls)).not.toContain("not-a-payload");
+    });
+
+    it("rejects a licence retry when the stored identity is missing", async () => {
+      const encryptedPayload = await captureLicensePayload();
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        encryptedPayload,
+        chauffeurVerificationId: VERIFICATION_ID,
+        retryAttempt: 0,
+        chauffeurVerification: {
+          identityFirstName: "ADA",
+          identityLastName: "LOVELACE",
+          dateOfBirth: null,
         },
       });
       database.chauffeurVerification.findUnique.mockResolvedValue({
@@ -797,20 +941,20 @@ describe("InterventionService", () => {
         }),
       });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
-      expect(JSON.stringify(logger.error.mock.calls)).not.toContain("not-a-payload");
     });
 
-    it("does not mutate an approved chauffeur when licence evidence is corrupt", async () => {
+    it("does not mutate an approved chauffeur when stored identity is missing", async () => {
+      const encryptedPayload = await captureLicensePayload();
       database.verificationIntervention.findUnique.mockResolvedValue({
         id: INTERVENTION_ID,
         kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
         status: VerificationInterventionStatus.OPEN,
-        encryptedPayload: "not-a-payload",
+        encryptedPayload,
         chauffeurVerificationId: VERIFICATION_ID,
         chauffeurVerification: {
           identityFirstName: "ADA",
           identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
+          dateOfBirth: null,
         },
       });
       database.chauffeurVerification.findUnique.mockResolvedValue({
@@ -942,6 +1086,59 @@ describe("InterventionService", () => {
       await service.retry(INTERVENTION_ID, 1);
 
       expect(database.user.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["provider rejection", "PROVIDER_REJECTED"],
+      ["staff rejection", "STAFF_REJECTED"],
+    ] as const)("resets owner onboarding and bank verification on %s", async (path, reason) => {
+      database.fleetOwnerAccountVerification.update.mockResolvedValue({ userId: USER_ID });
+      if (path === "provider rejection") {
+        const encryptedPayload = await captureLicensePayload();
+        database.verificationIntervention.findUnique.mockResolvedValue({
+          id: INTERVENTION_ID,
+          kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
+          status: VerificationInterventionStatus.OPEN,
+          encryptedPayload,
+          chauffeurVerificationId: null,
+          accountVerificationId: ACCOUNT_ID,
+          retryAttempt: 0,
+          accountVerification: {
+            identityFirstName: "ADA",
+            identityLastName: "LOVELACE",
+            identityDateOfBirth: DATE_OF_BIRTH,
+          },
+        });
+        licenseLookup.lookup.mockRejectedValueOnce(new PremblyError("REJECTED"));
+        await service.retry(INTERVENTION_ID, 1);
+      } else {
+        database.verificationIntervention.findUnique.mockResolvedValue({
+          id: INTERVENTION_ID,
+          kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
+          status: VerificationInterventionStatus.OPEN,
+          chauffeurVerificationId: null,
+          accountVerificationId: ACCOUNT_ID,
+        });
+        await service.reject(INTERVENTION_ID, USER_ID, "Licence is not valid");
+      }
+
+      expect(database.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+        where: { id: ACCOUNT_ID },
+        data: {
+          driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+          status: AccountVerificationStatus.FAILED,
+          failureReason: reason,
+        },
+        select: { userId: true },
+      });
+      expect(database.bankDetails.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        data: { isVerified: false },
+      });
+      expect(database.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { hasOnboarded: false, fleetOwnerStatus: FleetOwnerStatus.ON_HOLD },
+      });
     });
   });
 

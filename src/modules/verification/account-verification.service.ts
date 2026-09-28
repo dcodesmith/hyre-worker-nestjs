@@ -456,11 +456,15 @@ export class AccountVerificationService {
         });
         let interventionId: string | null = null;
         if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
-          if (!driversLicenseDocumentId) throw new AccountVerificationOperationFailedException();
+          const documentId = await this.resolveOwnerLicenseDocumentId(
+            tx,
+            userId,
+            driversLicenseDocumentId,
+          );
           const intervention = await this.interventionService.bindOwnerLicense(
             tx,
             completed.id,
-            driversLicenseDocumentId,
+            documentId,
             normalizeDriversLicenseNumber(input.driversLicenseNumber),
           );
           if (!intervention) throw new AccountVerificationChangedException();
@@ -811,11 +815,15 @@ export class AccountVerificationService {
           data: { status: ProviderVerificationStatus.SUCCEEDED, response },
         });
         if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
-          if (!driversLicenseDocumentId) throw new AccountVerificationOperationFailedException();
+          const documentId = await this.resolveOwnerLicenseDocumentId(
+            tx,
+            userId,
+            driversLicenseDocumentId,
+          );
           const intervention = await this.interventionService.bindOwnerLicense(
             tx,
             verification.id,
-            driversLicenseDocumentId,
+            documentId,
             normalizeDriversLicenseNumber(input.driversLicenseNumber),
           );
           if (!intervention) throw new AccountVerificationChangedException();
@@ -1377,6 +1385,24 @@ export class AccountVerificationService {
       throw new OwnerDriverLicenseRequiredException();
     }
     return existingDriverLicense.status === DocumentStatus.APPROVED;
+  }
+
+  private async resolveOwnerLicenseDocumentId(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    uploadedDocumentId: string | null,
+  ): Promise<string> {
+    if (uploadedDocumentId) return uploadedDocumentId;
+    const existing = await tx.documentApproval.findUnique({
+      where: {
+        documentType_userId: { documentType: DocumentType.DRIVERS_LICENSE, userId },
+      },
+      select: { id: true, status: true },
+    });
+    if (!existing || existing.status === DocumentStatus.REJECTED) {
+      throw new OwnerDriverLicenseRequiredException();
+    }
+    return existing.id;
   }
 
   private async ownerDriverApprovedOnSubmit(

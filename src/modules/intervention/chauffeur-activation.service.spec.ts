@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
   ChauffeurApprovalStatus,
+  ChauffeurVerificationStage,
   ChauffeurVerificationStatus,
   ProviderVerificationStatus,
   VerificationDecisionStatus,
@@ -48,6 +49,7 @@ function verification(overrides: Record<string, unknown> = {}) {
     identityLastName: "LOVELACE",
     driversLicenseDecision: VerificationDecisionStatus.APPROVED,
     faceDecision: VerificationDecisionStatus.APPROVED,
+    dateOfBirth: new Date(Date.UTC(1990, 0, 1)),
     selfieObjectKey: SELFIE_KEY,
     status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
     ...overrides,
@@ -150,6 +152,64 @@ describe("ChauffeurActivationService", () => {
     expect(database.user.create).not.toHaveBeenCalled();
     expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["missing", null, ChauffeurErrorCode.OPERATION_FAILED],
+    [
+      "underage",
+      new Date(
+        Date.UTC(
+          new Date().getUTCFullYear() - 20,
+          new Date().getUTCMonth(),
+          new Date().getUTCDate(),
+        ),
+      ),
+      ChauffeurErrorCode.MINIMUM_AGE_NOT_MET,
+    ],
+  ] as const)(
+    "fails closed for a %s stored date of birth and records a terminal driving stage",
+    async (_label, dateOfBirth, reason) => {
+      database.chauffeurVerification.findUnique.mockResolvedValueOnce(
+        verification({ dateOfBirth }),
+      );
+
+      await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(false);
+
+      expect(database.user.create).not.toHaveBeenCalled();
+      expect(database.user.update).not.toHaveBeenCalled();
+      expect(database.verificationIntervention.count).not.toHaveBeenCalled();
+      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: {
+          driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+          livenessProviderRef: null,
+          selfieObjectKey: null,
+          identityOfficialPhoto: null,
+        },
+      });
+      expect(database.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
+        where: {
+          verificationId: VERIFICATION_ID,
+          stage: ChauffeurVerificationStage.DRIVING,
+          status: ProviderVerificationStatus.PROCESSING,
+        },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: reason,
+        },
+      });
+      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
+        where: { chauffeurVerificationId: VERIFICATION_ID, status: "OPEN" },
+        data: expect.objectContaining({
+          status: "REJECTED",
+          encryptedPayload: null,
+          resolutionSource: reason,
+          resolutionNotes: reason,
+        }),
+      });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+    },
+  );
 
   it("creates the chauffeur once both decisions are approved and purges the selfie", async () => {
     database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
@@ -266,6 +326,16 @@ describe("ChauffeurActivationService", () => {
 
     expect(database.user.create).not.toHaveBeenCalled();
     expect(database.user.update).not.toHaveBeenCalled();
+    expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
+      where: { id: VERIFICATION_ID },
+      data: {
+        driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+        faceDecision: VerificationDecisionStatus.REJECTED,
+        livenessProviderRef: null,
+        selfieObjectKey: null,
+        identityOfficialPhoto: null,
+      },
+    });
     expect(database.chauffeurVerificationStageRequest.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ verificationId: VERIFICATION_ID }),
       data: {
@@ -278,7 +348,8 @@ describe("ChauffeurActivationService", () => {
       data: expect.objectContaining({
         status: "REJECTED",
         encryptedPayload: null,
-        resolutionSource: "ACCOUNT_CONFLICT",
+        resolutionSource: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        resolutionNotes: ChauffeurErrorCode.ACCOUNT_CONFLICT,
       }),
     });
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);

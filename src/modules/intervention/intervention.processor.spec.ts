@@ -20,15 +20,6 @@ describe("InterventionProcessor", () => {
     processor = module.get(InterventionProcessor);
   });
 
-  it("retries the intervention named in the job", async () => {
-    await processor.process({
-      name: VERIFICATION_INTERVENTION_RETRY_JOB,
-      data: { interventionId: "intervention-1", attempt: 2 },
-    } as Job);
-
-    expect(interventionService.retry).toHaveBeenCalledWith("intervention-1", 2);
-  });
-
   it("rejects an unknown job without calling retry", async () => {
     await expect(
       processor.process({
@@ -36,6 +27,15 @@ describe("InterventionProcessor", () => {
         data: { interventionId: "intervention-1", attempt: 1 },
       } as Job),
     ).rejects.toThrow("Unknown intervention job: other");
+    expect(interventionService.retry).not.toHaveBeenCalled();
+  });
+
+  it("ignores a legacy retry that has no generation", async () => {
+    await processor.process({
+      name: VERIFICATION_INTERVENTION_RETRY_JOB,
+      data: { interventionId: "intervention-1", attempt: 1 },
+    } as Job);
+
     expect(interventionService.retry).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,7 @@ import {
 } from "../../config/constants";
 import { InterventionService } from "./intervention.service";
 
-type RetryJob = { interventionId: string; attempt: number };
+type RetryJob = { interventionId: string; attempt: number; openedAt: number };
 
 @Processor(VERIFICATION_INTERVENTION_QUEUE)
 export class InterventionProcessor extends WorkerHost {
@@ -18,6 +18,11 @@ export class InterventionProcessor extends WorkerHost {
     if (job.name !== VERIFICATION_INTERVENTION_RETRY_JOB) {
       throw new Error(`Unknown intervention job: ${job.name}`);
     }
-    await this.interventionService.retry(job.data.interventionId, job.data.attempt);
+    if (!Number.isSafeInteger(job.data.openedAt)) return;
+    await this.interventionService.retry(
+      job.data.interventionId,
+      job.data.attempt,
+      job.data.openedAt,
+    );
   }
 }

@@ -41,7 +41,7 @@ import {
 } from "./intervention.error";
 
 const RETRY_DELAYS_MS = [15 * 60 * 1000, 30 * 60 * 1000] as const;
-type RetryJob = { interventionId: string; attempt: number };
+type RetryJob = { interventionId: string; attempt: number; openedAt: number };
 type DetailedIntervention = Prisma.VerificationInterventionGetPayload<{
   include: { chauffeurVerification: true; accountVerification: true };
 }>;
@@ -53,6 +53,10 @@ type LicenseRetryEvidence = {
     dateOfBirth: Date;
   };
 };
+type LicenseRetryEvidenceResult =
+  | { kind: "VALID"; evidence: LicenseRetryEvidence }
+  | { kind: "UNREADABLE_PAYLOAD" }
+  | { kind: "INVALID_IDENTITY" };
 type TransactionClient = Prisma.TransactionClient;
 
 @Injectable()
@@ -120,6 +124,11 @@ export class InterventionService {
       ) {
         return null;
       }
+      const existing = await tx.verificationIntervention.findUnique({
+        where: { resourceKey: `chauffeur-face:${verificationId}` },
+      });
+      if (existing?.status === VerificationInterventionStatus.OPEN) return existing;
+      const openedAt = new Date();
       return tx.verificationIntervention.upsert({
         where: { resourceKey: `chauffeur-face:${verificationId}` },
         create: {
@@ -127,7 +136,17 @@ export class InterventionService {
           kind: VerificationInterventionKind.CHAUFFEUR_FACE,
           chauffeurVerificationId: verificationId,
         },
-        update: {},
+        update: {
+          status: VerificationInterventionStatus.OPEN,
+          retryAttempt: 0,
+          lastAttemptAt: null,
+          emailNotifiedAt: null,
+          resolutionSource: null,
+          resolutionNotes: null,
+          resolvedAt: null,
+          resolvedById: null,
+          createdAt: openedAt,
+        },
       });
     });
     if (intervention) await this.dispatchIntervention(intervention.id);
@@ -234,7 +253,7 @@ export class InterventionService {
       RETRY_DELAYS_MS.map((elapsedDelay, index) => {
         const attempt = index + 1;
         if (intervention.retryAttempt >= attempt) return Promise.resolve();
-        const jobId = `verification-intervention-${intervention.id}-${attempt}`;
+        const jobId = `verification-intervention-${intervention.id}-${intervention.createdAt.getTime()}-${attempt}`;
         return (async () => {
           const existing = await this.queue.getJob?.(jobId);
           if (existing) {
@@ -244,7 +263,11 @@ export class InterventionService {
           const delay = Math.max(intervention.createdAt.getTime() + elapsedDelay - Date.now(), 0);
           return this.queue.add(
             VERIFICATION_INTERVENTION_RETRY_JOB,
-            { interventionId: intervention.id, attempt },
+            {
+              interventionId: intervention.id,
+              attempt,
+              openedAt: intervention.createdAt.getTime(),
+            },
             {
               delay,
               jobId,
@@ -310,18 +333,31 @@ export class InterventionService {
     }
   }
 
-  async retry(interventionId: string, attempt: number): Promise<void> {
+  async retry(interventionId: string, attempt: number, openedAt?: number): Promise<void> {
     if (attempt < 1 || attempt > RETRY_DELAYS_MS.length) return;
     const intervention = await this.databaseService.verificationIntervention.findUnique({
       where: { id: interventionId },
       include: { chauffeurVerification: true, accountVerification: true },
     });
-    if (!intervention || intervention.status !== VerificationInterventionStatus.OPEN) return;
+    if (
+      !intervention ||
+      intervention.status !== VerificationInterventionStatus.OPEN ||
+      (openedAt !== undefined && intervention.createdAt.getTime() !== openedAt)
+    ) {
+      return;
+    }
 
     let licenseEvidence: LicenseRetryEvidence | null = null;
     if (intervention.kind !== VerificationInterventionKind.CHAUFFEUR_FACE) {
-      licenseEvidence = this.licenseRetryEvidence(intervention);
-      if (!licenseEvidence) {
+      const evidenceResult = this.licenseRetryEvidence(intervention);
+      if (evidenceResult.kind === "UNREADABLE_PAYLOAD") {
+        this.logger.error(
+          { interventionId: intervention.id, kind: intervention.kind },
+          "Verification intervention payload could not be decrypted",
+        );
+        return;
+      }
+      if (evidenceResult.kind === "INVALID_IDENTITY") {
         const rejected = await this.rejectProviderDecision(
           intervention.id,
           "EVIDENCE_CORRUPTED",
@@ -336,6 +372,7 @@ export class InterventionService {
         }
         return;
       }
+      licenseEvidence = evidenceResult.evidence;
     } else if (!intervention.chauffeurVerification?.livenessProviderRef) {
       const rejected = await this.rejectProviderDecision(
         intervention.id,
@@ -358,6 +395,7 @@ export class InterventionService {
         id: interventionId,
         status: VerificationInterventionStatus.OPEN,
         retryAttempt: { lt: attempt },
+        ...(openedAt !== undefined ? { createdAt: new Date(openedAt) } : {}),
       },
       data: { retryAttempt: attempt, lastAttemptAt: claimedAt },
     });
@@ -397,10 +435,10 @@ export class InterventionService {
     }
   }
 
-  private licenseRetryEvidence(intervention: DetailedIntervention): LicenseRetryEvidence | null {
-    if (!intervention.encryptedPayload) return null;
+  private licenseRetryEvidence(intervention: DetailedIntervention): LicenseRetryEvidenceResult {
+    if (!intervention.encryptedPayload) return { kind: "UNREADABLE_PAYLOAD" };
     const licenseNumber = this.tryDecrypt(intervention.encryptedPayload);
-    if (!licenseNumber) return null;
+    if (!licenseNumber) return { kind: "UNREADABLE_PAYLOAD" };
     const identity =
       intervention.kind === VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE
         ? intervention.chauffeurVerification
@@ -418,14 +456,17 @@ export class InterventionService {
             }
           : null;
     if (!identity?.identityFirstName || !identity.identityLastName || !identity.dateOfBirth) {
-      return null;
+      return { kind: "INVALID_IDENTITY" };
     }
     return {
-      licenseNumber,
-      identity: {
-        identityFirstName: identity.identityFirstName,
-        identityLastName: identity.identityLastName,
-        dateOfBirth: identity.dateOfBirth,
+      kind: "VALID",
+      evidence: {
+        licenseNumber,
+        identity: {
+          identityFirstName: identity.identityFirstName,
+          identityLastName: identity.identityLastName,
+          dateOfBirth: identity.dateOfBirth,
+        },
       },
     };
   }
@@ -811,14 +852,7 @@ export class InterventionService {
         };
       }
       if (intervention.accountVerificationId) {
-        await tx.fleetOwnerAccountVerification.update({
-          where: { id: intervention.accountVerificationId },
-          data: {
-            driversLicenseDecision: VerificationDecisionStatus.REJECTED,
-            status: AccountVerificationStatus.FAILED,
-            failureReason: reason,
-          },
-        });
+        await this.rejectOwnerVerification(tx, intervention.accountVerificationId, reason);
       }
       return { won: true, selfieObjectKey: null, chauffeurVerificationId: null };
     });
@@ -893,6 +927,30 @@ export class InterventionService {
   private async purgeSelfie(key: string, verificationId: string): Promise<void> {
     await this.storageService.deleteObjectByKey(key).catch(() => {
       this.logger.warn({ verificationId }, "Failed to purge rejected chauffeur selfie");
+    });
+  }
+
+  private async rejectOwnerVerification(
+    tx: Prisma.TransactionClient,
+    verificationId: string,
+    reason: string,
+  ): Promise<void> {
+    const verification = await tx.fleetOwnerAccountVerification.update({
+      where: { id: verificationId },
+      data: {
+        driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+        status: AccountVerificationStatus.FAILED,
+        failureReason: reason,
+      },
+      select: { userId: true },
+    });
+    await tx.bankDetails.updateMany({
+      where: { userId: verification.userId },
+      data: { isVerified: false },
+    });
+    await tx.user.update({
+      where: { id: verification.userId },
+      data: { hasOnboarded: false, fleetOwnerStatus: FleetOwnerStatus.ON_HOLD },
     });
   }
 
@@ -1115,14 +1173,11 @@ export class InterventionService {
         };
       }
       if (intervention.accountVerificationId) {
-        await tx.fleetOwnerAccountVerification.update({
-          where: { id: intervention.accountVerificationId },
-          data: {
-            driversLicenseDecision: VerificationDecisionStatus.REJECTED,
-            status: AccountVerificationStatus.FAILED,
-            failureReason: "STAFF_REJECTED",
-          },
-        });
+        await this.rejectOwnerVerification(
+          tx,
+          intervention.accountVerificationId,
+          "STAFF_REJECTED",
+        );
       }
       return { won: true, selfieObjectKey: null };
     });

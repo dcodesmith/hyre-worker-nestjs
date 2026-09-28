@@ -1,3 +1,4 @@
+import { pipeline } from "node:stream/promises";
 import { Controller, Get, Header, Post, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
@@ -47,7 +48,15 @@ export class InterventionController {
     if (stored.contentLength !== undefined) {
       response.setHeader("Content-Length", stored.contentLength.toString());
     }
-    stored.stream.pipe(response);
+    try {
+      await pipeline(stored.stream, response);
+    } catch {
+      if (!response.headersSent && !response.destroyed) {
+        response.status(502).end();
+        return;
+      }
+      response.destroy();
+    }
   }
 
   @Get(":interventionId/evidence/nin-portrait")

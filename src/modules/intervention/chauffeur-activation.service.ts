@@ -10,6 +10,7 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import { USER } from "../auth/auth.const";
 import { ChauffeurErrorCode } from "../chauffeur/chauffeur.error";
+import { meetsMinimumChauffeurAge } from "../chauffeur/chauffeur-age";
 import {
   DatabaseService,
   isUniqueConstraintError,
@@ -22,6 +23,7 @@ type AccountConflictResult = {
   activated: boolean;
   selfieObjectKey: string | null;
 };
+type ChauffeurErrorCodeValue = (typeof ChauffeurErrorCode)[keyof typeof ChauffeurErrorCode];
 
 @Injectable()
 export class ChauffeurActivationService {
@@ -48,6 +50,16 @@ export class ChauffeurActivationService {
           verification.driversLicenseDecision !== VerificationDecisionStatus.APPROVED ||
           verification.faceDecision !== VerificationDecisionStatus.APPROVED
         ) {
+          return false;
+        }
+        if (!verification.dateOfBirth || !meetsMinimumChauffeurAge(verification.dateOfBirth)) {
+          selfieObjectKey = await this.failEligibility(
+            tx,
+            verification,
+            verification.dateOfBirth
+              ? ChauffeurErrorCode.MINIMUM_AGE_NOT_MET
+              : ChauffeurErrorCode.OPERATION_FAILED,
+          );
           return false;
         }
         const openInterventions = await tx.verificationIntervention.count({
@@ -173,9 +185,45 @@ export class ChauffeurActivationService {
       selfieObjectKey: string | null;
     },
   ): Promise<string | null> {
+    return this.failTerminalVerification(tx, verification, ChauffeurErrorCode.ACCOUNT_CONFLICT, {
+      driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+      faceDecision: VerificationDecisionStatus.REJECTED,
+    });
+  }
+
+  private async failEligibility(
+    tx: Prisma.TransactionClient,
+    verification: {
+      id: string;
+      selfieObjectKey: string | null;
+    },
+    reason: ChauffeurErrorCodeValue,
+  ): Promise<string | null> {
+    return this.failTerminalVerification(tx, verification, reason, {
+      driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+    });
+  }
+
+  private async failTerminalVerification(
+    tx: Prisma.TransactionClient,
+    verification: {
+      id: string;
+      selfieObjectKey: string | null;
+    },
+    reason: ChauffeurErrorCodeValue,
+    decisions: {
+      driversLicenseDecision: VerificationDecisionStatus;
+      faceDecision?: VerificationDecisionStatus;
+    },
+  ): Promise<string | null> {
     await tx.chauffeurVerification.update({
       where: { id: verification.id },
-      data: { selfieObjectKey: null, identityOfficialPhoto: null },
+      data: {
+        ...decisions,
+        livenessProviderRef: null,
+        selfieObjectKey: null,
+        identityOfficialPhoto: null,
+      },
     });
     await tx.chauffeurVerificationStageRequest.updateMany({
       where: {
@@ -185,7 +233,7 @@ export class ChauffeurActivationService {
       },
       data: {
         status: ProviderVerificationStatus.FAILED,
-        failureReason: ChauffeurErrorCode.ACCOUNT_CONFLICT,
+        failureReason: reason,
       },
     });
     await tx.verificationIntervention.updateMany({
@@ -194,7 +242,8 @@ export class ChauffeurActivationService {
         status: "REJECTED",
         encryptedPayload: null,
         resolvedAt: new Date(),
-        resolutionSource: "ACCOUNT_CONFLICT",
+        resolutionSource: reason,
+        resolutionNotes: reason,
       },
     });
     return verification.selfieObjectKey;

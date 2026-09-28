@@ -62,13 +62,13 @@ import {
   ChauffeurRequestInProgressException,
   ChauffeurStepIncompleteException,
 } from "./chauffeur.error";
+import { meetsMinimumChauffeurAge } from "./chauffeur-age";
 import { ChauffeurImageService } from "./chauffeur-image.service";
 
 const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
 const SMILE_CALLBACK_LEASE_MS = 15 * 60 * 1000;
-const MINIMUM_CHAUFFEUR_AGE = 21;
 
 const COMPLIANCE_REQUIREMENTS = [
   { type: "LASDRI", label: "LASDRI certificate or card", required: false },
@@ -467,6 +467,7 @@ export class ChauffeurService {
       if (outcome === "open") throw new ChauffeurRequestInProgressException();
       if (outcome === "approved") return this.getOnboarding(verificationId);
       verification = await this.getVerification(verificationId);
+      await this.assertDrivingCanStart(verification);
     }
     if (
       !verification.ninHash ||
@@ -476,6 +477,7 @@ export class ChauffeurService {
     ) {
       throw new ChauffeurStepIncompleteException("NIN");
     }
+    this.assertEligibleAge(verification.dateOfBirth);
     const processedSelfie = await this.imageService.processSelfie(selfie);
     const driversLicenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
     const claim = await this.claimStage(
@@ -599,6 +601,31 @@ export class ChauffeurService {
   private async assertDrivingCanStart(
     verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>,
   ): Promise<void> {
+    if (
+      verification.driversLicenseDecision === VerificationDecisionStatus.REJECTED ||
+      verification.faceDecision === VerificationDecisionStatus.REJECTED
+    ) {
+      const terminalFailure =
+        await this.databaseService.chauffeurVerificationStageRequest.findFirst({
+          where: {
+            verificationId: verification.id,
+            stage: ChauffeurVerificationStage.DRIVING,
+            status: ProviderVerificationStatus.FAILED,
+            failureReason: {
+              in: [
+                ChauffeurErrorCode.ACCOUNT_CONFLICT,
+                ChauffeurErrorCode.MINIMUM_AGE_NOT_MET,
+                ChauffeurErrorCode.OPERATION_FAILED,
+              ],
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { failureReason: true },
+        });
+      if (terminalFailure?.failureReason) {
+        throw this.storedStageFailure(terminalFailure.failureReason);
+      }
+    }
     if (verification.driversLicenseDecision === VerificationDecisionStatus.REJECTED) {
       throw new ChauffeurLicenseNotVerifiedException();
     }
@@ -752,22 +779,60 @@ export class ChauffeurService {
           if (error instanceof ChauffeurException) throw error;
           throw new ChauffeurProviderUnavailableException();
         }
-        const refreshed = await this.getVerification(verification.id);
-        if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
-        const opened = await this.databaseService.verificationIntervention.findFirst({
-          where: {
-            chauffeurVerificationId: verification.id,
-            kind: "CHAUFFEUR_FACE",
-            status: "OPEN",
-          },
-          select: { id: true },
-        });
-        return opened ? "open" : "released";
+        return this.settleSmileReservation(verification, jobId, stage.id);
       }
     }
 
-    await this.interventionService.openChauffeurFace(verification.id);
-    return "open";
+    const opened = await this.interventionService.openChauffeurFace(verification.id);
+    if (opened?.status === "OPEN") return "open";
+    return this.settleSmileReservation(verification, jobId, stage?.id);
+  }
+
+  private async settleSmileReservation(
+    verification: ChauffeurVerification,
+    jobId: string,
+    stageId: string | undefined,
+  ): Promise<"open" | "approved" | "released"> {
+    const refreshed = await this.getVerification(verification.id);
+    if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
+    const opened = await this.databaseService.verificationIntervention.findFirst({
+      where: {
+        chauffeurVerificationId: verification.id,
+        kind: "CHAUFFEUR_FACE",
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    if (opened) return "open";
+    if (await this.releaseSmileReservation(verification, jobId, stageId)) return "released";
+    const latest = await this.getVerification(verification.id);
+    if (latest.status === ChauffeurVerificationStatus.APPROVED) return "approved";
+    return latest.livenessProviderRef ? "open" : "released";
+  }
+
+  private async releaseSmileReservation(
+    verification: ChauffeurVerification,
+    jobId: string,
+    stageId: string | undefined,
+  ): Promise<boolean> {
+    const released = await this.databaseService.chauffeurVerification.updateMany({
+      where: {
+        id: verification.id,
+        livenessProviderRef: jobId,
+        status: { not: ChauffeurVerificationStatus.APPROVED },
+      },
+      data: { livenessProviderRef: null, selfieObjectKey: null },
+    });
+    if (released.count === 0) return false;
+    if (stageId) {
+      await this.failStage(stageId, ChauffeurErrorCode.PROVIDER_UNAVAILABLE);
+    }
+    if (verification.selfieObjectKey) {
+      await this.storageService
+        .deleteObjectByKey(verification.selfieObjectKey)
+        .catch(() => undefined);
+    }
+    return true;
   }
 
   async applySmileCompareResult(input: {
@@ -974,15 +1039,7 @@ export class ChauffeurService {
   }
 
   private assertEligibleAge(dateOfBirth: Date): void {
-    const today = new Date();
-    const cutoff = new Date(
-      Date.UTC(
-        today.getUTCFullYear() - MINIMUM_CHAUFFEUR_AGE,
-        today.getUTCMonth(),
-        today.getUTCDate(),
-      ),
-    );
-    if (dateOfBirth > cutoff) {
+    if (!meetsMinimumChauffeurAge(dateOfBirth)) {
       throw new ChauffeurMinimumAgeException();
     }
   }

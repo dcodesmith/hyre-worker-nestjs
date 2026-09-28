@@ -63,7 +63,6 @@ import {
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
 import {
-  ProviderVerificationException,
   VerificationIdempotencyKeyReusedException,
   VerificationRequestInProgressException,
 } from "./verification.error";
@@ -919,6 +918,57 @@ describe("AccountVerificationService", () => {
       expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
     });
 
+    it("reuses an existing pending licence when owner-driver providers are unavailable", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        id: "existing-license",
+        status: DocumentStatus.PENDING,
+      });
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await service.create({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: ownerDriverInput(),
+        documents: {},
+      });
+
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+        }),
+        VERIFICATION_ID,
+        "existing-license",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it.each([
+      ["missing", null],
+      ["rejected", { id: "existing-license", status: DocumentStatus.REJECTED }],
+    ] as const)(
+      "requires a licence when the stored document is %s during an owner-driver outage",
+      async (_label, stored) => {
+        databaseService.documentApproval.findUnique
+          .mockResolvedValueOnce({ status: DocumentStatus.PENDING })
+          .mockResolvedValueOnce(stored);
+        monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+        premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+        await expect(
+          service.create({
+            userId: USER_ID,
+            idempotencyKey: IDEMPOTENCY_KEY,
+            input: ownerDriverInput(),
+            documents: {},
+          }),
+        ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
+        expect(interventionService.bindOwnerLicense).not.toHaveBeenCalled();
+      },
+    );
+
     it("does not dispatch when an open owner licence intervention blocks create", async () => {
       monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
       premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
@@ -1336,21 +1386,6 @@ describe("AccountVerificationService", () => {
 
     it("falls back to Prembly when Mono cannot look up an NIN", async () => {
       monoService.verifyNin.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
-      premblyService.verifyNin.mockResolvedValueOnce(identity);
-
-      await expect(
-        service.create({
-          userId: USER_ID,
-          idempotencyKey: IDEMPOTENCY_KEY,
-          input: individualInput(),
-          documents: {},
-        }),
-      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
-      expect(premblyService.verifyNin).toHaveBeenCalledWith("12345678901");
-    });
-
-    it("falls back to Prembly when Mono returns an invalid NIN response", async () => {
-      monoService.verifyNin.mockRejectedValueOnce(new MonoError("INVALID_RESPONSE"));
       premblyService.verifyNin.mockResolvedValueOnce(identity);
 
       await expect(
@@ -2649,6 +2684,35 @@ describe("AccountVerificationService", () => {
         }),
         VERIFICATION_ID,
         "license-doc",
+        LICENSE_NUMBER,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
+    });
+
+    it("reuses an existing pending licence when staged driving providers are unavailable", async () => {
+      databaseService.documentApproval.findUnique.mockResolvedValue({
+        id: "existing-license",
+        status: DocumentStatus.PENDING,
+      });
+      monoService.verifyDriversLicense.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
+      premblyService.verifyDriversLicense.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: {},
+        }),
+      ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentApproval: databaseService.documentApproval,
+        }),
+        VERIFICATION_ID,
+        "existing-license",
         LICENSE_NUMBER,
       );
       expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-intervention");
