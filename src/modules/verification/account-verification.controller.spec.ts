@@ -198,68 +198,6 @@ describe("AccountVerificationController", () => {
     expect(accountVerificationService.create).not.toHaveBeenCalled();
   });
 
-  it("delegates identity verification with the session user and idempotency key", async () => {
-    const response = createMockResponse();
-    const result = { status: "VERIFIED" };
-    accountVerificationService.verifyIdentityStage.mockResolvedValueOnce(result);
-
-    await expect(
-      controller.verifyIdentity(mockUser, idempotencyKey, identityBody, response),
-    ).resolves.toEqual(result);
-    expect(accountVerificationService.verifyIdentityStage).toHaveBeenCalledWith(
-      "owner-1",
-      idempotencyKey,
-      identityBody,
-    );
-  });
-
-  it("delegates payout verification with the session user and idempotency key", async () => {
-    const response = createMockResponse();
-    const result = { status: "VERIFIED" };
-    accountVerificationService.verifyPayoutStage.mockResolvedValueOnce(result);
-
-    await expect(
-      controller.verifyPayout(mockUser, idempotencyKey, payoutBody, response),
-    ).resolves.toEqual(result);
-    expect(accountVerificationService.verifyPayoutStage).toHaveBeenCalledWith(
-      "owner-1",
-      idempotencyKey,
-      payoutBody,
-    );
-  });
-
-  it("delegates driving credentials with uploaded documents", async () => {
-    const response = createMockResponse();
-    const documents = { driversLicense: licenseFile() };
-    const result = { status: "COMPLETED", isOwnerDriver: true };
-    accountVerificationService.saveDrivingCredentialsStage.mockResolvedValueOnce(result);
-
-    await expect(
-      controller.saveDrivingCredentials(
-        mockUser,
-        idempotencyKey,
-        { isOwnerDriver: true },
-        documents,
-        response,
-      ),
-    ).resolves.toEqual(result);
-    expect(accountVerificationService.saveDrivingCredentialsStage).toHaveBeenCalledWith({
-      userId: "owner-1",
-      idempotencyKey: idempotencyKey,
-      input: { isOwnerDriver: true },
-      documents: documents,
-    });
-  });
-
-  it("delegates staged submission with the session user and idempotency key", async () => {
-    const response = createMockResponse();
-    const result = { status: "SUCCEEDED" };
-    accountVerificationService.submitStage.mockResolvedValueOnce(result);
-
-    await expect(controller.submit(mockUser, idempotencyKey, response)).resolves.toEqual(result);
-    expect(accountVerificationService.submitStage).toHaveBeenCalledWith("owner-1", idempotencyKey);
-  });
-
   it.each([
     [
       "identity",

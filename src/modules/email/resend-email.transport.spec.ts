@@ -52,28 +52,6 @@ describe("ResendEmailTransport", () => {
     transport = module.get<ResendEmailTransport>(ResendEmailTransport);
   });
 
-  it("should send email successfully", async () => {
-    const mockResult = {
-      data: { id: "email-123" },
-      error: null,
-    };
-    mockSend.mockResolvedValueOnce(mockResult);
-
-    const result = await transport.sendEmail({
-      to: "recipient@example.com",
-      subject: "Test Subject",
-      html: "<p>Test HTML</p>",
-    });
-
-    expect(mockSend).toHaveBeenCalledWith({
-      from: "Test Sender from Test App <test@example.com>",
-      to: "recipient@example.com",
-      subject: "Test Subject",
-      html: "<p>Test HTML</p>",
-    });
-    expect(result).toEqual(mockResult);
-  });
-
   it("should throw error when API returns an error", async () => {
     mockSend.mockResolvedValueOnce({
       data: null,

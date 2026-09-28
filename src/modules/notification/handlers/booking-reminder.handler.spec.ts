@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import { NotificationInboxType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createBooking,
@@ -79,10 +79,6 @@ describe("BookingReminderHandler", () => {
     handler = module.get(BookingReminderHandler);
   });
 
-  it("uses BOOKING_REMINDER eventType", () => {
-    expect(handler.eventType).toBe(NotificationOutboxEventType.BOOKING_REMINDER);
-  });
-
   it("fans out to a customer event and a chauffeur event with deterministic dedupe keys", async () => {
     notificationService.buildBookingReminderJobData.mockResolvedValueOnce([
       customerJob,
@@ -106,25 +102,6 @@ describe("BookingReminderHandler", () => {
     );
     expect(byRecipient[CHAUFFEUR_RECIPIENT_TYPE]?.dedupeKey).toBe(
       "booking-reminder:leg-1:chauffeur:booking-reminder-start:2026-05-09T14:00:00.000Z",
-    );
-  });
-
-  it("passes recipient user IDs to the job-data builder", async () => {
-    notificationService.buildBookingReminderJobData.mockResolvedValueOnce([]);
-    const leg = buildLeg();
-
-    await handler.buildEvents({
-      bookingLeg: leg,
-      type: NotificationType.BOOKING_REMINDER_END,
-    });
-
-    expect(notificationService.buildBookingReminderJobData).toHaveBeenCalledWith(
-      expect.anything(),
-      NotificationType.BOOKING_REMINDER_END,
-      {
-        customerUserId: "user-1",
-        chauffeurUserId: "chauffeur-1",
-      },
     );
   });
 

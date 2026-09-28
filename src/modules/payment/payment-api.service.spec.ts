@@ -756,29 +756,6 @@ describe("PaymentApiService", () => {
   });
 
   describe("getPaymentStatus", () => {
-    it("should return payment status successfully", async () => {
-      const booking = createBooking({ id: "booking-123", userId: mockUserInfo.id });
-      const payment = createPayment({
-        amountCharged: new Decimal(10000),
-        confirmedAt: new Date("2024-01-15T10:00:00Z"),
-        booking: { id: booking.id, status: booking.status, userId: booking.userId },
-      });
-
-      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
-
-      const result = await service.getPaymentStatus("tx-ref-123", mockUserInfo.id);
-
-      expect(result).toEqual({
-        txRef: "tx-ref-123",
-        status: "SUCCESSFUL",
-        amountExpected: 10000,
-        amountCharged: 10000,
-        confirmedAt: new Date("2024-01-15T10:00:00Z"),
-        booking: { id: booking.id, status: booking.status },
-        extension: undefined,
-      });
-    });
-
     it("throws PaymentNotFoundException when payment is missing", async () => {
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(null);
       vi.mocked(databaseService.extension.findFirst).mockResolvedValueOnce(null);

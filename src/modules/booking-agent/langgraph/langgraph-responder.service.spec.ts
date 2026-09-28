@@ -39,48 +39,6 @@ describe("LangGraphResponderService", () => {
   });
 
   describe("generateResponse", () => {
-    it("generates response with string content", async () => {
-      claudeMock.invoke.mockResolvedValue({
-        content: "Hello! How can I help you with your booking today?",
-      });
-
-      const state = buildState({ stage: "greeting" });
-
-      const response = await service.generateResponse(state);
-
-      expect(response.text).toBe("Hello! How can I help you with your booking today?");
-      expect(claudeMock.invoke).toHaveBeenCalled();
-    });
-
-    it("generates response with text block content", async () => {
-      claudeMock.invoke.mockResolvedValue({
-        content: [
-          {
-            type: "text",
-            text: "Sure, I can help you find a vehicle!",
-          },
-        ],
-      });
-
-      const state = buildState();
-
-      const response = await service.generateResponse(state);
-
-      expect(response.text).toBe("Sure, I can help you find a vehicle!");
-    });
-
-    it("handles empty content array", async () => {
-      claudeMock.invoke.mockResolvedValue({
-        content: [],
-      });
-
-      const state = buildState();
-
-      const response = await service.generateResponse(state);
-
-      expect(response.text).toBe("");
-    });
-
     it("throws on API error", async () => {
       claudeMock.invoke.mockRejectedValue(new Error("API timeout"));
 

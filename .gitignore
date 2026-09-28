@@ -32,6 +32,7 @@ lerna-debug.log*
 !.agents/skills/release/SKILL.md
 !docs/FLIGHTAWARE_ALERT_ENDPOINT_FAST_FOLLOW.md
 !docs/GENERIC_DOMAIN_OUTBOX_FAST_FOLLOW.md
+!docs/UNIT_TEST_CONFIDENCE_AUDIT.md
 !docs/environments.md
 !docs/release-command.md
 

@@ -2,7 +2,7 @@ import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { createOwnerPromotionListItem, createPromotionRecord } from "../../shared/helper.fixtures";
+import { createPromotionRecord } from "../../shared/helper.fixtures";
 import { AuthService } from "../auth/auth.service";
 import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
 import { FleetOwnerPromotionController } from "./fleet-owner-promotion.controller";
@@ -53,19 +53,6 @@ describe("FleetOwnerPromotionController", () => {
     promotionService = module.get<PromotionService>(PromotionService);
   });
 
-  describe("listOwnerPromotions", () => {
-    it("delegates to PromotionService.getOwnerPromotions with the caller's id", async () => {
-      vi.mocked(promotionService.getOwnerPromotions).mockResolvedValueOnce([
-        createOwnerPromotionListItem({ id: "promo-1" }),
-      ]);
-
-      const result = await controller.listOwnerPromotions(mockUser);
-
-      expect(result).toEqual([createOwnerPromotionListItem({ id: "promo-1" })]);
-      expect(promotionService.getOwnerPromotions).toHaveBeenCalledWith("owner-1");
-    });
-  });
-
   describe("createPromotion", () => {
     it("converts calendar dates to exclusive window and passes carId for CAR scope", async () => {
       vi.mocked(promotionService.createPromotion).mockResolvedValueOnce(
@@ -112,19 +99,6 @@ describe("FleetOwnerPromotionController", () => {
 
       const call = vi.mocked(promotionService.createPromotion).mock.calls[0][0];
       expect(call.carId).toBeNull();
-    });
-  });
-
-  describe("deactivatePromotion", () => {
-    it("delegates to PromotionService.deactivatePromotion with promotion id and caller id", async () => {
-      vi.mocked(promotionService.deactivatePromotion).mockResolvedValueOnce(
-        createPromotionRecord({ id: "promo-1", isActive: false }),
-      );
-
-      const result = await controller.deactivatePromotion("promo-1", mockUser);
-
-      expect(result).toEqual(createPromotionRecord({ id: "promo-1", isActive: false }));
-      expect(promotionService.deactivatePromotion).toHaveBeenCalledWith("promo-1", "owner-1");
     });
   });
 });

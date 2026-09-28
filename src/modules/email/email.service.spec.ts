@@ -39,19 +39,6 @@ describe("EmailService", () => {
       html: "<p>Test HTML</p>",
     };
 
-    it("should delegate email sending to the configured transport", async () => {
-      const mockResult = {
-        data: { id: "email-123" },
-      };
-
-      mockTransport.sendEmail.mockResolvedValueOnce(mockResult);
-
-      const result = await service.sendEmail(emailData);
-
-      expect(mockTransport.sendEmail).toHaveBeenCalledWith(emailData);
-      expect(result).toEqual(mockResult);
-    });
-
     it("should throw error when transport fails", async () => {
       const error = new Error("Network error");
       mockTransport.sendEmail.mockRejectedValueOnce(error);

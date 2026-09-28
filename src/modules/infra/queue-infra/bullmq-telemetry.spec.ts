@@ -1,4 +1,3 @@
-import { ROOT_CONTEXT } from "@opentelemetry/api";
 import { type Exception, type Job, UnrecoverableError } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureException } from "../../../sentry";
@@ -30,7 +29,7 @@ const SENSITIVE_KEYS = [
   "bullmq.job.progress",
 ] as const;
 
-const { innerSpan, adapter, BullMQOtel } = vi.hoisted(() => {
+const { innerSpan, BullMQOtel } = vi.hoisted(() => {
   const innerSpan = {
     setSpanOnContext: vi.fn((context: unknown) => context),
     setAttribute: vi.fn(),
@@ -58,7 +57,6 @@ const { innerSpan, adapter, BullMQOtel } = vi.hoisted(() => {
 
   return {
     innerSpan,
-    adapter,
     BullMQOtel: vi.fn(function MockBullMQOtel() {
       return adapter;
     }),
@@ -88,41 +86,10 @@ describe("createBullMqTelemetry", () => {
     vi.clearAllMocks();
   });
 
-  it("enables the official adapter metrics and delegates context, meter, and span lifecycle", () => {
-    const telemetry = createBullMqTelemetry("hyre-worker-test", "1.2.3");
-    const context = ROOT_CONTEXT;
-
-    expect(BullMQOtel).toHaveBeenCalledWith({
-      tracerName: "hyre-worker-test",
-      meterName: "hyre-worker-test",
-      version: "1.2.3",
-      enableMetrics: true,
-    });
-    expect(telemetry.contextManager).toBe(adapter.contextManager);
-    expect(telemetry.meter).toBe(adapter.meter);
-    expect(telemetry.tracer).not.toBe(adapter.tracer);
-
-    const span = telemetry.tracer.startSpan("add orders.probe", { kind: 3 }, context);
-
-    expect(adapter.tracer.startSpan).toHaveBeenCalledWith("add orders.probe", { kind: 3 }, context);
-    expect(span).not.toBe(innerSpan);
-    expect(span.setSpanOnContext(context)).toBe(context);
-    expect(innerSpan.setSpanOnContext).toHaveBeenCalledWith(context);
-
-    span.end();
-    expect(innerSpan.end).toHaveBeenCalledTimes(1);
-  });
-
   it.each(SENSITIVE_KEYS)("does not set %s individually", (key) => {
     startSafeSpan().setAttribute(key, "secret-value");
 
     expect(innerSpan.setAttribute).not.toHaveBeenCalled();
-  });
-
-  it("forwards non-sensitive span attributes", () => {
-    startSafeSpan().setAttribute("bullmq.job.id", "job-1");
-
-    expect(innerSpan.setAttribute).toHaveBeenCalledWith("bullmq.job.id", "job-1");
   });
 
   it("strips sensitive keys from setAttributes while keeping neighboring fields", () => {

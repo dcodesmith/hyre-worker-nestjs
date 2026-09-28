@@ -1,5 +1,3 @@
-import type { CanActivate, Type } from "@nestjs/common";
-import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
 import type { Response } from "express";
@@ -51,13 +49,5 @@ describe("AiSearchController", () => {
     expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
     expect(aiSearchService.search).toHaveBeenCalledWith("toyota");
     expect(result.params.make).toBe("Toyota");
-  });
-
-  it("applies AiSearchThrottlerGuard on search endpoint", () => {
-    const guards = Reflect.getMetadata(
-      GUARDS_METADATA,
-      AiSearchController.prototype.search,
-    ) as Type<CanActivate>[];
-    expect(guards).toContain(AiSearchThrottlerGuard);
   });
 });

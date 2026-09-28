@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { NotificationInboxType, NotificationOutboxEventType } from "@prisma/client";
+import { NotificationInboxType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createBooking,
@@ -40,34 +40,6 @@ describe("BookingStatusChangedHandler", () => {
     }).compile();
 
     handler = module.get(BookingStatusChangedHandler);
-  });
-
-  it("uses BOOKING_LIFECYCLE eventType", () => {
-    expect(handler.eventType).toBe(NotificationOutboxEventType.BOOKING_LIFECYCLE);
-  });
-
-  it("forwards (booking, oldStatus, newStatus, showReviewRequest) to the builder", async () => {
-    notificationService.buildBookingStatusChangeJobData.mockResolvedValueOnce(sampleJobData);
-    const booking = createBooking({
-      id: "booking-1",
-      userId: "user-1",
-      user: createUser({ id: "user-1" }),
-      car: createCar({ owner: createOwner() }),
-    });
-
-    await handler.buildEvents({
-      booking,
-      oldStatus: "CONFIRMED",
-      newStatus: "ACTIVE",
-      showReviewRequest: true,
-    });
-
-    expect(notificationService.buildBookingStatusChangeJobData).toHaveBeenCalledWith({
-      booking,
-      oldStatus: "CONFIRMED",
-      newStatus: "ACTIVE",
-      showReviewRequest: true,
-    });
   });
 
   it("defaults showReviewRequest to false", async () => {

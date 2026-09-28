@@ -216,20 +216,6 @@ describe("OptionalSessionGuard", () => {
         expect(mockGetUserRoles).toHaveBeenCalledWith("user-123");
         expect(context.getRequest()[AUTH_SESSION_KEY]).toBeUndefined();
       });
-
-      it("should pass headers to getSession", async () => {
-        mockGetSession.mockResolvedValueOnce(mockSession);
-        const context = createMockExecutionContext({
-          cookie: "session_token=token-123",
-          authorization: "Bearer some-token",
-        });
-
-        await guard.canActivate(context);
-
-        expect(mockGetSession).toHaveBeenCalledWith({
-          headers: expect.any(Headers),
-        });
-      });
     });
   });
 

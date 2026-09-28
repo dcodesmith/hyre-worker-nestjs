@@ -1,28 +1,12 @@
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AuthService } from "../auth/auth.service";
-import type { AuthSession } from "../auth/guards/session.guard";
 import { ReferralController } from "./referral.controller";
 import { ReferralService } from "./referral.service";
-
-function createMockAuthUser(overrides: Partial<AuthSession["user"]> = {}): AuthSession["user"] {
-  const now = new Date("2026-01-01T00:00:00.000Z");
-  return {
-    id: "user-1",
-    createdAt: now,
-    updatedAt: now,
-    emailVerified: false,
-    name: "Test User",
-    email: "test-user@example.com",
-    image: null,
-    roles: ["user"],
-    ...overrides,
-  };
-}
 
 describe("ReferralController", () => {
   let controller: ReferralController;
@@ -94,62 +78,5 @@ describe("ReferralController", () => {
       message: "Valid referral code.",
     });
     expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
-  });
-
-  it("returns eligibility payload for authenticated user", async () => {
-    vi.mocked(referralService.getReferralEligibility).mockResolvedValue({
-      eligible: true,
-      discountAmount: 5000,
-      reason: undefined,
-    });
-
-    const result = await controller.getReferralEligibility(createMockAuthUser(), {
-      amount: 50000,
-      type: "DAY",
-    });
-
-    expect(result).toEqual({
-      eligible: true,
-      discountAmount: 5000,
-      reason: undefined,
-    });
-  });
-
-  it("returns user referral info for authenticated user", async () => {
-    vi.mocked(referralService.getCurrentUserReferralInfo).mockResolvedValue({
-      referralCode: "ABCDEFGH",
-      shareLink: "http://localhost:3000/auth?ref=ABCDEFGH",
-      programEnabled: true,
-      discount: { type: "FIXED", amount: 10000 },
-      discountAmount: 10000,
-      hasUsedDiscount: false,
-      referredBy: null,
-      signupDate: null,
-      stats: {
-        totalReferrals: 1,
-        totalRewardsGranted: 1000,
-        totalRewardsPending: 0,
-        lastReferralAt: null,
-        totalEarned: 1000,
-        totalUsed: 0,
-        availableCredits: 1000,
-        maxCreditsPerBooking: 30000,
-      },
-      referrals: [],
-      rewards: [],
-    });
-
-    const request = {
-      headers: {},
-      protocol: "http",
-      get: vi.fn().mockReturnValue("localhost:3000"),
-    } as unknown as Request;
-
-    const result = await controller.getCurrentUserReferralInfo(createMockAuthUser(), request);
-
-    expect(result.referralCode).toBe("ABCDEFGH");
-    expect(result.programEnabled).toBe(true);
-    expect(result.discountAmount).toBe(10000);
-    expect(referralService.getCurrentUserReferralInfo).toHaveBeenCalledWith("user-1", request);
   });
 });

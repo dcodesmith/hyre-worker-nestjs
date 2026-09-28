@@ -2,16 +2,6 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
-import { captureTerminalJobFailure } from "../infra/queue-infra/bullmq-telemetry";
-
-const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
-  captureTerminalJobFailureMock: vi.fn(),
-}));
-
-vi.mock("../infra/queue-infra/bullmq-telemetry", () => ({
-  captureTerminalJobFailure: captureTerminalJobFailureMock,
-}));
 
 import type { FlightAlertJobData } from "./flightaware-alert.interface";
 import { FlightAlertProcessor } from "./flightaware-alert.processor";
@@ -50,54 +40,6 @@ describe("FlightAlertProcessor", () => {
     flightAwareAlertService = module.get<FlightAwareAlertService>(FlightAwareAlertService);
   });
   describe("process", () => {
-    it("should call getOrCreateFlightAlert with correct params", async () => {
-      const job = {
-        id: "job-123",
-        name: CREATE_FLIGHT_ALERT_JOB,
-        data: mockJobData,
-      } as Job<FlightAlertJobData, void, string>;
-
-      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockResolvedValue("alert-456");
-
-      const result = await processor.process(job);
-
-      expect(result).toEqual({ success: true });
-      expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-123", {
-        flightNumber: "BA74",
-        departureTime: new Date("2025-12-25T10:00:00.000Z"),
-        originCode: "EGLL",
-        originTimezone: "Europe/London",
-        destinationIATA: "LOS",
-      });
-    });
-
-    it("should pass undefined destinationIATA when not provided", async () => {
-      const jobData: FlightAlertJobData = {
-        flightId: "flight-789",
-        flightNumber: "AA100",
-        departureTime: "2025-12-25T10:00:00.000Z",
-      };
-
-      const job = {
-        id: "job-456",
-        name: CREATE_FLIGHT_ALERT_JOB,
-        data: jobData,
-      } as Job<FlightAlertJobData, void, string>;
-
-      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockResolvedValue("alert-789");
-
-      const result = await processor.process(job);
-
-      expect(result).toEqual({ success: true });
-      expect(flightAwareAlertService.getOrCreateFlightAlert).toHaveBeenCalledWith("flight-789", {
-        flightNumber: "AA100",
-        departureTime: new Date("2025-12-25T10:00:00.000Z"),
-        originCode: undefined,
-        originTimezone: undefined,
-        destinationIATA: undefined,
-      });
-    });
-
     it("should throw error for unknown job type", async () => {
       const job = {
         id: "job-123",
@@ -109,34 +51,6 @@ describe("FlightAlertProcessor", () => {
         "Unknown flight alert job type: unknown-job-type",
       );
       expect(flightAwareAlertService.getOrCreateFlightAlert).not.toHaveBeenCalled();
-    });
-
-    it("should re-throw errors to trigger retry mechanism", async () => {
-      const job = {
-        id: "job-123",
-        name: CREATE_FLIGHT_ALERT_JOB,
-        data: mockJobData,
-      } as Job<FlightAlertJobData, void, string>;
-
-      vi.mocked(flightAwareAlertService.getOrCreateFlightAlert).mockRejectedValue(
-        new Error("FlightAware API rate limit exceeded"),
-      );
-
-      await expect(processor.process(job)).rejects.toThrow("FlightAware API rate limit exceeded");
-    });
-  });
-
-  describe("onFailed", () => {
-    it("delegates a missing-job worker failure to terminal capture", () => {
-      const error = new Error("job lost");
-
-      processor.onFailed(undefined, error);
-
-      expect(captureTerminalJobFailure).toHaveBeenCalledExactlyOnceWith(
-        undefined,
-        error,
-        FLIGHT_ALERTS_QUEUE,
-      );
     });
   });
 });

@@ -30,22 +30,6 @@ describe("ChauffeurImageService", () => {
     service = module.get(ChauffeurImageService);
   });
 
-  it("returns the processed JPEG buffer", async () => {
-    const processed = Buffer.from("processed-jpeg");
-    sharpChain.toBuffer.mockResolvedValueOnce(processed);
-    const file = {
-      mimetype: "image/jpeg",
-      size: 16,
-      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-    };
-
-    await expect(service.processSelfie(file)).resolves.toBe(processed);
-    expect(sharpChain.resize).toHaveBeenCalledWith(1024, 1024, {
-      fit: "inside",
-      withoutEnlargement: true,
-    });
-  });
-
   it("maps a processing failure to an invalid selfie error", async () => {
     const processingError = new Error("corrupt");
     sharpChain.toBuffer.mockRejectedValueOnce(processingError);

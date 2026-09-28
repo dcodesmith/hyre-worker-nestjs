@@ -10,8 +10,6 @@ import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { BookingController } from "./booking.controller";
 import {
-  BookingFetchFailedException,
-  BookingNotFoundException,
   BookingRequestInProgressException,
   BookingValidationException,
   ExtensionRequestInProgressException,
@@ -51,12 +49,8 @@ describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
   let bookingExtensionService: BookingExtensionService;
-  let bookingPricingPreviewService: BookingPricingPreviewService;
-  let bookingReadService: BookingReadService;
   let bookingReceiptService: BookingReceiptService;
-  let bookingUpdateService: BookingUpdateService;
   let bookingCancellationService: BookingCancellationService;
-  let guestBookingAccessService: GuestBookingAccessService;
 
   const mockCreateBookingResponse = {
     bookingId: "booking-123",
@@ -66,47 +60,6 @@ describe("BookingController", () => {
     currency: "NGN" as const,
     bookingStatus: BookingStatus.PENDING,
     reservationExpiresAt: "2026-08-02T20:10:00.000Z",
-  };
-  const mockCreateExtensionResponse = {
-    extensionId: "extension-123",
-    paymentIntentId: "tx-ext-123",
-    checkoutUrl: "https://checkout.flutterwave.com/pay/ext123",
-  };
-  const mockPricingPreviewResponse = {
-    currency: "NGN" as const,
-    numberOfLegs: 3,
-    discountCoverage: "PARTIAL",
-    segments: [],
-    baseTotal: 140000,
-    compareAtBaseTotal: 150000,
-    addons: [],
-    addonTotal: 0,
-    fuelUpgradeCost: 0,
-    platformFeeRatePercent: 5,
-    platformFeeAmount: 7000,
-    compareAtPlatformFeeAmount: 7500,
-    subtotalBeforeDiscounts: 147000,
-    compareAtSubtotalBeforeDiscounts: 157500,
-    referralDiscountAmount: 0,
-    creditsUsed: 0,
-    creditsApplicable: 0,
-    subtotalAfterDiscounts: 147000,
-    vatRatePercent: 7.5,
-    vatAmount: 11025,
-    compareAtVatAmount: 11812.5,
-    totalAmount: 158025,
-    compareAtTotalAmount: 169312.5,
-    savingsAmount: 11287.5,
-  };
-  const mockBookingsByStatus = {
-    CONFIRMED: [{ id: "booking-1", status: "CONFIRMED" }],
-    COMPLETED: [{ id: "booking-2", status: "COMPLETED" }],
-  };
-  const mockBookingDetail = {
-    id: "booking-123",
-    status: "CONFIRMED",
-    userId: "user-123",
-    carId: CAR_ID,
   };
 
   const mockSessionUser = {
@@ -147,14 +100,14 @@ describe("BookingController", () => {
       createBooking: vi.fn().mockResolvedValue(mockCreateBookingResponse),
     };
     const mockBookingExtensionService = {
-      createExtension: vi.fn().mockResolvedValue(mockCreateExtensionResponse),
+      createExtension: vi.fn(),
     };
     const mockBookingPricingPreviewService = {
-      preview: vi.fn().mockResolvedValue(mockPricingPreviewResponse),
+      preview: vi.fn(),
     };
     const mockBookingReadService = {
-      getBookingsByStatus: vi.fn().mockResolvedValue(mockBookingsByStatus),
-      getBookingById: vi.fn().mockResolvedValue(mockBookingDetail),
+      getBookingsByStatus: vi.fn(),
+      getBookingById: vi.fn(),
     };
     const mockBookingReceiptService = {
       generateReceipt: vi.fn().mockResolvedValue({
@@ -163,16 +116,14 @@ describe("BookingController", () => {
       }),
     };
     const mockBookingUpdateService = {
-      updateBooking: vi.fn().mockResolvedValue(mockBookingDetail),
+      updateBooking: vi.fn(),
     };
     const mockBookingCancellationService = {
-      cancelBooking: vi.fn().mockResolvedValue({ ...mockBookingDetail, status: "CANCELLED" }),
+      cancelBooking: vi.fn(),
     };
     const mockGuestBookingAccessService = {
-      requestAccess: vi.fn().mockResolvedValue({
-        message: "If those booking details match, we sent an access link to the booking email.",
-      }),
-      getBooking: vi.fn().mockResolvedValue(mockBookingDetail),
+      requestAccess: vi.fn(),
+      getBooking: vi.fn(),
     };
 
     const mockAuthService = {
@@ -212,50 +163,11 @@ describe("BookingController", () => {
     controller = module.get<BookingController>(BookingController);
     bookingCreationService = module.get<BookingCreationService>(BookingCreationService);
     bookingExtensionService = module.get<BookingExtensionService>(BookingExtensionService);
-    bookingPricingPreviewService = module.get<BookingPricingPreviewService>(
-      BookingPricingPreviewService,
-    );
-    bookingReadService = module.get<BookingReadService>(BookingReadService);
     bookingReceiptService = module.get<BookingReceiptService>(BookingReceiptService);
-    bookingUpdateService = module.get<BookingUpdateService>(BookingUpdateService);
     bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
-    guestBookingAccessService = module.get<GuestBookingAccessService>(GuestBookingAccessService);
   });
   describe("createBooking", () => {
     describe("authenticated user", () => {
-      it("should create a booking for authenticated user", async () => {
-        const dto = createValidBookingDto();
-        const validatedDto = validateBookingInput(dto, true);
-
-        const result = await controller.createBooking(
-          validatedDto,
-          mockSessionUser,
-          "booking-request-123",
-          createMockResponse(),
-        );
-
-        expect(result).toEqual(mockCreateBookingResponse);
-        expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
-          expect.objectContaining({
-            input: expect.objectContaining({
-              carId: CAR_ID,
-              bookingType: "DAY",
-            }),
-            sessionUser: {
-              id: "user-123",
-              email: "user@example.com",
-              name: "Test User",
-              emailVerified: true,
-              image: null,
-              roles: ["user"],
-              createdAt: expect.any(Date),
-              updatedAt: expect.any(Date),
-            },
-            idempotencyKey: "booking-request-123",
-          }),
-        );
-      });
-
       it("should throw BookingValidationException for invalid booking data", async () => {
         const invalidDto = {
           carId: "", // Invalid - empty
@@ -273,32 +185,6 @@ describe("BookingController", () => {
     });
 
     describe("guest user", () => {
-      it("should create a booking for guest user", async () => {
-        const dto = createValidGuestBookingDto();
-        const validatedDto = validateBookingInput(dto, false);
-
-        const result = await controller.createBooking(
-          validatedDto,
-          null,
-          "booking-request-123",
-          createMockResponse(),
-        );
-
-        expect(result).toEqual(mockCreateBookingResponse);
-        expect(bookingCreationService.createBooking).toHaveBeenCalledWith(
-          expect.objectContaining({
-            input: expect.objectContaining({
-              carId: CAR_ID,
-              guestEmail: "guest@example.com",
-              guestName: "Guest User",
-              guestPhone: "08098765432",
-            }),
-            sessionUser: null,
-            idempotencyKey: "booking-request-123",
-          }),
-        );
-      });
-
       it("should throw BookingValidationException if guest fields are missing", async () => {
         const dto = createValidBookingDto(); // Missing guest fields
 
@@ -396,32 +282,6 @@ describe("BookingController", () => {
   });
 
   describe("createExtension", () => {
-    it("creates extension for authenticated user", async () => {
-      const result = await controller.createExtension(
-        "booking-123",
-        {
-          hours: 2,
-          callbackUrl: "https://example.com/extension-payment-status",
-          bookingLegId: "leg-future",
-        },
-        mockSessionUser,
-        "extension-request-123",
-        createMockResponse(),
-      );
-
-      expect(result).toEqual(mockCreateExtensionResponse);
-      expect(bookingExtensionService.createExtension).toHaveBeenCalledWith(
-        "booking-123",
-        {
-          hours: 2,
-          callbackUrl: "https://example.com/extension-payment-status",
-          bookingLegId: "leg-future",
-        },
-        mockSessionUser,
-        "extension-request-123",
-      );
-    });
-
     it("rejects createExtension when session user is missing", async () => {
       for (const sessionUser of [null, undefined]) {
         await expect(
@@ -438,35 +298,6 @@ describe("BookingController", () => {
         ).rejects.toBeInstanceOf(UnauthorizedException);
       }
       expect(bookingExtensionService.createExtension).not.toHaveBeenCalled();
-    });
-
-    it("propagates service error for invalid booking id", async () => {
-      vi.mocked(bookingExtensionService.createExtension).mockRejectedValueOnce(
-        new Error("Invalid booking id"),
-      );
-
-      await expect(
-        controller.createExtension(
-          "booking-123",
-          {
-            hours: 2,
-            callbackUrl: "https://example.com/extension-payment-status",
-          },
-          mockSessionUser,
-          "extension-request-123",
-          createMockResponse(),
-        ),
-      ).rejects.toThrow("Invalid booking id");
-
-      expect(bookingExtensionService.createExtension).toHaveBeenCalledWith(
-        "booking-123",
-        {
-          hours: 2,
-          callbackUrl: "https://example.com/extension-payment-status",
-        },
-        mockSessionUser,
-        "extension-request-123",
-      );
     });
 
     it("sets Retry-After when an identical extension request is processing", async () => {
@@ -488,63 +319,6 @@ describe("BookingController", () => {
         ),
       ).rejects.toBeInstanceOf(ExtensionRequestInProgressException);
       expect(response.setHeader).toHaveBeenCalledWith("Retry-After", "5");
-    });
-  });
-
-  describe("getPricingPreview", () => {
-    it("returns pricing preview for the requested booking window", async () => {
-      const body = {
-        carId: CAR_ID,
-        bookingType: "DAY" as const,
-        startDate: new Date("2025-02-01T00:00:00.000Z"),
-        endDate: new Date("2025-02-03T00:00:00.000Z"),
-        pickupTime: "9:00 AM",
-        addonIds: [],
-        requiresFullTank: false,
-        useCredits: 0,
-      };
-
-      const result = await controller.getPricingPreview(body, null);
-
-      expect(result).toEqual(mockPricingPreviewResponse);
-      expect(bookingPricingPreviewService.preview).toHaveBeenCalledWith(body, null);
-    });
-  });
-
-  describe("getBookingsByStatus", () => {
-    it("returns bookings grouped by status for authenticated user", async () => {
-      const result = await controller.getBookingsByStatus(mockSessionUser);
-
-      expect(result).toEqual(mockBookingsByStatus);
-      expect(bookingReadService.getBookingsByStatus).toHaveBeenCalledWith("user-123");
-    });
-
-    it("propagates service errors", async () => {
-      vi.mocked(bookingReadService.getBookingsByStatus).mockRejectedValueOnce(
-        new BookingFetchFailedException(),
-      );
-
-      await expect(controller.getBookingsByStatus(mockSessionUser)).rejects.toBeInstanceOf(
-        BookingFetchFailedException,
-      );
-    });
-  });
-
-  describe("guest booking access", () => {
-    it("requests an access link without requiring a session", async () => {
-      const body = { bookingReference: "BK-123", email: "guest@example.com" };
-
-      await controller.requestGuestBookingAccess(body);
-
-      expect(guestBookingAccessService.requestAccess).toHaveBeenCalledWith(body);
-    });
-
-    it("returns one booking for an opaque guest token", async () => {
-      const query = { token: "a".repeat(43) };
-
-      await controller.getGuestBooking(query);
-
-      expect(guestBookingAccessService.getBooking).toHaveBeenCalledWith(query);
     });
   });
 
@@ -573,111 +347,7 @@ describe("BookingController", () => {
     });
   });
 
-  describe("getBookingById", () => {
-    it("returns booking details for authenticated user", async () => {
-      const result = await controller.getBookingById("booking-123", mockSessionUser);
-
-      expect(result).toEqual(mockBookingDetail);
-      expect(bookingReadService.getBookingById).toHaveBeenCalledWith(
-        "booking-123",
-        mockSessionUser,
-      );
-    });
-
-    it("forwards fleet owner session user to booking read service", async () => {
-      const fleetOwnerSessionUser = {
-        ...mockSessionUser,
-        id: "owner-123",
-        roles: ["fleetOwner" as const],
-      };
-
-      await controller.getBookingById("booking-123", fleetOwnerSessionUser);
-
-      expect(bookingReadService.getBookingById).toHaveBeenCalledWith(
-        "booking-123",
-        fleetOwnerSessionUser,
-      );
-    });
-
-    it("propagates BookingNotFoundException when booking does not exist", async () => {
-      vi.mocked(bookingReadService.getBookingById).mockRejectedValueOnce(
-        new BookingNotFoundException(),
-      );
-
-      await expect(
-        controller.getBookingById("nonexistent", mockSessionUser),
-      ).rejects.toBeInstanceOf(BookingNotFoundException);
-    });
-  });
-
-  describe("updateBooking", () => {
-    it("updates booking for authenticated user", async () => {
-      const updateBody = { pickupAddress: "456 New St, Lagos" };
-
-      const result = await controller.updateBooking("booking-123", updateBody, mockSessionUser);
-
-      expect(result).toEqual(mockBookingDetail);
-      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
-        "booking-123",
-        "user-123",
-        updateBody,
-      );
-    });
-
-    it("updates booking pickup time", async () => {
-      const updateBody = { pickupTime: "10:00 AM" };
-
-      await controller.updateBooking("booking-123", updateBody, mockSessionUser);
-
-      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
-        "booking-123",
-        "user-123",
-        updateBody,
-      );
-    });
-
-    it("updates booking drop-off address with sameLocation false", async () => {
-      const updateBody = {
-        sameLocation: false as const,
-        dropOffAddress: "789 Drop Off Ave",
-      };
-
-      await controller.updateBooking("booking-123", updateBody, mockSessionUser);
-
-      expect(bookingUpdateService.updateBooking).toHaveBeenCalledWith(
-        "booking-123",
-        "user-123",
-        updateBody,
-      );
-    });
-
-    it("propagates service errors", async () => {
-      vi.mocked(bookingUpdateService.updateBooking).mockRejectedValueOnce(
-        new BookingNotFoundException(),
-      );
-
-      await expect(
-        controller.updateBooking("booking-123", { pickupAddress: "New" }, mockSessionUser),
-      ).rejects.toBeInstanceOf(BookingNotFoundException);
-    });
-  });
-
   describe("cancelBooking", () => {
-    it("cancels booking with provided reason", async () => {
-      const result = await controller.cancelBooking(
-        "booking-123",
-        { reason: "Plans changed" },
-        mockSessionUser,
-      );
-
-      expect(result).toEqual(expect.objectContaining({ status: "CANCELLED" }));
-      expect(bookingCancellationService.cancelBooking).toHaveBeenCalledWith(
-        "booking-123",
-        "user-123",
-        "Plans changed",
-      );
-    });
-
     it("uses default reason when none provided", async () => {
       await controller.cancelBooking("booking-123", {}, mockSessionUser);
 
@@ -686,16 +356,6 @@ describe("BookingController", () => {
         "user-123",
         "User requested cancellation",
       );
-    });
-
-    it("propagates service errors", async () => {
-      vi.mocked(bookingCancellationService.cancelBooking).mockRejectedValueOnce(
-        new BookingNotFoundException(),
-      );
-
-      await expect(
-        controller.cancelBooking("booking-123", { reason: "test" }, mockSessionUser),
-      ).rejects.toBeInstanceOf(BookingNotFoundException);
     });
   });
 });

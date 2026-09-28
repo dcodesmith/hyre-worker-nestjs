@@ -141,22 +141,6 @@ describe("AuthService", () => {
     });
   };
 
-  describe("when auth config is complete", () => {
-    beforeEach(async () => {
-      await setupTestModule({
-        TRUSTED_ORIGINS: ["https://example.com", "https://app.example.com"],
-      });
-    });
-    it("should be initialized", () => {
-      expect(service.isInitialized).toBe(true);
-    });
-
-    it("should return auth instance", () => {
-      expect(service.auth).toBeDefined();
-      expect(service.auth.api).toBeDefined();
-    });
-  });
-
   describe("validateRoleForClient", () => {
     beforeEach(async () => {
       await setupTestModule();

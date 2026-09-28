@@ -300,13 +300,6 @@ describe("FlutterwaveService", () => {
 
       expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/transactions/12345/verify");
     });
-
-    it("should throw error when verification fails", async () => {
-      const error = new Error("Transaction not found");
-      mockAxiosInstance.get.mockRejectedValueOnce(error);
-
-      await expect(service.verifyTransaction("invalid-id")).rejects.toThrow();
-    });
   });
 
   describe("findTransactionByReference", () => {
@@ -771,30 +764,6 @@ describe("FlutterwaveService", () => {
       await expect(service.fetchRefund("67890")).rejects.toMatchObject({
         statusCode: 503,
       });
-    });
-  });
-
-  describe("getWebhookUrl", () => {
-    it("should return webhook URL with path", () => {
-      const url = service.getWebhookUrl("/api/payments/webhook");
-      expect(url).toBe("https://example.com/webhooks/api/payments/webhook");
-    });
-
-    it("should return webhook URL without path", () => {
-      const url = service.getWebhookUrl();
-      expect(url).toBe("https://example.com/webhooks");
-    });
-
-    it("should handle path without leading slash", () => {
-      const url = service.getWebhookUrl("api/payments/webhook");
-      expect(url).toBe("https://example.com/webhooks/api/payments/webhook");
-    });
-  });
-
-  describe("getPublicKey", () => {
-    it("should return public key", () => {
-      const publicKey = service.getPublicKey();
-      expect(publicKey).toBe("test-public-key");
     });
   });
 

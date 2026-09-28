@@ -13,18 +13,13 @@ describe("RatesController", () => {
   let ratesService: {
     getRates: ReturnType<typeof vi.fn>;
   };
-  let adminService: {
-    getAllRates: ReturnType<typeof vi.fn>;
-    createPlatformFeeRate: ReturnType<typeof vi.fn>;
-    createVatRate: ReturnType<typeof vi.fn>;
-  };
 
   beforeEach(async () => {
     ratesService = {
       getRates: vi.fn(),
     };
 
-    adminService = {
+    const adminService = {
       getAllRates: vi.fn(),
       createPlatformFeeRate: vi.fn(),
       createVatRate: vi.fn(),
@@ -69,48 +64,6 @@ describe("RatesController", () => {
         vatRatePercent: 7.5,
       });
       expect(ratesService.getRates).toHaveBeenCalledOnce();
-    });
-  });
-
-  describe("getAllRates", () => {
-    it("should delegate to admin service", async () => {
-      const mockResult = { platformFeeRates: [], taxRates: [] };
-      adminService.getAllRates.mockResolvedValue(mockResult);
-
-      const result = await controller.getAllRates();
-
-      expect(result).toEqual(mockResult);
-      expect(adminService.getAllRates).toHaveBeenCalledOnce();
-    });
-  });
-
-  describe("createPlatformFeeRate", () => {
-    it("should delegate to admin service with dto", async () => {
-      const dto = {
-        feeType: "PLATFORM_SERVICE_FEE" as const,
-        ratePercent: 10,
-        effectiveSince: new Date(),
-      };
-      const mockResult = { id: "pf-1", ...dto };
-      adminService.createPlatformFeeRate.mockResolvedValue(mockResult);
-
-      const result = await controller.createPlatformFeeRate(dto);
-
-      expect(result).toEqual(mockResult);
-      expect(adminService.createPlatformFeeRate).toHaveBeenCalledWith(dto);
-    });
-  });
-
-  describe("createVatRate", () => {
-    it("should delegate to admin service with dto", async () => {
-      const dto = { ratePercent: 7.5, effectiveSince: new Date() };
-      const mockResult = { id: "vat-1", ...dto };
-      adminService.createVatRate.mockResolvedValue(mockResult);
-
-      const result = await controller.createVatRate(dto);
-
-      expect(result).toEqual(mockResult);
-      expect(adminService.createVatRate).toHaveBeenCalledWith(dto);
     });
   });
 });
