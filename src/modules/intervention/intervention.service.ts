@@ -793,6 +793,7 @@ export class InterventionService {
   private reopenAfterActivationFailure(
     interventionId: string,
     status: VerificationInterventionStatus,
+    encryptedPayload?: string | null,
   ) {
     return this.databaseService.verificationIntervention.updateMany({
       where: { id: interventionId, status },
@@ -802,6 +803,7 @@ export class InterventionService {
         resolvedById: null,
         resolutionNotes: null,
         resolutionSource: null,
+        ...(encryptedPayload !== undefined ? { encryptedPayload } : {}),
       },
     });
   }
@@ -1146,6 +1148,7 @@ export class InterventionService {
       await this.reopenAfterActivationFailure(
         interventionId,
         VerificationInterventionStatus.APPROVED,
+        intervention.encryptedPayload,
       );
       throw error;
     }

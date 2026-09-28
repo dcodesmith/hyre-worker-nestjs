@@ -70,6 +70,19 @@ describe("Verification intervention admin API", () => {
     documentStatus?: DocumentStatus;
   }) {
     const owner = await factory.createFleetOwner();
+    await databaseService.user.update({
+      where: { id: owner.id },
+      data: { emailVerified: true, phoneVerifiedAt: new Date() },
+    });
+    await databaseService.bankDetails.create({
+      data: {
+        userId: owner.id,
+        bankName: "Test Bank",
+        bankCode: "001",
+        accountNumber: "0123456789",
+        accountName: "John Doe",
+      },
+    });
     const verification = await databaseService.fleetOwnerAccountVerification.create({
       data: {
         userId: owner.id,

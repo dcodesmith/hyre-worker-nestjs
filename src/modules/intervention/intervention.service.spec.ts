@@ -1501,6 +1501,7 @@ describe("InterventionService", () => {
         kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
         status: VerificationInterventionStatus.OPEN,
         chauffeurVerificationId: VERIFICATION_ID,
+        encryptedPayload: "sealed-licence",
       });
       activation.activateIfEligible.mockRejectedValueOnce(new Error("chauffeur activation failed"));
 
@@ -1523,6 +1524,7 @@ describe("InterventionService", () => {
           resolvedById: null,
           resolutionNotes: null,
           resolutionSource: null,
+          encryptedPayload: "sealed-licence",
         },
       });
     });
