@@ -2,16 +2,16 @@ import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import sharp from "sharp";
 import { toLogError } from "../../common/logging/error-logging.helper";
-import type { UploadedChauffeurSelfie } from "./chauffeur.dto";
-import { ChauffeurInvalidSelfieException } from "./chauffeur.error";
+
+export class InvalidSelfieImageError extends Error {}
 
 @Injectable()
-export class ChauffeurImageService {
+export class SelfieImageService {
   constructor(private readonly logger: PinoLogger) {
-    this.logger.setContext(ChauffeurImageService.name);
+    this.logger.setContext(SelfieImageService.name);
   }
 
-  async processSelfie(file: UploadedChauffeurSelfie): Promise<Buffer> {
+  async process(file: { buffer: Buffer }): Promise<Buffer> {
     try {
       return await sharp(file.buffer, { failOn: "error", limitInputPixels: 20_000_000 })
         .rotate()
@@ -19,8 +19,8 @@ export class ChauffeurImageService {
         .jpeg({ quality: 85 })
         .toBuffer();
     } catch (error) {
-      this.logger.warn({ err: toLogError(error) }, "Failed to process chauffeur selfie");
-      throw new ChauffeurInvalidSelfieException();
+      this.logger.warn({ err: toLogError(error) }, "Failed to process driver selfie");
+      throw new InvalidSelfieImageError();
     }
   }
 }

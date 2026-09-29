@@ -6,11 +6,9 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { ChauffeurImageService } from "../src/modules/chauffeur/chauffeur-image.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { MonoService } from "../src/modules/mono/mono.service";
-import { SmileIdService } from "../src/modules/smile-id/smile-id.service";
 import { StorageService } from "../src/modules/storage/storage.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
@@ -54,6 +52,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
   let databaseService: DatabaseService;
   let factory: TestDataFactory;
   let ownerCookie: string;
+  let staffCookie: string;
   let ownerId: string;
   let ownerCarId: string;
   let customerId: string;
@@ -87,18 +86,17 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
         };
       }),
     deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
+    promotePrivateImage: vi
+      .fn()
+      .mockImplementation(async (_sourceKey: string, destinationKey: string) => {
+        const key = `${destinationKey.replace(/\.[^./]+$/, "")}.webp`;
+        return { key, url: `https://cdn.tripdly.test/${key}` };
+      }),
   };
   const monoService = {
     verifyNin: vi.fn(),
     verifyDriversLicense: vi.fn(),
   };
-  const smileIdService = {
-    compareSelfieToImage: vi.fn(),
-    comparisonStatus: vi.fn(),
-    webhookAuthentic: vi.fn().mockReturnValue(true),
-  };
-  let smileJob: { jobId: string; verificationId: string; stageRequestId: string } | undefined;
-
   function http(method: "get" | "post" | "put" | "patch", path: string) {
     return request(app.getHttpServer())[method](path).set("X-Forwarded-For", clientIp);
   }
@@ -167,18 +165,19 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     );
   }
 
-  function deliverSmileResult(status: "clear" | "block") {
-    if (!smileJob) throw new Error("Smile ID comparison was not submitted");
-    smileIdService.comparisonStatus.mockResolvedValueOnce(status);
-    return http("post", "/api/webhook/smile-id").send({
-      status,
-      product: "smart_selfie_compare",
-      partner_params: {
-        job_id: smileJob.jobId,
-        verificationId: smileJob.verificationId,
-        stageRequestId: smileJob.stageRequestId,
-      },
+  async function approveOpenFace(email: string) {
+    const verification = await databaseService.chauffeurVerification.findFirst({
+      where: { email },
+      select: { id: true },
     });
+    const intervention = await databaseService.verificationIntervention.findFirst({
+      where: { chauffeurVerificationId: verification?.id, kind: "CHAUFFEUR_FACE", status: "OPEN" },
+      select: { id: true },
+    });
+    if (!intervention) throw new Error(`No open face review for ${email}`);
+    return http("post", `/api/admin/verification-interventions/${intervention.id}/approve`)
+      .set("Cookie", staffCookie)
+      .send({ notes: "Matches the NIN portrait", source: "STAFF_REVIEW" });
   }
 
   async function completeOnboarding(
@@ -198,7 +197,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .set("Idempotency-Key", `${extras.prefix ?? "drive"}-${Date.now()}-${Math.random()}`)
       .field("driversLicenseNumber", extras.license ?? "ABC12345DE67")
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
-    if (driving.status < 300) await deliverSmileResult("clear");
+    if (driving.status < 300) await approveOpenFace(driving.body.email);
     return { nin, driving };
   }
 
@@ -241,12 +240,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .useValue(emailService)
       .overrideProvider(MonoService)
       .useValue(monoService)
-      .overrideProvider(SmileIdService)
-      .useValue(smileIdService)
       .overrideProvider(StorageService)
       .useValue(storageService)
-      .overrideProvider(ChauffeurImageService)
-      .useValue({ processSelfie: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")) })
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
@@ -255,6 +250,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     databaseService = app.get(DatabaseService);
     factory = new TestDataFactory(databaseService, app);
 
+    staffCookie = (await factory.createAuthenticatedStaff(uniqueEmail("chauffeur-e2e-staff")))
+      .cookie;
     const owner = await readyOwner("chauffeur-e2e-owner");
     ownerCookie = owner.cookie;
     ownerId = owner.id;
@@ -272,20 +269,6 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
     monoService.verifyNin.mockReset();
     monoService.verifyDriversLicense.mockReset();
-    smileIdService.compareSelfieToImage.mockReset();
-    smileIdService.comparisonStatus.mockReset();
-    smileIdService.webhookAuthentic.mockReset();
-    smileIdService.webhookAuthentic.mockReturnValue(true);
-    smileIdService.compareSelfieToImage.mockImplementation(
-      async (input: { partnerParams?: { verificationId?: string; stageRequestId?: string } }) => {
-        smileJob = {
-          jobId: `job-${Date.now()}-${Math.random()}`,
-          verificationId: input.partnerParams?.verificationId ?? "",
-          stageRequestId: input.partnerParams?.stageRequestId ?? "",
-        };
-        return { jobId: smileJob.jobId, createdAt: null };
-      },
-    );
     monoService.verifyNin.mockResolvedValue({
       firstName: "ADA",
       middleName: null,
@@ -564,8 +547,8 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     expect(driving.status).toBe(HttpStatus.CREATED);
     expect(driving.body.status).toBe("IDENTITY_VERIFIED");
 
-    const compared = await deliverSmileResult("clear");
-    expect(compared.status).toBe(HttpStatus.OK);
+    const compared = await approveOpenFace(email);
+    expect(compared.status).toBe(HttpStatus.CREATED);
     const approved = await onboarding("get", "", session);
     expect(approved.status).toBe(HttpStatus.OK);
     expect(approved.body.status).toBe("APPROVED");
@@ -587,14 +570,16 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       chauffeurApprovalStatus: "APPROVED",
       hasOnboarded: true,
       name: "ADA LOVELACE",
-      image: null,
+      image: expect.stringMatching(/^https:\/\/cdn\.tripdly\.test\/chauffeurs\//),
     });
     const verification = await databaseService.chauffeurVerification.findFirst({
       where: { email },
       select: { id: true, selfieObjectKey: true },
     });
     expect(verification?.selfieObjectKey).toBeNull();
-    expect(user?.image).toBeNull();
+    expect(user?.image).toEqual(
+      expect.stringMatching(/^https:\/\/cdn\.tripdly\.test\/chauffeurs\//),
+    );
     expect(storageService.deleteObjectByKey).toHaveBeenCalled();
     expect(storageService.uploadBuffer).toHaveBeenCalledWith(
       expect.any(Buffer),
@@ -629,7 +614,10 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
         where: { id: user?.id },
         select: { chauffeurDisabledAt: true, image: true },
       }),
-    ).toMatchObject({ chauffeurDisabledAt: expect.any(Date), image: null });
+    ).toMatchObject({
+      chauffeurDisabledAt: expect.any(Date),
+      image: expect.stringMatching(/^https:\/\/cdn\.tripdly\.test\/chauffeurs\//),
+    });
   });
 
   it("links an existing eligible User instead of creating a duplicate", async () => {
@@ -658,7 +646,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .attach("selfie", JPEG, { filename: "selfie.jpg", contentType: "image/jpeg" });
 
     expect(driving.status).toBe(HttpStatus.CREATED);
-    expect((await deliverSmileResult("clear")).status).toBe(HttpStatus.OK);
+    expect((await approveOpenFace(email)).status).toBe(HttpStatus.CREATED);
     const linked = await databaseService.user.findUnique({
       where: { email },
       select: { id: true, fleetOwnerId: true, chauffeurApprovalStatus: true },
@@ -711,14 +699,10 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     expect(second.driving.status).toBe(HttpStatus.CREATED);
     const rejected = await databaseService.chauffeurVerification.findFirst({
       where: { email: secondEmail },
-      select: { status: true, stageRequests: { select: { failureReason: true } } },
+      select: { status: true, faceDecision: true },
     });
     expect(rejected?.status).not.toBe(ChauffeurVerificationStatus.APPROVED);
-    expect(rejected?.stageRequests).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ failureReason: "CHAUFFEUR_ACCOUNT_CONFLICT" }),
-      ]),
-    );
+    expect(rejected?.faceDecision).toBe("REJECTED");
   });
 
   it("enforces overlapping chauffeur reservations at the database boundary", async () => {

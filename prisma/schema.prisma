@@ -139,6 +139,7 @@ model ChauffeurVerification {
   livenessConfidence        Float?
   faceMatchConfidence       Float?
   selfieObjectKey           String?
+  selfieRetakeRequired      Boolean                             @default(false)
   driversLicenseDecision    VerificationDecisionStatus          @default(PENDING)
   faceDecision              VerificationDecisionStatus          @default(PENDING)
   status                    ChauffeurVerificationStatus         @default(INVITED)
@@ -894,6 +895,7 @@ model FleetOwnerAccountVerification {
   identityFirstName         String?
   identityLastName          String?
   identityDateOfBirth       DateTime?
+  identityOfficialPhoto     String?
   legalName                 String?
   businessName              String?
   businessNameMatch         NameMatchStatus?
@@ -915,6 +917,9 @@ model FleetOwnerAccountVerification {
   driversLicenseExpiresAt   DateTime?
   driversLicenseProviderRef String?
   driversLicenseDecision    VerificationDecisionStatus                  @default(PENDING)
+  selfieObjectKey           String?
+  selfieRetakeRequired      Boolean                                     @default(false)
+  faceDecision              VerificationDecisionStatus                  @default(PENDING)
   drivingCompletedAt        DateTime?
   submittedAt               DateTime?
   failureReason             String?
@@ -1381,6 +1386,7 @@ enum VerificationInterventionKind {
   CHAUFFEUR_DRIVERS_LICENSE
   OWNER_DRIVER_LICENSE
   CHAUFFEUR_FACE
+  OWNER_DRIVER_FACE
 }
 
 enum VerificationInterventionStatus {
@@ -1388,6 +1394,7 @@ enum VerificationInterventionStatus {
   AUTO_RESOLVED
   APPROVED
   REJECTED
+  RETAKE_REQUESTED
 }
 
 enum FleetOwnerAccountType {

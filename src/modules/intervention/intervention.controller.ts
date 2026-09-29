@@ -90,6 +90,16 @@ export class InterventionController {
     return { success: true };
   }
 
+  @Post(":interventionId/request-retake")
+  async requestRetake(
+    @ZodParam("interventionId", interventionIdSchema) interventionId: string,
+    @ZodBody(rejectInterventionSchema) body: RejectInterventionDto,
+    @CurrentUser() user: AuthSession["user"],
+  ) {
+    await this.interventionService.requestRetake(interventionId, user.id, body.notes);
+    return { success: true };
+  }
+
   @Post(":interventionId/approve-document")
   async approveOwnerLicenseDocument(
     @ZodParam("interventionId", interventionIdSchema) interventionId: string,

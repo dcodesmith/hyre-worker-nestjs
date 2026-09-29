@@ -83,11 +83,6 @@ describe("DocumentApprovalService", () => {
       userId: "user-1",
       documentType: DocumentType.NIN,
     });
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
-      fleetOwnerId: null,
-      isOwnerDriver: false,
-    });
-
     await service.approveDocument("doc-1", "admin-1");
 
     expect(databaseServiceMock.documentApproval.count).not.toHaveBeenCalled();
@@ -101,9 +96,18 @@ describe("DocumentApprovalService", () => {
       userId: "user-1",
       documentType: DocumentType.DRIVERS_LICENSE,
     });
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
-      fleetOwnerId: "fo-1",
-      isOwnerDriver: false,
+    await service.approveDocument("doc-1", "admin-1");
+
+    expect(databaseServiceMock.documentApproval.count).not.toHaveBeenCalled();
+    expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("does not activate an owner-driver when only the licence document is approved", async () => {
+    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
+      id: "doc-1",
+      carId: null,
+      userId: "user-1",
+      documentType: DocumentType.DRIVERS_LICENSE,
     });
 
     await service.approveDocument("doc-1", "admin-1");
@@ -112,56 +116,16 @@ describe("DocumentApprovalService", () => {
     expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
   });
 
-  it("approves an owner-driver when only the licence is approved", async () => {
-    databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
-      id: "doc-1",
-      carId: null,
-      userId: "user-1",
-      documentType: DocumentType.DRIVERS_LICENSE,
-    });
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
-      fleetOwnerId: null,
-      isOwnerDriver: true,
-    });
-    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(1);
-
-    await service.approveDocument("doc-1", "admin-1");
-
-    expect(databaseServiceMock.documentApproval.count).toHaveBeenCalledWith({
-      where: {
-        userId: "user-1",
-        documentType: DocumentType.DRIVERS_LICENSE,
-        status: "APPROVED",
-      },
-    });
-    expect(databaseServiceMock.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
-      data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
-    });
-  });
-
-  it("does not approve an owner-driver while the licence is still unresolved", async () => {
+  it("does not activate an owner-driver when an optional document is approved", async () => {
     databaseServiceMock.documentApproval.update.mockResolvedValueOnce({
       id: "lasdri-1",
       carId: null,
       userId: "user-1",
       documentType: DocumentType.LASDRI,
     });
-    databaseServiceMock.user.findUnique.mockResolvedValueOnce({
-      fleetOwnerId: null,
-      isOwnerDriver: true,
-    });
-    databaseServiceMock.documentApproval.count.mockResolvedValueOnce(0);
 
     await service.approveDocument("lasdri-1", "admin-1");
 
-    expect(databaseServiceMock.documentApproval.count).toHaveBeenCalledWith({
-      where: {
-        userId: "user-1",
-        documentType: DocumentType.DRIVERS_LICENSE,
-        status: "APPROVED",
-      },
-    });
     expect(databaseServiceMock.user.update).not.toHaveBeenCalled();
   });
 

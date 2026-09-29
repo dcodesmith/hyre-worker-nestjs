@@ -4,6 +4,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import {
   AccountVerificationStage,
   AccountVerificationStatus,
+  ChauffeurApprovalStatus,
   DocumentStatus,
   DocumentType,
   FleetOwnerAccountType,
@@ -62,6 +63,7 @@ import {
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
+import { SelfieImageService } from "./selfie-image.service";
 import {
   VerificationIdempotencyKeyReusedException,
   VerificationRequestInProgressException,
@@ -86,6 +88,13 @@ const licenseFile = (name = "license.pdf"): UploadedAccountDocument => ({
   mimetype: "application/pdf",
   size: 1024,
   buffer: Buffer.from(`license-${name}`),
+});
+
+const selfieFile = (): UploadedAccountDocument => ({
+  originalname: "selfie.jpg",
+  mimetype: "image/jpeg",
+  size: 4,
+  buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
 });
 
 const individualInput = (
@@ -123,12 +132,17 @@ const fileHash = (file?: UploadedAccountDocument) =>
 
 const requestHash = (
   input: CreateAccountVerificationDto,
-  documents: { driversLicense?: UploadedAccountDocument; lasdri?: UploadedAccountDocument } = {},
+  documents: {
+    driversLicense?: UploadedAccountDocument;
+    lasdri?: UploadedAccountDocument;
+    selfie?: UploadedAccountDocument;
+  } = {},
 ) =>
   hashValue({
     ...input,
     driversLicense: fileHash(documents.driversLicense),
     lasdri: fileHash(documents.lasdri),
+    selfie: fileHash(documents.selfie),
   });
 
 const individualIdentity = (
@@ -165,13 +179,18 @@ const payoutHash = (input: PayoutVerificationDto = payoutInput()) =>
 
 const drivingHash = (
   input: DrivingCredentialsDto = { isOwnerDriver: false },
-  documents: { driversLicense?: UploadedAccountDocument; lasdri?: UploadedAccountDocument } = {},
+  documents: {
+    driversLicense?: UploadedAccountDocument;
+    lasdri?: UploadedAccountDocument;
+    selfie?: UploadedAccountDocument;
+  } = {},
 ) =>
   hashValue({
     stage: AccountVerificationStage.DRIVING,
     input,
     driversLicense: fileHash(documents.driversLicense),
     lasdri: fileHash(documents.lasdri),
+    selfie: fileHash(documents.selfie),
   });
 
 const submissionHash = () => hashValue({ stage: AccountVerificationStage.SUBMISSION });
@@ -393,6 +412,7 @@ describe("AccountVerificationService", () => {
   };
   let interventionService: {
     bindOwnerLicense: ReturnType<typeof vi.fn>;
+    bindOwnerFace: ReturnType<typeof vi.fn>;
     dispatchIntervention: ReturnType<typeof vi.fn>;
   };
   let logger: { warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
@@ -409,7 +429,9 @@ describe("AccountVerificationService", () => {
   let storageService: {
     uploadBuffer: ReturnType<typeof vi.fn>;
     deleteObjectByKey: ReturnType<typeof vi.fn>;
+    promotePrivateImage: ReturnType<typeof vi.fn>;
   };
+  let selfieImageService: { process: ReturnType<typeof vi.fn> };
 
   const readyUser = {
     emailVerified: true,
@@ -460,7 +482,11 @@ describe("AccountVerificationService", () => {
     };
     interventionService = {
       bindOwnerLicense: vi.fn().mockResolvedValue({ id: "owner-intervention" }),
+      bindOwnerFace: vi.fn().mockResolvedValue({ id: "owner-face" }),
       dispatchIntervention: vi.fn().mockResolvedValue(undefined),
+    };
+    selfieImageService = {
+      process: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")),
     };
     flutterwaveService = {
       resolveBankAccount: vi.fn().mockResolvedValue(resolvedAccount),
@@ -475,6 +501,10 @@ describe("AccountVerificationService", () => {
           return { key: `stored/${canonicalKey}`, url: `stored/${canonicalKey}` };
         }),
       deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
+      promotePrivateImage: vi.fn().mockResolvedValue({
+        key: "profile-key",
+        url: "https://cdn.example/profile.webp",
+      }),
     };
 
     databaseService.$transaction.mockImplementation(async (callback) =>
@@ -500,6 +530,7 @@ describe("AccountVerificationService", () => {
         { provide: FlutterwaveService, useValue: flutterwaveService },
         { provide: StorageService, useValue: storageService },
         { provide: InterventionService, useValue: interventionService },
+        { provide: SelfieImageService, useValue: selfieImageService },
         {
           provide: ConfigService,
           useValue: { get: vi.fn((key: string) => (key === "HMAC_KEY" ? HMAC_KEY : undefined)) },
@@ -664,7 +695,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: individualInput({ isOwnerDriver: true }),
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
       expect(monoService.verifyNin).not.toHaveBeenCalled();
@@ -680,67 +711,80 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: individualInput({ isOwnerDriver: true }),
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
     });
 
-    it("automatically succeeds when an owner-driver already has an APPROVED licence", async () => {
+    it("sends an owner-driver with an existing licence to review after storing the selfie", async () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce({
         status: DocumentStatus.APPROVED,
       });
       monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+        }),
+      );
 
       await expect(
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverInput(),
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
-      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
+      ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expect(monoService.verifyDriversLicense).toHaveBeenCalledWith(
         LICENSE_NUMBER,
         "JOHN",
         "DOE",
         identity.dateOfBirth,
       );
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(interventionService.bindOwnerFace).toHaveBeenCalled();
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ isVerified: true }),
-          update: expect.objectContaining({ isVerified: true }),
+          create: expect.objectContaining({ isVerified: false }),
+          update: expect.objectContaining({ isVerified: false }),
         }),
       );
       expect(databaseService.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
       });
     });
 
-    it("automatically succeeds when an owner-driver already has a PENDING licence", async () => {
+    it("sends an owner-driver with a pending licence to review", async () => {
       databaseService.documentApproval.findUnique.mockResolvedValueOnce({
         status: DocumentStatus.PENDING,
       });
       monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+        }),
+      );
 
       await expect(
         service.create({
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverInput(),
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
-      ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
+      ).resolves.toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ isVerified: true }),
-          update: expect.objectContaining({ isVerified: true }),
+          create: expect.objectContaining({ isVerified: false }),
+          update: expect.objectContaining({ isVerified: false }),
         }),
       );
       expect(databaseService.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
       });
     });
 
@@ -757,19 +801,25 @@ describe("AccountVerificationService", () => {
       ).rejects.toBeInstanceOf(AccountDocumentInvalidException);
     });
 
-    it("automatically succeeds after uploading a new owner-driver licence", async () => {
+    it("stores a new owner-driver licence and selfie, then opens review", async () => {
       const licence = licenseFile();
       monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+      databaseService.fleetOwnerAccountVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+        }),
+      );
 
       const result = await service.create({
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
         input: ownerDriverInput(),
-        documents: { driversLicense: licence },
+        documents: { driversLicense: licence, selfie: selfieFile() },
       });
 
-      expect(result.status).toBe(AccountVerificationStatus.SUCCEEDED);
-      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe(AccountVerificationStatus.REVIEW_REQUIRED);
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         licence.buffer,
         expect.stringMatching(
@@ -790,8 +840,8 @@ describe("AccountVerificationService", () => {
       );
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ isVerified: true }),
-          update: expect.objectContaining({ isVerified: true }),
+          create: expect.objectContaining({ isVerified: false }),
+          update: expect.objectContaining({ isVerified: false }),
         }),
       );
       expect(databaseService.user.update).toHaveBeenCalledWith({
@@ -799,9 +849,10 @@ describe("AccountVerificationService", () => {
         data: expect.objectContaining({
           isOwnerDriver: true,
           hasOnboarded: true,
-          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+          fleetOwnerStatus: FleetOwnerStatus.PROCESSING,
         }),
       });
+      expect(interventionService.bindOwnerFace).toHaveBeenCalled();
     });
 
     it("uploads optional LASDRI without changing an auto-approved outcome", async () => {
@@ -817,10 +868,11 @@ describe("AccountVerificationService", () => {
           documents: {
             driversLicense: licence,
             lasdri,
+            selfie: selfieFile(),
           },
         }),
       ).resolves.toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
-      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(3);
     });
 
     it("rejects a business owner-driver before claiming or calling Prembly", async () => {
@@ -850,7 +902,7 @@ describe("AccountVerificationService", () => {
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
         input: ownerDriverInput(),
-        documents: { driversLicense: licenseFile() },
+        documents: { driversLicense: licenseFile(), selfie: selfieFile() },
       });
 
       expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
@@ -868,7 +920,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverInput(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
       expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
@@ -890,10 +942,10 @@ describe("AccountVerificationService", () => {
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
         input: ownerDriverInput(),
-        documents: { driversLicense: licenseFile() },
+        documents: { driversLicense: licenseFile(), selfie: selfieFile() },
       });
 
-      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
       expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
         data: expect.objectContaining({
@@ -930,10 +982,10 @@ describe("AccountVerificationService", () => {
         userId: USER_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
         input: ownerDriverInput(),
-        documents: {},
+        documents: { selfie: selfieFile() },
       });
 
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
       expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
         expect.objectContaining({
           documentApproval: databaseService.documentApproval,
@@ -962,7 +1014,7 @@ describe("AccountVerificationService", () => {
             userId: USER_ID,
             idempotencyKey: IDEMPOTENCY_KEY,
             input: ownerDriverInput(),
-            documents: {},
+            documents: { selfie: selfieFile() },
           }),
         ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
         expect(interventionService.bindOwnerLicense).not.toHaveBeenCalled();
@@ -979,7 +1031,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverInput(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
       expect(interventionService.dispatchIntervention).not.toHaveBeenCalled();
@@ -991,7 +1043,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: individualInput({ isOwnerDriver: true }),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
       expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
@@ -1488,6 +1540,7 @@ describe("AccountVerificationService", () => {
           input: ownerDriverInput(),
           documents: {
             driversLicense: licence,
+            selfie: selfieFile(),
           },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
@@ -1517,10 +1570,11 @@ describe("AccountVerificationService", () => {
           input: ownerDriverInput(),
           documents: {
             driversLicense: licence,
+            selfie: selfieFile(),
           },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledTimes(3);
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledTimes(6);
       expect(logger.warn).toHaveBeenCalledWith(
         { err: expect.objectContaining({ message: "s3 down" }) },
         "Failed to delete an unreferenced account document after retries",
@@ -1607,6 +1661,7 @@ describe("AccountVerificationService", () => {
         input: ownerDriverInput(),
         documents: {
           driversLicense: licence,
+          selfie: selfieFile(),
         },
       });
 
@@ -1664,6 +1719,7 @@ describe("AccountVerificationService", () => {
         data: {
           isOwnerDriver: false,
           ...clearedLicenseData,
+          selfieRetakeRequired: false,
           drivingCompletedAt: expect.any(Date),
         },
       });
@@ -2294,6 +2350,7 @@ describe("AccountVerificationService", () => {
         data: {
           isOwnerDriver: false,
           ...clearedLicenseData,
+          selfieRetakeRequired: false,
           drivingCompletedAt: expect.any(Date),
         },
       });
@@ -2309,9 +2366,7 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it("verifies an owner-driver licence with Mono and persists hashed evidence", async () => {
-      monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
-
+    it("requires a selfie before an owner-driver licence lookup", async () => {
       await expect(
         service.saveDrivingCredentialsStage({
           userId: USER_ID,
@@ -2319,11 +2374,29 @@ describe("AccountVerificationService", () => {
           input: ownerDriverDriving(),
           documents: { driversLicense: licenseFile() },
         }),
+      ).rejects.toBeInstanceOf(AccountDocumentInvalidException);
+      expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(
+        databaseService.fleetOwnerAccountVerificationStageRequest.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("verifies an owner-driver licence with Mono, stores the selfie, and opens a face review", async () => {
+      monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+
+      await expect(
+        service.saveDrivingCredentialsStage({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: ownerDriverDriving(),
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
+        }),
       ).resolves.toMatchObject({
         status: "COMPLETED",
         isOwnerDriver: true,
         documents: { driversLicense: "PENDING" },
       });
+      expect(monoService.verifyDriversLicense).toHaveBeenCalledTimes(1);
       expect(monoService.verifyDriversLicense).toHaveBeenCalledWith(
         LICENSE_NUMBER,
         "JOHN",
@@ -2331,14 +2404,22 @@ describe("AccountVerificationService", () => {
         identity.dateOfBirth,
       );
       expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
+      expect(selfieImageService.process).toHaveBeenCalledTimes(1);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
-        data: {
+        data: expect.objectContaining({
           isOwnerDriver: true,
           ...persistedLicenseData,
+          selfieRetakeRequired: false,
+          selfieObjectKey: expect.stringMatching(/selfie-.+\.webp$/),
           drivingCompletedAt: expect.any(Date),
-        },
+        }),
       });
+      expect(interventionService.bindOwnerFace).toHaveBeenCalledWith(
+        expect.anything(),
+        VERIFICATION_ID,
+      );
+      expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-face");
     });
 
     it("hashes the typed licence number rather than Mono's canonical form", async () => {
@@ -2353,7 +2434,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving({ driversLicenseNumber: typedNumber }),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED" });
       expect(monoService.verifyDriversLicense).toHaveBeenCalledWith(
@@ -2382,7 +2463,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({
         status: "COMPLETED",
@@ -2432,7 +2513,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: { isOwnerDriver: true },
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseRequiredException);
       expect(
@@ -2460,7 +2541,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: { isOwnerDriver: true },
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(BusinessOwnerDriverInvalidException);
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
@@ -2599,7 +2680,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
       expect(premblyService.verifyDriversLicense).not.toHaveBeenCalled();
@@ -2619,7 +2700,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
       expect(premblyService.verifyDriversLicense).toHaveBeenCalledWith(
@@ -2644,7 +2725,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
       expect(storageService.uploadBuffer).not.toHaveBeenCalled();
@@ -2660,14 +2741,14 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({
         status: "COMPLETED",
         isOwnerDriver: true,
         documents: { driversLicense: "PENDING" },
       });
-      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(2);
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
         data: expect.objectContaining({
@@ -2702,11 +2783,11 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
 
-      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).toHaveBeenCalledTimes(1);
       expect(interventionService.bindOwnerLicense).toHaveBeenCalledWith(
         expect.objectContaining({
           documentApproval: databaseService.documentApproval,
@@ -2728,7 +2809,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
       expect(interventionService.dispatchIntervention).not.toHaveBeenCalled();
@@ -2749,7 +2830,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseIdentityMismatchException);
       expectDraftNotAdvanced();
@@ -2770,7 +2851,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
     });
@@ -2787,7 +2868,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
     });
@@ -2803,7 +2884,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseExpiredException);
       expectDraftNotAdvanced();
@@ -2821,7 +2902,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
@@ -2842,7 +2923,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationStepIncompleteException);
       expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
@@ -2859,7 +2940,7 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: ownerDriverDriving(),
-          documents: { driversLicense: licenseFile() },
+          documents: { driversLicense: licenseFile(), selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
       expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
@@ -2876,12 +2957,66 @@ describe("AccountVerificationService", () => {
           userId: USER_ID,
           idempotencyKey: IDEMPOTENCY_KEY,
           input: { isOwnerDriver: true },
-          documents: {},
+          documents: { selfie: selfieFile() },
         }),
       ).rejects.toBeInstanceOf(OwnerDriverLicenseNotVerifiedException);
       expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
       expectDraftNotAdvanced();
     });
+  });
+
+  describe("replaceSelfie", () => {
+    const retakeRecord = (status: AccountVerificationStatus) =>
+      payoutReadyDraft({
+        status,
+        isOwnerDriver: true,
+        selfieRetakeRequired: true,
+        selfieObjectKey: null,
+        faceDecision: VerificationDecisionStatus.PENDING,
+      });
+
+    it.each([AccountVerificationStatus.DRAFT, AccountVerificationStatus.REVIEW_REQUIRED])(
+      "accepts a new selfie for a %s owner-driver retake",
+      async (status) => {
+        databaseService.fleetOwnerAccountVerification.findFirst
+          .mockResolvedValueOnce({ id: VERIFICATION_ID })
+          .mockResolvedValueOnce(retakeRecord(status));
+
+        await expect(
+          service.replaceSelfie(USER_ID, IDEMPOTENCY_KEY, selfieFile()),
+        ).resolves.toMatchObject({ status: "COMPLETED", isOwnerDriver: true });
+
+        expect(monoService.verifyDriversLicense).not.toHaveBeenCalled();
+        expect(selfieImageService.process).toHaveBeenCalledTimes(1);
+        expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: VERIFICATION_ID,
+            status,
+            selfieRetakeRequired: true,
+            selfieObjectKey: null,
+          },
+          data: {
+            selfieObjectKey: expect.stringMatching(/selfie-.+\.webp$/),
+            selfieRetakeRequired: false,
+            faceDecision: VerificationDecisionStatus.PENDING,
+          },
+        });
+        expect(interventionService.bindOwnerFace).toHaveBeenCalledWith(
+          expect.anything(),
+          VERIFICATION_ID,
+        );
+        expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-face");
+        expect(
+          databaseService.fleetOwnerAccountVerificationStageRequest.update,
+        ).toHaveBeenCalledWith({
+          where: { id: STAGE_REQUEST_ID },
+          data: {
+            status: ProviderVerificationStatus.SUCCEEDED,
+            response: { status: "COMPLETED", isOwnerDriver: true },
+          },
+        });
+      },
+    );
   });
 
   describe("submitStage", () => {
@@ -2950,7 +3085,11 @@ describe("AccountVerificationService", () => {
       });
       expect(databaseService.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID },
-        data: { status: AccountVerificationStatus.SUCCEEDED, submittedAt: expect.any(Date) },
+        data: {
+          status: AccountVerificationStatus.SUCCEEDED,
+          submittedAt: expect.any(Date),
+          identityOfficialPhoto: null,
+        },
       });
     });
 
@@ -2973,6 +3112,8 @@ describe("AccountVerificationService", () => {
         isOwnerDriver: true,
         ...persistedLicenseData,
         driversLicenseExpiresAt: new Date(Date.UTC(2020, 0, 1)),
+        selfieObjectKey: "owner-selfie-key",
+        faceDecision: VerificationDecisionStatus.APPROVED,
       });
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
@@ -2993,6 +3134,7 @@ describe("AccountVerificationService", () => {
         driversLicenseDecision: VerificationDecisionStatus.PENDING,
         driversLicenseExpiresAt: null,
         driversLicenseProviderRef: null,
+        selfieObjectKey: "owner-selfie-key",
       });
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
@@ -3024,6 +3166,7 @@ describe("AccountVerificationService", () => {
         isOwnerDriver: true,
         ...persistedLicenseData,
         driversLicenseDecision: VerificationDecisionStatus.PENDING,
+        selfieObjectKey: "owner-selfie-key",
       });
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
@@ -3037,10 +3180,12 @@ describe("AccountVerificationService", () => {
       expect(databaseService.user.updateMany).not.toHaveBeenCalled();
     });
 
-    it("approves an owner-driver with a hash and PENDING document on submit", async () => {
+    it("holds an owner-driver for review when the licence document is still pending", async () => {
       const ownerDriverDraft = drivingReadyDraft({
         isOwnerDriver: true,
         ...persistedLicenseData,
+        selfieObjectKey: "owner-selfie-key",
+        faceDecision: VerificationDecisionStatus.APPROVED,
       });
       databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(ownerDriverDraft);
       databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValue(ownerDriverDraft);
@@ -3049,6 +3194,7 @@ describe("AccountVerificationService", () => {
       });
       databaseService.fleetOwnerAccountVerification.update.mockResolvedValue(
         succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
           isOwnerDriver: true,
           ...persistedLicenseData,
           submittedAt: new Date("2026-01-01T00:15:00Z"),
@@ -3057,11 +3203,11 @@ describe("AccountVerificationService", () => {
 
       const result = await service.submitStage(USER_ID, IDEMPOTENCY_KEY);
 
-      expect(result).toMatchObject({ status: AccountVerificationStatus.SUCCEEDED });
+      expect(result).toMatchObject({ status: AccountVerificationStatus.REVIEW_REQUIRED });
       expectNoLicenseLeak(result);
       expect(databaseService.user.updateMany).toHaveBeenCalledWith({
         where: { id: USER_ID, emailVerified: true, phoneVerifiedAt: { not: null } },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
+        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.PROCESSING }),
       });
     });
 
@@ -3813,6 +3959,8 @@ describe("AccountVerificationService", () => {
       status: AccountVerificationStatus.REVIEW_REQUIRED,
       isOwnerDriver: true,
       driversLicenseDecision: VerificationDecisionStatus.APPROVED,
+      faceDecision: VerificationDecisionStatus.APPROVED,
+      selfieObjectKey: "owner-selfie-key",
       user: { emailVerified: true, phoneVerifiedAt: new Date() },
     });
 
@@ -3876,10 +4024,40 @@ describe("AccountVerificationService", () => {
         where: { userId: USER_ID },
         data: expect.objectContaining({ isVerified: true }),
       });
+      expect(storageService.promotePrivateImage).toHaveBeenCalledWith(
+        "owner-selfie-key",
+        expect.stringMatching(new RegExp(`^fleet-owners/${USER_ID}/profile/.+\\.webp$`)),
+      );
       expect(tx.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        data: { hasOnboarded: true, fleetOwnerStatus: FleetOwnerStatus.APPROVED },
+        data: {
+          hasOnboarded: true,
+          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+          image: "https://cdn.example/profile.webp",
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+        },
       });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("owner-selfie-key");
+    });
+
+    it("does not approve an owner-driver until the face review is approved", async () => {
+      const tx = reviewTx({
+        verification: succeededRecord({
+          status: AccountVerificationStatus.REVIEW_REQUIRED,
+          isOwnerDriver: true,
+          driversLicenseDecision: VerificationDecisionStatus.APPROVED,
+          faceDecision: VerificationDecisionStatus.PENDING,
+          selfieObjectKey: "owner-selfie-key",
+          user: { emailVerified: true, phoneVerifiedAt: new Date() },
+        }),
+      });
+      databaseService.$transaction.mockImplementationOnce(async (callback) => callback(tx));
+
+      await expect(service.approve(VERIFICATION_ID, REVIEWER_ID)).rejects.toBeInstanceOf(
+        AccountVerificationReviewPendingException,
+      );
+      expect(storageService.promotePrivateImage).not.toHaveBeenCalled();
+      expect(tx.user.update).not.toHaveBeenCalled();
     });
 
     it("rejects approval when the review is not found", async () => {
@@ -3928,6 +4106,7 @@ describe("AccountVerificationService", () => {
       },
       bankDetails: { updateMany: vi.fn() },
       user: { update: vi.fn() },
+      verificationIntervention: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
     });
 
     it("rejects a pending review, writes audit fields, and holds the owner", async () => {

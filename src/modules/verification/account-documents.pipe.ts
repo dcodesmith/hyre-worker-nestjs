@@ -16,6 +16,7 @@ const ALLOWED_DOCUMENT_TYPES = new Set([
 export type AccountDocuments = {
   driversLicense?: UploadedAccountDocument;
   lasdri?: UploadedAccountDocument;
+  selfie?: UploadedAccountDocument;
 };
 
 @Injectable()
@@ -26,17 +27,30 @@ export class AccountDocumentsPipe
     const documents = {
       driversLicense: files?.driversLicense?.[0],
       lasdri: files?.lasdri?.[0],
+      selfie: files?.selfie?.[0],
     };
 
-    this.validate(documents.driversLicense, "Driver's licence");
-    this.validate(documents.lasdri, "LASDRI");
+    this.validate(documents.driversLicense, "Driver's licence", true);
+    this.validate(documents.lasdri, "LASDRI", true);
+    this.validate(documents.selfie, "Selfie", false);
     return documents;
   }
 
-  private validate(file: UploadedAccountDocument | undefined, label: string): void {
+  private validate(
+    file: UploadedAccountDocument | undefined,
+    label: string,
+    allowPdf: boolean,
+  ): void {
     if (!file) return;
-    if (!ALLOWED_DOCUMENT_TYPES.has(file.mimetype)) {
-      throw new AccountDocumentInvalidException(`${label} must be a JPEG, PNG, WebP, or PDF`);
+    if (
+      !ALLOWED_DOCUMENT_TYPES.has(file.mimetype) ||
+      (!allowPdf && file.mimetype === "application/pdf")
+    ) {
+      throw new AccountDocumentInvalidException(
+        allowPdf
+          ? `${label} must be a JPEG, PNG, WebP, or PDF`
+          : `${label} must be a JPEG, PNG, or WebP`,
+      );
     }
     if (file.size <= 0 || file.size > MAX_ACCOUNT_DOCUMENT_SIZE_BYTES) {
       throw new AccountDocumentInvalidException(`${label} must not exceed 5 MB`);
@@ -76,5 +90,18 @@ export class AccountDriverLicensePipe
     }
     const documents = new AccountDocumentsPipe().transform({ driversLicense: [file] });
     return documents.driversLicense as UploadedAccountDocument;
+  }
+}
+
+@Injectable()
+export class AccountSelfiePipe
+  implements PipeTransform<UploadedAccountDocument | undefined, UploadedAccountDocument>
+{
+  transform(file: UploadedAccountDocument | undefined): UploadedAccountDocument {
+    if (!file) {
+      throw new AccountDocumentInvalidException("A selfie is required");
+    }
+    const documents = new AccountDocumentsPipe().transform({ selfie: [file] });
+    return documents.selfie as UploadedAccountDocument;
   }
 }

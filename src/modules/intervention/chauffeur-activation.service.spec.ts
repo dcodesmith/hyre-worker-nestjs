@@ -67,7 +67,10 @@ describe("ChauffeurActivationService", () => {
     $queryRaw: ReturnType<typeof vi.fn>;
     $transaction: ReturnType<typeof vi.fn>;
   };
-  let storageService: { deleteObjectByKey: ReturnType<typeof vi.fn> };
+  let storageService: {
+    deleteObjectByKey: ReturnType<typeof vi.fn>;
+    promotePrivateImage: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     database = {
@@ -104,7 +107,13 @@ describe("ChauffeurActivationService", () => {
     database.$transaction.mockImplementation(async (callback: (tx: typeof database) => unknown) =>
       callback(database),
     );
-    storageService = { deleteObjectByKey: vi.fn().mockResolvedValue(undefined) };
+    storageService = {
+      deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
+      promotePrivateImage: vi.fn().mockResolvedValue({
+        key: "profile-key",
+        url: "https://cdn.example/profile.webp",
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -239,7 +248,11 @@ describe("ChauffeurActivationService", () => {
         roles: { connect: { name: USER } },
       }),
     );
-    expect(created).not.toHaveProperty("image");
+    expect(storageService.promotePrivateImage).toHaveBeenCalledWith(
+      SELFIE_KEY,
+      expect.stringMatching(new RegExp(`^chauffeurs/${VERIFICATION_ID}/profile/.+\\.webp$`)),
+    );
+    expect(created.image).toBe("https://cdn.example/profile.webp");
     expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
       where: { id: VERIFICATION_ID },
       data: expect.objectContaining({
@@ -278,6 +291,7 @@ describe("ChauffeurActivationService", () => {
         fleetOwnerId: OWNER_ID,
         chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
         chauffeurDisabledAt: null,
+        image: "https://cdn.example/profile.webp",
       }),
       select: { id: true },
     });

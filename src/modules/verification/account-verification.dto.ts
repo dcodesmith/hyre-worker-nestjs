@@ -116,4 +116,5 @@ export interface UploadedAccountDocument {
 export interface AccountDocumentUploadFields {
   driversLicense?: UploadedAccountDocument[];
   lasdri?: UploadedAccountDocument[];
+  selfie?: UploadedAccountDocument[];
 }

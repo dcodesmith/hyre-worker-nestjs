@@ -28,6 +28,7 @@ import {
   type AccountDocuments,
   AccountDocumentsPipe,
   AccountDriverLicensePipe,
+  AccountSelfiePipe,
   MAX_ACCOUNT_DOCUMENT_SIZE_BYTES,
 } from "./account-documents.pipe";
 import {
@@ -53,6 +54,7 @@ import { VerificationThrottlerGuard } from "./verification-throttler.guard";
 const ACCOUNT_DOCUMENT_FIELDS = [
   { name: "driversLicense", maxCount: 1 },
   { name: "lasdri", maxCount: 1 },
+  { name: "selfie", maxCount: 1 },
 ] as const;
 const idempotencyKeyPipe = new ZodValidationPipe(idempotencyKeySchema);
 
@@ -158,6 +160,25 @@ export class AccountVerificationController {
         input: body,
         documents,
       }),
+    );
+  }
+
+  @Put("onboarding/selfie")
+  @UseGuards(VerificationThrottlerGuard)
+  @UseInterceptors(
+    FileInterceptor("selfie", {
+      limits: { fileSize: MAX_ACCOUNT_DOCUMENT_SIZE_BYTES },
+    }),
+  )
+  replaceSelfie(
+    @CurrentUser() user: AuthSession["user"],
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @UploadedFile(new AccountSelfiePipe()) selfie: UploadedAccountDocument,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const idempotencyKey = idempotencyKeyPipe.transform(rawIdempotencyKey);
+    return this.withRetryAfter(response, () =>
+      this.accountVerificationService.replaceSelfie(user.id, idempotencyKey, selfie),
     );
   }
 

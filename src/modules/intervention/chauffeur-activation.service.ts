@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   ChauffeurApprovalStatus,
@@ -37,6 +38,7 @@ export class ChauffeurActivationService {
 
   async activateIfEligible(verificationId: string): Promise<boolean> {
     let selfieObjectKey: string | null = null;
+    let profileObjectKey: string | null = null;
     let activated: boolean;
     try {
       activated = await this.databaseService.$transaction(async (tx) => {
@@ -70,6 +72,7 @@ export class ChauffeurActivationService {
           },
         });
         if (openInterventions > 0) return false;
+        if (!verification.selfieObjectKey) return false;
 
         const found = await tx.user.findFirst({
           where: { email: { equals: verification.email, mode: "insensitive" } },
@@ -92,6 +95,11 @@ export class ChauffeurActivationService {
           return false;
         }
 
+        const profile = await this.storageService.promotePrivateImage(
+          verification.selfieObjectKey,
+          `chauffeurs/${verification.id}/profile/${randomUUID()}.webp`,
+        );
+        profileObjectKey = profile.key;
         const legalName = [
           verification.identityFirstName,
           verification.identityMiddleName,
@@ -107,6 +115,7 @@ export class ChauffeurActivationService {
           termsAcceptedAt: verification.termsAcceptedAt,
           privacyAcceptedAt: verification.privacyAcceptedAt,
           fleetOwnerId: verification.fleetOwnerId,
+          image: profile.url,
           chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           chauffeurDisabledAt: null,
           hasOnboarded: true,
@@ -140,6 +149,12 @@ export class ChauffeurActivationService {
         return true;
       });
     } catch (error) {
+      if (profileObjectKey) {
+        await this.storageService.deleteObjectByKey(profileObjectKey).catch(() => {
+          this.logger.warn({ verificationId }, "Failed to purge unused chauffeur profile image");
+        });
+        profileObjectKey = null;
+      }
       if (!isUniqueConstraintError(error)) throw error;
       const conflict = await this.resolveRolledBackUniqueConflict(verificationId);
       if (!conflict.handled) throw error;

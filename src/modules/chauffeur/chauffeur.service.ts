@@ -24,13 +24,13 @@ import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError } from "../mono/mono.service";
 import { NinLookupService } from "../nin/nin-lookup.service";
 import { PremblyError } from "../prembly/prembly.service";
-import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
 import {
   PhoneVerificationCodeInvalidException,
   PhoneVerificationProviderUnavailableException,
 } from "../verification/account-verification.error";
 import { PhoneVerificationService } from "../verification/phone-verification.service";
+import { InvalidSelfieImageError, SelfieImageService } from "../verification/selfie-image.service";
 import type {
   CreateChauffeurInvitationDto,
   ListChauffeursQueryDto,
@@ -46,6 +46,7 @@ import {
   ChauffeurException,
   ChauffeurIdempotencyKeyReusedException,
   ChauffeurIdentityMismatchException,
+  ChauffeurInvalidSelfieException,
   ChauffeurInvitationExistsException,
   ChauffeurInvitationInvalidException,
   ChauffeurInvitationNotAllowedException,
@@ -63,12 +64,10 @@ import {
   ChauffeurStepIncompleteException,
 } from "./chauffeur.error";
 import { meetsMinimumChauffeurAge } from "./chauffeur-age";
-import { ChauffeurImageService } from "./chauffeur-image.service";
 
 const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
-const SMILE_CALLBACK_LEASE_MS = 15 * 60 * 1000;
 
 const COMPLIANCE_REQUIREMENTS = [
   { type: "LASDRI", label: "LASDRI certificate or card", required: false },
@@ -89,8 +88,7 @@ export class ChauffeurService {
     private readonly phoneVerificationService: PhoneVerificationService,
     private readonly ninLookupService: NinLookupService,
     private readonly driversLicenseLookupService: DriversLicenseLookupService,
-    private readonly smileIdService: SmileIdService,
-    private readonly imageService: ChauffeurImageService,
+    private readonly imageService: SelfieImageService,
     private readonly storageService: StorageService,
     private readonly interventionService: InterventionService,
     private readonly logger: PinoLogger,
@@ -457,18 +455,11 @@ export class ChauffeurService {
     input: VerifyChauffeurDrivingDto,
     selfie: UploadedChauffeurSelfie,
   ) {
-    let verification = await this.getVerification(verificationId);
+    const verification = await this.getVerification(verificationId);
     if (verification.status === ChauffeurVerificationStatus.APPROVED) {
       return this.toOnboardingState(verification);
     }
     await this.assertDrivingCanStart(verification);
-    if (verification.livenessProviderRef) {
-      const outcome = await this.reconcileExpiredSmileJob(verification);
-      if (outcome === "open") throw new ChauffeurRequestInProgressException();
-      if (outcome === "approved") return this.getOnboarding(verificationId);
-      verification = await this.getVerification(verificationId);
-      await this.assertDrivingCanStart(verification);
-    }
     if (
       !verification.ninHash ||
       !verification.identityFirstName ||
@@ -478,8 +469,13 @@ export class ChauffeurService {
       throw new ChauffeurStepIncompleteException("NIN");
     }
     this.assertEligibleAge(verification.dateOfBirth);
-    const processedSelfie = await this.imageService.processSelfie(selfie);
+    const processedSelfie = await this.processSelfie(selfie);
     const driversLicenseNumber = normalizeDriversLicenseNumber(input.driversLicenseNumber);
+    const driversLicenseHash = this.hash(driversLicenseNumber);
+    const licenseAlreadySubmitted = verification.driversLicenseHash === driversLicenseHash;
+    if (verification.driversLicenseHash && !licenseAlreadySubmitted) {
+      throw new ChauffeurLicenseNotVerifiedException();
+    }
     const claim = await this.claimStage(
       verificationId,
       ChauffeurVerificationStage.DRIVING,
@@ -495,23 +491,25 @@ export class ChauffeurService {
 
     let license: MonoDriversLicenseResult | null = null;
     let licenseOutage = false;
-    try {
-      license = await this.driversLicenseLookupService.lookup(
-        driversLicenseNumber,
-        verification.identityFirstName,
-        verification.identityLastName,
-        verification.dateOfBirth,
-      );
-    } catch (error) {
-      if (
-        (error instanceof MonoError || error instanceof PremblyError) &&
-        ["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
-      ) {
-        licenseOutage = true;
-      } else {
-        const mapped = this.mapLicenseError(error);
-        await this.failStage(claim.requestId, mapped.getErrorCode());
-        throw mapped;
+    if (!licenseAlreadySubmitted) {
+      try {
+        license = await this.driversLicenseLookupService.lookup(
+          driversLicenseNumber,
+          verification.identityFirstName,
+          verification.identityLastName,
+          verification.dateOfBirth,
+        );
+      } catch (error) {
+        if (
+          (error instanceof MonoError || error instanceof PremblyError) &&
+          ["UNAVAILABLE", "INVALID_RESPONSE"].includes(error.kind)
+        ) {
+          licenseOutage = true;
+        } else {
+          const mapped = this.mapLicenseError(error);
+          await this.failStage(claim.requestId, mapped.getErrorCode());
+          throw mapped;
+        }
       }
     }
 
@@ -533,65 +531,75 @@ export class ChauffeurService {
         imageKey,
         "image/jpeg",
       );
-      const reservation = `pending:${claim.requestId}`;
-      const licenseInterventionId = await this.reserveDrivingSubmission({
+      const interventionIds = await this.reserveDrivingSubmission({
         verificationId: verification.id,
-        reservation,
         selfieObjectKey,
         driversLicenseNumber,
         license,
         licenseOutage,
+        licenseAlreadySubmitted,
       });
-      try {
-        const compared = await this.startSmileComparison(
-          verification,
-          processedSelfie,
-          ninPhoto,
-          claim.requestId,
-        );
-        const submitted = await this.databaseService.$transaction(async (tx) => {
-          const updated = await tx.chauffeurVerification.updateMany({
-            where: { id: verification.id, livenessProviderRef: reservation },
-            data: {
-              livenessProviderRef: compared.jobId,
-              ...(license ? { dateOfBirth: license.dateOfBirth } : {}),
-            },
-          });
-          if (updated.count === 0) return false;
-          await tx.chauffeurVerificationStageRequest.update({
-            where: { id: claim.requestId },
-            data: { processingExpiresAt: new Date(Date.now() + SMILE_CALLBACK_LEASE_MS) },
-          });
-          return true;
-        });
-        if (!submitted) throw new ChauffeurRequestInProgressException();
-      } catch (error) {
-        if (!(error instanceof SmileIdError)) {
-          await this.cancelDrivingSubmission(
-            verification.id,
-            reservation,
-            selfieObjectKey,
-            licenseInterventionId,
-          );
-          throw error;
-        }
-        try {
-          await this.interventionService.openChauffeurFace(verification.id);
-        } catch (openError) {
-          await this.cancelDrivingSubmission(
-            verification.id,
-            reservation,
-            selfieObjectKey,
-            licenseInterventionId,
-          );
-          throw openError;
-        }
-      }
-      if (licenseInterventionId) {
-        await this.interventionService.dispatchIntervention(licenseInterventionId);
+      for (const interventionId of interventionIds) {
+        await this.interventionService.dispatchIntervention(interventionId);
       }
       return this.getOnboarding(verificationId);
     } catch (error) {
+      const mapped = this.mapDrivingError(error);
+      await this.failStage(claim.requestId, mapped.getErrorCode());
+      throw mapped;
+    }
+  }
+
+  async replaceSelfie(
+    verificationId: string,
+    idempotencyKey: string,
+    selfie: UploadedChauffeurSelfie,
+  ) {
+    const verification = await this.getVerification(verificationId);
+    if (
+      verification.status === ChauffeurVerificationStatus.APPROVED ||
+      !verification.selfieRetakeRequired ||
+      !verification.driversLicenseHash ||
+      verification.faceDecision !== VerificationDecisionStatus.PENDING
+    ) {
+      throw new ChauffeurRequestInProgressException();
+    }
+    const processedSelfie = await this.processSelfie(selfie);
+    const claim = await this.claimStage(
+      verificationId,
+      ChauffeurVerificationStage.DRIVING,
+      idempotencyKey,
+      this.hashJson({ selfieRetake: this.hash(processedSelfie) }),
+    );
+    if (claim.replay) return this.getOnboarding(verificationId);
+
+    const imageKey = `fleet-owners/${verification.fleetOwnerId}/chauffeurs/${verification.id}/documents/${randomUUID()}.webp`;
+    let selfieObjectKey: string | null = null;
+    try {
+      selfieObjectKey = (
+        await this.storageService.uploadBuffer(processedSelfie, imageKey, "image/jpeg")
+      ).key;
+      const interventionId = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.chauffeurVerification.updateMany({
+          where: {
+            id: verification.id,
+            selfieObjectKey: null,
+            selfieRetakeRequired: true,
+            faceDecision: VerificationDecisionStatus.PENDING,
+          },
+          data: { selfieObjectKey, selfieRetakeRequired: false },
+        });
+        if (updated.count === 0) throw new ChauffeurRequestInProgressException();
+        const intervention = await this.interventionService.bindChauffeurFace(tx, verification.id);
+        if (!intervention) throw new ChauffeurRequestInProgressException();
+        return intervention.id;
+      });
+      await this.interventionService.dispatchIntervention(interventionId);
+      return this.getOnboarding(verificationId);
+    } catch (error) {
+      if (selfieObjectKey) {
+        await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
+      }
       const mapped = this.mapDrivingError(error);
       await this.failStage(claim.requestId, mapped.getErrorCode());
       throw mapped;
@@ -632,50 +640,59 @@ export class ChauffeurService {
     if (verification.faceDecision === VerificationDecisionStatus.REJECTED) {
       throw new ChauffeurBiometricNotVerifiedException();
     }
-    const openLicenseIntervention = await this.databaseService.verificationIntervention.findFirst({
-      where: {
-        chauffeurVerificationId: verification.id,
-        kind: "CHAUFFEUR_DRIVERS_LICENSE",
-        status: "OPEN",
-      },
-      select: { id: true },
-    });
-    if (openLicenseIntervention) throw new ChauffeurRequestInProgressException();
+    if (verification.selfieObjectKey) throw new ChauffeurRequestInProgressException();
   }
 
   private async reserveDrivingSubmission(input: {
     verificationId: string;
-    reservation: string;
     selfieObjectKey: string;
     driversLicenseNumber: string;
     license: MonoDriversLicenseResult | null;
     licenseOutage: boolean;
-  }): Promise<string | null> {
+    licenseAlreadySubmitted: boolean;
+  }): Promise<string[]> {
     try {
       return await this.databaseService.$transaction(async (tx) => {
         const updated = await tx.chauffeurVerification.updateMany({
-          where: { id: input.verificationId, livenessProviderRef: null },
+          where: {
+            id: input.verificationId,
+            selfieObjectKey: null,
+            faceDecision: VerificationDecisionStatus.PENDING,
+          },
           data: {
-            livenessProviderRef: input.reservation,
             selfieObjectKey: input.selfieObjectKey,
-            driversLicenseHash: this.hash(input.driversLicenseNumber),
-            driversLicenseLast4: input.driversLicenseNumber.slice(-4).toUpperCase(),
-            driversLicenseExpiresAt: input.license?.expiresAt,
-            driversLicenseProviderRef: input.license?.reference,
-            driversLicenseDecision: input.license
-              ? VerificationDecisionStatus.APPROVED
-              : VerificationDecisionStatus.PENDING,
+            selfieRetakeRequired: false,
+            ...(input.licenseAlreadySubmitted
+              ? {}
+              : {
+                  driversLicenseHash: this.hash(input.driversLicenseNumber),
+                  driversLicenseLast4: input.driversLicenseNumber.slice(-4).toUpperCase(),
+                  driversLicenseExpiresAt: input.license?.expiresAt,
+                  driversLicenseProviderRef: input.license?.reference,
+                  driversLicenseDecision: input.license
+                    ? VerificationDecisionStatus.APPROVED
+                    : VerificationDecisionStatus.PENDING,
+                }),
           },
         });
         if (updated.count === 0) throw new ChauffeurRequestInProgressException();
-        if (!input.licenseOutage) return null;
-        const intervention = await this.interventionService.bindChauffeurLicense(
+        const interventionIds: string[] = [];
+        if (input.licenseOutage) {
+          const licenseIntervention = await this.interventionService.bindChauffeurLicense(
+            tx,
+            input.verificationId,
+            input.driversLicenseNumber,
+          );
+          if (!licenseIntervention) throw new ChauffeurRequestInProgressException();
+          interventionIds.push(licenseIntervention.id);
+        }
+        const faceIntervention = await this.interventionService.bindChauffeurFace(
           tx,
           input.verificationId,
-          input.driversLicenseNumber,
         );
-        if (!intervention) throw new ChauffeurRequestInProgressException();
-        return intervention.id;
+        if (!faceIntervention) throw new ChauffeurRequestInProgressException();
+        interventionIds.push(faceIntervention.id);
+        return interventionIds;
       });
     } catch (error) {
       await this.storageService.deleteObjectByKey(input.selfieObjectKey).catch(() => undefined);
@@ -683,195 +700,13 @@ export class ChauffeurService {
     }
   }
 
-  private async cancelDrivingSubmission(
-    verificationId: string,
-    reservation: string,
-    selfieObjectKey: string,
-    interventionId: string | null,
-  ): Promise<void> {
-    await this.databaseService.$transaction(async (tx) => {
-      await tx.chauffeurVerification.updateMany({
-        where: { id: verificationId, livenessProviderRef: reservation },
-        data: { livenessProviderRef: null, selfieObjectKey: null },
-      });
-      if (interventionId) {
-        await this.interventionService.cancelPreparedIntervention(
-          tx,
-          interventionId,
-          "SUBMISSION_FAILED",
-        );
-      }
-    });
-    await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => undefined);
-  }
-
-  private startSmileComparison(
-    verification: Awaited<ReturnType<ChauffeurService["getVerification"]>>,
-    selfie: Buffer,
-    ninPhoto: string,
-    stageRequestId: string,
-  ) {
-    const { privacyAcceptedAt, identityFirstName, identityLastName } = verification;
-    if (!privacyAcceptedAt || !identityFirstName || !identityLastName) {
-      throw new ChauffeurBiometricNotVerifiedException();
+  private async processSelfie(selfie: UploadedChauffeurSelfie): Promise<Buffer> {
+    try {
+      return await this.imageService.process(selfie);
+    } catch (error) {
+      if (error instanceof InvalidSelfieImageError) throw new ChauffeurInvalidSelfieException();
+      throw error;
     }
-    return this.smileIdService.compareSelfieToImage({
-      selfie,
-      comparisonImage: this.portrait(ninPhoto),
-      comparisonImageType: "PORTRAIT",
-      consent: {
-        grantedAt: privacyAcceptedAt,
-        noticeLanguage: "EN",
-        privacyPolicyUrl: `${getEmailPublicEnv().websiteUrl.replace(/\/$/, "")}/privacy`,
-      },
-      user: {
-        givenNames: identityFirstName,
-        lastName: identityLastName,
-        email: verification.email,
-      },
-      partnerParams: {
-        verificationId: verification.id,
-        stageRequestId,
-      },
-    });
-  }
-
-  private async reconcileExpiredSmileJob(
-    verification: ChauffeurVerification,
-  ): Promise<"open" | "approved" | "released"> {
-    const jobId = verification.livenessProviderRef;
-    if (!jobId) return "released";
-    const intervention = await this.databaseService.verificationIntervention.findFirst({
-      where: {
-        chauffeurVerificationId: verification.id,
-        kind: "CHAUFFEUR_FACE",
-        status: "OPEN",
-      },
-      select: { id: true },
-    });
-    if (intervention) return "open";
-    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
-      where: {
-        verificationId: verification.id,
-        stage: ChauffeurVerificationStage.DRIVING,
-        status: ProviderVerificationStatus.PROCESSING,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    if (stage && stage.processingExpiresAt > new Date()) return "open";
-
-    if (!jobId.startsWith("pending:")) {
-      let status: Awaited<ReturnType<SmileIdService["comparisonStatus"]>>;
-      try {
-        status = await this.smileIdService.comparisonStatus(jobId);
-      } catch {
-        throw new ChauffeurProviderUnavailableException();
-      }
-      if (status !== "processing" && status !== "not_found" && stage) {
-        try {
-          await this.applySmileCompareResult({
-            jobId,
-            verificationId: verification.id,
-            stageRequestId: stage.id,
-            status,
-          });
-        } catch (error) {
-          if (error instanceof ChauffeurException) throw error;
-          throw new ChauffeurProviderUnavailableException();
-        }
-        return this.settleSmileReservation(verification, jobId, stage.id);
-      }
-    }
-
-    const opened = await this.interventionService.openChauffeurFace(verification.id);
-    if (opened?.status === "OPEN") return "open";
-    return this.settleSmileReservation(verification, jobId, stage?.id);
-  }
-
-  private async settleSmileReservation(
-    verification: ChauffeurVerification,
-    jobId: string,
-    stageId: string | undefined,
-  ): Promise<"open" | "approved" | "released"> {
-    const refreshed = await this.getVerification(verification.id);
-    if (refreshed.status === ChauffeurVerificationStatus.APPROVED) return "approved";
-    const opened = await this.databaseService.verificationIntervention.findFirst({
-      where: {
-        chauffeurVerificationId: verification.id,
-        kind: "CHAUFFEUR_FACE",
-        status: "OPEN",
-      },
-      select: { id: true },
-    });
-    if (opened) return "open";
-    if (await this.releaseSmileReservation(verification, jobId, stageId)) return "released";
-    const latest = await this.getVerification(verification.id);
-    if (latest.status === ChauffeurVerificationStatus.APPROVED) return "approved";
-    return latest.livenessProviderRef ? "open" : "released";
-  }
-
-  private async releaseSmileReservation(
-    verification: ChauffeurVerification,
-    jobId: string,
-    stageId: string | undefined,
-  ): Promise<boolean> {
-    const released = await this.databaseService.chauffeurVerification.updateMany({
-      where: {
-        id: verification.id,
-        livenessProviderRef: jobId,
-        status: { not: ChauffeurVerificationStatus.APPROVED },
-      },
-      data: { livenessProviderRef: null, selfieObjectKey: null },
-    });
-    if (released.count === 0) return false;
-    if (stageId) {
-      await this.failStage(stageId, ChauffeurErrorCode.PROVIDER_UNAVAILABLE);
-    }
-    if (verification.selfieObjectKey) {
-      await this.storageService
-        .deleteObjectByKey(verification.selfieObjectKey)
-        .catch(() => undefined);
-    }
-    return true;
-  }
-
-  async applySmileCompareResult(input: {
-    jobId: string;
-    verificationId: string;
-    stageRequestId: string;
-    status: "clear" | "attention" | "block" | "error";
-  }): Promise<void> {
-    const confirmed = await this.smileIdService.comparisonStatus(input.jobId);
-    if (confirmed === "processing") throw new ChauffeurProviderUnavailableException();
-    const status = confirmed;
-    const verification = await this.databaseService.chauffeurVerification.findFirst({
-      where: { livenessProviderRef: input.jobId },
-    });
-    if (!verification?.selfieObjectKey || verification.id !== input.verificationId) {
-      throw new ChauffeurNotFoundException();
-    }
-    if (verification.status === ChauffeurVerificationStatus.APPROVED) return;
-
-    const stage = await this.databaseService.chauffeurVerificationStageRequest.findFirst({
-      where: {
-        id: input.stageRequestId,
-        verificationId: verification.id,
-        stage: ChauffeurVerificationStage.DRIVING,
-        status: ProviderVerificationStatus.PROCESSING,
-      },
-    });
-    if (!stage) return;
-    await this.interventionService.recordSmileResult(
-      verification.id,
-      status === "not_found" ? "error" : status,
-    );
-  }
-
-  private portrait(photo: string): Buffer {
-    const encoded = photo.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
-    const buffer = Buffer.from(encoded, "base64");
-    if (buffer.length === 0) throw new ChauffeurBiometricNotVerifiedException();
-    return buffer;
   }
 
   private async claimStage(
@@ -992,9 +827,6 @@ export class ChauffeurService {
     if (error instanceof ChauffeurException) {
       return error;
     }
-    if (error instanceof SmileIdError) {
-      return new ChauffeurProviderUnavailableException();
-    }
     if (isUniqueConstraintError(error)) {
       return new ChauffeurAccountConflictException();
     }
@@ -1071,6 +903,11 @@ export class ChauffeurService {
         phone: verification.phoneVerifiedAt !== null,
         nin: verification.identityProviderRef !== null && verification.dateOfBirth !== null,
         driving: verification.status === ChauffeurVerificationStatus.APPROVED,
+        drivingSubmitted: verification.selfieObjectKey !== null,
+        rejected:
+          verification.faceDecision === VerificationDecisionStatus.REJECTED ||
+          verification.driversLicenseDecision === VerificationDecisionStatus.REJECTED,
+        selfieRetakeRequired: verification.selfieRetakeRequired,
       },
       complianceRequirements: COMPLIANCE_REQUIREMENTS,
     };

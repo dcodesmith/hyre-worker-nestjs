@@ -15,6 +15,7 @@ import {
 } from "./account-verification.controller";
 import { AccountVerificationService } from "./account-verification.service";
 import { PhoneVerificationService } from "./phone-verification.service";
+import { SelfieImageService } from "./selfie-image.service";
 import {
   InsuranceVerificationController,
   VehicleVerificationController,
@@ -45,8 +46,9 @@ import { VerificationThrottlerGuard } from "./verification-throttler.guard";
     VehicleVerificationService,
     AccountVerificationService,
     PhoneVerificationService,
+    SelfieImageService,
     VerificationThrottlerGuard,
   ],
-  exports: [PhoneVerificationService, VerificationThrottlerGuard],
+  exports: [PhoneVerificationService, SelfieImageService, VerificationThrottlerGuard],
 })
 export class VerificationModule {}
