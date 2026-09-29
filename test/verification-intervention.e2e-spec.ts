@@ -334,9 +334,9 @@ describe("Verification intervention admin API", () => {
     });
     expect(account).toMatchObject({
       driversLicenseDecision: VerificationDecisionStatus.APPROVED,
-      status: AccountVerificationStatus.SUCCEEDED,
+      status: AccountVerificationStatus.REVIEW_REQUIRED,
     });
-    expect(user).toMatchObject({ fleetOwnerStatus: "APPROVED", hasOnboarded: true });
+    expect(user).toMatchObject({ fleetOwnerStatus: "PROCESSING", hasOnboarded: false });
   });
 
   it("does not let face rejection mutate an approved chauffeur", async () => {
