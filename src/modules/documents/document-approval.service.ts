@@ -51,10 +51,6 @@ export class DocumentApprovalService {
           await this.carApprovalService.approveCarIfFullyReviewed(updated.carId, tx);
         }
 
-        if (updated.userId) {
-          await this.approveChauffeurIfFullyReviewed(updated.userId, tx);
-        }
-
         return updated;
       });
 
@@ -105,33 +101,6 @@ export class DocumentApprovalService {
       return { success: true, document };
     } catch (error) {
       throw this.toApprovalError(error, "Failed to reject document", { documentId });
-    }
-  }
-
-  private async approveChauffeurIfFullyReviewed(
-    userId: string,
-    tx: Prisma.TransactionClient,
-  ): Promise<void> {
-    await lockUserRow(tx, userId);
-    const user = await tx.user.findUnique({
-      where: { id: userId },
-      select: { isOwnerDriver: true },
-    });
-    if (!user?.isOwnerDriver) return;
-
-    const approvedDocuments = await tx.documentApproval.count({
-      where: {
-        userId,
-        documentType: DocumentType.DRIVERS_LICENSE,
-        status: DocumentStatus.APPROVED,
-      },
-    });
-
-    if (approvedDocuments === 1) {
-      await tx.user.update({
-        where: { id: userId },
-        data: { chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED },
-      });
     }
   }
 

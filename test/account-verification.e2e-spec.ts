@@ -81,6 +81,11 @@ const PAYOUT_FIELDS = {
   accountNumber: ACCOUNT_NUMBER,
 } as const;
 
+const SELFIE = Buffer.from(
+  "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIIAeC//2Q==",
+  "base64",
+);
+
 function hashRequest(input: CreateAccountVerificationDto): string {
   return createHmac("sha256", process.env.HMAC_KEY ?? "")
     .update(
@@ -88,6 +93,7 @@ function hashRequest(input: CreateAccountVerificationDto): string {
         ...input,
         driversLicense: null,
         lasdri: null,
+        selfie: null,
       }),
     )
     .digest("hex");
@@ -175,7 +181,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
         .attach("driversLicense", pdfDocument(), {
           filename: "license.pdf",
           contentType: "application/pdf",
-        }),
+        })
+        .attach("selfie", SELFIE, { filename: "selfie.jpg", contentType: "image/jpeg" }),
       cookie,
     );
     if (extras.lasdri) {
@@ -246,6 +253,9 @@ describe("Fleet-owner account verification E2E Tests", () => {
         contentType: "application/pdf",
       });
     }
+    if (isOwnerDriver === "true") {
+      req.attach("selfie", SELFIE, { filename: "selfie.jpg", contentType: "image/jpeg" });
+    }
     return req;
   }
 
@@ -307,6 +317,10 @@ describe("Fleet-owner account verification E2E Tests", () => {
             };
           }),
         deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
+        promotePrivateImage: vi.fn(async (_sourceKey: string, destinationKey: string) => ({
+          key: destinationKey,
+          url: `https://cdn.tripdly.test/${destinationKey}`,
+        })),
       })
       .overrideProvider(MonoService)
       .useValue(monoService)
@@ -600,7 +614,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("driversLicenseNumber", LICENSE_NUMBER)
       .field("bankName", "GTBank")
       .field("bankCode", "058")
-      .field("accountNumber", ACCOUNT_NUMBER);
+      .field("accountNumber", ACCOUNT_NUMBER)
+      .attach("selfie", SELFIE, { filename: "selfie.jpg", contentType: "image/jpeg" });
 
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
     expect(response.body.errorCode).toBe("OWNER_DRIVER_LICENSE_REQUIRED");
@@ -691,7 +706,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.CREATED);
     expect(response.body).toMatchObject({
-      status: "SUCCEEDED",
+      status: "REVIEW_REQUIRED",
       isOwnerDriver: true,
     });
 
@@ -713,11 +728,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
       expect.arrayContaining([{ documentType: "DRIVERS_LICENSE", status: "PENDING" }]),
     );
     expect(documents.some(({ documentType }) => documentType === "LASDRI")).toBe(false);
-    expect(user).toMatchObject({ fleetOwnerStatus: "APPROVED", hasOnboarded: true });
-    expect(bank?.isVerified).toBe(true);
+    expect(user).toMatchObject({ fleetOwnerStatus: "PROCESSING", hasOnboarded: true });
+    expect(bank?.isVerified).toBe(false);
 
     const status = await http("get", "/api/fleet-owner/onboarding").set("Cookie", owner.cookie);
-    expect(status.body).toMatchObject({ status: "VERIFIED", bank: { verified: true } });
+    expect(status.body).toMatchObject({ status: "UNDER_REVIEW", bank: { verified: false } });
   });
 
   it("POST /api/fleet-owner/account-verifications succeeds when an owner-driver licence is already approved", async () => {
@@ -740,10 +755,11 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .field("driversLicenseNumber", LICENSE_NUMBER)
       .field("bankName", "GTBank")
       .field("bankCode", "058")
-      .field("accountNumber", ACCOUNT_NUMBER);
+      .field("accountNumber", ACCOUNT_NUMBER)
+      .attach("selfie", SELFIE, { filename: "selfie.jpg", contentType: "image/jpeg" });
 
     expect(response.status).toBe(HttpStatus.CREATED);
-    expect(response.body).toMatchObject({ status: "SUCCEEDED", isOwnerDriver: true });
+    expect(response.body).toMatchObject({ status: "REVIEW_REQUIRED", isOwnerDriver: true });
     expect(response.body).not.toHaveProperty("driversLicenseHash");
     expect(response.body).not.toHaveProperty("driversLicenseLast4");
     expect(response.body).not.toHaveProperty("driversLicenseNumber");
@@ -758,8 +774,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
         select: { isVerified: true },
       }),
     ]);
-    expect(user?.fleetOwnerStatus).toBe("APPROVED");
-    expect(bank?.isVerified).toBe(true);
+    expect(user?.fleetOwnerStatus).toBe("PROCESSING");
+    expect(bank?.isVerified).toBe(false);
   });
 
   it("POST /api/fleet-owner/account-verifications accepts optional LASDRI without gating review", async () => {
@@ -774,7 +790,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     );
 
     expect(response.status).toBe(HttpStatus.CREATED);
-    expect(response.body).toMatchObject({ status: "SUCCEEDED", isOwnerDriver: true });
+    expect(response.body).toMatchObject({ status: "REVIEW_REQUIRED", isOwnerDriver: true });
 
     const documents = await databaseService.documentApproval.findMany({
       where: { userId: owner.id },
@@ -1098,6 +1114,24 @@ describe("Fleet-owner account verification E2E Tests", () => {
     );
     expect(licenseApprove.status).toBe(HttpStatus.CREATED);
 
+    const face = await databaseService.verificationIntervention.findFirst({
+      where: { accountVerificationId: created.body.id, kind: "OWNER_DRIVER_FACE", status: "OPEN" },
+      select: { id: true },
+    });
+    const blockedByFace = await http(
+      "post",
+      `/api/admin/fleet-owner-account-verifications/${created.body.id}/approve`,
+    ).set("Cookie", adminCookie);
+    expect(blockedByFace.status).toBe(HttpStatus.CONFLICT);
+    expect(blockedByFace.body.errorCode).toBe("ACCOUNT_VERIFICATION_REVIEW_PENDING");
+    const faceApproval = await http(
+      "post",
+      `/api/admin/verification-interventions/${face?.id}/approve`,
+    )
+      .set("Cookie", adminCookie)
+      .send({ notes: "Matches the NIN portrait", source: "STAFF_REVIEW" });
+    expect(faceApproval.status).toBe(HttpStatus.CREATED);
+
     const approved = await http(
       "post",
       `/api/admin/fleet-owner-account-verifications/${created.body.id}/approve`,
@@ -1219,7 +1253,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       where: { id: lasdri.id },
       select: { status: true },
     });
-    expect(user?.chauffeurApprovalStatus).toBe("APPROVED");
+    expect(user?.chauffeurApprovalStatus).toBe("PENDING");
     expect(pendingLasdri?.status).toBe("PENDING");
     expect(nin.id).toBeTruthy();
   });

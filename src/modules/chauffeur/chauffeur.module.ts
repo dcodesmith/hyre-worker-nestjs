@@ -4,7 +4,6 @@ import { DriversLicenseModule } from "../drivers-license/drivers-license.module"
 import { EmailModule } from "../email/email.module";
 import { InterventionModule } from "../intervention/intervention.module";
 import { NinModule } from "../nin/nin.module";
-import { SmileIdModule } from "../smile-id/smile-id.module";
 import { StorageModule } from "../storage/storage.module";
 import { VerificationModule } from "../verification/verification.module";
 import {
@@ -12,9 +11,7 @@ import {
   FleetOwnerChauffeurController,
 } from "./chauffeur.controller";
 import { ChauffeurService } from "./chauffeur.service";
-import { ChauffeurImageService } from "./chauffeur-image.service";
 import { ChauffeurSessionGuard } from "./chauffeur-session.guard";
-import { SmileIdWebhookController } from "./smile-id-webhook.controller";
 
 @Module({
   imports: [
@@ -23,15 +20,10 @@ import { SmileIdWebhookController } from "./smile-id-webhook.controller";
     EmailModule,
     InterventionModule,
     NinModule,
-    SmileIdModule,
     StorageModule,
     VerificationModule,
   ],
-  controllers: [
-    FleetOwnerChauffeurController,
-    ChauffeurOnboardingController,
-    SmileIdWebhookController,
-  ],
-  providers: [ChauffeurService, ChauffeurImageService, ChauffeurSessionGuard],
+  controllers: [FleetOwnerChauffeurController, ChauffeurOnboardingController],
+  providers: [ChauffeurService, ChauffeurSessionGuard],
 })
 export class ChauffeurModule {}

@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import {
   AccountVerificationStage,
   AccountVerificationStatus,
+  ChauffeurApprovalStatus,
   DocumentStatus,
   DocumentType,
   FleetOwnerAccountType,
@@ -68,6 +69,7 @@ import {
   OwnerDriverLicenseNotVerifiedException,
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
+import { InvalidSelfieImageError, SelfieImageService } from "./selfie-image.service";
 import {
   ProviderVerificationException,
   VerificationErrorCode,
@@ -158,15 +160,21 @@ function nextOnboardingAction({
   emailVerified,
   phoneVerified,
   progress,
+  selfieRetakeRequired,
+  verificationRejected,
   verificationStatus,
 }: {
   emailVerified: boolean;
   phoneVerified: boolean;
   progress: OnboardingProgress;
+  selfieRetakeRequired: boolean;
+  verificationRejected: boolean;
   verificationStatus?: AccountVerificationStatus;
 }) {
   if (!emailVerified) return "VERIFY_EMAIL";
   if (!phoneVerified) return "VERIFY_PHONE";
+  if (verificationRejected) return "REJECTED";
+  if (selfieRetakeRequired) return "RETAKE_SELFIE";
   if (!progress.identityComplete) return "VERIFY_IDENTITY";
   if (!progress.payoutComplete) return "VERIFY_PAYOUT";
   if (!progress.drivingComplete) return "PROVIDE_DRIVING_CREDENTIALS";
@@ -265,6 +273,7 @@ export class AccountVerificationService {
     private readonly flutterwaveService: FlutterwaveService,
     private readonly storageService: StorageService,
     private readonly interventionService: InterventionService,
+    private readonly selfieImageService: SelfieImageService,
     private readonly logger: PinoLogger,
   ) {
     this.hashKey = configService.get("HMAC_KEY", { infer: true });
@@ -300,6 +309,7 @@ export class AccountVerificationService {
     const verification = claim.verification;
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
+    let selfieUpload: { key: string; url: string } | null = null;
     try {
       const { identity, legalName, business, businessNameMatch, representativeNameMatch } =
         await this.verifyIdentity(input);
@@ -334,9 +344,13 @@ export class AccountVerificationService {
           );
         }
       }
+      if (input.isOwnerDriver && documents.selfie) {
+        selfieUpload = await this.uploadSelfie(userId, verification.id, documents.selfie);
+      }
 
       const verifiedAt = new Date();
       const needsReview =
+        input.isOwnerDriver ||
         driversLicense === "OUTAGE" ||
         bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
         businessNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
@@ -430,6 +444,7 @@ export class AccountVerificationService {
             identityFirstName: identity.firstName,
             identityLastName: identity.lastName,
             identityDateOfBirth: identity.dateOfBirth,
+            identityOfficialPhoto: input.isOwnerDriver ? identity.officialPhoto : null,
             legalName,
             businessName: business?.businessName,
             businessNameMatch,
@@ -450,11 +465,12 @@ export class AccountVerificationService {
             payoutVerifiedAt: verifiedAt,
             representativeNameMatch,
             ...this.driverLicenseData(driversLicense, input.driversLicenseNumber),
+            selfieObjectKey: selfieUpload?.key,
             drivingCompletedAt: verifiedAt,
             submittedAt: verifiedAt,
           },
         });
-        let interventionId: string | null = null;
+        const interventionIds: string[] = [];
         if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
           const documentId = await this.resolveOwnerLicenseDocumentId(
             tx,
@@ -468,18 +484,23 @@ export class AccountVerificationService {
             normalizeDriversLicenseNumber(input.driversLicenseNumber),
           );
           if (!intervention) throw new AccountVerificationChangedException();
-          interventionId = intervention.id;
+          interventionIds.push(intervention.id);
         }
-        return { completed, interventionId };
+        if (input.isOwnerDriver) {
+          const faceIntervention = await this.interventionService.bindOwnerFace(tx, completed.id);
+          if (!faceIntervention) throw new AccountVerificationChangedException();
+          interventionIds.push(faceIntervention.id);
+        }
+        return { completed, interventionIds };
       });
 
       await this.deleteReplacedDocuments(previousDocuments, uploaded);
-      if (result.interventionId) {
-        await this.interventionService.dispatchIntervention(result.interventionId);
+      for (const interventionId of result.interventionIds) {
+        await this.interventionService.dispatchIntervention(interventionId);
       }
       return this.toResponse(result.completed);
     } catch (error) {
-      await this.deleteUploaded(uploaded);
+      await this.deleteUploaded([...uploaded, ...(selfieUpload ? [selfieUpload] : [])]);
       throw await this.fail(verification.id, error);
     }
   }
@@ -529,6 +550,10 @@ export class AccountVerificationService {
             identityFirstName: verified.identity.firstName,
             identityLastName: verified.identity.lastName,
             identityDateOfBirth: verified.identity.dateOfBirth,
+            identityOfficialPhoto:
+              input.accountType === FleetOwnerAccountType.INDIVIDUAL
+                ? verified.identity.officialPhoto
+                : null,
             legalName: verified.legalName,
             businessName: verified.business?.businessName,
             businessNameMatch: verified.businessNameMatch,
@@ -671,6 +696,7 @@ export class AccountVerificationService {
       input,
       driversLicense: this.fileHash(documents.driversLicense),
       lasdri: this.fileHash(documents.lasdri),
+      selfie: this.fileHash(documents.selfie),
     });
     const replay = await this.findStageReplay({
       userId,
@@ -698,7 +724,8 @@ export class AccountVerificationService {
       (input.isOwnerDriver ||
         input.driversLicenseNumber ||
         documents.driversLicense ||
-        documents.lasdri)
+        documents.lasdri ||
+        documents.selfie)
     ) {
       throw new BusinessOwnerDriverInvalidException();
     }
@@ -716,6 +743,7 @@ export class AccountVerificationService {
     if (claim.kind === "REPLAYED") return claim.response;
 
     const uploaded: Array<{ type: DocumentType; key: string; url: string }> = [];
+    let selfieUpload: { key: string; url: string } | null = null;
     try {
       let driversLicense: OwnerDriverLicenseResult = null;
       if (input.isOwnerDriver) {
@@ -746,6 +774,10 @@ export class AccountVerificationService {
           );
         }
       }
+      if (input.isOwnerDriver && documents.selfie) {
+        selfieUpload = await this.uploadSelfie(userId, verification.id, documents.selfie);
+      }
+      const previousSelfieObjectKey = verification.selfieObjectKey;
       const previousDocuments = await this.databaseService.documentApproval.findMany({
         where: {
           userId,
@@ -765,7 +797,7 @@ export class AccountVerificationService {
           lasdri: documents.lasdri ? "PENDING" : null,
         },
       };
-      const interventionId = await this.databaseService.$transaction(async (tx) => {
+      const interventionIds = await this.databaseService.$transaction(async (tx) => {
         const completedAt = new Date();
         const lease = await tx.fleetOwnerAccountVerificationStageRequest.updateMany({
           where: {
@@ -782,6 +814,9 @@ export class AccountVerificationService {
           data: {
             isOwnerDriver: input.isOwnerDriver,
             ...this.driverLicenseData(driversLicense, input.driversLicenseNumber),
+            selfieObjectKey: selfieUpload?.key ?? null,
+            selfieRetakeRequired: false,
+            faceDecision: VerificationDecisionStatus.PENDING,
             drivingCompletedAt: completedAt,
           },
         });
@@ -814,6 +849,7 @@ export class AccountVerificationService {
           where: { id: claim.requestId },
           data: { status: ProviderVerificationStatus.SUCCEEDED, response },
         });
+        const ids: string[] = [];
         if (driversLicense === "OUTAGE" && input.driversLicenseNumber) {
           const documentId = await this.resolveOwnerLicenseDocumentId(
             tx,
@@ -827,15 +863,97 @@ export class AccountVerificationService {
             normalizeDriversLicenseNumber(input.driversLicenseNumber),
           );
           if (!intervention) throw new AccountVerificationChangedException();
-          return intervention.id;
+          ids.push(intervention.id);
         }
-        return null;
+        if (input.isOwnerDriver) {
+          const faceIntervention = await this.interventionService.bindOwnerFace(
+            tx,
+            verification.id,
+          );
+          if (!faceIntervention) throw new AccountVerificationChangedException();
+          ids.push(faceIntervention.id);
+        }
+        return ids;
       });
       await this.deleteReplacedDocuments(previousDocuments, uploaded);
-      if (interventionId) await this.interventionService.dispatchIntervention(interventionId);
+      if (previousSelfieObjectKey && previousSelfieObjectKey !== selfieUpload?.key) {
+        await this.deleteObjectWithRetry(previousSelfieObjectKey);
+      }
+      for (const interventionId of interventionIds) {
+        await this.interventionService.dispatchIntervention(interventionId);
+      }
       return response;
     } catch (error) {
-      await this.deleteUploaded(uploaded);
+      await this.deleteUploaded([...uploaded, ...(selfieUpload ? [selfieUpload] : [])]);
+      throw await this.failStage(claim.requestId, error);
+    }
+  }
+
+  async replaceSelfie(userId: string, idempotencyKey: string, selfie: UploadedAccountDocument) {
+    await this.assertUserCanVerify(userId);
+    const requestHash = this.hashValue({
+      stage: AccountVerificationStage.DRIVING,
+      selfieRetake: this.fileHash(selfie),
+    });
+    const replay = await this.findStageReplay({
+      userId,
+      idempotencyKey,
+      stage: AccountVerificationStage.DRIVING,
+      requestHash,
+    });
+    if (replay) return replay;
+    const verification = await this.databaseService.fleetOwnerAccountVerification.findFirst({
+      where: {
+        userId,
+        status: {
+          in: [AccountVerificationStatus.DRAFT, AccountVerificationStatus.REVIEW_REQUIRED],
+        },
+        isOwnerDriver: true,
+        selfieRetakeRequired: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!verification) throw new AccountVerificationNotFoundException();
+    const claim = await this.claimStageRequest({
+      verificationId: verification.id,
+      stage: AccountVerificationStage.DRIVING,
+      idempotencyKey,
+      requestHash,
+    });
+    if (claim.kind === "REPLAYED") return claim.response;
+
+    let uploaded: { key: string; url: string } | null = null;
+    try {
+      uploaded = await this.uploadSelfie(userId, verification.id, selfie);
+      const selfieObjectKey = uploaded.key;
+      const response: StageResponse = { status: "COMPLETED", isOwnerDriver: true };
+      const interventionId = await this.databaseService.$transaction(async (tx) => {
+        const updated = await tx.fleetOwnerAccountVerification.updateMany({
+          where: {
+            id: verification.id,
+            status: verification.status,
+            selfieRetakeRequired: true,
+            selfieObjectKey: null,
+          },
+          data: {
+            selfieObjectKey,
+            selfieRetakeRequired: false,
+            faceDecision: VerificationDecisionStatus.PENDING,
+          },
+        });
+        if (updated.count === 0) throw new AccountVerificationChangedException();
+        const intervention = await this.interventionService.bindOwnerFace(tx, verification.id);
+        if (!intervention) throw new AccountVerificationChangedException();
+        await tx.fleetOwnerAccountVerificationStageRequest.update({
+          where: { id: claim.requestId },
+          data: { status: ProviderVerificationStatus.SUCCEEDED, response },
+        });
+        return intervention.id;
+      });
+      await this.interventionService.dispatchIntervention(interventionId);
+      return response;
+    } catch (error) {
+      if (uploaded) await this.deleteUploaded([uploaded]);
       throw await this.failStage(claim.requestId, error);
     }
   }
@@ -901,6 +1019,7 @@ export class AccountVerificationService {
         await this.ownerDriverApprovedOnSubmit(tx, userId, current);
 
         const needsReview =
+          current.isOwnerDriver ||
           current.identityRequiresReview ||
           current.bankNameMatch === NameMatchStatus.REVIEW_REQUIRED ||
           (current.isOwnerDriver &&
@@ -929,7 +1048,11 @@ export class AccountVerificationService {
         if (userUpdated.count === 0) throw new AccountVerificationChangedException();
         const completed = await tx.fleetOwnerAccountVerification.update({
           where: { id: current.id },
-          data: { status, submittedAt },
+          data: {
+            status,
+            submittedAt,
+            identityOfficialPhoto: current.isOwnerDriver ? undefined : null,
+          },
         });
         const response = this.toResponse(completed);
         await tx.fleetOwnerAccountVerificationStageRequest.update({
@@ -1010,6 +1133,7 @@ export class AccountVerificationService {
       data: {
         status: AccountVerificationStatus.FAILED,
         failureReason: AccountVerificationErrorCode.OPERATION_FAILED,
+        identityOfficialPhoto: null,
       },
     });
   }
@@ -1156,6 +1280,7 @@ export class AccountVerificationService {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.OPERATION_FAILED,
+          identityOfficialPhoto: null,
         },
       });
       if (superseded.count === 1) {
@@ -1367,12 +1492,15 @@ export class AccountVerificationService {
     isOwnerDriver: boolean,
     documents: AccountDocuments,
   ): Promise<boolean> {
-    if (!isOwnerDriver && (documents.driversLicense || documents.lasdri)) {
+    if (!isOwnerDriver && (documents.driversLicense || documents.lasdri || documents.selfie)) {
       throw new AccountDocumentInvalidException(
-        "Driver documents can only be uploaded for an owner-driver",
+        "Driver documents and selfies can only be uploaded for an owner-driver",
       );
     }
     if (!isOwnerDriver) return true;
+    if (!documents.selfie) {
+      throw new AccountDocumentInvalidException("A selfie is required for owner-drivers");
+    }
     if (documents.driversLicense) return false;
 
     const existingDriverLicense = await this.databaseService.documentApproval.findUnique({
@@ -1426,6 +1554,23 @@ export class AccountVerificationService {
     }
     if (!current.driversLicenseHash) {
       throw new OwnerDriverLicenseNotVerifiedException();
+    }
+    if (!current.selfieObjectKey) {
+      throw new AccountVerificationStepIncompleteException("DRIVING");
+    }
+    if (current.faceDecision === VerificationDecisionStatus.REJECTED) {
+      throw new AccountVerificationOperationFailedException();
+    }
+    if (current.faceDecision === VerificationDecisionStatus.PENDING) {
+      const intervention = await tx.verificationIntervention.findFirst({
+        where: {
+          accountVerificationId: current.id,
+          kind: VerificationInterventionKind.OWNER_DRIVER_FACE,
+          status: VerificationInterventionStatus.OPEN,
+        },
+        select: { id: true },
+      });
+      if (!intervention) throw new AccountVerificationOperationFailedException();
     }
     if (current.driversLicenseDecision === VerificationDecisionStatus.REJECTED) {
       throw new OwnerDriverLicenseNotVerifiedException();
@@ -1707,6 +1852,9 @@ export class AccountVerificationService {
         emailVerified: user.emailVerified,
         phoneVerified: user.phoneVerifiedAt !== null,
         progress,
+        selfieRetakeRequired: verification?.selfieRetakeRequired ?? false,
+        verificationRejected:
+          verification?.failureReason === AccountVerificationErrorCode.MANUAL_REVIEW_REJECTED,
         verificationStatus: verification?.status,
       }),
       requiredActions,
@@ -1714,78 +1862,128 @@ export class AccountVerificationService {
   }
 
   async approve(verificationId: string, reviewerId: string) {
-    return this.databaseService.$transaction(async (tx) => {
-      const verification = await tx.fleetOwnerAccountVerification.findUnique({
+    let promotedKey: string | null = null;
+    let privateSelfieKey: string | null = null;
+    try {
+      const candidate = await this.databaseService.fleetOwnerAccountVerification.findUnique({
         where: { id: verificationId },
-        include: {
-          user: {
-            select: { emailVerified: true, phoneVerifiedAt: true },
-          },
+        select: {
+          faceDecision: true,
+          isOwnerDriver: true,
+          selfieObjectKey: true,
+          status: true,
+          userId: true,
         },
       });
-      if (!verification) throw new AccountVerificationReviewNotFoundException();
-      if (verification.status !== AccountVerificationStatus.REVIEW_REQUIRED) {
-        throw new AccountVerificationReviewNotPendingException();
-      }
-      if (!verification.user.emailVerified) throw new AccountEmailNotVerifiedException();
-      if (!verification.user.phoneVerifiedAt) throw new AccountPhoneNotVerifiedException();
+      const profile =
+        candidate?.status === AccountVerificationStatus.REVIEW_REQUIRED &&
+        candidate.isOwnerDriver &&
+        candidate.faceDecision === VerificationDecisionStatus.APPROVED &&
+        candidate.selfieObjectKey
+          ? await this.storageService.promotePrivateImage(
+              candidate.selfieObjectKey,
+              `fleet-owners/${candidate.userId}/profile/${randomUUID()}.webp`,
+            )
+          : null;
+      promotedKey = profile?.key ?? null;
 
-      if (verification.isOwnerDriver) {
-        const driversLicense = await tx.documentApproval.findUnique({
-          where: {
-            documentType_userId: {
-              documentType: DocumentType.DRIVERS_LICENSE,
-              userId: verification.userId,
+      const response = await this.databaseService.$transaction(async (tx) => {
+        const verification = await tx.fleetOwnerAccountVerification.findUnique({
+          where: { id: verificationId },
+          include: {
+            user: {
+              select: { emailVerified: true, phoneVerifiedAt: true },
             },
           },
-          select: { status: true },
         });
-        if (driversLicense?.status !== DocumentStatus.APPROVED) {
-          throw new OwnerDriverLicenseNotApprovedException();
+        if (!verification) throw new AccountVerificationReviewNotFoundException();
+        if (verification.status !== AccountVerificationStatus.REVIEW_REQUIRED) {
+          throw new AccountVerificationReviewNotPendingException();
         }
-        if (verification.driversLicenseDecision !== VerificationDecisionStatus.APPROVED) {
-          throw new OwnerDriverLicenseNotApprovedException();
+        if (!verification.user.emailVerified) throw new AccountEmailNotVerifiedException();
+        if (!verification.user.phoneVerifiedAt) throw new AccountPhoneNotVerifiedException();
+
+        let profileUrl: string | undefined;
+        if (verification.isOwnerDriver) {
+          const driversLicense = await tx.documentApproval.findUnique({
+            where: {
+              documentType_userId: {
+                documentType: DocumentType.DRIVERS_LICENSE,
+                userId: verification.userId,
+              },
+            },
+            select: { status: true },
+          });
+          if (
+            driversLicense?.status !== DocumentStatus.APPROVED ||
+            verification.driversLicenseDecision !== VerificationDecisionStatus.APPROVED
+          ) {
+            throw new OwnerDriverLicenseNotApprovedException();
+          }
+          if (
+            verification.faceDecision !== VerificationDecisionStatus.APPROVED ||
+            !verification.selfieObjectKey ||
+            verification.selfieObjectKey !== candidate?.selfieObjectKey ||
+            !profile
+          ) {
+            throw new AccountVerificationReviewPendingException();
+          }
+          privateSelfieKey = verification.selfieObjectKey;
+          profileUrl = profile.url;
         }
-      }
 
-      const reviewedAt = new Date();
-      const updated = await tx.fleetOwnerAccountVerification.updateMany({
-        where: { id: verificationId, status: AccountVerificationStatus.REVIEW_REQUIRED },
-        data: {
-          status: AccountVerificationStatus.SUCCEEDED,
-          reviewedById: reviewerId,
-          reviewedAt,
-          reviewNotes: null,
-        },
-      });
-      if (updated.count === 0) throw new AccountVerificationReviewNotPendingException();
+        const reviewedAt = new Date();
+        const updated = await tx.fleetOwnerAccountVerification.updateMany({
+          where: { id: verificationId, status: AccountVerificationStatus.REVIEW_REQUIRED },
+          data: {
+            status: AccountVerificationStatus.SUCCEEDED,
+            reviewedById: reviewerId,
+            reviewedAt,
+            reviewNotes: null,
+            selfieObjectKey: null,
+            identityOfficialPhoto: null,
+          },
+        });
+        if (updated.count === 0) throw new AccountVerificationReviewNotPendingException();
 
-      const bank = await tx.bankDetails.updateMany({
-        where: { userId: verification.userId },
-        data: { isVerified: true, lastVerifiedAt: reviewedAt },
-      });
-      if (bank.count === 0) throw new AccountVerificationOperationFailedException();
+        const bank = await tx.bankDetails.updateMany({
+          where: { userId: verification.userId },
+          data: { isVerified: true, lastVerifiedAt: reviewedAt },
+        });
+        if (bank.count === 0) throw new AccountVerificationOperationFailedException();
 
-      await tx.user.update({
-        where: { id: verification.userId },
-        data: {
-          hasOnboarded: true,
-          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
-        },
+        await tx.user.update({
+          where: { id: verification.userId },
+          data: {
+            hasOnboarded: true,
+            fleetOwnerStatus: FleetOwnerStatus.APPROVED,
+            ...(verification.isOwnerDriver
+              ? {
+                  image: profileUrl,
+                  chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                }
+              : {}),
+          },
+        });
+        const completed = await tx.fleetOwnerAccountVerification.findUnique({
+          where: { id: verificationId },
+        });
+        if (!completed) throw new AccountVerificationReviewNotFoundException();
+        return this.toResponse(completed);
       });
-      const completed = await tx.fleetOwnerAccountVerification.findUnique({
-        where: { id: verificationId },
-      });
-      if (!completed) throw new AccountVerificationReviewNotFoundException();
-      return this.toResponse(completed);
-    });
+      if (privateSelfieKey) await this.deleteObjectWithRetry(privateSelfieKey);
+      return response;
+    } catch (error) {
+      if (promotedKey) await this.deleteObjectWithRetry(promotedKey);
+      throw error;
+    }
   }
 
   async reject(verificationId: string, reviewerId: string, notes: string) {
-    return this.databaseService.$transaction(async (tx) => {
+    const result = await this.databaseService.$transaction(async (tx) => {
       const verification = await tx.fleetOwnerAccountVerification.findUnique({
         where: { id: verificationId },
-        select: { userId: true, status: true },
+        select: { userId: true, status: true, selfieObjectKey: true },
       });
       if (!verification) throw new AccountVerificationReviewNotFoundException();
       if (verification.status !== AccountVerificationStatus.REVIEW_REQUIRED) {
@@ -1800,6 +1998,8 @@ export class AccountVerificationService {
           reviewedById: reviewerId,
           reviewedAt: new Date(),
           reviewNotes: notes,
+          selfieObjectKey: null,
+          identityOfficialPhoto: null,
         },
       });
       if (rejected.count === 0) throw new AccountVerificationReviewNotPendingException();
@@ -1815,8 +2015,23 @@ export class AccountVerificationService {
           fleetOwnerStatus: FleetOwnerStatus.ON_HOLD,
         },
       });
-      return { success: true };
+      await tx.verificationIntervention.updateMany({
+        where: {
+          accountVerificationId: verificationId,
+          status: VerificationInterventionStatus.OPEN,
+        },
+        data: {
+          status: VerificationInterventionStatus.REJECTED,
+          encryptedPayload: null,
+          resolvedAt: new Date(),
+          resolutionSource: "ACCOUNT_REJECTED",
+          resolutionNotes: notes,
+        },
+      });
+      return { response: { success: true }, selfieObjectKey: verification.selfieObjectKey };
     });
+    if (result.selfieObjectKey) await this.deleteObjectWithRetry(result.selfieObjectKey);
+    return result.response;
   }
 
   private replay(verification: FleetOwnerAccountVerification, requestHash: string) {
@@ -1906,6 +2121,7 @@ export class AccountVerificationService {
       ...input,
       driversLicense: this.fileHash(documents.driversLicense),
       lasdri: this.fileHash(documents.lasdri),
+      selfie: this.fileHash(documents.selfie),
     });
   }
 
@@ -1934,6 +2150,24 @@ export class AccountVerificationService {
       type,
       ...(await this.storageService.uploadBuffer(file.buffer, key, file.mimetype)),
     };
+  }
+
+  private async uploadSelfie(
+    userId: string,
+    verificationId: string,
+    file: UploadedAccountDocument,
+  ) {
+    let processed: Buffer;
+    try {
+      processed = await this.selfieImageService.process(file);
+    } catch (error) {
+      if (error instanceof InvalidSelfieImageError) {
+        throw new AccountDocumentInvalidException("The selfie image could not be processed");
+      }
+      throw error;
+    }
+    const key = `fleet-owners/${userId}/account-verifications/${verificationId}/documents/selfie-${randomUUID()}.webp`;
+    return this.storageService.uploadBuffer(processed, key, "image/jpeg");
   }
 
   private async deleteUploaded(uploaded: Array<{ key: string }>): Promise<void> {
@@ -1973,7 +2207,11 @@ export class AccountVerificationService {
     await this.databaseService.fleetOwnerAccountVerification
       .updateMany({
         where: { id, status: AccountVerificationStatus.PROCESSING },
-        data: { status: AccountVerificationStatus.FAILED, failureReason: exception.getErrorCode() },
+        data: {
+          status: AccountVerificationStatus.FAILED,
+          failureReason: exception.getErrorCode(),
+          identityOfficialPhoto: null,
+        },
       })
       .catch(() => undefined);
     return exception;

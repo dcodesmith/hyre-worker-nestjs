@@ -188,7 +188,11 @@ describe("GuestBookingAccessService", () => {
         year: 2025,
         images: [{ url: "https://cdn.example.com/car.jpg" }],
       },
-      chauffeur: { name: "Driver", phoneNumber: "08000000000" },
+      chauffeur: {
+        name: "Driver",
+        phoneNumber: "08000000000",
+        image: "https://cdn.example/chauffeur.webp",
+      },
       legs: [
         {
           id: "leg-1",
@@ -202,6 +206,13 @@ describe("GuestBookingAccessService", () => {
 
     const result = await service.getBooking({ token: "a".repeat(43) });
 
+    expect(databaseService.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          chauffeur: { select: { name: true, phoneNumber: true, image: true } },
+        }),
+      }),
+    );
     expect(result).toMatchObject({
       bookingId: "booking-1",
       bookingReference: "BK-1",
@@ -221,7 +232,11 @@ describe("GuestBookingAccessService", () => {
         },
       ],
       car: { images: ["https://cdn.example.com/car.jpg"] },
-      chauffeur: { name: "Driver", phoneNumber: "08000000000" },
+      chauffeur: {
+        name: "Driver",
+        phoneNumber: "08000000000",
+        image: "https://cdn.example/chauffeur.webp",
+      },
       legs: [{ id: "leg-1", extensions: [] }],
     });
     expect(result).not.toHaveProperty("guestUser");

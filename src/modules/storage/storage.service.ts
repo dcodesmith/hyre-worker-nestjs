@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
@@ -75,6 +76,30 @@ export class StorageService {
       key: object.key,
       url: isPrivate ? object.key : `${this.settings.publicObjectUrlPrefix}/${object.key}`,
     };
+  }
+
+  async promotePrivateImage(sourceKey: string, destinationKey: string): Promise<StoredObject> {
+    if (!sourceKey.includes(PRIVATE_OBJECT_KEY_MARKER)) {
+      throw new Error("Only private document images can be promoted");
+    }
+    const key = `${this.writableKey(destinationKey).replace(/\.[^./]+$/, "")}.webp`;
+    if (key.includes(PRIVATE_OBJECT_KEY_MARKER)) {
+      throw new Error("Profile images must use public storage");
+    }
+    const copySource = [this.settings.docsBucketName, sourceKey]
+      .map((part) => encodeURIComponent(part).replaceAll("%2F", "/"))
+      .join("/");
+    await this.s3Client.send(
+      new CopyObjectCommand({
+        Bucket: this.settings.bucketName,
+        Key: key,
+        CopySource: copySource,
+        ContentType: WEBP_CONTENT_TYPE,
+        CacheControl: IMMUTABLE_CACHE_CONTROL,
+        MetadataDirective: "REPLACE",
+      }),
+    );
+    return { key, url: `${this.settings.publicObjectUrlPrefix}/${key}` };
   }
 
   async deleteObjectByKey(key: string): Promise<void> {

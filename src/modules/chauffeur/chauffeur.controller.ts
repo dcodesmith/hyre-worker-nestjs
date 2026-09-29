@@ -172,6 +172,28 @@ export class ChauffeurOnboardingController {
     );
   }
 
+  @Put("selfie")
+  @UseGuards(ChauffeurSessionGuard, VerificationThrottlerGuard)
+  @UseInterceptors(
+    FileInterceptor("selfie", {
+      limits: { fileSize: MAX_CHAUFFEUR_SELFIE_SIZE_BYTES },
+    }),
+  )
+  replaceSelfie(
+    @CurrentChauffeurVerification() verificationId: string,
+    @Headers("Idempotency-Key") rawIdempotencyKey: string,
+    @UploadedFile(new ChauffeurSelfiePipe()) selfie: UploadedChauffeurSelfie,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.withRetryAfter(response, () =>
+      this.chauffeurService.replaceSelfie(
+        verificationId,
+        idempotencyKeyPipe.transform(rawIdempotencyKey),
+        selfie,
+      ),
+    );
+  }
+
   private async withRetryAfter<T>(response: Response, operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();

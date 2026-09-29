@@ -114,7 +114,7 @@ export class GuestBookingAccessService {
             },
           },
         },
-        chauffeur: { select: { name: true, phoneNumber: true } },
+        chauffeur: { select: { name: true, phoneNumber: true, image: true } },
         legs: {
           orderBy: { legDate: "asc" },
           select: {

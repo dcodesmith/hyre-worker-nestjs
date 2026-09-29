@@ -1,4 +1,3 @@
-import { getQueueToken } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
@@ -6,33 +5,18 @@ import {
   ChauffeurVerificationStatus,
   DocumentStatus,
   DocumentType,
-  FleetOwnerStatus,
   NameMatchStatus,
   type Prisma,
   VerificationDecisionStatus,
   VerificationInterventionKind,
   VerificationInterventionStatus,
 } from "@prisma/client";
-import { PinoLogger } from "nestjs-pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmailPublicEnv } from "@/email-public-env";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import {
-  VERIFICATION_INTERVENTION_QUEUE,
-  VERIFICATION_INTERVENTION_RETRY_JOB,
-} from "../../config/constants";
 import { DatabaseService } from "../database/database.service";
-import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
 import { EmailService } from "../email/email.service";
-import { MonoError } from "../mono/mono.service";
-import { PremblyError } from "../prembly/prembly.service";
-import { SmileIdError, SmileIdService } from "../smile-id/smile-id.service";
 import { StorageService } from "../storage/storage.service";
-import {
-  AccountEmailNotVerifiedException,
-  AccountPhoneNotVerifiedException,
-  AccountVerificationOperationFailedException,
-} from "../verification/account-verification.error";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
 import {
   InterventionAlreadyResolvedException,
@@ -50,7 +34,6 @@ const ACCOUNT_ID = "018f47a2-7b3c-7d4e-8f90-1234567894b1";
 const USER_ID = "018f47a2-7b3c-7d4e-8f90-1234567894d1";
 const LICENSE_NUMBER = "ABC12345DE67";
 const DOCUMENT_ID = "018f47a2-7b3c-7d4e-8f90-1234567894e1";
-const DATE_OF_BIRTH = new Date(Date.UTC(1990, 0, 1));
 
 type RawQuery = { strings: readonly string[]; values: readonly unknown[] };
 
@@ -77,20 +60,8 @@ function expectRowLock(
   expect(queryValues(query)).toEqual([id]);
 }
 
-const matchingLicense = {
-  licenseNumber: LICENSE_NUMBER,
-  firstName: "ADA",
-  middleName: null,
-  lastName: "LOVELACE",
-  dateOfBirth: DATE_OF_BIRTH,
-  expiresAt: new Date(Date.UTC(2099, 11, 31)),
-  officialPhoto: "photo",
-  reference: "lic-ref",
-};
-
 describe("InterventionService", () => {
   let service: InterventionService;
-  let logger: { warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
   let database: {
     verificationIntervention: Record<string, ReturnType<typeof vi.fn>>;
     chauffeurVerification: Record<string, ReturnType<typeof vi.fn>>;
@@ -102,15 +73,12 @@ describe("InterventionService", () => {
     $transaction: ReturnType<typeof vi.fn>;
     $queryRaw: ReturnType<typeof vi.fn>;
   };
-  let licenseLookup: { lookup: ReturnType<typeof vi.fn> };
-  let smileIdService: { comparisonStatus: ReturnType<typeof vi.fn> };
   let emailService: { sendEmail: ReturnType<typeof vi.fn> };
   let storageService: {
     deleteObjectByKey: ReturnType<typeof vi.fn>;
     getObjectStream: ReturnType<typeof vi.fn>;
   };
   let activation: { activateIfEligible: ReturnType<typeof vi.fn> };
-  let queue: { add: ReturnType<typeof vi.fn>; getJob: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     database = {
@@ -174,29 +142,20 @@ describe("InterventionService", () => {
       accountVerificationId: null,
       ...create,
     }));
-    licenseLookup = { lookup: vi.fn() };
-    smileIdService = { comparisonStatus: vi.fn() };
     emailService = { sendEmail: vi.fn().mockResolvedValue(undefined) };
     storageService = {
       deleteObjectByKey: vi.fn().mockResolvedValue(undefined),
       getObjectStream: vi.fn(),
     };
     activation = { activateIfEligible: vi.fn().mockResolvedValue(true) };
-    queue = {
-      add: vi.fn().mockResolvedValue({ id: "job" }),
-      getJob: vi.fn().mockResolvedValue(null),
-    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InterventionService,
         { provide: DatabaseService, useValue: database },
-        { provide: DriversLicenseLookupService, useValue: licenseLookup },
-        { provide: SmileIdService, useValue: smileIdService },
         { provide: EmailService, useValue: emailService },
         { provide: StorageService, useValue: storageService },
         { provide: ChauffeurActivationService, useValue: activation },
-        { provide: getQueueToken(VERIFICATION_INTERVENTION_QUEUE), useValue: queue },
         {
           provide: ConfigService,
           useValue: {
@@ -213,7 +172,6 @@ describe("InterventionService", () => {
       .compile();
 
     service = module.get(InterventionService);
-    logger = module.get(PinoLogger);
   });
 
   afterEach(() => {
@@ -234,13 +192,6 @@ describe("InterventionService", () => {
     await service.bindChauffeurLicense(tx(), VERIFICATION_ID, licenseNumber);
     return database.verificationIntervention.upsert.mock.calls[0][0].create
       .encryptedPayload as string;
-  }
-
-  function consumedRetryAttempt(): boolean {
-    return database.verificationIntervention.updateMany.mock.calls.some((call) => {
-      const argument = call[0] as { data?: { retryAttempt?: number } };
-      return argument.data?.retryAttempt !== undefined;
-    });
   }
 
   describe("binding", () => {
@@ -285,8 +236,6 @@ describe("InterventionService", () => {
           accountVerificationId: undefined,
           documentApprovalId: undefined,
           encryptedPayload: payload,
-          retryAttempt: 0,
-          lastAttemptAt: null,
           emailNotifiedAt: null,
           resolutionSource: null,
           resolutionNotes: null,
@@ -295,7 +244,6 @@ describe("InterventionService", () => {
           createdAt: OPENED_AT,
         },
       });
-      expect(queue.add).not.toHaveBeenCalled();
       expect(emailService.sendEmail).not.toHaveBeenCalled();
     });
 
@@ -319,13 +267,11 @@ describe("InterventionService", () => {
             status: VerificationInterventionStatus.OPEN,
             documentApprovalId: DOCUMENT_ID,
             encryptedPayload: payload,
-            retryAttempt: 0,
             resolutionNotes: null,
             resolvedById: null,
           }),
         }),
       );
-      expect(queue.add).not.toHaveBeenCalled();
     });
 
     it("refuses to overwrite evidence that is still open", async () => {
@@ -350,19 +296,6 @@ describe("InterventionService", () => {
 
       expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
     });
-
-    it("cancels only an open prepared intervention and clears its payload", async () => {
-      await service.cancelPreparedIntervention(tx(), INTERVENTION_ID, "SUBMISSION_FAILED");
-
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
-        data: expect.objectContaining({
-          status: VerificationInterventionStatus.REJECTED,
-          encryptedPayload: null,
-          resolutionSource: "SUBMISSION_FAILED",
-        }),
-      });
-    });
   });
 
   describe("dispatch", () => {
@@ -370,195 +303,42 @@ describe("InterventionService", () => {
       freezeOpenedAt();
     });
 
-    it("schedules stable retries and emails operations once after the licence commits", async () => {
-      await service.bindChauffeurLicense(tx(), VERIFICATION_ID, LICENSE_NUMBER);
+    it("emails operations once and does not schedule a provider retry", async () => {
       database.verificationIntervention.findUnique.mockResolvedValueOnce({
         id: INTERVENTION_ID,
         status: VerificationInterventionStatus.OPEN,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
+        kind: VerificationInterventionKind.CHAUFFEUR_FACE,
         emailNotifiedAt: null,
       });
 
       await service.dispatchIntervention(INTERVENTION_ID);
 
-      const payload = database.verificationIntervention.upsert.mock.calls[0][0].create
-        .encryptedPayload as string;
-      expect(payload).not.toContain(LICENSE_NUMBER);
-      expect(queue.add).toHaveBeenCalledTimes(2);
-      expect(queue.add).toHaveBeenNthCalledWith(
-        1,
-        VERIFICATION_INTERVENTION_RETRY_JOB,
-        {
-          interventionId: INTERVENTION_ID,
-          attempt: 1,
-          openedAt: OPENED_AT.getTime(),
-        },
-        expect.objectContaining({
-          delay: 15 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-${OPENED_AT.getTime()}-1`,
-          attempts: 3,
-          backoff: { type: "exponential", delay: 30_000 },
-        }),
-      );
-      expect(queue.add).toHaveBeenNthCalledWith(
-        2,
-        VERIFICATION_INTERVENTION_RETRY_JOB,
-        {
-          interventionId: INTERVENTION_ID,
-          attempt: 2,
-          openedAt: OPENED_AT.getTime(),
-        },
-        expect.objectContaining({
-          delay: 30 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-${OPENED_AT.getTime()}-2`,
-        }),
-      );
       expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
       const email = emailService.sendEmail.mock.calls[0][0];
       expect(email.to).toBe(OPERATIONS_EMAIL);
       expect(email.html).toContain(`${getEmailPublicEnv().websiteUrl}/admin/interventions`);
-      expect(email.html).not.toContain(LICENSE_NUMBER);
-    });
-
-    it("does not send a second email when open evidence cannot be bound again", async () => {
-      await service.bindChauffeurLicense(tx(), VERIFICATION_ID, LICENSE_NUMBER);
-      database.verificationIntervention.findUnique.mockResolvedValueOnce({
-        id: INTERVENTION_ID,
-        status: VerificationInterventionStatus.OPEN,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
-        emailNotifiedAt: null,
-      });
-      await service.dispatchIntervention(INTERVENTION_ID);
-
-      database.verificationIntervention.findUnique.mockResolvedValueOnce({
-        id: INTERVENTION_ID,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload: "kept-secret",
-      });
-      database.verificationIntervention.upsert.mockClear();
-
-      await expect(
-        service.bindChauffeurLicense(tx(), VERIFICATION_ID, "LAG98765AB21"),
-      ).resolves.toBeNull();
-
-      expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
-      expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-      expect(queue.add).toHaveBeenCalledTimes(2);
-    });
-
-    it("skips the email when another worker already claimed notification", async () => {
-      const openTask = {
-        id: INTERVENTION_ID,
-        status: VerificationInterventionStatus.OPEN,
-        kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
-        emailNotifiedAt: null,
-      };
-      database.verificationIntervention.findUnique
-        .mockResolvedValueOnce(openTask)
-        .mockResolvedValueOnce(openTask);
-      database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
-
-      await service.openChauffeurFace(VERIFICATION_ID);
-
-      expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
-
-      expect(database.$queryRaw).toHaveBeenCalledTimes(1);
-      expectRowLock(database.$queryRaw.mock.calls[0][0], "ChauffeurVerification", VERIFICATION_ID);
       expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
         where: { id: INTERVENTION_ID, emailNotifiedAt: null },
         data: { emailNotifiedAt: OPENED_AT },
       });
-      expect(emailService.sendEmail).not.toHaveBeenCalled();
     });
 
-    it("reopens a terminal face task and schedules a fresh retry generation", async () => {
-      const previousOpenedAt = new Date("2026-08-01T00:00:00.000Z");
-      const reopenedAt = new Date("2026-09-28T08:00:00.000Z");
-      vi.useFakeTimers();
-      vi.setSystemTime(reopenedAt);
-      const completedJob = {
-        getState: vi.fn().mockResolvedValue("completed"),
-        retry: vi.fn(),
-      };
-      queue.getJob.mockImplementation(async (jobId: string) =>
-        jobId.includes(String(reopenedAt.getTime())) ? null : completedJob,
-      );
-      database.verificationIntervention.findUnique
-        .mockResolvedValueOnce({
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.REJECTED,
-          createdAt: previousOpenedAt,
-        })
-        .mockResolvedValueOnce({
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.OPEN,
-          kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-          createdAt: reopenedAt,
-          retryAttempt: 0,
-          emailNotifiedAt: null,
-        });
-
-      await service.openChauffeurFace(VERIFICATION_ID);
-
-      expect(database.verificationIntervention.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { resourceKey: `chauffeur-face:${VERIFICATION_ID}` },
-          update: expect.objectContaining({
-            status: VerificationInterventionStatus.OPEN,
-            retryAttempt: 0,
-            lastAttemptAt: null,
-            emailNotifiedAt: null,
-            resolutionSource: null,
-            resolutionNotes: null,
-            resolvedAt: null,
-            resolvedById: null,
-            createdAt: reopenedAt,
-          }),
-        }),
-      );
-      expect(queue.add).toHaveBeenNthCalledWith(
-        1,
-        VERIFICATION_INTERVENTION_RETRY_JOB,
-        {
-          interventionId: INTERVENTION_ID,
-          attempt: 1,
-          openedAt: reopenedAt.getTime(),
-        },
-        expect.objectContaining({
-          delay: 15 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-${reopenedAt.getTime()}-1`,
-        }),
-      );
-      expect(queue.add).toHaveBeenNthCalledWith(
-        2,
-        VERIFICATION_INTERVENTION_RETRY_JOB,
-        {
-          interventionId: INTERVENTION_ID,
-          attempt: 2,
-          openedAt: reopenedAt.getTime(),
-        },
-        expect.objectContaining({
-          delay: 30 * 60 * 1000,
-          jobId: `verification-intervention-${INTERVENTION_ID}-${reopenedAt.getTime()}-2`,
-        }),
-      );
-      expect(completedJob.retry).not.toHaveBeenCalled();
-    });
-
-    it("releases the email claim when sending fails so repair can retry it", async () => {
-      await service.bindOwnerLicense(tx(), ACCOUNT_ID, DOCUMENT_ID, LICENSE_NUMBER);
+    it("does not send a second email when open face evidence cannot be bound again", async () => {
       database.verificationIntervention.findUnique.mockResolvedValueOnce({
         id: INTERVENTION_ID,
         status: VerificationInterventionStatus.OPEN,
-        kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
+      });
+
+      await expect(service.bindChauffeurFace(tx(), VERIFICATION_ID)).resolves.toBeNull();
+      expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it("releases the email claim when sending fails so repair can retry it", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValueOnce({
+        id: INTERVENTION_ID,
+        status: VerificationInterventionStatus.OPEN,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
         emailNotifiedAt: null,
       });
       emailService.sendEmail.mockRejectedValueOnce(new Error("smtp down"));
@@ -568,755 +348,6 @@ describe("InterventionService", () => {
       expect(database.verificationIntervention.updateMany).toHaveBeenLastCalledWith({
         where: { id: INTERVENTION_ID, emailNotifiedAt: OPENED_AT },
         data: { emailNotifiedAt: null },
-      });
-      expect(logger.warn).toHaveBeenCalled();
-      const warning = JSON.stringify(logger.warn.mock.calls.at(-1));
-      expect(warning).not.toContain(LICENSE_NUMBER);
-    });
-
-    it("still emails when retry scheduling fails", async () => {
-      queue.add.mockRejectedValue(new Error("redis down"));
-      await service.bindChauffeurLicense(tx(), VERIFICATION_ID, LICENSE_NUMBER);
-      database.verificationIntervention.findUnique.mockResolvedValueOnce({
-        id: INTERVENTION_ID,
-        status: VerificationInterventionStatus.OPEN,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
-        emailNotifiedAt: null,
-      });
-
-      await service.dispatchIntervention(INTERVENTION_ID);
-
-      expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-      expect(logger.error).toHaveBeenCalled();
-    });
-
-    it.each([
-      ["approved", ChauffeurVerificationStatus.APPROVED, VerificationDecisionStatus.PENDING],
-      [
-        "already decided",
-        ChauffeurVerificationStatus.IDENTITY_VERIFIED,
-        VerificationDecisionStatus.APPROVED,
-      ],
-      ["missing", null, null],
-    ] as const)(
-      "does not open a face task for an %s chauffeur",
-      async (_label, status, faceDecision) => {
-        database.chauffeurVerification.findUnique.mockResolvedValueOnce(
-          status ? { status, faceDecision } : null,
-        );
-
-        await expect(service.openChauffeurFace(VERIFICATION_ID)).resolves.toBeNull();
-
-        expectRowLock(
-          database.$queryRaw.mock.calls[0][0],
-          "ChauffeurVerification",
-          VERIFICATION_ID,
-        );
-        expect(database.verificationIntervention.upsert).not.toHaveBeenCalled();
-        expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-        expect(queue.add).not.toHaveBeenCalled();
-        expect(emailService.sendEmail).not.toHaveBeenCalled();
-      },
-    );
-
-    it("does not dispatch a terminal intervention", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValueOnce({
-        id: INTERVENTION_ID,
-        status: VerificationInterventionStatus.REJECTED,
-        retryAttempt: 2,
-        emailNotifiedAt: OPENED_AT,
-        createdAt: OPENED_AT,
-      });
-
-      await service.dispatchIntervention(INTERVENTION_ID);
-
-      expect(queue.add).not.toHaveBeenCalled();
-      expect(emailService.sendEmail).not.toHaveBeenCalled();
-    });
-
-    it("repairs missing retries and a failed email, and stops after the final attempt", async () => {
-      database.verificationIntervention.findMany.mockResolvedValueOnce([
-        {
-          id: INTERVENTION_ID,
-          kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-          createdAt: OPENED_AT,
-          retryAttempt: 0,
-          emailNotifiedAt: null,
-        },
-      ]);
-
-      await service.repairOpenInterventionDispatch();
-
-      expect(queue.add).toHaveBeenCalledTimes(2);
-      expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-
-      queue.add.mockClear();
-      emailService.sendEmail.mockClear();
-      database.verificationIntervention.findMany.mockResolvedValueOnce([
-        {
-          id: INTERVENTION_ID,
-          kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-          createdAt: OPENED_AT,
-          retryAttempt: 2,
-          emailNotifiedAt: OPENED_AT,
-        },
-      ]);
-
-      await service.repairOpenInterventionDispatch();
-
-      expect(queue.add).not.toHaveBeenCalled();
-      expect(emailService.sendEmail).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("retry", () => {
-    it("ignores an attempt past the final retry and a lost claim", async () => {
-      await service.retry(INTERVENTION_ID, 3);
-      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalled();
-
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        createdAt: OPENED_AT,
-        retryAttempt: 0,
-        lastAttemptAt: null,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-      database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
-
-      await service.retry(INTERVENTION_ID, 1, OPENED_AT.getTime());
-
-      expect(licenseLookup.lookup).not.toHaveBeenCalled();
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.OPEN,
-          retryAttempt: { lt: 1 },
-          createdAt: OPENED_AT,
-        },
-        data: { retryAttempt: 1, lastAttemptAt: OPENED_AT },
-      });
-    });
-
-    it("does not consume a retry or call providers when a delayed job belongs to a previous generation", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      const reopenedAt = new Date("2026-09-28T08:00:00.000Z");
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        createdAt: reopenedAt,
-        retryAttempt: 0,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-
-      await expect(service.retry(INTERVENTION_ID, 1, OPENED_AT.getTime())).resolves.toBeUndefined();
-
-      expect(licenseLookup.lookup).not.toHaveBeenCalled();
-      expect(consumedRetryAttempt()).toBe(false);
-      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalled();
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-    });
-
-    it("auto-resolves a matching chauffeur licence and activates once", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        accountVerificationId: null,
-        retryAttempt: 1,
-        chauffeurVerification: {
-          identityFirstName: "Ada",
-          identityLastName: "Lovelace",
-          dateOfBirth: DATE_OF_BIRTH,
-          selfieObjectKey: "selfie-key",
-        },
-        accountVerification: null,
-      });
-      licenseLookup.lookup.mockResolvedValueOnce(matchingLicense);
-
-      await service.retry(INTERVENTION_ID, 1);
-
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
-        data: expect.objectContaining({
-          status: VerificationInterventionStatus.AUTO_RESOLVED,
-          encryptedPayload: null,
-          resolutionSource: "PROVIDER_RETRY",
-        }),
-      });
-      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: expect.objectContaining({
-          driversLicenseDecision: VerificationDecisionStatus.APPROVED,
-          driversLicenseProviderRef: "lic-ref",
-        }),
-      });
-      expect(activation.activateIfEligible).toHaveBeenCalledTimes(1);
-      expect(activation.activateIfEligible).toHaveBeenCalledWith(VERIFICATION_ID);
-    });
-
-    it("does not activate when a concurrent resolution wins the claim", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-      licenseLookup.lookup.mockResolvedValueOnce(matchingLicense);
-      database.verificationIntervention.updateMany
-        .mockResolvedValueOnce({ count: 1 })
-        .mockResolvedValueOnce({ count: 0 });
-
-      await service.retry(INTERVENTION_ID, 1);
-
-      expect(activation.activateIfEligible).not.toHaveBeenCalled();
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ["identity mismatch", { ...matchingLicense, firstName: "OTHER" }, "IDENTITY_MISMATCH"],
-      [
-        "expiry",
-        { ...matchingLicense, expiresAt: new Date(Date.UTC(2026, 8, 25)) },
-        "LICENSE_EXPIRED",
-      ],
-    ] as const)(
-      "rejects a retried licence for %s and purges the selfie",
-      async (_label, license, reason) => {
-        const encryptedPayload = await captureLicensePayload();
-        database.chauffeurVerification.findUnique.mockResolvedValue({
-          selfieObjectKey: "selfie-key",
-        });
-        database.verificationIntervention.findUnique.mockResolvedValue({
-          id: INTERVENTION_ID,
-          kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-          status: VerificationInterventionStatus.OPEN,
-          encryptedPayload,
-          chauffeurVerificationId: VERIFICATION_ID,
-          chauffeurVerification: {
-            identityFirstName: "ADA",
-            identityLastName: "LOVELACE",
-            dateOfBirth: DATE_OF_BIRTH,
-            selfieObjectKey: "selfie-key",
-          },
-        });
-        licenseLookup.lookup.mockResolvedValueOnce(license);
-
-        await service.retry(INTERVENTION_ID, 1);
-
-        expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-          where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
-          data: expect.objectContaining({
-            status: VerificationInterventionStatus.REJECTED,
-            encryptedPayload: null,
-            resolutionNotes: reason,
-          }),
-        });
-        expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
-        expect(activation.activateIfEligible).not.toHaveBeenCalled();
-      },
-    );
-
-    it("rejects a definitive provider rejection and leaves an outage open", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      const openIntervention = {
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        retryAttempt: 1,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-          selfieObjectKey: null,
-        },
-      };
-      database.verificationIntervention.findUnique.mockResolvedValue(openIntervention);
-      database.chauffeurVerification.findUnique.mockResolvedValue({ selfieObjectKey: null });
-      licenseLookup.lookup.mockRejectedValueOnce(new PremblyError("REJECTED"));
-
-      await service.retry(INTERVENTION_ID, 1);
-
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ resolutionNotes: "PROVIDER_REJECTED" }),
-        }),
-      );
-
-      database.verificationIntervention.updateMany.mockClear();
-      licenseLookup.lookup.mockRejectedValueOnce(new MonoError("UNAVAILABLE"));
-      await service.retry(INTERVENTION_ID, 2);
-      expect(
-        database.verificationIntervention.updateMany.mock.calls.some(
-          (call) => call[0].data?.status === VerificationInterventionStatus.REJECTED,
-        ),
-      ).toBe(false);
-      expect(logger.warn).toHaveBeenCalled();
-      expect(JSON.stringify(logger.warn.mock.calls.at(-1))).not.toContain(LICENSE_NUMBER);
-    });
-
-    it("leaves an undecryptable licence open without consuming a retry or rejecting the applicant", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload: "not-a-payload",
-        chauffeurVerificationId: VERIFICATION_ID,
-        retryAttempt: 0,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-
-      await expect(service.retry(INTERVENTION_ID, 1)).resolves.toBeUndefined();
-
-      expect(licenseLookup.lookup).not.toHaveBeenCalled();
-      expect(consumedRetryAttempt()).toBe(false);
-      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalled();
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
-      expect(JSON.stringify(logger.error.mock.calls)).not.toContain("not-a-payload");
-    });
-
-    it("rejects a licence retry when the stored identity is missing", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        retryAttempt: 0,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: null,
-        },
-      });
-      database.chauffeurVerification.findUnique.mockResolvedValue({
-        status: ChauffeurVerificationStatus.IDENTITY_VERIFIED,
-        selfieObjectKey: "selfie-key",
-      });
-
-      await expect(service.retry(INTERVENTION_ID, 1)).rejects.toBeInstanceOf(
-        InterventionNotFoundException,
-      );
-
-      expect(licenseLookup.lookup).not.toHaveBeenCalled();
-      expect(consumedRetryAttempt()).toBe(false);
-      expectRowLock(database.$queryRaw.mock.calls[0][0], "ChauffeurVerification", VERIFICATION_ID);
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
-        data: expect.objectContaining({
-          status: VerificationInterventionStatus.REJECTED,
-          encryptedPayload: null,
-          resolutionSource: "EVIDENCE_CORRUPTED",
-          resolutionNotes: "EVIDENCE_CORRUPTED",
-        }),
-      });
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
-    });
-
-    it("does not mutate an approved chauffeur when stored identity is missing", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: null,
-        },
-      });
-      database.chauffeurVerification.findUnique.mockResolvedValue({
-        status: ChauffeurVerificationStatus.APPROVED,
-        selfieObjectKey: "selfie-key",
-      });
-
-      await expect(service.retry(INTERVENTION_ID, 1)).resolves.toBeUndefined();
-
-      expect(consumedRetryAttempt()).toBe(false);
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-      expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
-        data: expect.objectContaining({
-          status: VerificationInterventionStatus.AUTO_RESOLVED,
-          encryptedPayload: null,
-          resolutionSource: "ALREADY_APPROVED",
-        }),
-      });
-    });
-
-    it("releases the retry claim when the provider call fails unexpectedly", async () => {
-      const encryptedPayload = await captureLicensePayload();
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: VERIFICATION_ID,
-        retryAttempt: 0,
-        lastAttemptAt: null,
-        chauffeurVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          dateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-      licenseLookup.lookup.mockRejectedValueOnce(new Error("socket hang up"));
-
-      await expect(service.retry(INTERVENTION_ID, 1)).rejects.toThrow("socket hang up");
-
-      const claim = database.verificationIntervention.updateMany.mock.calls.find((call) => {
-        const argument = call[0] as { data?: { retryAttempt?: number; lastAttemptAt?: Date } };
-        return argument.data?.retryAttempt === 1;
-      });
-      const claimedAt = (claim?.[0] as { data?: { lastAttemptAt?: Date } } | undefined)?.data
-        ?.lastAttemptAt;
-      expect(claimedAt).toBeInstanceOf(Date);
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.OPEN,
-          retryAttempt: 1,
-          lastAttemptAt: claimedAt,
-        },
-        data: { retryAttempt: 0, lastAttemptAt: null },
-      });
-      expect(JSON.stringify(logger.error.mock.calls)).not.toContain(LICENSE_NUMBER);
-    });
-
-    it("auto-resolves an owner-driver licence and approves the account", async () => {
-      freezeOpenedAt();
-      await service.bindOwnerLicense(tx(), ACCOUNT_ID, DOCUMENT_ID, LICENSE_NUMBER);
-      const encryptedPayload = database.verificationIntervention.upsert.mock.calls[0][0].create
-        .encryptedPayload as string;
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        chauffeurVerificationId: null,
-        accountVerificationId: ACCOUNT_ID,
-        accountVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          identityDateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-      database.fleetOwnerAccountVerification.findUnique.mockResolvedValue({
-        id: ACCOUNT_ID,
-        userId: USER_ID,
-        status: AccountVerificationStatus.REVIEW_REQUIRED,
-        identityRequiresReview: false,
-        bankNameMatch: NameMatchStatus.MATCHED,
-        user: {
-          emailVerified: true,
-          phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
-        },
-      });
-      database.bankDetails.updateMany.mockResolvedValue({ count: 1 });
-      licenseLookup.lookup.mockResolvedValueOnce(matchingLicense);
-
-      await service.retry(INTERVENTION_ID, 2);
-
-      expect(database.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
-        where: { id: ACCOUNT_ID },
-        data: expect.objectContaining({
-          driversLicenseDecision: VerificationDecisionStatus.APPROVED,
-        }),
-      });
-      expect(database.user.update).toHaveBeenCalledWith({
-        where: { id: USER_ID },
-        data: expect.objectContaining({ fleetOwnerStatus: FleetOwnerStatus.APPROVED }),
-      });
-      expect(activation.activateIfEligible).not.toHaveBeenCalled();
-    });
-
-    it("does not approve an owner account that still needs another review", async () => {
-      freezeOpenedAt();
-      await service.bindOwnerLicense(tx(), ACCOUNT_ID, DOCUMENT_ID, LICENSE_NUMBER);
-      const encryptedPayload = database.verificationIntervention.upsert.mock.calls[0][0].create
-        .encryptedPayload as string;
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
-        status: VerificationInterventionStatus.OPEN,
-        encryptedPayload,
-        accountVerificationId: ACCOUNT_ID,
-        accountVerification: {
-          identityFirstName: "ADA",
-          identityLastName: "LOVELACE",
-          identityDateOfBirth: DATE_OF_BIRTH,
-        },
-      });
-      database.fleetOwnerAccountVerification.findUnique.mockResolvedValue({
-        id: ACCOUNT_ID,
-        status: AccountVerificationStatus.REVIEW_REQUIRED,
-        identityRequiresReview: true,
-        bankNameMatch: NameMatchStatus.MATCHED,
-      });
-      licenseLookup.lookup.mockResolvedValueOnce(matchingLicense);
-
-      await service.retry(INTERVENTION_ID, 1);
-
-      expect(database.user.update).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ["provider rejection", "PROVIDER_REJECTED"],
-      ["staff rejection", "STAFF_REJECTED"],
-    ] as const)("resets owner onboarding and bank verification on %s", async (path, reason) => {
-      database.fleetOwnerAccountVerification.update.mockResolvedValue({ userId: USER_ID });
-      if (path === "provider rejection") {
-        const encryptedPayload = await captureLicensePayload();
-        database.verificationIntervention.findUnique.mockResolvedValue({
-          id: INTERVENTION_ID,
-          kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
-          status: VerificationInterventionStatus.OPEN,
-          encryptedPayload,
-          chauffeurVerificationId: null,
-          accountVerificationId: ACCOUNT_ID,
-          retryAttempt: 0,
-          accountVerification: {
-            identityFirstName: "ADA",
-            identityLastName: "LOVELACE",
-            identityDateOfBirth: DATE_OF_BIRTH,
-          },
-        });
-        licenseLookup.lookup.mockRejectedValueOnce(new PremblyError("REJECTED"));
-        await service.retry(INTERVENTION_ID, 1);
-      } else {
-        database.verificationIntervention.findUnique.mockResolvedValue({
-          id: INTERVENTION_ID,
-          kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
-          status: VerificationInterventionStatus.OPEN,
-          chauffeurVerificationId: null,
-          accountVerificationId: ACCOUNT_ID,
-        });
-        await service.reject(INTERVENTION_ID, USER_ID, "Licence is not valid");
-      }
-
-      expect(database.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
-        where: { id: ACCOUNT_ID },
-        data: {
-          driversLicenseDecision: VerificationDecisionStatus.REJECTED,
-          status: AccountVerificationStatus.FAILED,
-          failureReason: reason,
-        },
-        select: { userId: true },
-      });
-      expect(database.bankDetails.updateMany).toHaveBeenCalledWith({
-        where: { userId: USER_ID },
-        data: { isVerified: false },
-      });
-      expect(database.user.update).toHaveBeenCalledWith({
-        where: { id: USER_ID },
-        data: { hasOnboarded: false, fleetOwnerStatus: FleetOwnerStatus.ON_HOLD },
-      });
-    });
-  });
-
-  describe("Smile results", () => {
-    function faceIntervention(
-      status: VerificationInterventionStatus = VerificationInterventionStatus.OPEN,
-    ) {
-      return {
-        id: INTERVENTION_ID,
-        kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-        status,
-        chauffeurVerificationId: VERIFICATION_ID,
-        resourceKey: `chauffeur-face:${VERIFICATION_ID}`,
-      };
-    }
-
-    it("approves a clear comparison and activates", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue(faceIntervention());
-
-      await service.recordSmileResult(VERIFICATION_ID, "clear");
-
-      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: { faceDecision: VerificationDecisionStatus.APPROVED },
-      });
-      expect(activation.activateIfEligible).toHaveBeenCalledTimes(1);
-    });
-
-    it("approves the face directly when no intervention was opened", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValueOnce(null);
-
-      await service.recordSmileResult(VERIFICATION_ID, "clear");
-
-      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: { faceDecision: VerificationDecisionStatus.APPROVED },
-      });
-      expect(activation.activateIfEligible).toHaveBeenCalledWith(VERIFICATION_ID);
-    });
-
-    it("reopens an auto-resolved face task when activation fails", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue(faceIntervention());
-      activation.activateIfEligible.mockRejectedValueOnce(new Error("chauffeur activation failed"));
-
-      await expect(service.recordSmileResult(VERIFICATION_ID, "clear")).rejects.toThrow(
-        "chauffeur activation failed",
-      );
-
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.AUTO_RESOLVED,
-        },
-        data: {
-          status: VerificationInterventionStatus.OPEN,
-          resolvedAt: null,
-          resolvedById: null,
-          resolutionNotes: null,
-          resolutionSource: null,
-        },
-      });
-    });
-
-    it("does not activate again when the clear result was already applied", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValueOnce(
-        faceIntervention(VerificationInterventionStatus.AUTO_RESOLVED),
-      );
-      database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
-
-      await service.recordSmileResult(VERIFICATION_ID, "clear");
-
-      expect(activation.activateIfEligible).not.toHaveBeenCalled();
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-    });
-
-    it("does not throw when a provider clear loses the resolution race", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue(faceIntervention());
-      database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
-
-      await expect(service.recordSmileResult(VERIFICATION_ID, "clear")).resolves.toBeUndefined();
-      expect(activation.activateIfEligible).not.toHaveBeenCalled();
-    });
-
-    it("rejects and purges evidence when Smile blocks", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue(faceIntervention());
-      database.chauffeurVerification.findUnique.mockResolvedValue({
-        selfieObjectKey: "selfie-key",
-      });
-
-      await service.recordSmileResult(VERIFICATION_ID, "block");
-
-      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
-        where: { id: VERIFICATION_ID },
-        data: expect.objectContaining({
-          faceDecision: VerificationDecisionStatus.REJECTED,
-          selfieObjectKey: null,
-          identityOfficialPhoto: null,
-          livenessProviderRef: null,
-        }),
-      });
-      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
-      expect(activation.activateIfEligible).not.toHaveBeenCalled();
-    });
-
-    it.each(["attention", "error"] as const)(
-      "opens staff face review for %s and keeps stored evidence",
-      async (status) => {
-        await service.recordSmileResult(VERIFICATION_ID, status);
-
-        expect(database.verificationIntervention.upsert).toHaveBeenCalledWith(
-          expect.objectContaining({
-            where: { resourceKey: `chauffeur-face:${VERIFICATION_ID}` },
-            create: expect.objectContaining({
-              kind: VerificationInterventionKind.CHAUFFEUR_FACE,
-            }),
-          }),
-        );
-        expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-        expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
-      },
-    );
-
-    it("leaves a face retry open when Smile is unavailable", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        ...faceIntervention(),
-        retryAttempt: 0,
-        lastAttemptAt: null,
-        chauffeurVerification: { livenessProviderRef: "job-1" },
-      });
-      smileIdService.comparisonStatus.mockRejectedValueOnce(new SmileIdError("UNAVAILABLE"));
-
-      await service.retry(INTERVENTION_ID, 1);
-
-      expect(logger.warn).toHaveBeenCalled();
-      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
-      expect(database.verificationIntervention.updateMany).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { retryAttempt: 0, lastAttemptAt: null },
-        }),
-      );
-    });
-
-    it("releases a face retry claim when Smile fails outside the provider contract", async () => {
-      database.verificationIntervention.findUnique.mockResolvedValue({
-        ...faceIntervention(),
-        retryAttempt: 0,
-        lastAttemptAt: null,
-        chauffeurVerification: { livenessProviderRef: "job-1" },
-      });
-      smileIdService.comparisonStatus.mockRejectedValueOnce(new Error("socket hang up"));
-
-      await expect(service.retry(INTERVENTION_ID, 1)).rejects.toThrow("socket hang up");
-
-      const claim = database.verificationIntervention.updateMany.mock.calls.find((call) => {
-        const argument = call[0] as { data?: { retryAttempt?: number; lastAttemptAt?: Date } };
-        return argument.data?.retryAttempt === 1;
-      });
-      const claimedAt = (claim?.[0] as { data?: { lastAttemptAt?: Date } } | undefined)?.data
-        ?.lastAttemptAt;
-      expect(claimedAt).toBeInstanceOf(Date);
-      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: INTERVENTION_ID,
-          status: VerificationInterventionStatus.OPEN,
-          retryAttempt: 1,
-          lastAttemptAt: claimedAt,
-        },
-        data: { retryAttempt: 0, lastAttemptAt: null },
       });
     });
   });
@@ -1359,12 +390,12 @@ describe("InterventionService", () => {
         status: VerificationInterventionStatus.OPEN,
         applicantName: "Ada Lovelace",
         licenseLast4: "DE67",
-        hasSelfie: false,
-        hasNinPortrait: false,
+        hasSelfie: true,
+        hasNinPortrait: true,
         document: null,
-        retryAttempt: 1,
         createdAt: OPENED_AT,
       });
+      expect(result.items[0]).not.toHaveProperty("retryAttempt");
       const serialized = JSON.stringify(result);
       expect(serialized).not.toContain(LICENSE_NUMBER);
       expect(serialized).not.toContain("secret-selfie-key");
@@ -1618,12 +649,53 @@ describe("InterventionService", () => {
           resolutionSource: "STAFF_REVIEW",
         }),
       });
+      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          faceDecision: VerificationDecisionStatus.REJECTED,
+          selfieObjectKey: null,
+        }),
+      });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
 
       database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
       await expect(service.reject(INTERVENTION_ID, USER_ID, "Again")).rejects.toBeInstanceOf(
         InterventionAlreadyResolvedException,
       );
+    });
+
+    it("requests a retake by clearing the stored selfie so another one can be submitted", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_FACE,
+        status: VerificationInterventionStatus.OPEN,
+        chauffeurVerificationId: VERIFICATION_ID,
+      });
+      database.chauffeurVerification.findUnique.mockResolvedValue({
+        selfieObjectKey: "selfie-key",
+      });
+
+      await service.requestRetake(INTERVENTION_ID, USER_ID, "Take another photo");
+
+      expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
+        where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
+        data: expect.objectContaining({
+          status: VerificationInterventionStatus.RETAKE_REQUESTED,
+          resolvedById: USER_ID,
+          resolutionNotes: "Take another photo",
+          resolutionSource: "STAFF_REVIEW",
+        }),
+      });
+      expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: {
+          selfieObjectKey: null,
+          selfieRetakeRequired: true,
+          faceDecision: VerificationDecisionStatus.PENDING,
+          livenessProviderRef: null,
+        },
+      });
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
     });
 
     it("does not change an approved chauffeur when staff approve or reject the face task", async () => {
@@ -1654,18 +726,10 @@ describe("InterventionService", () => {
       expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
       expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
       expect(activation.activateIfEligible).not.toHaveBeenCalled();
-      expect(database.verificationIntervention.update).toHaveBeenCalledWith({
-        where: { id: INTERVENTION_ID },
-        data: expect.objectContaining({
-          status: VerificationInterventionStatus.AUTO_RESOLVED,
-          resolutionSource: "ALREADY_APPROVED",
-        }),
-      });
       expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
         where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
         data: expect.objectContaining({
           status: VerificationInterventionStatus.AUTO_RESOLVED,
-          encryptedPayload: null,
           resolutionSource: "ALREADY_APPROVED",
         }),
       });
@@ -1676,7 +740,7 @@ describe("InterventionService", () => {
       }
     });
 
-    it("approves the linked owner licence document and the account together", async () => {
+    it("approves the linked owner licence document without activating the account", async () => {
       database.verificationIntervention.findUnique.mockResolvedValue({
         id: INTERVENTION_ID,
         kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
@@ -1735,13 +799,8 @@ describe("InterventionService", () => {
         where: { id: ACCOUNT_ID },
         data: { driversLicenseDecision: VerificationDecisionStatus.APPROVED },
       });
-      expect(database.user.update).toHaveBeenCalledWith({
-        where: { id: USER_ID },
-        data: expect.objectContaining({
-          hasOnboarded: true,
-          fleetOwnerStatus: FleetOwnerStatus.APPROVED,
-        }),
-      });
+      expect(database.user.update).not.toHaveBeenCalled();
+      expect(database.bankDetails.updateMany).not.toHaveBeenCalled();
     });
 
     it("rejects an owner document that is not the linked driver's licence", async () => {
@@ -1824,46 +883,33 @@ describe("InterventionService", () => {
     }
 
     it.each([
-      [
-        "email",
-        { emailVerified: false, phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z") },
-        AccountEmailNotVerifiedException,
-      ],
-      ["phone", { emailVerified: true, phoneVerifiedAt: null }, AccountPhoneNotVerifiedException],
+      ["email", { emailVerified: false, phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z") }],
+      ["phone", { emailVerified: true, phoneVerifiedAt: null }],
     ] as const)(
-      "does not approve owner onboarding when %s is unverified",
-      async (_contact, user, exception) => {
+      "approves the licence document when %s is unverified and leaves the account in review",
+      async (_contact, user) => {
         stageRecoverableOwnerLicence(user);
 
-        await expect(
-          service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID),
-        ).rejects.toBeInstanceOf(exception);
+        await service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID);
 
         expect(database.bankDetails.updateMany).not.toHaveBeenCalled();
         expect(database.user.update).not.toHaveBeenCalled();
-        expect(database.fleetOwnerAccountVerification.update).not.toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({ status: AccountVerificationStatus.SUCCEEDED }),
-          }),
-        );
+        expect(database.fleetOwnerAccountVerification.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID },
+          data: { driversLicenseDecision: VerificationDecisionStatus.APPROVED },
+        });
       },
     );
 
-    it("does not approve owner onboarding when no bank row is updated", async () => {
+    it("does not touch the bank row when approving the licence document", async () => {
       stageRecoverableOwnerLicence({
         emailVerified: true,
         phoneVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
       });
-      database.bankDetails.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(
-        service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID),
-      ).rejects.toBeInstanceOf(AccountVerificationOperationFailedException);
+      await service.approveOwnerLicenseDocument(INTERVENTION_ID, USER_ID);
 
-      expect(database.bankDetails.updateMany).toHaveBeenCalledWith({
-        where: { userId: USER_ID },
-        data: expect.objectContaining({ isVerified: true }),
-      });
+      expect(database.bankDetails.updateMany).not.toHaveBeenCalled();
       expect(database.user.update).not.toHaveBeenCalled();
     });
   });
