@@ -31,6 +31,12 @@ export class InterventionController {
     return this.interventionService.list(query);
   }
 
+  @Get(":interventionId")
+  @Header("Cache-Control", "private, no-store")
+  get(@ZodParam("interventionId", interventionIdSchema) interventionId: string) {
+    return this.interventionService.get(interventionId);
+  }
+
   @Get(":interventionId/license-number")
   @Header("Cache-Control", "private, no-store")
   async licenseNumber(@ZodParam("interventionId", interventionIdSchema) interventionId: string) {

@@ -33,6 +33,32 @@ const FACE_KINDS = new Set<VerificationInterventionKind>([
   VerificationInterventionKind.OWNER_DRIVER_FACE,
 ]);
 
+const interventionSummaryInclude = {
+  chauffeurVerification: {
+    select: {
+      name: true,
+      driversLicenseLast4: true,
+      selfieObjectKey: true,
+      identityOfficialPhoto: true,
+    },
+  },
+  accountVerification: {
+    select: {
+      legalName: true,
+      driversLicenseLast4: true,
+      selfieObjectKey: true,
+      identityOfficialPhoto: true,
+    },
+  },
+  documentApproval: {
+    select: { id: true, userId: true, status: true },
+  },
+} satisfies Prisma.VerificationInterventionInclude;
+
+type InterventionSummaryRecord = Prisma.VerificationInterventionGetPayload<{
+  include: typeof interventionSummaryInclude;
+}>;
+
 type TransactionClient = Prisma.TransactionClient;
 
 @Injectable()
@@ -468,28 +494,7 @@ export class InterventionService {
     const [items, total] = await Promise.all([
       this.databaseService.verificationIntervention.findMany({
         where,
-        include: {
-          chauffeurVerification: {
-            select: {
-              name: true,
-              driversLicenseLast4: true,
-              selfieObjectKey: true,
-              identityOfficialPhoto: true,
-            },
-          },
-          accountVerification: {
-            select: {
-              legalName: true,
-              driversLicenseLast4: true,
-              userId: true,
-              selfieObjectKey: true,
-              identityOfficialPhoto: true,
-            },
-          },
-          documentApproval: {
-            select: { id: true, userId: true, status: true },
-          },
-        },
+        include: interventionSummaryInclude,
         orderBy: { createdAt: "asc" },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
@@ -497,32 +502,45 @@ export class InterventionService {
       this.databaseService.verificationIntervention.count({ where }),
     ]);
     return {
-      items: items.map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        status: item.status,
-        applicantName:
-          item.chauffeurVerification?.name ?? item.accountVerification?.legalName ?? "Applicant",
-        licenseLast4:
-          item.chauffeurVerification?.driversLicenseLast4 ??
-          item.accountVerification?.driversLicenseLast4 ??
-          null,
-        hasSelfie: Boolean(
-          item.chauffeurVerification?.selfieObjectKey ?? item.accountVerification?.selfieObjectKey,
-        ),
-        hasNinPortrait: Boolean(
-          item.chauffeurVerification?.identityOfficialPhoto ??
-            item.accountVerification?.identityOfficialPhoto,
-        ),
-        document: item.documentApproval,
-        createdAt: item.createdAt,
-      })),
+      items: items.map((item) => this.toSummary(item)),
       meta: {
         page: query.page,
         limit: query.limit,
         total,
         totalPages: Math.ceil(total / query.limit),
       },
+    };
+  }
+
+  async get(interventionId: string) {
+    const item = await this.databaseService.verificationIntervention.findUnique({
+      where: { id: interventionId },
+      include: interventionSummaryInclude,
+    });
+    if (!item) throw new InterventionNotFoundException();
+    return this.toSummary(item);
+  }
+
+  private toSummary(item: InterventionSummaryRecord) {
+    return {
+      id: item.id,
+      kind: item.kind,
+      status: item.status,
+      applicantName:
+        item.chauffeurVerification?.name ?? item.accountVerification?.legalName ?? "Applicant",
+      licenseLast4:
+        item.chauffeurVerification?.driversLicenseLast4 ??
+        item.accountVerification?.driversLicenseLast4 ??
+        null,
+      hasSelfie: Boolean(
+        item.chauffeurVerification?.selfieObjectKey ?? item.accountVerification?.selfieObjectKey,
+      ),
+      hasNinPortrait: Boolean(
+        item.chauffeurVerification?.identityOfficialPhoto ??
+          item.accountVerification?.identityOfficialPhoto,
+      ),
+      document: item.documentApproval,
+      createdAt: item.createdAt,
     };
   }
 

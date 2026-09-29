@@ -402,6 +402,45 @@ describe("InterventionService", () => {
       expect(serialized).not.toContain("secret-photo-bytes");
     });
 
+    it("returns one review and hides a missing one", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValueOnce({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        createdAt: OPENED_AT,
+        encryptedPayload: `secret.${LICENSE_NUMBER}`,
+        chauffeurVerification: {
+          name: "Ada Lovelace",
+          driversLicenseLast4: "DE67",
+          selfieObjectKey: "secret-selfie-key",
+          identityOfficialPhoto: null,
+        },
+        accountVerification: null,
+        documentApproval: null,
+      });
+
+      const result = await service.get(INTERVENTION_ID);
+      expect(result).toEqual({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.CHAUFFEUR_DRIVERS_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        applicantName: "Ada Lovelace",
+        licenseLast4: "DE67",
+        hasSelfie: true,
+        hasNinPortrait: false,
+        document: null,
+        createdAt: OPENED_AT,
+      });
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(LICENSE_NUMBER);
+      expect(serialized).not.toContain("secret-selfie-key");
+
+      database.verificationIntervention.findUnique.mockResolvedValueOnce(null);
+      await expect(service.get(INTERVENTION_ID)).rejects.toBeInstanceOf(
+        InterventionNotFoundException,
+      );
+    });
+
     it("reveals a full chauffeur licence only for an open licence task", async () => {
       const encryptedPayload = await captureLicensePayload();
       database.verificationIntervention.findUnique.mockResolvedValue({
