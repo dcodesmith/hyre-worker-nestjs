@@ -88,6 +88,9 @@ describe("InterventionController", () => {
     expect(reflector.get(HEADERS_METADATA, controller.list)).toEqual([
       { name: "Cache-Control", value: "private, no-store" },
     ]);
+    expect(reflector.get(HEADERS_METADATA, controller.get)).toEqual([
+      { name: "Cache-Control", value: "private, no-store" },
+    ]);
     expect(reflector.get(HEADERS_METADATA, controller.licenseNumber)).toEqual([
       { name: "Cache-Control", value: "private, no-store" },
     ]);
