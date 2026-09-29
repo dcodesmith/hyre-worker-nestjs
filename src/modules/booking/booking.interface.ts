@@ -127,6 +127,7 @@ export interface GuestBookingDetailsResponse {
   chauffeur: {
     name: string | null;
     phoneNumber: string | null;
+    image: string | null;
   } | null;
   legs: Array<{
     id: string;

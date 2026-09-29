@@ -930,6 +930,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.DRIVER_LICENSE_NOT_VERIFIED,
+          identityOfficialPhoto: null,
         },
       });
     });
@@ -1144,6 +1145,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.BANK_ACCOUNT_NAME_MISMATCH,
+          identityOfficialPhoto: null,
         },
       });
     });
@@ -1468,6 +1470,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.NIN_NOT_VERIFIED,
+          identityOfficialPhoto: null,
         },
       });
     });
@@ -1488,6 +1491,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.CAC_NOT_VERIFIED,
+          identityOfficialPhoto: null,
         },
       });
     });
@@ -1598,6 +1602,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.OPERATION_FAILED,
+          identityOfficialPhoto: null,
         },
       });
       expect(databaseService.fleetOwnerAccountVerification.create).toHaveBeenCalledWith({
@@ -1719,7 +1724,9 @@ describe("AccountVerificationService", () => {
         data: {
           isOwnerDriver: false,
           ...clearedLicenseData,
+          selfieObjectKey: null,
           selfieRetakeRequired: false,
+          faceDecision: VerificationDecisionStatus.PENDING,
           drivingCompletedAt: expect.any(Date),
         },
       });
@@ -1790,6 +1797,7 @@ describe("AccountVerificationService", () => {
           identityFirstName: "JOHN",
           identityLastName: "DOE",
           identityDateOfBirth: identity.dateOfBirth,
+          identityOfficialPhoto: "nin-photo",
           legalName: "JOHN MIDDLE DOE",
           identityProviderRef: "nin-ref",
           identityRequiresReview: false,
@@ -1865,6 +1873,7 @@ describe("AccountVerificationService", () => {
           representativeNameMatch: NameMatchStatus.MATCHED,
           businessNameMatch: NameMatchStatus.MATCHED,
           identityRequiresReview: false,
+          identityOfficialPhoto: null,
         }),
       });
     });
@@ -1880,6 +1889,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.NIN_NOT_VERIFIED,
+          identityOfficialPhoto: null,
         },
       });
       expect(databaseService.fleetOwnerAccountVerification.update).not.toHaveBeenCalled();
@@ -1896,6 +1906,7 @@ describe("AccountVerificationService", () => {
         data: {
           status: AccountVerificationStatus.FAILED,
           failureReason: AccountVerificationErrorCode.CAC_NOT_VERIFIED,
+          identityOfficialPhoto: null,
         },
       });
     });
@@ -2350,7 +2361,9 @@ describe("AccountVerificationService", () => {
         data: {
           isOwnerDriver: false,
           ...clearedLicenseData,
+          selfieObjectKey: null,
           selfieRetakeRequired: false,
+          faceDecision: VerificationDecisionStatus.PENDING,
           drivingCompletedAt: expect.any(Date),
         },
       });
@@ -2412,6 +2425,7 @@ describe("AccountVerificationService", () => {
           ...persistedLicenseData,
           selfieRetakeRequired: false,
           selfieObjectKey: expect.stringMatching(/selfie-.+\.webp$/),
+          faceDecision: VerificationDecisionStatus.PENDING,
           drivingCompletedAt: expect.any(Date),
         }),
       });
@@ -2420,6 +2434,36 @@ describe("AccountVerificationService", () => {
         VERIFICATION_ID,
       );
       expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("owner-face");
+    });
+
+    it("returns an approved owner face to review when the selfie is replaced", async () => {
+      databaseService.fleetOwnerAccountVerification.findFirst.mockResolvedValue(
+        payoutReadyDraft({
+          faceDecision: VerificationDecisionStatus.APPROVED,
+          selfieObjectKey: "old-owner-selfie",
+        }),
+      );
+      monoService.verifyDriversLicense.mockResolvedValueOnce(driversLicense);
+
+      await service.saveDrivingCredentialsStage({
+        userId: USER_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        input: ownerDriverDriving(),
+        documents: { driversLicense: licenseFile(), selfie: selfieFile() },
+      });
+
+      expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
+        data: expect.objectContaining({
+          faceDecision: VerificationDecisionStatus.PENDING,
+          selfieObjectKey: expect.stringMatching(/selfie-.+\.webp$/),
+        }),
+      });
+      expect(interventionService.bindOwnerFace).toHaveBeenCalledWith(
+        expect.anything(),
+        VERIFICATION_ID,
+      );
+      expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("old-owner-selfie");
     });
 
     it("hashes the typed licence number rather than Mono's canonical form", async () => {
@@ -3972,40 +4016,46 @@ describe("AccountVerificationService", () => {
         updateCount?: number;
         bankCount?: number;
       } = {},
-    ) => ({
-      fleetOwnerAccountVerification: {
-        findUnique: vi
-          .fn()
-          .mockResolvedValueOnce(
-            overrides.verification === undefined ? pendingReview : overrides.verification,
-          )
-          .mockResolvedValueOnce(
-            overrides.completed ??
-              succeededRecord({
-                reviewedById: REVIEWER_ID,
-                reviewedAt: new Date("2026-09-07T00:00:00Z"),
-              }),
-          ),
-        updateMany: vi.fn().mockResolvedValue({ count: overrides.updateCount ?? 1 }),
-      },
-      documentApproval: {
-        findUnique: vi
-          .fn()
-          .mockResolvedValue(
-            overrides.license === undefined
-              ? { status: DocumentStatus.APPROVED }
-              : overrides.license,
-          ),
-      },
-      bankDetails: {
-        updateMany: vi.fn().mockResolvedValue({ count: overrides.bankCount ?? 1 }),
-      },
-      user: { update: vi.fn() },
-    });
+    ) => {
+      const verification =
+        overrides.verification === undefined ? pendingReview : overrides.verification;
+      databaseService.fleetOwnerAccountVerification.findUnique.mockResolvedValueOnce(verification);
+      return {
+        fleetOwnerAccountVerification: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValueOnce(verification)
+            .mockResolvedValueOnce(
+              overrides.completed ??
+                succeededRecord({
+                  reviewedById: REVIEWER_ID,
+                  reviewedAt: new Date("2026-09-07T00:00:00Z"),
+                }),
+            ),
+          updateMany: vi.fn().mockResolvedValue({ count: overrides.updateCount ?? 1 }),
+        },
+        documentApproval: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValue(
+              overrides.license === undefined
+                ? { status: DocumentStatus.APPROVED }
+                : overrides.license,
+            ),
+        },
+        bankDetails: {
+          updateMany: vi.fn().mockResolvedValue({ count: overrides.bankCount ?? 1 }),
+        },
+        user: { update: vi.fn() },
+      };
+    };
 
     it("approves a pending review after confirming an approved owner-driver licence", async () => {
       const tx = reviewTx();
-      databaseService.$transaction.mockImplementationOnce(async (callback) => callback(tx));
+      databaseService.$transaction.mockImplementationOnce(async (callback) => {
+        expect(storageService.promotePrivateImage).toHaveBeenCalledTimes(1);
+        return callback(tx);
+      });
 
       await expect(service.approve(VERIFICATION_ID, REVIEWER_ID)).resolves.toMatchObject({
         id: VERIFICATION_ID,

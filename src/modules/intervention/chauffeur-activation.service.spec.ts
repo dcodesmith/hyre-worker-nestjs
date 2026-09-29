@@ -135,7 +135,7 @@ describe("ChauffeurActivationService", () => {
   ] as const)(
     "does not activate when only the %s decision is approved",
     async (_label, override) => {
-      database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification(override));
+      database.chauffeurVerification.findUnique.mockResolvedValue(verification(override));
 
       await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(false);
       expect(database.user.create).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe("ChauffeurActivationService", () => {
   );
 
   it("does not activate while a chauffeur licence or face intervention is open", async () => {
-    database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
     database.verificationIntervention.count.mockResolvedValueOnce(1);
 
     await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(false);
@@ -159,7 +159,7 @@ describe("ChauffeurActivationService", () => {
     });
     expect(database.user.findFirst).not.toHaveBeenCalled();
     expect(database.user.create).not.toHaveBeenCalled();
-    expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+    expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("profile-key");
   });
 
   it.each([
@@ -178,9 +178,7 @@ describe("ChauffeurActivationService", () => {
   ] as const)(
     "fails closed for a %s stored date of birth and records a terminal driving stage",
     async (_label, dateOfBirth, reason) => {
-      database.chauffeurVerification.findUnique.mockResolvedValueOnce(
-        verification({ dateOfBirth }),
-      );
+      database.chauffeurVerification.findUnique.mockResolvedValue(verification({ dateOfBirth }));
 
       await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(false);
 
@@ -221,7 +219,11 @@ describe("ChauffeurActivationService", () => {
   );
 
   it("creates the chauffeur once both decisions are approved and purges the selfie", async () => {
-    database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
+    database.$transaction.mockImplementationOnce(async (callback) => {
+      expect(storageService.promotePrivateImage).toHaveBeenCalledTimes(1);
+      return callback(database);
+    });
 
     await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(true);
 
@@ -273,7 +275,7 @@ describe("ChauffeurActivationService", () => {
   });
 
   it("activates an existing eligible user instead of creating another", async () => {
-    database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
     database.user.findFirst.mockResolvedValueOnce({ id: "existing-user" });
     database.user.findUnique.mockResolvedValueOnce({
       id: "existing-user",
@@ -300,6 +302,14 @@ describe("ChauffeurActivationService", () => {
   it("does not create a second chauffeur when activation already succeeded", async () => {
     database.chauffeurVerification.findUnique
       .mockResolvedValueOnce(verification())
+      .mockResolvedValueOnce(verification())
+      .mockResolvedValueOnce(
+        verification({
+          status: ChauffeurVerificationStatus.APPROVED,
+          chauffeurId: "new-user",
+          selfieObjectKey: null,
+        }),
+      )
       .mockResolvedValueOnce(
         verification({
           status: ChauffeurVerificationStatus.APPROVED,
@@ -332,7 +342,7 @@ describe("ChauffeurActivationService", () => {
       { id: "other", fleetOwnerId: null, isOwnerDriver: false, roles: [{ name: "fleetOwner" }] },
     ],
   ] as const)("fails closed for %s and purges the selfie", async (_label, existing) => {
-    database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
     database.user.findFirst.mockResolvedValueOnce({ id: existing.id });
     database.user.findUnique.mockResolvedValueOnce(existing);
 
@@ -370,7 +380,7 @@ describe("ChauffeurActivationService", () => {
   });
 
   it("logs a selfie purge failure without failing the activation", async () => {
-    database.chauffeurVerification.findUnique.mockResolvedValueOnce(verification());
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
     storageService.deleteObjectByKey.mockRejectedValueOnce(new Error("r2 down"));
 
     await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(true);

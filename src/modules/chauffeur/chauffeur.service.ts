@@ -556,6 +556,26 @@ export class ChauffeurService {
     selfie: UploadedChauffeurSelfie,
   ) {
     const verification = await this.getVerification(verificationId);
+    const processedSelfie = await this.processSelfie(selfie);
+    const requestHash = this.hashJson({ selfieRetake: this.hash(processedSelfie) });
+    const existing = await this.databaseService.chauffeurVerificationStageRequest.findUnique({
+      where: {
+        verificationId_idempotencyKey: {
+          verificationId,
+          idempotencyKey: this.hash(idempotencyKey),
+        },
+      },
+    });
+    if (
+      existing &&
+      (existing.stage !== ChauffeurVerificationStage.DRIVING ||
+        existing.requestHash !== requestHash)
+    ) {
+      throw new ChauffeurIdempotencyKeyReusedException();
+    }
+    if (existing?.status === ProviderVerificationStatus.SUCCEEDED) {
+      return this.getOnboarding(verificationId);
+    }
     if (
       verification.status === ChauffeurVerificationStatus.APPROVED ||
       !verification.selfieRetakeRequired ||
@@ -564,12 +584,11 @@ export class ChauffeurService {
     ) {
       throw new ChauffeurRequestInProgressException();
     }
-    const processedSelfie = await this.processSelfie(selfie);
     const claim = await this.claimStage(
       verificationId,
       ChauffeurVerificationStage.DRIVING,
       idempotencyKey,
-      this.hashJson({ selfieRetake: this.hash(processedSelfie) }),
+      requestHash,
     );
     if (claim.replay) return this.getOnboarding(verificationId);
 

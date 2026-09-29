@@ -39,8 +39,27 @@ export class ChauffeurActivationService {
   async activateIfEligible(verificationId: string): Promise<boolean> {
     let selfieObjectKey: string | null = null;
     let profileObjectKey: string | null = null;
+    let profileUsed = false;
     let activated: boolean;
     try {
+      const candidate = await this.databaseService.chauffeurVerification.findUnique({
+        where: { id: verificationId },
+      });
+      const profile =
+        candidate &&
+        candidate.status !== ChauffeurVerificationStatus.APPROVED &&
+        candidate.driversLicenseDecision === VerificationDecisionStatus.APPROVED &&
+        candidate.faceDecision === VerificationDecisionStatus.APPROVED &&
+        candidate.dateOfBirth &&
+        meetsMinimumChauffeurAge(candidate.dateOfBirth) &&
+        candidate.selfieObjectKey
+          ? await this.storageService.promotePrivateImage(
+              candidate.selfieObjectKey,
+              `chauffeurs/${candidate.id}/profile/${randomUUID()}.webp`,
+            )
+          : null;
+      profileObjectKey = profile?.key ?? null;
+
       activated = await this.databaseService.$transaction(async (tx) => {
         await this.lockVerification(tx, verificationId);
         const verification = await tx.chauffeurVerification.findUnique({
@@ -94,12 +113,7 @@ export class ChauffeurActivationService {
           selfieObjectKey = await this.failAccountConflict(tx, verification);
           return false;
         }
-
-        const profile = await this.storageService.promotePrivateImage(
-          verification.selfieObjectKey,
-          `chauffeurs/${verification.id}/profile/${randomUUID()}.webp`,
-        );
-        profileObjectKey = profile.key;
+        if (!profile || verification.selfieObjectKey !== candidate?.selfieObjectKey) return false;
         const legalName = [
           verification.identityFirstName,
           verification.identityMiddleName,
@@ -127,6 +141,7 @@ export class ChauffeurActivationService {
               data: { ...data, email: verification.email },
               select: { id: true },
             });
+        profileUsed = true;
 
         selfieObjectKey = verification.selfieObjectKey;
         await tx.chauffeurVerification.update({
@@ -162,6 +177,11 @@ export class ChauffeurActivationService {
       selfieObjectKey = conflict.selfieObjectKey;
     }
 
+    if (profileObjectKey && !profileUsed) {
+      await this.storageService.deleteObjectByKey(profileObjectKey).catch(() => {
+        this.logger.warn({ verificationId }, "Failed to purge unused chauffeur profile image");
+      });
+    }
     if (selfieObjectKey) {
       await this.storageService.deleteObjectByKey(selfieObjectKey).catch(() => {
         this.logger.warn({ verificationId }, "Failed to purge terminal chauffeur selfie");

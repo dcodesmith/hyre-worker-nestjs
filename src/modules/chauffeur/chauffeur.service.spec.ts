@@ -1418,6 +1418,32 @@ describe("ChauffeurService", () => {
       expect(interventionService.dispatchIntervention).toHaveBeenCalledWith("intervention-face");
     });
 
+    it("replays a completed selfie retake after the retake flag is cleared", async () => {
+      const completed = identityVerified({
+        driversLicenseHash: hash("ABC12345DE67"),
+        faceDecision: VerificationDecisionStatus.PENDING,
+        selfieRetakeRequired: false,
+        selfieObjectKey: STORED_SELFIE_KEY,
+      });
+      databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValue(completed);
+      databaseService.chauffeurVerificationStageRequest.findUnique.mockResolvedValueOnce({
+        id: "stage-retake",
+        stage: ChauffeurVerificationStage.DRIVING,
+        requestHash: hash(JSON.stringify({ selfieRetake: hash(Buffer.from("processed-selfie")) })),
+        status: ProviderVerificationStatus.SUCCEEDED,
+        failureReason: null,
+      });
+
+      await expect(
+        service.replaceSelfie(VERIFICATION_ID, "retake-key-1", selfie),
+      ).resolves.toMatchObject({
+        steps: { drivingSubmitted: true, selfieRetakeRequired: false },
+      });
+
+      expect(databaseService.chauffeurVerificationStageRequest.create).not.toHaveBeenCalled();
+      expect(storageService.uploadBuffer).not.toHaveBeenCalled();
+    });
+
     it("blocks another driving attempt after a rejected licence or face decision", async () => {
       databaseService.chauffeurVerification.findUniqueOrThrow.mockResolvedValueOnce(
         identityVerified({ driversLicenseDecision: "REJECTED" }),
