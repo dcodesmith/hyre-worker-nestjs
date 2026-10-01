@@ -92,6 +92,7 @@ export class WhatsAppAudioTranscriptionService {
 
     const contentLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(contentLength) && contentLength > WHATSAPP_AUDIO_MAX_BYTES) {
+      controller.abort();
       throw new Error(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
     }
 

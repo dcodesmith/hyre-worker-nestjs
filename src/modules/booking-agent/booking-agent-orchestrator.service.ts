@@ -106,13 +106,15 @@ export class BookingAgentOrchestratorService {
 
       const outboxItems: OrchestratorResult["enqueueOutbox"] = result.outboxItems.map(
         ({ interactive, ...outboxItem }) => {
-          const hasValidTemplate = outboxItem.templateName?.startsWith("HX") ?? false;
+          const delivery = this.resolveOutboundDelivery(
+            context.windowExpiresAt,
+            outboxItem.templateName,
+            outboxItem.dedupeKey,
+          );
           return {
             ...outboxItem,
-            mode: hasValidTemplate
-              ? WhatsAppDeliveryMode.TEMPLATE
-              : this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
-            templateName: hasValidTemplate ? outboxItem.templateName : undefined,
+            mode: delivery.mode,
+            templateName: delivery.templateName,
           };
         },
       );
@@ -162,12 +164,52 @@ export class BookingAgentOrchestratorService {
       textBody: string;
     },
   ): OrchestratorResult["enqueueOutbox"][number] {
+    const delivery = this.resolveOutboundDelivery(
+      context.windowExpiresAt,
+      undefined,
+      input.dedupeKey,
+    );
     return {
       conversationId: context.conversationId,
       dedupeKey: input.dedupeKey,
-      mode: this.windowPolicyService.resolveOutboundMode(context.windowExpiresAt),
+      mode: delivery.mode,
       textBody: input.textBody,
+      templateName: delivery.templateName,
       templateVariables: undefined,
+    };
+  }
+
+  /**
+   * Never enqueue TEMPLATE without an HX Content SID — sender rejects that state.
+   * Outside the free-form window with no SID, fall back to FREE_FORM (Twilio may still
+   * reject) until a dedicated reopen template is configured.
+   */
+  private resolveOutboundDelivery(
+    windowExpiresAt: Date | null | undefined,
+    templateName: string | undefined,
+    dedupeKey: string,
+  ): { mode: WhatsAppDeliveryMode; templateName: string | undefined } {
+    if (templateName?.startsWith("HX")) {
+      return {
+        mode: WhatsAppDeliveryMode.TEMPLATE,
+        templateName,
+      };
+    }
+
+    const windowMode = this.windowPolicyService.resolveOutboundMode(windowExpiresAt);
+    if (windowMode === WhatsAppDeliveryMode.TEMPLATE) {
+      this.logger.warn(
+        {
+          dedupeKey,
+          strippedTemplateName: templateName,
+        },
+        "Closed WhatsApp window requires a template SID; falling back to FREE_FORM",
+      );
+    }
+
+    return {
+      mode: WhatsAppDeliveryMode.FREE_FORM,
+      templateName: undefined,
     };
   }
 }

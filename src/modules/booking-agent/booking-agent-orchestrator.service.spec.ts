@@ -141,7 +141,7 @@ describe("BookingAgentOrchestratorService", () => {
     expect(windowPolicyService.resolveOutboundMode).not.toHaveBeenCalled();
   });
 
-  it("strips invalid template names and resolves the outbound mode from the window", async () => {
+  it("strips invalid template names and never enqueues TEMPLATE without an HX SID", async () => {
     windowPolicyService.resolveOutboundMode.mockReturnValue(WhatsAppDeliveryMode.TEMPLATE);
     langGraphService.invoke.mockResolvedValue({
       outboxItems: [
@@ -172,12 +172,12 @@ describe("BookingAgentOrchestratorService", () => {
     expect(result.enqueueOutbox).toEqual([
       expect.objectContaining({
         dedupeKey: "langgraph:msg_1",
-        mode: WhatsAppDeliveryMode.TEMPLATE,
+        mode: WhatsAppDeliveryMode.FREE_FORM,
         templateName: undefined,
       }),
       expect.objectContaining({
         dedupeKey: "langgraph:handoff:msg_1",
-        mode: WhatsAppDeliveryMode.TEMPLATE,
+        mode: WhatsAppDeliveryMode.FREE_FORM,
         templateName: undefined,
       }),
     ]);

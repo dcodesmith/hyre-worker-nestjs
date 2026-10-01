@@ -135,17 +135,21 @@ describe("WhatsAppAudioTranscriptionService", () => {
 
   it("rejects audio when content-length exceeds the byte cap", async () => {
     const read = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: {
-        get: (name: string) =>
-          name.toLowerCase() === "content-length" ? String(WHATSAPP_AUDIO_MAX_BYTES + 1) : null,
-      },
-      body: {
-        getReader: () => ({ read, cancel: vi.fn() }),
-      },
-    } as unknown as Response);
+    let fetchSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      fetchSignal = init?.signal ?? undefined;
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "content-length" ? String(WHATSAPP_AUDIO_MAX_BYTES + 1) : null,
+        },
+        body: {
+          getReader: () => ({ read, cancel: vi.fn() }),
+        },
+      } as unknown as Response;
+    });
     const transcribeSpy = vi.spyOn(
       service as unknown as TranscriptionServiceInternals,
       "transcribeAudioBinary",
@@ -159,6 +163,7 @@ describe("WhatsAppAudioTranscriptionService", () => {
       }),
     ).rejects.toThrow(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
 
+    expect(fetchSignal?.aborted).toBe(true);
     expect(read).not.toHaveBeenCalled();
     expect(transcribeSpy).not.toHaveBeenCalled();
   });
