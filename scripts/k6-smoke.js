@@ -132,8 +132,7 @@ function safeRequest(method, path, body, headers, name) {
 }
 
 function assertAllowed(method, path) {
-  const url = new URL(path, "https://smoke.invalid");
-  const pathname = url.pathname;
+  const pathname = pathnameOf(path);
   const isPricingPreview = pathname === "/api/bookings/pricing-preview";
 
   if (!isPricingPreview && FORBIDDEN_PATHS.some((pattern) => pattern.test(pathname))) {
@@ -157,28 +156,21 @@ function assertAllowed(method, path) {
 
 function previewOrigin(rawValue) {
   const raw = requiredValue("API_BASE_URL", rawValue);
-  const url = new URL(raw);
-
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  ) {
+  const match = /^https:\/\/([a-z0-9.-]+)\/?$/i.exec(raw);
+  if (!match) {
     throw new Error("API_BASE_URL must be a bare HTTPS origin");
   }
+  const hostname = match[1].toLowerCase();
 
-  if (BLOCKED_HOSTS.has(url.hostname) || url.hostname.includes("production")) {
-    throw new Error(`Refusing production hostname: ${url.hostname}`);
+  if (BLOCKED_HOSTS.has(hostname) || hostname.includes("production")) {
+    throw new Error(`Refusing production hostname: ${hostname}`);
   }
 
-  if (!/^hyre-worker-nestjs-pr-\d+\.fly\.dev$/.test(url.hostname)) {
-    throw new Error(`Refusing non-preview API hostname: ${url.hostname}`);
+  if (!/^hyre-worker-nestjs-pr-\d+\.fly\.dev$/.test(hostname)) {
+    throw new Error(`Refusing non-preview API hostname: ${hostname}`);
   }
 
-  return url.origin;
+  return `https://${hostname}`;
 }
 
 function requiredValue(name, suppliedValue = __ENV[name]) {
@@ -231,4 +223,11 @@ function futureDayWindow() {
   const end = new Date(start);
   end.setUTCHours(20, 0, 0, 0);
   return { startDate: start.toISOString(), endDate: end.toISOString() };
+}
+
+function pathnameOf(path) {
+  if (!path.startsWith("/") || path.startsWith("//") || path.includes("#")) {
+    throw new Error(`Smoke path must be a same-origin absolute path: ${path}`);
+  }
+  return path.split("?", 1)[0];
 }
