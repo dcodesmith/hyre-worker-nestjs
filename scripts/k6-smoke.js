@@ -1,5 +1,5 @@
-import http from "k6/http";
 import { check } from "k6";
+import http from "k6/http";
 import { Counter } from "k6/metrics";
 
 const fixtureSkips = new Counter("fixture_skips");
@@ -51,16 +51,14 @@ export default function () {
   check(identity, {
     "API identity is healthy": (response) => response.status === 200,
     "preview environment is selected": (response) => response.json("environment") === "preview",
-    "API commit matches": (response) =>
-      response.json("deployment.commit") === EXPECTED_API_COMMIT,
+    "API commit matches": (response) => response.json("deployment.commit") === EXPECTED_API_COMMIT,
     "API version matches": (response) =>
       response.json("deployment.version") === EXPECTED_API_VERSION,
   });
 
   const health = safeRequest("GET", "/health", null, headers, "health");
   check(health, {
-    "health is OK": (response) =>
-      response.status === 200 && response.json("status") === "ok",
+    "health is OK": (response) => response.status === 200 && response.json("status") === "ok",
   });
 
   const categories = safeRequest(
@@ -101,16 +99,9 @@ export default function () {
     return;
   }
 
-  const carDetail = safeRequest(
-    "GET",
-    `/api/cars/${car.id}`,
-    null,
-    headers,
-    "car_detail",
-  );
+  const carDetail = safeRequest("GET", `/api/cars/${car.id}`, null, headers, "car_detail");
   check(carDetail, {
-    "car detail succeeds": (response) =>
-      response.status === 200 && response.json("id") === car.id,
+    "car detail succeeds": (response) => response.status === 200 && response.json("id") === car.id,
   });
 
   const pricingPreview = safeRequest(
