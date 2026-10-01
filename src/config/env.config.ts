@@ -280,10 +280,9 @@ export const envSchema = z
     ),
     ASSET_PUBLIC_BASE_URL: z.url("ASSET_PUBLIC_BASE_URL must be a valid URL"),
 
-    // LangGraph Agent configuration
-    ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for LangGraph agent"),
-    LANGGRAPH_HISTORY_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
-    LANGGRAPH_HISTORY_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    // Booking agent configuration
+    ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for booking agent"),
+    BOOKING_AGENT_HISTORY_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   })
   .superRefine((env, ctx) => {
     const hasUsername = typeof env.BULL_BOARD_USERNAME === "string";

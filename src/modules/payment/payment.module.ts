@@ -42,6 +42,11 @@ import { TransferCompletedHandler } from "./transfer-completed.handler";
     RefundFinalizationService,
     RefundReconciliationService,
   ],
-  exports: [PaymentService, PaymentApiService, PaymentWebhookService],
+  exports: [
+    PaymentService,
+    PaymentApiService,
+    PaymentWebhookService,
+    BookingReservationExpirationService,
+  ],
 })
 export class PaymentModule {}

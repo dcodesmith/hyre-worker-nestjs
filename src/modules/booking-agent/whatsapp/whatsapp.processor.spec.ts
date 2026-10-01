@@ -28,7 +28,7 @@ import type {
   ProcessWhatsAppOutboxJobData,
 } from "../booking-agent.interface";
 import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.service";
-import { LangGraphStateService } from "../langgraph/langgraph-state.service";
+import { BookingAgentStateService } from "../conversation/booking-agent-state.service";
 import { WhatsAppProcessor } from "./whatsapp.processor";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
@@ -68,7 +68,7 @@ describe("WhatsAppProcessor", () => {
   let orchestratorService: {
     decide: ReturnType<typeof vi.fn>;
   };
-  let langGraphStateService: {
+  let bookingAgentStateService: {
     loadState: ReturnType<typeof vi.fn>;
     clearState: ReturnType<typeof vi.fn>;
   };
@@ -102,7 +102,7 @@ describe("WhatsAppProcessor", () => {
     orchestratorService = {
       decide: vi.fn(),
     };
-    langGraphStateService = {
+    bookingAgentStateService = {
       loadState: vi.fn(),
       clearState: vi.fn(),
     };
@@ -130,8 +130,8 @@ describe("WhatsAppProcessor", () => {
           useValue: orchestratorService,
         },
         {
-          provide: LangGraphStateService,
-          useValue: langGraphStateService,
+          provide: BookingAgentStateService,
+          useValue: bookingAgentStateService,
         },
         {
           provide: WhatsAppSenderService,
@@ -599,7 +599,7 @@ describe("WhatsAppProcessor", () => {
   });
 
   it("processes inactivity nudge job and schedules clear job", async () => {
-    langGraphStateService.loadState.mockResolvedValue({ stage: "confirming" });
+    bookingAgentStateService.loadState.mockResolvedValue({ stage: "confirming" });
 
     await processor.process(
       buildJob(PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB, {
@@ -638,7 +638,7 @@ describe("WhatsAppProcessor", () => {
       }),
     );
 
-    expect(langGraphStateService.clearState).toHaveBeenCalledWith("conv-1");
+    expect(bookingAgentStateService.clearState).toHaveBeenCalledWith("conv-1");
     expect(senderService.enqueueOutbound).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "conv-1",
@@ -660,7 +660,7 @@ describe("WhatsAppProcessor", () => {
       }),
     );
 
-    expect(langGraphStateService.clearState).not.toHaveBeenCalled();
+    expect(bookingAgentStateService.clearState).not.toHaveBeenCalled();
     expect(senderService.enqueueOutbound).not.toHaveBeenCalled();
   });
 

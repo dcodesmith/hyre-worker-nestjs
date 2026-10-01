@@ -3,18 +3,18 @@ import { WhatsAppDeliveryMode, WhatsAppMessageKind } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import type { InboundMessageContext, OrchestratorResult } from "./booking-agent.interface";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
-import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
-import { LangGraphStateService } from "./langgraph/langgraph-state.service";
+import { BookingAgentStateService } from "./conversation/booking-agent-state.service";
+import { BookingAgentTurnService } from "./conversation/booking-agent-turn.service";
 
-const LANGGRAPH_ERROR_FALLBACK_TEXT =
+const BOOKING_AGENT_ERROR_FALLBACK_TEXT =
   "I'm having trouble processing your request. Please try again or type AGENT to speak with someone.";
 
 @Injectable()
 export class BookingAgentOrchestratorService {
   constructor(
     private readonly windowPolicyService: BookingAgentWindowPolicyService,
-    private readonly langGraphService: LangGraphGraphService,
-    private readonly langGraphStateService: LangGraphStateService,
+    private readonly turnService: BookingAgentTurnService,
+    private readonly bookingAgentStateService: BookingAgentStateService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingAgentOrchestratorService.name);
@@ -22,7 +22,6 @@ export class BookingAgentOrchestratorService {
 
   /**
    * Main orchestration entry point.
-   * Uses LangGraph for all conversational booking flows.
    */
   async decide(
     context: InboundMessageContext & {
@@ -46,7 +45,7 @@ export class BookingAgentOrchestratorService {
     }
 
     if (body === "RESET" || body === "START OVER") {
-      await this.langGraphStateService.clearState(context.conversationId);
+      await this.bookingAgentStateService.clearState(context.conversationId);
       return {
         enqueueOutbox: [
           this.buildSingleOutboxReply(context, {
@@ -75,18 +74,15 @@ export class BookingAgentOrchestratorService {
       };
     }
 
-    return this.decideLangGraph(context);
+    return this.decideTurn(context);
   }
 
-  /**
-   * LangGraph-based orchestration for natural conversation flow.
-   */
-  private async decideLangGraph(
+  private async decideTurn(
     context: InboundMessageContext & { windowExpiresAt?: Date | null },
   ): Promise<OrchestratorResult> {
     const { conversationId, messageId, body = "", customerId = null, interactive } = context;
     try {
-      const result = await this.langGraphService.invoke({
+      const result = await this.turnService.invoke({
         conversationId,
         messageId,
         message: body ?? "",
@@ -100,7 +96,7 @@ export class BookingAgentOrchestratorService {
             conversationId: context.conversationId,
             error: result.error,
           },
-          "LangGraph execution returned error",
+          "Booking agent turn returned error",
         );
       }
 
@@ -122,14 +118,14 @@ export class BookingAgentOrchestratorService {
       if (result.error && outboxItems.length === 0) {
         outboxItems.push(
           this.buildSingleOutboxReply(context, {
-            dedupeKey: `langgraph-error-fallback:${context.messageId}`,
-            textBody: LANGGRAPH_ERROR_FALLBACK_TEXT,
+            dedupeKey: `booking-agent-error-fallback:${context.messageId}`,
+            textBody: BOOKING_AGENT_ERROR_FALLBACK_TEXT,
           }),
         );
       }
 
       const hasHandoffOutbox = outboxItems.some((item) =>
-        item.dedupeKey.startsWith("langgraph:handoff:"),
+        item.dedupeKey.startsWith("booking-agent:handoff:"),
       );
 
       return {
@@ -143,14 +139,14 @@ export class BookingAgentOrchestratorService {
           conversationId: context.conversationId,
           error: error instanceof Error ? error.message : String(error),
         },
-        "LangGraph orchestration failed, falling back to error response",
+        "Booking agent turn failed, falling back to error response",
       );
 
       return {
         enqueueOutbox: [
           this.buildSingleOutboxReply(context, {
-            dedupeKey: `langgraph-error:${context.messageId}`,
-            textBody: LANGGRAPH_ERROR_FALLBACK_TEXT,
+            dedupeKey: `booking-agent-error:${context.messageId}`,
+            textBody: BOOKING_AGENT_ERROR_FALLBACK_TEXT,
           }),
         ],
       };

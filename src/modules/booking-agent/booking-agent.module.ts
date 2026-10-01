@@ -15,28 +15,32 @@ import { DatabaseModule } from "../database/database.module";
 import { MapsModule } from "../maps/maps.module";
 import { TwilioWebhookGuard } from "../messaging/guards/twilio-webhook.guard";
 import { OpenAiSdkModule } from "../openai-sdk/openai-sdk.module";
+import { PaymentModule } from "../payment/payment.module";
 import { RatesModule } from "../rates/rates.module";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./booking-agent.const";
 import { BookingAgentOrchestratorService } from "./booking-agent-orchestrator.service";
 import { BookingAgentSearchService } from "./booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
-import { CreateBookingNode } from "./langgraph/create-booking.node";
-import { ExtractNode } from "./langgraph/extract.node";
-import { HandoffNode } from "./langgraph/handoff.node";
-import { LANGGRAPH_EXTRACTION_MODEL, LANGGRAPH_RESPONSE_MODEL } from "./langgraph/langgraph.const";
+import { BookingAgentExtractorService } from "./conversation/booking-agent-extractor.service";
+import { BookingAgentResponderService } from "./conversation/booking-agent-responder.service";
+import { BookingAgentStateService } from "./conversation/booking-agent-state.service";
+import { BookingAgentTurnService } from "./conversation/booking-agent-turn.service";
 import {
-  LANGGRAPH_ANTHROPIC_CLIENT,
-  LANGGRAPH_OPENAI_CLIENT,
-  LANGGRAPH_REDIS_CLIENT,
-} from "./langgraph/langgraph.tokens";
-import { LangGraphExtractorService } from "./langgraph/langgraph-extractor.service";
-import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
-import { LangGraphResponderService } from "./langgraph/langgraph-responder.service";
-import { LangGraphStateService } from "./langgraph/langgraph-state.service";
-import { MergeNode } from "./langgraph/merge.node";
-import { RespondNode } from "./langgraph/respond.node";
-import { RouteNode } from "./langgraph/route.node";
-import { SearchNode } from "./langgraph/search.node";
+  BOOKING_AGENT_EXTRACTION_MODEL,
+  BOOKING_AGENT_RESPONSE_MODEL,
+} from "./conversation/conversation.const";
+import {
+  BOOKING_AGENT_ANTHROPIC_CLIENT,
+  BOOKING_AGENT_OPENAI_CLIENT,
+  BOOKING_AGENT_REDIS_CLIENT,
+} from "./conversation/conversation.tokens";
+import { CreateBookingAction } from "./conversation/create-booking.action";
+import { ExtractAction } from "./conversation/extract.action";
+import { HandoffAction } from "./conversation/handoff.action";
+import { MergeAction } from "./conversation/merge.action";
+import { RespondAction } from "./conversation/respond.action";
+import { RouteAction } from "./conversation/route.action";
+import { SearchAction } from "./conversation/search.action";
 import { WhatsAppProcessor } from "./whatsapp/whatsapp.processor";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp/whatsapp-audio-transcription.service";
 import { WhatsAppInboundController } from "./whatsapp/whatsapp-inbound.controller";
@@ -52,6 +56,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     MapsModule,
     RatesModule,
     OpenAiSdkModule,
+    PaymentModule,
     BullModule.registerQueue({
       name: WHATSAPP_AGENT_QUEUE,
       defaultJobOptions: WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS,
@@ -64,29 +69,29 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
   controllers: [WhatsAppInboundController],
   providers: [
     {
-      provide: LANGGRAPH_ANTHROPIC_CLIENT,
+      provide: BOOKING_AGENT_ANTHROPIC_CLIENT,
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const apiKey = configService.get("ANTHROPIC_API_KEY", { infer: true });
         return new ChatAnthropic({
           apiKey,
-          model: LANGGRAPH_RESPONSE_MODEL,
+          model: BOOKING_AGENT_RESPONSE_MODEL,
         });
       },
     },
     {
-      provide: LANGGRAPH_OPENAI_CLIENT,
+      provide: BOOKING_AGENT_OPENAI_CLIENT,
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const apiKey = configService.get("OPENAI_API_KEY", { infer: true });
         return new ChatOpenAI({
           apiKey,
-          model: LANGGRAPH_EXTRACTION_MODEL,
+          model: BOOKING_AGENT_EXTRACTION_MODEL,
         });
       },
     },
     {
-      provide: LANGGRAPH_REDIS_CLIENT,
+      provide: BOOKING_AGENT_REDIS_CLIENT,
       inject: [ConfigService, PinoLogger],
       useFactory: (configService: ConfigService<EnvConfig>, logger: PinoLogger) => {
         logger.setContext("BookingAgentRedisClient");
@@ -101,23 +106,23 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
               error: error instanceof Error ? error.message : String(error),
               stack: error instanceof Error ? error.stack : undefined,
             },
-            "LANGGRAPH_REDIS_CLIENT emitted Redis error",
+            "BOOKING_AGENT_REDIS_CLIENT emitted Redis error",
           );
         });
         return client;
       },
     },
-    LangGraphStateService,
-    LangGraphExtractorService,
-    LangGraphResponderService,
-    ExtractNode,
-    MergeNode,
-    RouteNode,
-    SearchNode,
-    CreateBookingNode,
-    RespondNode,
-    HandoffNode,
-    LangGraphGraphService,
+    BookingAgentStateService,
+    BookingAgentExtractorService,
+    BookingAgentResponderService,
+    ExtractAction,
+    MergeAction,
+    RouteAction,
+    SearchAction,
+    CreateBookingAction,
+    RespondAction,
+    HandoffAction,
+    BookingAgentTurnService,
     WhatsAppIngressService,
     WhatsAppAudioTranscriptionService,
     WhatsAppPersistenceService,
@@ -138,7 +143,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
 })
 export class BookingAgentModule implements OnModuleDestroy {
   constructor(
-    @Inject(LANGGRAPH_REDIS_CLIENT)
+    @Inject(BOOKING_AGENT_REDIS_CLIENT)
     private readonly redisClient: Redis,
     private readonly logger: PinoLogger,
   ) {
@@ -154,7 +159,7 @@ export class BookingAgentModule implements OnModuleDestroy {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         },
-        "Failed to quit LANGGRAPH_REDIS_CLIENT, forcing disconnect",
+        "Failed to quit BOOKING_AGENT_REDIS_CLIENT, forcing disconnect",
       );
       try {
         this.redisClient.disconnect();
@@ -165,7 +170,7 @@ export class BookingAgentModule implements OnModuleDestroy {
               disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
             stack: disconnectError instanceof Error ? disconnectError.stack : undefined,
           },
-          "Failed to disconnect LANGGRAPH_REDIS_CLIENT",
+          "Failed to disconnect BOOKING_AGENT_REDIS_CLIENT",
         );
       }
     }

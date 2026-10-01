@@ -5,11 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
-import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/langgraph/langgraph.const";
-import type { BookingAgentState } from "../src/modules/booking-agent/langgraph/langgraph.interface";
-import { LANGGRAPH_ANTHROPIC_CLIENT } from "../src/modules/booking-agent/langgraph/langgraph.tokens";
-import { LangGraphExtractorService } from "../src/modules/booking-agent/langgraph/langgraph-extractor.service";
-import { LangGraphStateService } from "../src/modules/booking-agent/langgraph/langgraph-state.service";
+import { BookingAgentExtractorService } from "../src/modules/booking-agent/conversation/booking-agent-extractor.service";
+import { BookingAgentStateService } from "../src/modules/booking-agent/conversation/booking-agent-state.service";
+import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/conversation/conversation.const";
+import type { BookingAgentState } from "../src/modules/booking-agent/conversation/conversation.interface";
+import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "../src/modules/booking-agent/conversation/conversation.tokens";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { GooglePlacesService } from "../src/modules/maps/google-places.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -85,9 +85,9 @@ describe("Booking Agent", () => {
     })
       .overrideProvider(AuthEmailService)
       .useValue({ sendOTPEmail: vi.fn().mockResolvedValue(undefined) })
-      .overrideProvider(LangGraphExtractorService)
+      .overrideProvider(BookingAgentExtractorService)
       .useValue(extractorService)
-      .overrideProvider(LANGGRAPH_ANTHROPIC_CLIENT)
+      .overrideProvider(BOOKING_AGENT_ANTHROPIC_CLIENT)
       .useValue(claudeService)
       .overrideProvider(GooglePlacesService)
       .useValue(googlePlacesService)
@@ -181,11 +181,13 @@ describe("Booking Agent", () => {
       windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s1:intro");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s1:intro");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(text).toContain("Here are your options");
     expect(
-      result.enqueueOutbox.some((item) => item.dedupeKey.startsWith("langgraph:msg_s1:vehicle:")),
+      result.enqueueOutbox.some((item) =>
+        item.dedupeKey.startsWith("booking-agent:msg_s1:vehicle:"),
+      ),
     ).toBe(true);
   });
 
@@ -201,7 +203,7 @@ describe("Booking Agent", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(text).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
     expect(text).not.toContain("Here are your options");
     expect(extractorService.extract).toHaveBeenCalled();
     expect(claudeService.invoke).not.toHaveBeenCalled();
@@ -241,7 +243,7 @@ describe("Booking Agent", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s2");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s2");
     expect(text).toContain("missing booking details");
   });
 
@@ -286,7 +288,7 @@ describe("Booking Agent", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
-    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_first");
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s3_first");
 
     const secondTurn = await orchestratorService.decide({
       messageId: "msg_s3_second",
@@ -296,12 +298,12 @@ describe("Booking Agent", () => {
       windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
 
-    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s3_second:intro");
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s3_second:intro");
     const text = secondTurn.enqueueOutbox[0]?.textBody ?? "";
     expect(text).toContain("Here are your options");
     expect(
       secondTurn.enqueueOutbox.some((item) =>
-        item.dedupeKey.startsWith("langgraph:msg_s3_second:vehicle:"),
+        item.dedupeKey.startsWith("booking-agent:msg_s3_second:vehicle:"),
       ),
     ).toBe(true);
   });
@@ -364,7 +366,7 @@ describe("Booking Agent", () => {
       windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
     expect(beforeResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe(
-      "langgraph:msg_s4_before_reset:intro",
+      "booking-agent:msg_s4_before_reset:intro",
     );
     expect(beforeResetFollowup.enqueueOutbox[0]?.textBody ?? "").toContain("Here are your options");
 
@@ -387,12 +389,12 @@ describe("Booking Agent", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
     });
-    expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s4_after_reset");
+    expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s4_after_reset");
     const afterResetText = afterResetFollowup.enqueueOutbox[0]?.textBody ?? "";
     expect(afterResetText).toContain("missing booking details");
     expect(
       afterResetFollowup.enqueueOutbox.some((item) =>
-        item.dedupeKey.startsWith("langgraph:msg_s4_after_reset:vehicle:"),
+        item.dedupeKey.startsWith("booking-agent:msg_s4_after_reset:vehicle:"),
       ),
     ).toBe(false);
   });
@@ -424,7 +426,7 @@ describe("Booking Agent", () => {
     });
 
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s5");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s5");
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(text).toContain("Please share pickup time in this format");
   });
@@ -470,7 +472,7 @@ describe("Booking Agent", () => {
       kind: WhatsAppMessageKind.TEXT,
       windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
-    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_first");
+    expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s6_first");
     expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("missing booking details");
 
     const secondTurn = await orchestratorService.decide({
@@ -482,11 +484,11 @@ describe("Booking Agent", () => {
     });
 
     const secondTurnText = secondTurn.enqueueOutbox[0]?.textBody ?? "";
-    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s6_second:intro");
+    expect(secondTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s6_second:intro");
     expect(secondTurnText).toContain("Here are your options");
     expect(
       secondTurn.enqueueOutbox.some((item) =>
-        item.dedupeKey.startsWith("langgraph:msg_s6_second:vehicle:"),
+        item.dedupeKey.startsWith("booking-agent:msg_s6_second:vehicle:"),
       ),
     ).toBe(true);
   });
@@ -527,10 +529,12 @@ describe("Booking Agent", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:msg_s7:intro");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s7:intro");
     expect(text).toContain("Here are your options");
     expect(
-      result.enqueueOutbox.some((item) => item.dedupeKey.startsWith("langgraph:msg_s7:vehicle:")),
+      result.enqueueOutbox.some((item) =>
+        item.dedupeKey.startsWith("booking-agent:msg_s7:vehicle:"),
+      ),
     ).toBe(true);
   });
 
@@ -582,17 +586,17 @@ describe("Booking Agent", () => {
     });
 
     const outageText = outageTurn.enqueueOutbox.map((item) => item.textBody ?? "").join("\n");
-    expect(outageText).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(outageText).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
     expect(outageText).not.toContain("Here are your options");
     expect(claudeService.invoke).toHaveBeenCalledTimes(claudeCallsBeforeOutage);
 
-    const persisted = await app.get(LangGraphStateService).loadState("conv_outage_preserve");
+    const persisted = await app.get(BookingAgentStateService).loadState("conv_outage_preserve");
     expect(persisted?.draft.pickupLocation).toBe("Wheatbaker hotel, Ikoyi");
     expect(persisted?.availableOptions.length).toBeGreaterThan(0);
   });
 
   it("keeps paymentLink across a follow-up turn", async () => {
-    const stateService = app.get(LangGraphStateService);
+    const stateService = app.get(BookingAgentStateService);
     const paymentLink = "https://pay.example.com/invoice/phase1";
     const conversationId = "conv_payment_link_persist";
     const seeded: BookingAgentState = {
@@ -615,7 +619,7 @@ describe("Booking Agent", () => {
       preferences: {},
       response: null,
       outboxItems: [],
-      nextNode: null,
+      nextAction: null,
       error: null,
       statusMessage: null,
     };
