@@ -93,6 +93,18 @@ export class WhatsAppSenderService {
     const claimTime = new Date();
     const claimed = await this.persistenceService.claimOutboxForProcessing(outboxId, claimTime);
     if (!claimed) {
+      const existing = await this.persistenceService.getOutboxForDispatch(outboxId);
+      if (
+        existing &&
+        !existing.providerMessageSid &&
+        existing.status !== WhatsAppOutboxStatus.DEAD_LETTER
+      ) {
+        // Still locked (e.g. PROCESSING within TTL) or not yet retryable — fail the
+        // BullMQ job so it retries after backoff instead of completing as a no-op.
+        throw new Error(
+          `WhatsApp outbox ${outboxId} could not be claimed (status=${existing.status}); retrying`,
+        );
+      }
       return;
     }
 

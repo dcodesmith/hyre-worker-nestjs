@@ -94,12 +94,30 @@ describe("WhatsAppSenderService", () => {
     expect(whatsappAgentQueue.add).not.toHaveBeenCalled();
   });
 
-  it("returns early when outbox claim fails", async () => {
+  it("returns early when outbox claim fails for an already-sent row", async () => {
     persistenceService.claimOutboxForProcessing.mockResolvedValue(false);
+    persistenceService.getOutboxForDispatch.mockResolvedValue({
+      id: "outbox-1",
+      status: WhatsAppOutboxStatus.PROCESSING,
+      providerMessageSid: "SM123",
+    });
 
     await service.processOutbox("outbox-1");
 
-    expect(persistenceService.getOutboxForDispatch).not.toHaveBeenCalled();
+    expect(persistenceService.getOutboxForDispatch).toHaveBeenCalledWith("outbox-1");
+  });
+
+  it("throws when outbox claim fails while the row is still claimable", async () => {
+    persistenceService.claimOutboxForProcessing.mockResolvedValue(false);
+    persistenceService.getOutboxForDispatch.mockResolvedValue({
+      id: "outbox-1",
+      status: WhatsAppOutboxStatus.PROCESSING,
+      providerMessageSid: null,
+    });
+
+    await expect(service.processOutbox("outbox-1")).rejects.toThrow(
+      "WhatsApp outbox outbox-1 could not be claimed (status=PROCESSING); retrying",
+    );
   });
 
   it("marks dead letter on final attempt failure", async () => {

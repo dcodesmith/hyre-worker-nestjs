@@ -60,6 +60,7 @@ export class MergeNode {
       preferences: newPreferences,
       availableOptions: shouldClearOptions ? [] : state.availableOptions,
       lastShownOptions: draftChanged ? [] : state.lastShownOptions,
+      selectedOption: draftChanged ? null : state.selectedOption,
       locationValidation: nextLocationValidation,
     };
   }

@@ -15,7 +15,7 @@ const STAGE_INSTRUCTIONS: Partial<Record<BookingStage, string>> = {
   confirming:
     "INSTRUCTION: Summarize the booking details clearly. Show what they selected and ask for final confirmation. Use the confirm/reject buttons below.\n",
   awaiting_payment:
-    "INSTRUCTION: The booking has been created! Share the payment link with them and let them know their vehicle is reserved.\n",
+    "INSTRUCTION: The booking has been created! Share the payment link and explain that payment confirms the booking. Do not claim the vehicle is reserved or held.\n",
   collecting:
     "INSTRUCTION: Ask for ALL missing fields in one message. Do NOT ask for confirmation - just ask for missing fields.\n",
   greeting:
@@ -90,8 +90,7 @@ export function buildResponderUserContext(
   state: BookingAgentState,
   options: BuildResponderUserContextOptions,
 ): string {
-  const { stage, draft, extraction, availableOptions, selectedOption, holdId, statusMessage } =
-    state;
+  const { stage, draft, extraction, availableOptions, selectedOption, statusMessage } = state;
   const missingFields = getMissingRequiredFields(draft);
 
   let context = `CURRENT STATE: ${stage}\n`;
@@ -122,10 +121,6 @@ export function buildResponderUserContext(
   if (selectedOption) {
     const selectedPrice = `₦${selectedOption.estimatedTotalInclVat.toLocaleString()}`;
     context += `SELECTED: ${selectedOption.make} ${selectedOption.model} - ${selectedPrice}\n`;
-  }
-
-  if (holdId) {
-    context += "HOLD ACTIVE: Vehicle reserved for 15 minutes\n";
   }
 
   const stageInstruction = STAGE_INSTRUCTIONS[stage];

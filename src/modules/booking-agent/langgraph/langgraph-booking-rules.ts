@@ -14,9 +14,11 @@ export function shouldApplyDraftPatch(intent: UserIntent): boolean {
 export function hasDraftChanged(oldDraft: BookingDraft, newDraft: BookingDraft): boolean {
   const keyFields: (keyof BookingDraft)[] = [
     "pickupDate",
+    "pickupTime",
     "dropoffDate",
     "bookingType",
     "pickupLocation",
+    "dropoffLocation",
     "vehicleType",
   ];
 

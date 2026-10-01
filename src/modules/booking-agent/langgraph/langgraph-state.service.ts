@@ -57,6 +57,7 @@ export class LangGraphStateService {
         holdId: persisted.holdId ?? null,
         holdExpiresAt: persisted.holdExpiresAt ?? null,
         bookingId: persisted.bookingId ?? null,
+        paymentLink: persisted.paymentLink ?? null,
         locationValidation,
       };
     } catch (error) {
@@ -87,6 +88,7 @@ export class LangGraphStateService {
       holdId: state.holdId,
       holdExpiresAt: state.holdExpiresAt,
       bookingId: state.bookingId,
+      paymentLink: state.paymentLink,
       locationValidation: state.locationValidation ?? createDefaultLocationValidationState(),
       updatedAt: new Date().toISOString(),
     };
@@ -187,7 +189,7 @@ export class LangGraphStateService {
       holdId: existingState.holdId ?? null,
       holdExpiresAt: existingState.holdExpiresAt ?? null,
       bookingId: existingState.bookingId ?? null,
-      paymentLink: null,
+      paymentLink: existingState.paymentLink ?? null,
       preferences: existingState.preferences ?? {},
       response: null,
       outboxItems: [],

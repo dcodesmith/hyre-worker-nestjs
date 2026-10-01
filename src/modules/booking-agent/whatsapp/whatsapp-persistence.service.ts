@@ -8,7 +8,10 @@ import {
 import { PinoLogger } from "nestjs-pino";
 import type { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 import { DatabaseService } from "../../database/database.service";
-import { WHATSAPP_PROCESSING_LOCK_TTL_MS } from "../booking-agent.const";
+import {
+  WHATSAPP_OUTBOX_PROCESSING_TTL_MS,
+  WHATSAPP_PROCESSING_LOCK_TTL_MS,
+} from "../booking-agent.const";
 import type { CreateOutboxInput, TwilioInboundWebhookPayload } from "../booking-agent.interface";
 
 export const INBOUND_MESSAGE_CONTEXT_SELECT = Prisma.validator<Prisma.WhatsAppMessageSelect>()({
@@ -52,7 +55,7 @@ export class WhatsAppPersistenceService {
     windowExpiresAt: Date;
   }): Promise<{ id: string }> {
     const { phoneE164, payload, now, windowExpiresAt } = input;
-    return this.databaseService.whatsAppConversation.upsert({
+    const conversation = await this.databaseService.whatsAppConversation.upsert({
       where: { phoneE164 },
       create: {
         phoneE164,
@@ -66,10 +69,20 @@ export class WhatsAppPersistenceService {
         profileName: payload.ProfileName ?? undefined,
         lastInboundAt: now,
         windowExpiresAt,
-        status: "ACTIVE",
       },
       select: { id: true },
     });
+
+    // Reactivate closed chats; never clobber active human handoff.
+    await this.databaseService.whatsAppConversation.updateMany({
+      where: {
+        id: conversation.id,
+        status: "CLOSED",
+      },
+      data: { status: "ACTIVE" },
+    });
+
+    return conversation;
   }
 
   async createInboundMessage(input: {
@@ -139,6 +152,7 @@ export class WhatsAppPersistenceService {
   }
 
   async claimOutboxForProcessing(outboxId: string, now: Date): Promise<boolean> {
+    const staleProcessingBefore = new Date(now.getTime() - WHATSAPP_OUTBOX_PROCESSING_TTL_MS);
     const claimResult = await this.databaseService.whatsAppOutbox.updateMany({
       where: {
         id: outboxId,
@@ -146,6 +160,10 @@ export class WhatsAppPersistenceService {
         OR: [
           { status: WhatsAppOutboxStatus.PENDING },
           { status: WhatsAppOutboxStatus.FAILED, nextAttemptAt: { lte: now } },
+          {
+            status: WhatsAppOutboxStatus.PROCESSING,
+            lastAttemptAt: { lte: staleProcessingBefore },
+          },
         ],
       },
       data: {
@@ -338,6 +356,10 @@ export class WhatsAppPersistenceService {
       return null;
     }
 
+    if (message.status === "PROCESSED") {
+      return null;
+    }
+
     return message;
   }
 
@@ -348,6 +370,17 @@ export class WhatsAppPersistenceService {
         status: "HANDOFF",
         handoffReason: reason,
         handoffAt: new Date(),
+      },
+    });
+  }
+
+  async clearConversationHandoff(conversationId: string): Promise<void> {
+    await this.databaseService.whatsAppConversation.update({
+      where: { id: conversationId },
+      data: {
+        status: "ACTIVE",
+        handoffReason: null,
+        handoffAt: null,
       },
     });
   }

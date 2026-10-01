@@ -230,6 +230,7 @@ export interface PersistedState {
   holdId: string | null;
   holdExpiresAt: string | null;
   bookingId: string | null;
+  paymentLink: string | null;
   locationValidation?: BookingAgentLocationValidationState;
   updatedAt: string;
 }

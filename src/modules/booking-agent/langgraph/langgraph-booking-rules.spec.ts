@@ -111,6 +111,20 @@ describe("langgraph-booking-rules", () => {
     expect(hasDraftChanged(oldDraft, newDraft)).toBe(true);
   });
 
+  it("treats pickupTime and dropoffLocation as draft changes", () => {
+    const oldDraft = {
+      pickupDate: "2026-03-01",
+      pickupTime: "09:00",
+      dropoffLocation: "Ikoyi",
+      bookingType: "DAY" as const,
+    };
+
+    expect(hasDraftChanged(oldDraft, { ...oldDraft, pickupTime: "10:00" })).toBe(true);
+    expect(hasDraftChanged(oldDraft, { ...oldDraft, dropoffLocation: "Lekki" })).toBe(true);
+    expect(hasDraftChanged(oldDraft, { ...oldDraft, flightNumber: "P4 123" })).toBe(false);
+    expect(hasDraftChanged(oldDraft, oldDraft)).toBe(false);
+  });
+
   it("applies draft patches only for data-updating intents", () => {
     expect(shouldApplyDraftPatch("provide_info")).toBe(true);
     expect(shouldApplyDraftPatch("confirm")).toBe(false);

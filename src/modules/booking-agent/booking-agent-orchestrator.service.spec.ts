@@ -116,4 +116,73 @@ describe("BookingAgentOrchestratorService", () => {
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph-error:msg_1");
     expect(result.enqueueOutbox[0]?.textBody).toContain("I'm having trouble processing");
   });
+
+  it("keeps TEMPLATE mode for a valid HX content sid", async () => {
+    langGraphService.invoke.mockResolvedValue({
+      outboxItems: [
+        {
+          conversationId: "conv_1",
+          dedupeKey: "langgraph:msg_1:vehicle:0",
+          mode: WhatsAppDeliveryMode.FREE_FORM,
+          templateName: "HX43448303892f9f4026057adb597e0c22",
+          templateVariables: { "1": "Toyota Prado" },
+        },
+      ],
+      response: { text: "Here are your options" },
+      stage: "presenting_options",
+      draft: {},
+      error: null,
+    });
+
+    const result = await service.decide(buildContext());
+
+    expect(result.enqueueOutbox[0]?.mode).toBe(WhatsAppDeliveryMode.TEMPLATE);
+    expect(result.enqueueOutbox[0]?.templateName).toBe("HX43448303892f9f4026057adb597e0c22");
+    expect(windowPolicyService.resolveOutboundMode).not.toHaveBeenCalled();
+  });
+
+  it("strips invalid template names and never enqueues TEMPLATE without an HX SID", async () => {
+    windowPolicyService.resolveOutboundMode.mockReturnValue(WhatsAppDeliveryMode.TEMPLATE);
+    langGraphService.invoke.mockResolvedValue({
+      outboxItems: [
+        {
+          conversationId: "conv_1",
+          dedupeKey: "langgraph:msg_1",
+          mode: WhatsAppDeliveryMode.TEMPLATE,
+          textBody: "Welcome back",
+          templateName: "booking-reopen",
+        },
+        {
+          conversationId: "conv_1",
+          dedupeKey: "langgraph:handoff:msg_1",
+          mode: WhatsAppDeliveryMode.TEMPLATE,
+          textBody: "An agent will join shortly",
+          templateName: "handoff-reopen",
+        },
+      ],
+      response: { text: "Welcome back" },
+      stage: "collecting",
+      draft: {},
+      error: null,
+    });
+
+    const result = await service.decide(buildContext({ windowExpiresAt: null }));
+
+    expect(windowPolicyService.resolveOutboundMode).toHaveBeenCalledWith(null);
+    expect(result.enqueueOutbox).toEqual([
+      expect.objectContaining({
+        dedupeKey: "langgraph:msg_1",
+        mode: WhatsAppDeliveryMode.FREE_FORM,
+        templateName: undefined,
+      }),
+      expect.objectContaining({
+        dedupeKey: "langgraph:handoff:msg_1",
+        mode: WhatsAppDeliveryMode.FREE_FORM,
+        templateName: undefined,
+      }),
+    ]);
+    expect(result.enqueueOutbox.map((item) => item.templateName)).not.toEqual(
+      expect.arrayContaining(["booking-reopen", "handoff-reopen"]),
+    );
+  });
 });

@@ -3,6 +3,7 @@ import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../../database/database.service";
+import { WHATSAPP_OUTBOX_PROCESSING_TTL_MS } from "../booking-agent.const";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 
 describe("WhatsAppPersistenceService", () => {
@@ -86,6 +87,50 @@ describe("WhatsAppPersistenceService", () => {
     await expect(service.getInboundMessageContext("msg-1")).resolves.toBeNull();
   });
 
+  it("returns null inbound context when the message is already processed", async () => {
+    databaseService.whatsAppMessage.findUnique.mockResolvedValue({
+      id: "msg-1",
+      direction: "INBOUND",
+      status: "PROCESSED",
+      body: "book me an suv",
+    });
+
+    await expect(service.getInboundMessageContext("msg-1")).resolves.toBeNull();
+  });
+
+  it("reactivates CLOSED conversations and does not force ACTIVE on upsert", async () => {
+    const now = new Date("2026-03-01T00:00:00.000Z");
+    const windowExpiresAt = new Date("2026-03-02T00:00:00.000Z");
+    databaseService.whatsAppConversation.upsert.mockResolvedValue({ id: "conv-1" });
+    databaseService.whatsAppConversation.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      service.upsertConversationForInbound({
+        phoneE164: "+2348000000000",
+        payload: { WaId: "2348000000000", ProfileName: "Ada" },
+        now,
+        windowExpiresAt,
+      }),
+    ).resolves.toEqual({ id: "conv-1" });
+
+    const upsertArgs = databaseService.whatsAppConversation.upsert.mock.calls[0]?.[0];
+    expect(upsertArgs.create).not.toHaveProperty("status");
+    expect(upsertArgs.update).not.toHaveProperty("status");
+    expect(upsertArgs.update).toEqual(
+      expect.objectContaining({
+        lastInboundAt: now,
+        windowExpiresAt,
+      }),
+    );
+    expect(databaseService.whatsAppConversation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "conv-1",
+        status: "CLOSED",
+      },
+      data: { status: "ACTIVE" },
+    });
+  });
+
   it("returns null link state when conversation is missing", async () => {
     databaseService.whatsAppConversation.findUnique.mockResolvedValue(null);
 
@@ -108,6 +153,34 @@ describe("WhatsAppPersistenceService", () => {
         }),
       }),
     );
+  });
+
+  it("reclaims PROCESSING outbox rows only after the processing TTL", async () => {
+    const now = new Date("2026-03-01T00:01:00.000Z");
+    const staleProcessingBefore = new Date(now.getTime() - WHATSAPP_OUTBOX_PROCESSING_TTL_MS);
+    databaseService.whatsAppOutbox.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(service.claimOutboxForProcessing("outbox-1", now)).resolves.toBe(true);
+
+    expect(databaseService.whatsAppOutbox.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "outbox-1",
+        providerMessageSid: null,
+        OR: [
+          { status: WhatsAppOutboxStatus.PENDING },
+          { status: WhatsAppOutboxStatus.FAILED, nextAttemptAt: { lte: now } },
+          {
+            status: WhatsAppOutboxStatus.PROCESSING,
+            lastAttemptAt: { lte: staleProcessingBefore },
+          },
+        ],
+      },
+      data: {
+        status: WhatsAppOutboxStatus.PROCESSING,
+        attempts: { increment: 1 },
+        lastAttemptAt: now,
+      },
+    });
   });
 
   it("marks outbox failure and truncates long error message", async () => {

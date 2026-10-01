@@ -5,6 +5,7 @@ import { PinoLogger } from "nestjs-pino";
 import { toFile } from "openai/uploads";
 import type { EnvConfig } from "../../../config/env.config";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
+import { WHATSAPP_AUDIO_MAX_BYTES } from "../booking-agent.const";
 
 @Injectable()
 export class WhatsAppAudioTranscriptionService {
@@ -89,8 +90,41 @@ export class WhatsAppAudioTranscriptionService {
       throw new Error(`Failed to fetch WhatsApp media from ${mediaUrl} (${response.status})`);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    return new Uint8Array(arrayBuffer);
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > WHATSAPP_AUDIO_MAX_BYTES) {
+      controller.abort();
+      throw new Error(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
+    }
+
+    if (!response.body) {
+      throw new Error(`WhatsApp media response from ${mediaUrl} had no body`);
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > WHATSAPP_AUDIO_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
+      }
+      chunks.push(value);
+    }
+
+    const audioBytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      audioBytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return audioBytes;
   }
 
   private validateTwilioMediaUrl(mediaUrl: string): void {
