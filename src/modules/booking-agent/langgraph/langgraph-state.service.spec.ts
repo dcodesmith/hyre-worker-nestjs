@@ -117,6 +117,24 @@ describe("LangGraphStateService", () => {
       expect(merged.messages).toHaveLength(2);
       expect(merged.draft.pickupLocation).toBe("Lagos");
       expect(merged.preferences.pricePreference).toBe("budget");
+      expect(merged.paymentLink).toBeNull();
+    });
+
+    it("preserves paymentLink from existing state", () => {
+      const merged = service.mergeWithExisting(
+        {
+          stage: "awaiting_payment",
+          turnCount: 2,
+          paymentLink: "https://pay.example.com/invoice/123",
+        },
+        conversationId,
+        "msg_2",
+        "has the payment gone through?",
+        null,
+      );
+
+      expect(merged.paymentLink).toBe("https://pay.example.com/invoice/123");
+      expect(merged.stage).toBe("awaiting_payment");
     });
 
     it("preserves existing customerId when new one is null", () => {
@@ -260,6 +278,31 @@ describe("LangGraphStateService", () => {
       expect(state).not.toBeNull();
       expect(state?.draft?.pickupLocation).toBe("Ikeja");
       expect(state?.stage).toBe("collecting");
+      expect(state?.paymentLink).toBeNull();
+    });
+
+    it("loads a persisted paymentLink", async () => {
+      redisMock.get.mockResolvedValue(
+        JSON.stringify({
+          messages: [],
+          draft: {},
+          stage: "awaiting_payment",
+          turnCount: 4,
+          availableOptions: [],
+          lastShownOptions: [],
+          preferences: {},
+          holdId: null,
+          holdExpiresAt: null,
+          bookingId: "booking_1",
+          paymentLink: "https://pay.example.com/invoice/123",
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+
+      const state = await service.loadState(conversationId);
+
+      expect(state?.paymentLink).toBe("https://pay.example.com/invoice/123");
+      expect(state?.stage).toBe("awaiting_payment");
     });
 
     it("hydrates nested defaults for partially persisted location validation", async () => {
@@ -345,6 +388,17 @@ describe("LangGraphStateService", () => {
         expect.any(Number),
         expect.any(String),
       );
+    });
+
+    it("persists paymentLink", async () => {
+      const state = service.createInitialState(conversationId, "msg_1", "hi", null);
+      state.stage = "awaiting_payment";
+      state.paymentLink = "https://pay.example.com/invoice/123";
+
+      await service.saveState(conversationId, state);
+
+      const payload = JSON.parse(redisMock.setex.mock.calls[0]?.[2] as string);
+      expect(payload.paymentLink).toBe("https://pay.example.com/invoice/123");
     });
 
     it("retries on failure", async () => {

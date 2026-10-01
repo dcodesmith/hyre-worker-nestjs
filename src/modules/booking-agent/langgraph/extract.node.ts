@@ -1,7 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "./langgraph.const";
-import { createDefaultLocationValidationState } from "./langgraph.interface";
 import { LangGraphExtractorService } from "./langgraph-extractor.service";
 import { normalizeNodeError } from "./langgraph-log-utils";
 import type { LangGraphNodeResult, LangGraphNodeState } from "./langgraph-node-state.interface";
@@ -47,13 +46,6 @@ export class ExtractNode {
         },
         error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
         statusMessage: null,
-        draft: { __clear: true },
-        preferences: { __clear: true },
-        availableOptions: [],
-        lastShownOptions: [],
-        selectedOption: null,
-        locationValidation: createDefaultLocationValidationState(),
-        stage: "greeting",
       };
     }
   }

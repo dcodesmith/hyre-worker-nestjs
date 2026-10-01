@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { OPENAI_SDK_CLIENT } from "../../openai-sdk/openai-sdk.tokens";
+import { WHATSAPP_AUDIO_MAX_BYTES } from "../booking-agent.const";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 
 type TranscriptionServiceInternals = {
@@ -130,5 +131,68 @@ describe("WhatsAppAudioTranscriptionService", () => {
     ).rejects.toThrow("Invalid WhatsApp media URL protocol");
 
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects audio when content-length exceeds the byte cap", async () => {
+    const read = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-length" ? String(WHATSAPP_AUDIO_MAX_BYTES + 1) : null,
+      },
+      body: {
+        getReader: () => ({ read, cancel: vi.fn() }),
+      },
+    } as unknown as Response);
+    const transcribeSpy = vi.spyOn(
+      service as unknown as TranscriptionServiceInternals,
+      "transcribeAudioBinary",
+    );
+
+    await expect(
+      service.transcribeInboundAudio({
+        mediaUrl: "https://api.twilio.com/media/123",
+        mediaContentType: "audio/ogg",
+        traceId: "conv-1:msg-1",
+      }),
+    ).rejects.toThrow(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
+
+    expect(read).not.toHaveBeenCalled();
+    expect(transcribeSpy).not.toHaveBeenCalled();
+  });
+
+  it("cancels the media stream when the downloaded audio exceeds the byte cap", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValue({
+            done: false,
+            value: new Uint8Array(WHATSAPP_AUDIO_MAX_BYTES + 1),
+          }),
+          cancel,
+        }),
+      },
+    } as unknown as Response);
+    const transcribeSpy = vi.spyOn(
+      service as unknown as TranscriptionServiceInternals,
+      "transcribeAudioBinary",
+    );
+
+    await expect(
+      service.transcribeInboundAudio({
+        mediaUrl: "https://media.twiliocdn.com/audio/123",
+        mediaContentType: "audio/ogg",
+        traceId: "conv-1:msg-1",
+      }),
+    ).rejects.toThrow(`WhatsApp audio exceeds the ${WHATSAPP_AUDIO_MAX_BYTES} byte limit`);
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(transcribeSpy).not.toHaveBeenCalled();
   });
 });

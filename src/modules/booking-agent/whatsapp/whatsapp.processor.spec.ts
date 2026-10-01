@@ -60,6 +60,7 @@ describe("WhatsAppProcessor", () => {
     getConversationLinkState: ReturnType<typeof vi.fn>;
     getInboundMessageContext: ReturnType<typeof vi.fn>;
     markConversationHandoff: ReturnType<typeof vi.fn>;
+    clearConversationHandoff: ReturnType<typeof vi.fn>;
     markInboundMessageProcessed: ReturnType<typeof vi.fn>;
     markInboundMessageFailed: ReturnType<typeof vi.fn>;
     releaseProcessingLock: ReturnType<typeof vi.fn>;
@@ -93,6 +94,7 @@ describe("WhatsAppProcessor", () => {
         .mockResolvedValue({ linkedUserId: null, linkStatus: "UNLINKED" }),
       getInboundMessageContext: vi.fn(),
       markConversationHandoff: vi.fn(),
+      clearConversationHandoff: vi.fn(),
       markInboundMessageProcessed: vi.fn(),
       markInboundMessageFailed: vi.fn(),
       releaseProcessingLock: vi.fn(),
@@ -222,6 +224,83 @@ describe("WhatsAppProcessor", () => {
       expect.any(String),
     );
   });
+
+  it("marks handoff inbound processed without calling the orchestrator", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.getInboundMessageContext.mockResolvedValue({
+      id: "msg-1",
+      conversationId: "conv-1",
+      body: "still waiting",
+      kind: WhatsAppMessageKind.TEXT,
+      mediaUrl: null,
+      mediaContentType: null,
+      rawPayload: {},
+      conversation: {
+        status: "HANDOFF",
+        windowExpiresAt: new Date("2026-03-01T00:00:00.000Z"),
+      },
+    });
+
+    await processor.process(
+      buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        dedupeKey: "dedupe-1",
+      }),
+    );
+
+    expect(orchestratorService.decide).not.toHaveBeenCalled();
+    expect(persistenceService.clearConversationHandoff).not.toHaveBeenCalled();
+    expect(persistenceService.markInboundMessageProcessed).toHaveBeenCalledWith("msg-1");
+    expect(persistenceService.releaseProcessingLock).toHaveBeenCalledWith(
+      "conv-1",
+      expect.any(String),
+    );
+  });
+
+  it.each(["RESET", "start over", "  START OVER  "])(
+    "runs the orchestrator and clears handoff for %s",
+    async (body) => {
+      persistenceService.acquireProcessingLock.mockResolvedValue(true);
+      persistenceService.getInboundMessageContext.mockResolvedValue({
+        id: "msg-1",
+        conversationId: "conv-1",
+        body,
+        kind: WhatsAppMessageKind.TEXT,
+        mediaUrl: null,
+        mediaContentType: null,
+        rawPayload: {},
+        conversation: {
+          status: "HANDOFF",
+          windowExpiresAt: new Date("2026-03-01T00:00:00.000Z"),
+        },
+      });
+      orchestratorService.decide.mockResolvedValue({
+        enqueueOutbox: [],
+        resultingStage: "greeting",
+      });
+
+      await processor.process(
+        buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          dedupeKey: "dedupe-1",
+        }),
+      );
+
+      expect(orchestratorService.decide).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body,
+          conversationId: "conv-1",
+        }),
+      );
+      expect(orchestratorService.decide.mock.invocationCallOrder[0]).toBeLessThan(
+        persistenceService.clearConversationHandoff.mock.invocationCallOrder[0],
+      );
+      expect(persistenceService.clearConversationHandoff).toHaveBeenCalledWith("conv-1");
+      expect(persistenceService.markInboundMessageProcessed).toHaveBeenCalledWith("msg-1");
+    },
+  );
 
   it("forwards linked customerId from conversation context to orchestrator", async () => {
     persistenceService.acquireProcessingLock.mockResolvedValue(true);

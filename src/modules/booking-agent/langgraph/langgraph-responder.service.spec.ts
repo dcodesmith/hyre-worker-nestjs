@@ -346,6 +346,9 @@ describe("LangGraphResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toContain("Booking Created");
+      expect(response.text).toContain("Complete your payment to confirm booking");
+      expect(response.text).not.toMatch(/reserved/i);
+      expect(response.text).not.toMatch(/HOLD ACTIVE/i);
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons).toHaveLength(2);
       expect(response.interactive?.buttons?.[0].id).toBe("cancel");
@@ -409,6 +412,20 @@ describe("LangGraphResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(claudeMock.invoke).not.toHaveBeenCalled();
+    });
+
+    it("returns greeting outage text even when options are still present", async () => {
+      const state = buildState({
+        stage: "greeting",
+        error: LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE,
+        availableOptions: [buildVehicleOption()],
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).not.toContain("Here are your options");
       expect(claudeMock.invoke).not.toHaveBeenCalled();
     });
 

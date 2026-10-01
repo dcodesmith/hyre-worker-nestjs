@@ -119,7 +119,7 @@ export class LangGraphResponderService {
 
     return (
       this.buildResetResponse(extraction?.intent) ??
-      this.buildGreetingErrorResponse(stage, availableOptions, error) ??
+      this.buildGreetingErrorResponse(stage, error) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
       this.buildPresentingOptionsResponse(stage, availableOptions, statusMessage, draft) ??
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
@@ -138,17 +138,12 @@ export class LangGraphResponderService {
 
   private buildGreetingErrorResponse(
     stage: BookingStage,
-    availableOptions: VehicleSearchOption[],
     error: string | null,
   ): AgentResponse | null {
     // Surface user-safe outage messages deterministically in greeting.
     // Keep confirming-stage errors on the confirming path so retry/agent actions are preserved.
-    if (
-      error &&
-      availableOptions.length === 0 &&
-      stage === "greeting" &&
-      error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE
-    ) {
+    // Do not require empty options — extract failures preserve draft/options by design.
+    if (error === LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE && stage === "greeting") {
       return { text: error };
     }
     return null;
@@ -521,12 +516,10 @@ export class LangGraphResponderService {
       "*✅ Booking Created!*",
       "",
       selectedOption
-        ? `Your *${selectedOption.make} ${selectedOption.model}* has been reserved.`
-        : "Your vehicle has been reserved.",
+        ? `Your booking includes the *${selectedOption.make} ${selectedOption.model}*.`
+        : "Your vehicle selection has been added to the booking.",
       "",
       "*Complete your payment to confirm booking*",
-      "",
-      "_Your reservation will be held while you complete payment._",
     ].join("\n");
   }
 

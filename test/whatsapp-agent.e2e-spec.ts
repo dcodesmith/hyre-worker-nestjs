@@ -6,8 +6,10 @@ import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
 import { LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/langgraph/langgraph.const";
+import type { BookingAgentState } from "../src/modules/booking-agent/langgraph/langgraph.interface";
 import { LANGGRAPH_ANTHROPIC_CLIENT } from "../src/modules/booking-agent/langgraph/langgraph.tokens";
 import { LangGraphExtractorService } from "../src/modules/booking-agent/langgraph/langgraph-extractor.service";
+import { LangGraphStateService } from "../src/modules/booking-agent/langgraph/langgraph-state.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { GooglePlacesService } from "../src/modules/maps/google-places.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -530,5 +532,115 @@ describe("Booking Agent", () => {
     expect(
       result.enqueueOutbox.some((item) => item.dedupeKey.startsWith("langgraph:msg_s7:vehicle:")),
     ).toBe(true);
+  });
+
+  it("preserves draft and options when extract fails on a later turn", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      color: "White",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-OUTAGE-001",
+    });
+
+    extractorService.extract
+      .mockResolvedValueOnce({
+        intent: "provide_info",
+        draftPatch: {
+          make: "Toyota",
+          model: "Prado",
+          vehicleType: "SUV",
+          color: "White",
+          pickupDate: FUTURE_LATER_PICKUP_DATE,
+          dropoffDate: FUTURE_DROPOFF_DATE,
+          bookingType: "DAY",
+          pickupTime: "9 AM",
+          pickupLocation: "Wheatbaker hotel, Ikoyi",
+          dropoffLocation: "Wheatbaker hotel, Ikoyi",
+        },
+        confidence: 0.95,
+      })
+      .mockRejectedValueOnce(new Error("service unavailable"));
+
+    const firstTurn = await orchestratorService.decide({
+      messageId: "msg_outage_preserve_1",
+      conversationId: "conv_outage_preserve",
+      body: "Book a white Prado day trip from Wheatbaker hotel, Ikoyi",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
+    });
+    expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("Here are your options");
+    const claudeCallsBeforeOutage = claudeService.invoke.mock.calls.length;
+
+    const outageTurn = await orchestratorService.decide({
+      messageId: "msg_outage_preserve_2",
+      conversationId: "conv_outage_preserve",
+      body: "the white one",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
+    });
+
+    const outageText = outageTurn.enqueueOutbox.map((item) => item.textBody ?? "").join("\n");
+    expect(outageText).toContain(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(outageText).not.toContain("Here are your options");
+    expect(claudeService.invoke).toHaveBeenCalledTimes(claudeCallsBeforeOutage);
+
+    const persisted = await app.get(LangGraphStateService).loadState("conv_outage_preserve");
+    expect(persisted?.draft.pickupLocation).toBe("Wheatbaker hotel, Ikoyi");
+    expect(persisted?.availableOptions.length).toBeGreaterThan(0);
+  });
+
+  it("keeps paymentLink across a follow-up turn", async () => {
+    const stateService = app.get(LangGraphStateService);
+    const paymentLink = "https://pay.example.com/invoice/phase1";
+    const conversationId = "conv_payment_link_persist";
+    const seeded: BookingAgentState = {
+      messages: [],
+      conversationId,
+      customerId: null,
+      inboundMessage: "confirm",
+      inboundMessageId: "msg_payment_seed",
+      draft: { pickupLocation: "Ikoyi" },
+      stage: "awaiting_payment",
+      turnCount: 3,
+      extraction: null,
+      availableOptions: [],
+      lastShownOptions: [],
+      selectedOption: null,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: "booking_phase1",
+      paymentLink,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      nextNode: null,
+      error: null,
+      statusMessage: null,
+    };
+    await stateService.saveState(conversationId, seeded);
+
+    extractorService.extract.mockResolvedValue({
+      intent: "ask_question",
+      draftPatch: {},
+      confidence: 0.8,
+    });
+
+    const followUp = await orchestratorService.decide({
+      messageId: "msg_payment_followup",
+      conversationId,
+      body: "how do I pay?",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
+    });
+
+    const followUpText = followUp.enqueueOutbox.map((item) => item.textBody ?? "").join("\n");
+    expect(followUpText).not.toMatch(/HOLD ACTIVE/i);
+    expect(followUpText).not.toMatch(/reserved/i);
+
+    const persisted = await stateService.loadState(conversationId);
+    expect(persisted?.paymentLink).toBe(paymentLink);
+    expect(persisted?.bookingId).toBe("booking_phase1");
   });
 });

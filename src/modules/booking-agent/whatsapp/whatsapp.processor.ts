@@ -111,10 +111,28 @@ export class WhatsAppProcessor extends WorkerHost {
       }
 
       await this.cancelPendingInactivityJobs(conversationId);
+      const isHandoffReset =
+        context.conversation.status === "HANDOFF" && this.isResetCommand(context.body);
+
+      if (context.conversation.status === "HANDOFF" && !isHandoffReset) {
+        await this.persistenceService.markInboundMessageProcessed(messageId);
+        this.logger.info(
+          {
+            traceId,
+            durationMs: Date.now() - startedAt,
+          },
+          "Processed inbound WhatsApp message during agent handoff",
+        );
+        return;
+      }
+
       const orchestratorContext = await this.buildOrchestratorContext(context, traceId);
 
       const result = await this.bookingAgentOrchestratorService.decide(orchestratorContext);
       await this.handleInboundOrchestratorResult(result, context.conversationId, messageId);
+      if (isHandoffReset) {
+        await this.persistenceService.clearConversationHandoff(conversationId);
+      }
 
       await this.persistenceService.markInboundMessageProcessed(messageId);
       this.logger.info(
@@ -393,6 +411,11 @@ export class WhatsAppProcessor extends WorkerHost {
       stage === "confirming" ||
       stage === "awaiting_payment"
     );
+  }
+
+  private isResetCommand(body: string | null): boolean {
+    const command = body?.trim().toUpperCase();
+    return command === "RESET" || command === "START OVER";
   }
 
   private getInactivityNudgeJobId(conversationId: string): string {

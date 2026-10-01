@@ -31,7 +31,7 @@ describe("ExtractNode", () => {
     vi.resetAllMocks();
   });
 
-  it("returns safe fallback state on extraction failure", async () => {
+  it("returns an unknown extraction and leaves draft state untouched on failure", async () => {
     extractorServiceMock.extract.mockRejectedValue(new Error("429"));
 
     const result = await extractNode.run({
@@ -61,7 +61,16 @@ describe("ExtractNode", () => {
     });
 
     expect(result.error).toBe(LANGGRAPH_SERVICE_UNAVAILABLE_MESSAGE);
-    expect(result.stage).toBe("greeting");
-    expect(result.availableOptions).toEqual([]);
+    expect(result.extraction).toEqual({
+      intent: "unknown",
+      draftPatch: {},
+      confidence: 0,
+    });
+    expect(result.statusMessage).toBeNull();
+    expect(result).not.toHaveProperty("stage");
+    expect(result).not.toHaveProperty("draft");
+    expect(result).not.toHaveProperty("availableOptions");
+    expect(result).not.toHaveProperty("lastShownOptions");
+    expect(result).not.toHaveProperty("selectedOption");
   });
 });

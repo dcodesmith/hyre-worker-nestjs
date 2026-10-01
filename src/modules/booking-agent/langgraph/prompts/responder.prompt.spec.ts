@@ -75,4 +75,40 @@ describe("responder.prompt contract", () => {
       "INSTRUCTION: Include this status update clearly before asking for next details.",
     );
   });
+
+  it("does not claim a reservation or active hold while awaiting payment", () => {
+    const context = buildResponderUserContext(
+      {
+        messages: [],
+        conversationId: "conv_1",
+        customerId: null,
+        inboundMessage: "I paid",
+        inboundMessageId: "msg_1",
+        inboundInteractive: undefined,
+        draft: {},
+        stage: "awaiting_payment",
+        turnCount: 4,
+        extraction: null,
+        availableOptions: [],
+        lastShownOptions: [],
+        selectedOption: null,
+        holdId: null,
+        holdExpiresAt: null,
+        bookingId: "booking_1",
+        paymentLink: "https://pay.example.com/invoice/123",
+        preferences: {},
+        response: null,
+        outboxItems: [],
+        nextNode: null,
+        error: null,
+        statusMessage: null,
+      },
+      { maxContextFieldChars: 300, maxDraftContextChars: 600, maxOptionContextItems: 5 },
+    );
+
+    expect(context).toContain("payment confirms the booking");
+    expect(context).toContain("Do not claim the vehicle is reserved or held");
+    expect(context).not.toMatch(/HOLD ACTIVE/i);
+    expect(context).not.toMatch(/has been reserved|vehicle is now reserved/i);
+  });
 });
