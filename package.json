@@ -13,6 +13,7 @@
     "start:dev:typecheck": "nest start --watch --type-check",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "smoke:k6": "k6 run scripts/k6-smoke.js",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
