@@ -4,15 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { BookingAgentOrchestratorService } from "./booking-agent-orchestrator.service";
 import { BookingAgentWindowPolicyService } from "./booking-agent-window-policy.service";
-import { LangGraphGraphService } from "./langgraph/langgraph-graph.service";
-import { LangGraphStateService } from "./langgraph/langgraph-state.service";
+import { BookingAgentStateService } from "./conversation/booking-agent-state.service";
+import { BookingAgentTurnService } from "./conversation/booking-agent-turn.service";
 
 describe("BookingAgentOrchestratorService", () => {
   let moduleRef: TestingModule;
   let service: BookingAgentOrchestratorService;
   let windowPolicyService: { resolveOutboundMode: ReturnType<typeof vi.fn> };
-  let langGraphService: { invoke: ReturnType<typeof vi.fn> };
-  let langGraphStateService: { clearState: ReturnType<typeof vi.fn> };
+  let bookingAgentService: { invoke: ReturnType<typeof vi.fn> };
+  let bookingAgentStateService: { clearState: ReturnType<typeof vi.fn> };
 
   const buildContext = (
     overrides?: Partial<Parameters<BookingAgentOrchestratorService["decide"]>[0]>,
@@ -29,10 +29,10 @@ describe("BookingAgentOrchestratorService", () => {
     windowPolicyService = {
       resolveOutboundMode: vi.fn().mockReturnValue(WhatsAppDeliveryMode.FREE_FORM),
     };
-    langGraphService = {
+    bookingAgentService = {
       invoke: vi.fn(),
     };
-    langGraphStateService = {
+    bookingAgentStateService = {
       clearState: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -44,12 +44,12 @@ describe("BookingAgentOrchestratorService", () => {
           useValue: windowPolicyService,
         },
         {
-          provide: LangGraphGraphService,
-          useValue: langGraphService,
+          provide: BookingAgentTurnService,
+          useValue: bookingAgentService,
         },
         {
-          provide: LangGraphStateService,
-          useValue: langGraphStateService,
+          provide: BookingAgentStateService,
+          useValue: bookingAgentStateService,
         },
       ],
     })
@@ -64,29 +64,29 @@ describe("BookingAgentOrchestratorService", () => {
 
     expect(result.markAsHandoff).toEqual({ reason: "USER_REQUESTED_AGENT" });
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(langGraphService.invoke).not.toHaveBeenCalled();
+    expect(bookingAgentService.invoke).not.toHaveBeenCalled();
   });
 
   it("returns media fallback for inbound audio/image/doc messages", async () => {
     const result = await service.decide(buildContext({ kind: WhatsAppMessageKind.AUDIO }));
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("media-fallback:msg_1");
-    expect(langGraphService.invoke).not.toHaveBeenCalled();
+    expect(bookingAgentService.invoke).not.toHaveBeenCalled();
   });
 
-  it("clears langgraph state when user requests reset", async () => {
+  it("clears booking-agent state when user requests reset", async () => {
     const result = await service.decide(buildContext({ body: "start over" }));
 
-    expect(langGraphStateService.clearState).toHaveBeenCalledWith("conv_1");
+    expect(bookingAgentStateService.clearState).toHaveBeenCalledWith("conv_1");
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("reset-ack:msg_1");
-    expect(langGraphService.invoke).not.toHaveBeenCalled();
+    expect(bookingAgentService.invoke).not.toHaveBeenCalled();
   });
 
-  it("marks conversation as handoff when LangGraph returns handoff outbox", async () => {
-    langGraphService.invoke.mockResolvedValue({
+  it("marks conversation as handoff when BookingAgent returns handoff outbox", async () => {
+    bookingAgentService.invoke.mockResolvedValue({
       outboxItems: [
         {
           conversationId: "conv_1",
-          dedupeKey: "langgraph:handoff:msg_1",
+          dedupeKey: "booking-agent:handoff:msg_1",
           mode: WhatsAppDeliveryMode.FREE_FORM,
           textBody:
             "A Tripdly agent will join this chat shortly. Please share your booking reference if available.",
@@ -103,26 +103,26 @@ describe("BookingAgentOrchestratorService", () => {
     const result = await service.decide(buildContext({ body: "talk to agent" }));
 
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph:handoff:msg_1");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:handoff:msg_1");
     expect(result.markAsHandoff).toEqual({ reason: "USER_REQUESTED_AGENT" });
   });
 
-  it("returns fallback message when LangGraph invocation fails", async () => {
-    langGraphService.invoke.mockRejectedValue(new Error("Graph failed"));
+  it("returns fallback message when booking-agent turn fails", async () => {
+    bookingAgentService.invoke.mockRejectedValue(new Error("Graph failed"));
 
     const result = await service.decide(buildContext({ body: "Need an SUV" }));
 
     expect(result.enqueueOutbox).toHaveLength(1);
-    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("langgraph-error:msg_1");
+    expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent-error:msg_1");
     expect(result.enqueueOutbox[0]?.textBody).toContain("I'm having trouble processing");
   });
 
   it("keeps TEMPLATE mode for a valid HX content sid", async () => {
-    langGraphService.invoke.mockResolvedValue({
+    bookingAgentService.invoke.mockResolvedValue({
       outboxItems: [
         {
           conversationId: "conv_1",
-          dedupeKey: "langgraph:msg_1:vehicle:0",
+          dedupeKey: "booking-agent:msg_1:vehicle:0",
           mode: WhatsAppDeliveryMode.FREE_FORM,
           templateName: "HX43448303892f9f4026057adb597e0c22",
           templateVariables: { "1": "Toyota Prado" },
@@ -143,18 +143,18 @@ describe("BookingAgentOrchestratorService", () => {
 
   it("strips invalid template names and never enqueues TEMPLATE without an HX SID", async () => {
     windowPolicyService.resolveOutboundMode.mockReturnValue(WhatsAppDeliveryMode.TEMPLATE);
-    langGraphService.invoke.mockResolvedValue({
+    bookingAgentService.invoke.mockResolvedValue({
       outboxItems: [
         {
           conversationId: "conv_1",
-          dedupeKey: "langgraph:msg_1",
+          dedupeKey: "booking-agent:msg_1",
           mode: WhatsAppDeliveryMode.TEMPLATE,
           textBody: "Welcome back",
           templateName: "booking-reopen",
         },
         {
           conversationId: "conv_1",
-          dedupeKey: "langgraph:handoff:msg_1",
+          dedupeKey: "booking-agent:handoff:msg_1",
           mode: WhatsAppDeliveryMode.TEMPLATE,
           textBody: "An agent will join shortly",
           templateName: "handoff-reopen",
@@ -171,12 +171,12 @@ describe("BookingAgentOrchestratorService", () => {
     expect(windowPolicyService.resolveOutboundMode).toHaveBeenCalledWith(null);
     expect(result.enqueueOutbox).toEqual([
       expect.objectContaining({
-        dedupeKey: "langgraph:msg_1",
+        dedupeKey: "booking-agent:msg_1",
         mode: WhatsAppDeliveryMode.FREE_FORM,
         templateName: undefined,
       }),
       expect.objectContaining({
-        dedupeKey: "langgraph:handoff:msg_1",
+        dedupeKey: "booking-agent:handoff:msg_1",
         mode: WhatsAppDeliveryMode.FREE_FORM,
         templateName: undefined,
       }),

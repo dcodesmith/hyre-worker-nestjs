@@ -34,7 +34,7 @@ import type {
   ProcessWhatsAppOutboxJobData,
 } from "../booking-agent.interface";
 import { BookingAgentOrchestratorService } from "../booking-agent-orchestrator.service";
-import { LangGraphStateService } from "../langgraph/langgraph-state.service";
+import { BookingAgentStateService } from "../conversation/booking-agent-state.service";
 import { parseInteractiveReply } from "./whatsapp-agent.utils";
 import { WhatsAppAudioTranscriptionService } from "./whatsapp-audio-transcription.service";
 import type { InboundMessageContextRecord } from "./whatsapp-persistence.service";
@@ -53,7 +53,7 @@ export class WhatsAppProcessor extends WorkerHost {
   constructor(
     private readonly persistenceService: WhatsAppPersistenceService,
     private readonly bookingAgentOrchestratorService: BookingAgentOrchestratorService,
-    private readonly langGraphStateService: LangGraphStateService,
+    private readonly bookingAgentStateService: BookingAgentStateService,
     private readonly senderService: WhatsAppSenderService,
     private readonly audioTranscriptionService: WhatsAppAudioTranscriptionService,
     private readonly logger: PinoLogger,
@@ -271,7 +271,7 @@ export class WhatsAppProcessor extends WorkerHost {
     job: Job<ProcessWhatsAppInactivityNudgeJobData, unknown, string>,
   ): Promise<void> {
     const { conversationId, messageId, scheduledAtMs } = job.data;
-    const state = await this.langGraphStateService.loadState(conversationId);
+    const state = await this.bookingAgentStateService.loadState(conversationId);
     if (!this.isNudgeableStage(state?.stage)) {
       return;
     }
@@ -323,7 +323,7 @@ export class WhatsAppProcessor extends WorkerHost {
       return;
     }
 
-    await this.langGraphStateService.clearState(conversationId);
+    await this.bookingAgentStateService.clearState(conversationId);
     await this.senderService.enqueueOutbound({
       conversationId,
       dedupeKey: `inactivity-clear:${conversationId}:${nudgeScheduledAtMs}`,
@@ -339,7 +339,7 @@ export class WhatsAppProcessor extends WorkerHost {
         conversationId,
         nudgeScheduledAtMs,
       },
-      "Cleared LangGraph state after inactivity grace period elapsed",
+      "Cleared booking-agent state after inactivity grace period elapsed",
     );
   }
 

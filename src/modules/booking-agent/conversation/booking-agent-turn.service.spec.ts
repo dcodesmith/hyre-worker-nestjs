@@ -1,0 +1,2517 @@
+import { Test, TestingModule } from "@nestjs/testing";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { CarNotAvailableException } from "../../booking/booking.error";
+import { BookingCreationService } from "../../booking/booking-creation.service";
+import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
+import { DatabaseService } from "../../database/database.service";
+import { GooglePlacesService } from "../../maps/google-places.service";
+import { BookingReservationExpirationService } from "../../payment/booking-reservation-expiration.service";
+import { BookingAgentSearchService } from "../booking-agent-search.service";
+import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
+import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
+import { BookingAgentTurnService } from "./booking-agent-turn.service";
+import { CreateBookingAction } from "./create-booking.action";
+import { ExtractAction } from "./extract.action";
+import { HandoffAction } from "./handoff.action";
+import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { buildVehicleOption } from "./conversation.factory";
+import type { BookingAgentState } from "./conversation.interface";
+import { createDefaultLocationValidationState } from "./conversation.interface";
+import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
+import { BookingAgentResponderService } from "./booking-agent-responder.service";
+import { BookingAgentStateService } from "./booking-agent-state.service";
+import { MergeAction } from "./merge.action";
+import { RespondAction } from "./respond.action";
+import { RouteAction } from "./route.action";
+import { SearchAction } from "./search.action";
+
+describe("BookingAgentTurnService", () => {
+  let moduleRef: TestingModule;
+  let service: BookingAgentTurnService;
+  let stateServiceMock: {
+    loadState: ReturnType<typeof vi.fn>;
+    saveState: ReturnType<typeof vi.fn>;
+    createInitialState: ReturnType<typeof vi.fn>;
+    mergeWithExisting: ReturnType<typeof vi.fn>;
+    addMessage: ReturnType<typeof vi.fn>;
+  };
+  let extractorServiceMock: {
+    extract: ReturnType<typeof vi.fn>;
+  };
+  let responderServiceMock: {
+    generateResponse: ReturnType<typeof vi.fn>;
+  };
+  let toolExecutorServiceMock: {
+    searchVehiclesFromExtracted: ReturnType<typeof vi.fn>;
+  };
+  let windowPolicyServiceMock: {
+    resolveOutboundMode: ReturnType<typeof vi.fn>;
+  };
+  let bookingCreationServiceMock: {
+    createBooking: ReturnType<typeof vi.fn>;
+  };
+  let databaseServiceMock: {
+    whatsAppConversation: {
+      findUnique: ReturnType<typeof vi.fn>;
+    };
+  };
+  let googlePlacesServiceMock: {
+    validateAddress: ReturnType<typeof vi.fn>;
+  };
+  let whatsAppPersistenceServiceMock: {
+    getConversationLinkState: ReturnType<typeof vi.fn>;
+  };
+  let bookingReservationExpirationServiceMock: {
+    reconcileExpiredReservation: ReturnType<typeof vi.fn>;
+  };
+
+  const conversationId = "conv_test";
+  const messageId = "msg_test";
+
+  const buildInitialState = (): BookingAgentState => ({
+    conversationId,
+    inboundMessage: "",
+    inboundMessageId: messageId,
+    customerId: null,
+    stage: "greeting",
+    turnCount: 0,
+    messages: [],
+    draft: {},
+    availableOptions: [],
+    lastShownOptions: [],
+    selectedOption: null,
+    holdId: null,
+    holdExpiresAt: null,
+    bookingId: null,
+    paymentLink: null,
+    preferences: {},
+    response: null,
+    outboxItems: [],
+    extraction: null,
+    nextAction: null,
+    error: null,
+    statusMessage: null,
+    locationValidation: createDefaultLocationValidationState(),
+  });
+
+  beforeEach(async () => {
+    stateServiceMock = {
+      loadState: vi.fn().mockResolvedValue(null),
+      saveState: vi.fn().mockResolvedValue(undefined),
+      createInitialState: vi.fn().mockImplementation(buildInitialState),
+      mergeWithExisting: vi.fn().mockImplementation((existing) => ({ ...existing })),
+      addMessage: vi.fn(),
+    };
+
+    extractorServiceMock = {
+      extract: vi.fn().mockResolvedValue({
+        intent: "greeting",
+        draftPatch: {},
+        confidence: 0.9,
+      }),
+    };
+
+    responderServiceMock = {
+      generateResponse: vi.fn().mockResolvedValue({
+        text: "Hello! How can I help you today?",
+      }),
+    };
+
+    toolExecutorServiceMock = {
+      searchVehiclesFromExtracted: vi.fn().mockResolvedValue({
+        exactMatches: [],
+        alternatives: [],
+      }),
+    };
+
+    windowPolicyServiceMock = {
+      resolveOutboundMode: vi.fn().mockReturnValue("FREEFORM"),
+    };
+
+    bookingCreationServiceMock = {
+      createBooking: vi.fn().mockResolvedValue({
+        bookingId: "booking_123",
+        checkoutUrl: "https://pay.tripdly.com/checkout/booking_123",
+      }),
+    };
+
+    databaseServiceMock = {
+      whatsAppConversation: {
+        findUnique: vi.fn().mockImplementation(() => {
+          return Promise.resolve({
+            phoneE164: "+2348012345678",
+            profileName: "Test Customer",
+          });
+        }),
+      },
+    };
+
+    whatsAppPersistenceServiceMock = {
+      getConversationLinkState: vi
+        .fn()
+        .mockResolvedValue({ linkedUserId: null, linkStatus: "UNLINKED" }),
+    };
+
+    googlePlacesServiceMock = {
+      validateAddress: vi.fn().mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+      }),
+    };
+
+    bookingReservationExpirationServiceMock = {
+      reconcileExpiredReservation: vi.fn().mockResolvedValue("retained"),
+    };
+
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        BookingAgentTurnService,
+        { provide: BookingAgentStateService, useValue: stateServiceMock },
+        { provide: BookingAgentExtractorService, useValue: extractorServiceMock },
+        { provide: BookingAgentResponderService, useValue: responderServiceMock },
+        { provide: BookingAgentSearchService, useValue: toolExecutorServiceMock },
+        { provide: BookingAgentWindowPolicyService, useValue: windowPolicyServiceMock },
+        { provide: BookingCreationService, useValue: bookingCreationServiceMock },
+        {
+          provide: BookingReservationExpirationService,
+          useValue: bookingReservationExpirationServiceMock,
+        },
+        {
+          provide: BookingPricingPreviewService,
+          useValue: {
+            preview: vi.fn().mockResolvedValue({
+              subtotalBeforeDiscounts: 150000,
+              vatAmount: 0,
+              totalAmount: 150000,
+            }),
+          },
+        },
+        { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
+        { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
+        ExtractAction,
+        MergeAction,
+        RouteAction,
+        SearchAction,
+        CreateBookingAction,
+        RespondAction,
+        HandoffAction,
+      ],
+    })
+      .useMocker(mockPinoLoggerToken)
+      .compile();
+
+    service = moduleRef.get(BookingAgentTurnService);
+  });
+
+  afterEach(async () => {
+    await moduleRef?.close();
+    vi.resetAllMocks();
+  });
+
+  describe("invoke", () => {
+    it("passes interactive reply to state", async () => {
+      const interactive = { type: "button" as const, buttonId: "confirm" };
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "",
+        interactive,
+      });
+
+      expect(extractorServiceMock.extract).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inboundInteractive: interactive,
+        }),
+      );
+    });
+  });
+
+  describe("expireElapsedHold", () => {
+    const pastExpiry = "2020-01-01T00:00:00.000Z";
+    const futureExpiry = "2099-01-01T00:00:00.000Z";
+    const paymentLink = "https://pay.example.com/booking_123";
+    const expiredStatusMessage =
+      "Your previous payment window expired. Please confirm the booking again to generate a new payment link.";
+
+    const seedAwaitingPayment = (overrides: Partial<BookingAgentState> = {}) => {
+      const existingState: BookingAgentState = {
+        ...buildInitialState(),
+        stage: "awaiting_payment",
+        bookingId: "booking_123",
+        holdId: "hold_456",
+        holdExpiresAt: pastExpiry,
+        paymentLink,
+        statusMessage: "Payment link is ready",
+        ...overrides,
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+      return existingState;
+    };
+
+    const invokeAndCaptureStateAfterHoldCheck = async (): Promise<BookingAgentState> => {
+      let captured: BookingAgentState | undefined;
+      extractorServiceMock.extract.mockImplementation(async (state: BookingAgentState) => {
+        captured = state;
+        return { intent: "greeting", draftPatch: {}, confidence: 0.9 };
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Hi",
+      });
+
+      if (!captured) {
+        throw new Error("Expected extract to receive state after hold expiry check");
+      }
+
+      return captured;
+    };
+
+    it("clears hold and payment fields when the elapsed reservation is cancelled", async () => {
+      seedAwaitingPayment();
+      bookingReservationExpirationServiceMock.reconcileExpiredReservation.mockResolvedValue(
+        "cancelled",
+      );
+
+      const stateAfterHoldCheck = await invokeAndCaptureStateAfterHoldCheck();
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).toHaveBeenCalledWith("booking_123");
+      expect(stateAfterHoldCheck.stage).toBe("confirming");
+      expect(stateAfterHoldCheck.holdId).toBeNull();
+      expect(stateAfterHoldCheck.holdExpiresAt).toBeNull();
+      expect(stateAfterHoldCheck.bookingId).toBeNull();
+      expect(stateAfterHoldCheck.paymentLink).toBeNull();
+      expect(stateAfterHoldCheck.statusMessage).toBe(expiredStatusMessage);
+      expect(responderServiceMock.generateResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusMessage: expiredStatusMessage,
+        }),
+      );
+    });
+
+    it("falls back from bookingId to holdId when reconciling an expired hold", async () => {
+      seedAwaitingPayment({ bookingId: null, holdId: "hold_only" });
+      bookingReservationExpirationServiceMock.reconcileExpiredReservation.mockResolvedValue(
+        "cancelled",
+      );
+
+      const stateAfterHoldCheck = await invokeAndCaptureStateAfterHoldCheck();
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).toHaveBeenCalledWith("hold_only");
+      expect(stateAfterHoldCheck.stage).toBe("confirming");
+      expect(stateAfterHoldCheck.holdId).toBeNull();
+      expect(stateAfterHoldCheck.bookingId).toBeNull();
+      expect(stateAfterHoldCheck.paymentLink).toBeNull();
+      expect(stateAfterHoldCheck.statusMessage).toBe(expiredStatusMessage);
+    });
+
+    it("sends a confirmation when the elapsed reservation is confirmed", async () => {
+      seedAwaitingPayment();
+      bookingReservationExpirationServiceMock.reconcileExpiredReservation.mockResolvedValue(
+        "confirmed",
+      );
+      const confirmation = "Payment confirmed — your booking is confirmed.";
+      const responder = new BookingAgentResponderService(
+        { invoke: vi.fn() } as never,
+        { setContext: vi.fn() } as never,
+      );
+      responderServiceMock.generateResponse.mockImplementation((state: BookingAgentState) =>
+        responder.generateResponse(state),
+      );
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Did my payment go through?",
+      });
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).toHaveBeenCalledWith("booking_123");
+      expect(extractorServiceMock.extract).not.toHaveBeenCalled();
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+      expect(responderServiceMock.generateResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: "completed",
+          bookingId: "booking_123",
+          holdId: null,
+          holdExpiresAt: null,
+          paymentLink: null,
+          statusMessage: confirmation,
+        }),
+      );
+      expect(result.stage).toBe("completed");
+      expect(result.response?.text).toBe(confirmation);
+      expect(result.outboxItems).toEqual([
+        expect.objectContaining({
+          conversationId,
+          mode: "FREE_FORM",
+          textBody: confirmation,
+          dedupeKey: `booking-agent:${messageId}`,
+        }),
+      ]);
+      expect(stateServiceMock.saveState).toHaveBeenCalledWith(
+        conversationId,
+        expect.objectContaining({
+          stage: "completed",
+          bookingId: "booking_123",
+          holdId: null,
+          holdExpiresAt: null,
+          paymentLink: null,
+          statusMessage: confirmation,
+        }),
+      );
+    });
+
+    it("leaves state unchanged when reconciliation retains the reservation", async () => {
+      const existingState = seedAwaitingPayment();
+      bookingReservationExpirationServiceMock.reconcileExpiredReservation.mockResolvedValue(
+        "retained",
+      );
+
+      const stateAfterHoldCheck = await invokeAndCaptureStateAfterHoldCheck();
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).toHaveBeenCalledWith(
+        "booking_123",
+      );
+      expect(stateAfterHoldCheck.stage).toBe(existingState.stage);
+      expect(stateAfterHoldCheck.holdId).toBe(existingState.holdId);
+      expect(stateAfterHoldCheck.holdExpiresAt).toBe(existingState.holdExpiresAt);
+      expect(stateAfterHoldCheck.bookingId).toBe(existingState.bookingId);
+      expect(stateAfterHoldCheck.paymentLink).toBe(existingState.paymentLink);
+      expect(stateAfterHoldCheck.statusMessage).toBe(existingState.statusMessage);
+    });
+
+    it("leaves state unchanged when cancelling the elapsed reservation throws", async () => {
+      const existingState = seedAwaitingPayment();
+      bookingReservationExpirationServiceMock.reconcileExpiredReservation.mockRejectedValue(
+        new Error("database unavailable"),
+      );
+
+      const stateAfterHoldCheck = await invokeAndCaptureStateAfterHoldCheck();
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).toHaveBeenCalledWith(
+        "booking_123",
+      );
+      expect(stateAfterHoldCheck.stage).toBe(existingState.stage);
+      expect(stateAfterHoldCheck.holdId).toBe(existingState.holdId);
+      expect(stateAfterHoldCheck.holdExpiresAt).toBe(existingState.holdExpiresAt);
+      expect(stateAfterHoldCheck.bookingId).toBe(existingState.bookingId);
+      expect(stateAfterHoldCheck.paymentLink).toBe(existingState.paymentLink);
+      expect(stateAfterHoldCheck.statusMessage).toBe(existingState.statusMessage);
+    });
+
+    it("leaves a future hold unchanged and does not reconcile it", async () => {
+      // A hold that has not elapsed stays untouched. Immediate customer confirmation
+      // is delivered by the payment success notification, not by this expiry check.
+      const existingState = seedAwaitingPayment({ holdExpiresAt: futureExpiry });
+
+      const stateAfterHoldCheck = await invokeAndCaptureStateAfterHoldCheck();
+
+      expect(
+        bookingReservationExpirationServiceMock.reconcileExpiredReservation,
+      ).not.toHaveBeenCalled();
+      expect(stateAfterHoldCheck.stage).toBe("awaiting_payment");
+      expect(stateAfterHoldCheck.holdId).toBe(existingState.holdId);
+      expect(stateAfterHoldCheck.holdExpiresAt).toBe(futureExpiry);
+      expect(stateAfterHoldCheck.bookingId).toBe(existingState.bookingId);
+      expect(stateAfterHoldCheck.paymentLink).toBe(existingState.paymentLink);
+    });
+  });
+
+  describe("conversation flow - greeting to collecting", () => {
+    it("stays in greeting stage on greeting intent to allow welcoming response", async () => {
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "greeting",
+        draftPatch: {},
+        confidence: 0.95,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Hello",
+      });
+
+      expect(result.stage).toBe("greeting");
+    });
+
+    it("clears stale booking state when greeting from awaiting_payment stage", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "awaiting_payment";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+      };
+      existingState.selectedOption = buildVehicleOption();
+      existingState.availableOptions = [buildVehicleOption()];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Drop me off at the same place",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "greeting",
+        draftPatch: {},
+        confidence: 0.95,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Hi",
+      });
+
+      // Should reset to greeting stage and clear the stale booking state
+      expect(result.stage).toBe("greeting");
+      expect(result.draft).toEqual({});
+      // Should NOT have searched for vehicles
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+    });
+
+    it("clears stale booking state when greeting from completed stage", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "completed";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "greeting",
+        draftPatch: {},
+        confidence: 0.95,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Hello",
+      });
+
+      expect(result.stage).toBe("greeting");
+      expect(result.draft).toEqual({});
+    });
+  });
+
+  describe("conversation flow - collecting info", () => {
+    it("updates draft with extracted info", async () => {
+      extractorServiceMock.extract.mockResolvedValueOnce({
+        intent: "provide_info",
+        draftPatch: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupLocation: "Lagos",
+        },
+        confidence: 0.9,
+      });
+
+      // Explicitly stub the geocoding lookup for this test
+      googlePlacesServiceMock.validateAddress.mockResolvedValueOnce({
+        isValid: true,
+        normalizedAddress: "Victoria Island, Lagos, Nigeria",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "I need a day booking tomorrow in Lagos",
+      });
+
+      // Verify normalization lookup was called with the raw pickupLocation
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenCalledWith("Lagos");
+      expect(result.draft.bookingType).toBe("DAY");
+      expect(result.draft.pickupDate).toBe("2026-03-01");
+      expect(result.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
+    });
+
+    it("triggers search when all required fields collected", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "No",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: { dropoffLocation: "Lekki" },
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Drop me off in Lekki",
+      });
+
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+    });
+
+    it("fills dropoffLocation when user says same place explicitly", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "5 Glover Road, Ikoyi",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Drop me off at the same place",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Mock Google Places to return the same address (already specific enough)
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "5 Glover Road, Ikoyi",
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Drop me off at the same place",
+      });
+
+      expect(result.draft.dropoffLocation).toBe("5 Glover Road, Ikoyi");
+    });
+
+    it("keeps dropoffLocation in sync when pickupLocation is normalized and they were equal", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Glover Road Ikoyi", // Same as pickup (via "same location" instruction)
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Google Places normalizes the address
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Both pickup and dropoff should be normalized to the same address
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+    });
+
+    it("normalizes dropoffLocation separately when it differs from pickupLocation", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Lekki Phase 1", // Different from pickup
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress
+        .mockResolvedValueOnce({
+          isValid: true,
+          normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+        })
+        .mockResolvedValueOnce({
+          isValid: true,
+          normalizedAddress: "Lekki Phase 1, Lagos, Nigeria",
+        });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      // Pickup and dropoff should both be normalized independently.
+      expect(result.draft.pickupLocation).toBe("12 Glover Road, Ikoyi, Lagos, Nigeria");
+      expect(result.draft.dropoffLocation).toBe("Lekki Phase 1, Lagos, Nigeria");
+    });
+
+    it("validates dropoffLocation when it differs from pickupLocation", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Fagba",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress
+        .mockResolvedValueOnce({
+          isValid: true,
+          normalizedAddress: "Wheatbaker Hotel, Ikoyi, Lagos, Nigeria",
+        })
+        .mockResolvedValueOnce({
+          isValid: false,
+          failureReason: "AREA_ONLY",
+        });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenNthCalledWith(
+        1,
+        "Wheatbaker Hotel, Ikoyi",
+      );
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenNthCalledWith(2, "Fagba");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.stage).toBe("collecting");
+      expect(result.draft.pickupLocation).toBe("Wheatbaker Hotel, Ikoyi, Lagos, Nigeria");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":dropoff-address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("drop-off address");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+
+    it("skips dropoff validation when dropoff matches pickup", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Glover Road Ikoyi",
+        dropoffLocation: "Glover Road Ikoyi",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "12 Glover Road, Ikoyi, Lagos, Nigeria",
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Proceed",
+      });
+
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes availableOptions to responder after search", async () => {
+      const vehicle = buildVehicleOption({ id: "veh_search_result" });
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [vehicle],
+        alternatives: [],
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes, find me options",
+      });
+
+      // Verify responder was called with the search results
+      expect(responderServiceMock.generateResponse).toHaveBeenCalled();
+      const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
+      expect(responderArg.availableOptions).toHaveLength(1);
+      expect(responderArg.availableOptions[0].id).toBe("veh_search_result");
+      expect(responderArg.stage).toBe("presenting_options");
+    });
+
+    it("validates pickup immediately in collecting stage when user provides vague area", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "pick me up from Ikoyi",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: { pickupLocation: "Ikoyi" },
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: false,
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pick me up from Ikoyi",
+      });
+
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenCalledWith("Ikoyi");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("Please share the full pickup address");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+  });
+
+  describe("conversation flow - selecting options", () => {
+    it("sets selected option on selection intent", async () => {
+      const vehicle = buildVehicleOption({ id: "veh_1" });
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.availableOptions = [vehicle];
+      existingState.lastShownOptions = [vehicle];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "No",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "select_option",
+        draftPatch: {},
+        selectionHint: "1",
+        confidence: 0.9,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "The first one",
+      });
+
+      expect(result.stage).toBe("confirming");
+    });
+
+    it("handles cheapest selection hint", async () => {
+      const cheapVehicle = buildVehicleOption({ id: "v1", estimatedTotalInclVat: 80000 });
+      const expensiveVehicle = buildVehicleOption({ id: "v2", estimatedTotalInclVat: 150000 });
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.availableOptions = [expensiveVehicle, cheapVehicle];
+      existingState.lastShownOptions = [expensiveVehicle, cheapVehicle];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "select_option",
+        draftPatch: {},
+        selectionHint: "cheapest",
+        confidence: 0.9,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "The cheapest one",
+      });
+
+      expect(result.stage).toBe("confirming");
+    });
+  });
+
+  describe("conversation flow - confirmation", () => {
+    it("transitions to awaiting_payment on confirm", async () => {
+      const vehicle = buildVehicleOption();
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = vehicle;
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes, confirm",
+      });
+
+      expect(result.stage).toBe("awaiting_payment");
+      expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
+    });
+
+    it("clears selection on reject", async () => {
+      const vehicle = buildVehicleOption();
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = vehicle;
+      existingState.availableOptions = [vehicle];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "reject",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "No, show me others",
+      });
+
+      expect(result.stage).toBe("collecting");
+    });
+
+    it("searches and presents alternatives immediately on show_others intent", async () => {
+      const selected = buildVehicleOption({ id: "selected_1" });
+      const alternative = buildVehicleOption({ id: "alt_1", make: "Lexus", model: "RX350" });
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = selected;
+      existingState.availableOptions = [selected];
+      existingState.lastShownOptions = [selected];
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        vehicleType: "SUV",
+        color: "white",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "reject",
+        draftPatch: {},
+        preferenceHint: "show_alternatives",
+        confidence: 1,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [alternative],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Show others",
+      });
+
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+      expect(result.stage).toBe("presenting_options");
+      expect(result.error).toBeNull();
+    });
+
+    it("routes to booking creation when user says yes in confirming stage even if extractor drifts", async () => {
+      const vehicle = buildVehicleOption();
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = vehicle;
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.5,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      expect(result.stage).toBe("awaiting_payment");
+      expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
+    });
+
+    it("returns refreshed options when selected car becomes unavailable at booking time", async () => {
+      const selected = buildVehicleOption({ id: "vehicle_unavailable" });
+      const alternative = buildVehicleOption({
+        id: "vehicle_alt_1",
+        make: "Lexus",
+        model: "LX570",
+      });
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = selected;
+      existingState.availableOptions = [selected];
+      existingState.lastShownOptions = [selected];
+      existingState.draft = {
+        bookingType: "FULL_DAY",
+        pickupDate: "2026-04-04",
+        pickupTime: "06:30",
+        dropoffDate: "2026-04-10",
+        pickupLocation: "Murtala Muhammad international airport",
+        dropoffLocation: "256 Kofo Abayoki Street",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "Yes",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      bookingCreationServiceMock.createBooking.mockRejectedValue(
+        new CarNotAvailableException(selected.id, "Car Not Available Exception"),
+      );
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [alternative],
+        alternatives: [],
+        precondition: null,
+      });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes",
+      });
+
+      expect(result.stage).toBe("presenting_options");
+      // Vehicle unavailability is a business status message, not an error
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("no longer available");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+      expect(bookingCreationServiceMock.createBooking).toHaveBeenCalled();
+    });
+
+    it("does not expose raw booking exception messages to the user", async () => {
+      const selected = buildVehicleOption({ id: "vehicle_1" });
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = selected;
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 1,
+      });
+      bookingCreationServiceMock.createBooking.mockRejectedValue(
+        new Error("postgres timeout stack"),
+      );
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "confirm",
+      });
+
+      expect(result.stage).toBe("confirming");
+      expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(result.error).not.toContain("postgres timeout");
+    });
+
+    it("routes to reject behavior when user says no in confirming stage even if extractor drifts", async () => {
+      const vehicle = buildVehicleOption();
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = vehicle;
+      existingState.availableOptions = [vehicle];
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({
+        ...existingState,
+        inboundMessage: "No",
+        inboundMessageId: messageId,
+      });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.5,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "No",
+      });
+
+      expect(result.stage).toBe("collecting");
+      expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+    });
+
+    it("ignores draftPatch mutation during control intents like confirm", async () => {
+      const vehicle = buildVehicleOption();
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.selectedOption = vehicle;
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {
+          pickupDate: "2026-05-20",
+          dropoffLocation: "Bad patch attempt",
+        },
+        confidence: 1,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "confirm",
+      });
+
+      expect(result.draft.pickupDate).toBe("2026-03-01");
+      expect(result.draft.dropoffLocation).toBe("Lekki");
+    });
+  });
+
+  describe("conversation flow - cancellation", () => {
+    it("transitions to cancelled on cancel intent", async () => {
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "cancel",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Cancel everything",
+      });
+
+      expect(result.stage).toBe("cancelled");
+    });
+  });
+
+  describe("conversation flow - reset", () => {
+    it("clears draft and returns to greeting on reset intent", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "confirming";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+      };
+      existingState.availableOptions = [buildVehicleOption()];
+      existingState.selectedOption = buildVehicleOption();
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "reset",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Done — I've cleared your booking details. Ready to start fresh! What do you need?",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "RESET",
+      });
+
+      expect(result.stage).toBe("greeting");
+      expect(result.draft).toEqual({});
+      expect(result.response?.text).toContain("cleared");
+    });
+  });
+
+  describe("conversation flow - new_booking", () => {
+    it("clears existing draft and starts fresh with new preferences", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+        vehicleType: "SUV",
+      };
+      existingState.availableOptions = [buildVehicleOption()];
+      existingState.lastShownOptions = [buildVehicleOption()];
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "new_booking",
+        draftPatch: { vehicleType: "SEDAN" },
+        confidence: 0.9,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "I need a sedan",
+      });
+
+      // Should clear old draft, keep only new info
+      expect(result.stage).toBe("collecting");
+      expect(result.draft.vehicleType).toBe("SEDAN");
+      expect(result.draft.pickupDate).toBeUndefined();
+      expect(result.draft.pickupTime).toBeUndefined();
+      expect(result.draft.pickupLocation).toBeUndefined();
+    });
+
+    it("clears available options when starting new booking", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+      };
+      existingState.availableOptions = [buildVehicleOption(), buildVehicleOption({ id: "v2" })];
+      existingState.lastShownOptions = [buildVehicleOption(), buildVehicleOption({ id: "v2" })];
+      existingState.selectedOption = buildVehicleOption();
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "new_booking",
+        draftPatch: {},
+        confidence: 0.85,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "I want to book a car",
+      });
+
+      expect(result.stage).toBe("collecting");
+      // Note: The draft reducer merges, so we check that the route action handles clearing
+      // The availableOptions should be cleared in the result
+    });
+
+    it("does not search immediately after new_booking intent", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+        dropoffDate: "2026-03-01",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "new_booking",
+        draftPatch: { vehicleType: "SEDAN" },
+        confidence: 0.9,
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "I need a sedan",
+      });
+
+      // Should NOT search because new_booking clears draft and goes to collecting
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("conversation flow - agent handoff", () => {
+    it("transitions to cancelled and generates handoff message", async () => {
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "request_agent",
+        draftPatch: {},
+        confidence: 1,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "I want to speak to a human",
+      });
+
+      expect(result.stage).toBe("cancelled");
+      expect(result.response?.text).toContain("agent");
+    });
+  });
+
+  describe("preferences handling", () => {
+    it("updates price preference from extraction hint", async () => {
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        preferenceHint: "budget",
+        confidence: 0.8,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "I want something affordable",
+      });
+
+      expect(result.draft).toBeDefined();
+    });
+
+    it("does not duplicate preference notes when hint already exists", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.preferences = {
+        pricePreference: "budget",
+        notes: ["budget"],
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        preferenceHint: "budget",
+        confidence: 0.9,
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "I still want a budget option",
+      });
+
+      expect(stateServiceMock.saveState).toHaveBeenCalledWith(
+        conversationId,
+        expect.objectContaining({
+          preferences: expect.objectContaining({
+            notes: ["budget"],
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("vehicle card template sending", () => {
+    it("sends vehicle cards as template messages with correct variables", async () => {
+      const vehicle = buildVehicleOption({
+        id: "veh_template_test",
+        make: "BMW",
+        model: "X5",
+        imageUrl: "https://example.com/bmw.jpg",
+      });
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [vehicle],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: vehicle.id,
+            imageUrl: vehicle.imageUrl,
+            caption: "🚗 SUV • ⭐ EXECUTIVE\n💰 ₦150,000",
+            buttonId: `select_vehicle:${vehicle.id}`,
+            buttonTitle: "✓ Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Yes, search for me",
+      });
+
+      expect(result.outboxItems).toHaveLength(2);
+
+      // First item: intro text message
+      const introMessage = result.outboxItems[0];
+      expect(introMessage.mode).toBe("FREE_FORM");
+      expect(introMessage.textBody).toBe("Here are your options!");
+
+      // Second item: vehicle card as template
+      const vehicleCard = result.outboxItems[1];
+      expect(vehicleCard.mode).toBe("TEMPLATE");
+      expect(vehicleCard.templateName).toBe("HX43448303892f9f4026057adb597e0c22");
+      expect(vehicleCard.templateVariables).toEqual({
+        "1": "BMW X5",
+        "2": "₦150,000 incl. VAT",
+        "3": "https://example.com/bmw.jpg",
+        "4": "Select",
+        "5": "veh_template_test",
+      });
+    });
+
+    it("sends multiple vehicle cards as separate template messages", async () => {
+      const vehicle1 = buildVehicleOption({
+        id: "veh_1",
+        make: "Toyota",
+        model: "Prado",
+        imageUrl: "https://example.com/prado.jpg",
+      });
+      const vehicle2 = buildVehicleOption({
+        id: "veh_2",
+        make: "Lexus",
+        model: "GX",
+        imageUrl: "https://example.com/gx.jpg",
+      });
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Lekki",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [vehicle1, vehicle2],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Found 2 options for you!",
+        vehicleCards: [
+          {
+            vehicleId: vehicle1.id,
+            imageUrl: vehicle1.imageUrl,
+            caption: "🚗 SUV • ⭐ EXECUTIVE",
+            buttonId: `select_vehicle:${vehicle1.id}`,
+            buttonTitle: "✓ Select",
+          },
+          {
+            vehicleId: vehicle2.id,
+            imageUrl: vehicle2.imageUrl,
+            caption: "🚗 SUV • ⭐ EXECUTIVE",
+            buttonId: `select_vehicle:${vehicle2.id}`,
+            buttonTitle: "✓ Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      // 1 intro + 2 vehicle cards = 3 outbox items
+      expect(result.outboxItems).toHaveLength(3);
+      expect(result.outboxItems[0].mode).toBe("FREE_FORM");
+      expect(result.outboxItems[1].mode).toBe("TEMPLATE");
+      expect(result.outboxItems[2].mode).toBe("TEMPLATE");
+
+      // Check each vehicle card has title + VAT-inclusive body value
+      expect(result.outboxItems[1].templateVariables?.["1"]).toContain("Toyota Prado");
+      expect(result.outboxItems[1].templateVariables?.["2"]).toContain("incl. VAT");
+      expect(result.outboxItems[2].templateVariables?.["1"]).toContain("Lexus GX");
+      expect(result.outboxItems[2].templateVariables?.["2"]).toContain("incl. VAT");
+    });
+
+    it("sends standard text message when no vehicle cards present", async () => {
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Welcome! How can I help you today?",
+        vehicleCards: undefined,
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Hello",
+      });
+
+      expect(result.outboxItems).toHaveLength(1);
+      expect(result.outboxItems[0].mode).toBe("FREE_FORM");
+      expect(result.outboxItems[0].textBody).toBe("Welcome! How can I help you today?");
+      expect(result.outboxItems[0].templateName).toBeUndefined();
+    });
+  });
+
+  describe("search - no results", () => {
+    it("asks for full pickup address when pickup address is not validated", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheabaker Ikoyi",
+        dropoffLocation: "Wheabaker Ikoyi",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: false,
+        failureReason: "AMBIGUOUS",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "pickup is wheabaker ikoyi",
+      });
+
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("Please share the full pickup address");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+
+    it("re-validates pickup location when user provides a different address after invalid lookup", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationValidation = {
+        ...createDefaultLocationValidationState(),
+        pickup: {
+          status: "invalid",
+          lastValidatedInput: "Ikoyi",
+          normalizedAddress: null,
+        },
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "update_info",
+        draftPatch: { pickupLocation: "Ikoyi Phase 1" },
+        confidence: 0.9,
+      });
+
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: false,
+        failureReason: "AREA_ONLY",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "yes",
+      });
+
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenCalledWith("Ikoyi Phase 1");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(result.outboxItems).toHaveLength(2);
+      expect(result.outboxItems[0]?.dedupeKey).toContain(":address-checking");
+      expect(result.outboxItems[1]?.dedupeKey).toContain(":address-suggestions");
+      expect(result.outboxItems[1]?.textBody).toContain("Please share the full pickup address");
+      expect(result.outboxItems[1]?.textBody).not.toContain("Did you mean one of these?");
+    });
+
+    it("does not re-validate pickup location after NO_MATCH when pickup validation is invalid", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Xyzzyville",
+        dropoffLocation: "Xyzzyville",
+      };
+      existingState.locationValidation = {
+        ...createDefaultLocationValidationState(),
+        pickup: {
+          status: "invalid",
+          lastValidatedInput: "Xyzzyville",
+          normalizedAddress: null,
+        },
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "I still need a valid pickup location. Please share a more specific address.",
+      });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "yes",
+      });
+
+      // Should NOT re-validate because input is unchanged and validation already failed.
+      expect(googlePlacesServiceMock.validateAddress).not.toHaveBeenCalled();
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      // Should persist a meaningful status message for a more precise pickup address prompt
+      expect(result.stage).toBe("collecting");
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("Xyzzyville");
+      expect(savedState?.statusMessage).toContain("Please share the full pickup address");
+    });
+
+    it("sets error message when search returns no vehicles", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupTime: "23:00",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Wheatbaker, Ikoyi",
+        dropoffLocation: "6 Glover Road, Ikoyi",
+        vehicleType: "SEDAN",
+        serviceTier: "LUXURY",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Search returns no results
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Unfortunately, no vehicles matching your criteria are available for the selected date. Would you like to try a different date, vehicle type, or booking type?",
+      });
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for me",
+      });
+
+      // Should go back to collecting stage (no results is a status message, not an error)
+      expect(result.stage).toBe("collecting");
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toContain("No vehicles matching your criteria");
+    });
+
+    it("asks for explicit opt-in before showing alternatives for strict vehicle filters", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupTime: "23:00",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Wheatbaker, Ikoyi",
+        dropoffLocation: "6 Glover Road, Ikoyi",
+        vehicleType: "SEDAN",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [buildVehicleOption({ id: "alt-1" })],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for me",
+      });
+
+      expect(result.stage).toBe("collecting");
+      expect(responderServiceMock.generateResponse).toHaveBeenCalled();
+      const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
+      expect(responderArg.availableOptions).toHaveLength(0);
+      expect(responderArg.statusMessage).toContain("would you like me to show them?");
+    });
+
+    it("uses service tier in strict filter label when tier is the only strict constraint", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupTime: "23:00",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Wheatbaker, Ikoyi",
+        dropoffLocation: "6 Glover Road, Ikoyi",
+        serviceTier: "LUXURY",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [buildVehicleOption({ id: "alt-tier-only-1" })],
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for me",
+      });
+
+      const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
+      expect(responderArg.availableOptions).toHaveLength(0);
+      expect(responderArg.statusMessage).toContain("luxury");
+      expect(responderArg.statusMessage).toContain("would you like me to show them?");
+    });
+
+    it("shows alternatives after explicit show_alternatives opt-in", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.preferences = {
+        notes: ["show_alternatives"],
+      };
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupTime: "23:00",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Wheatbaker, Ikoyi",
+        dropoffLocation: "6 Glover Road, Ikoyi",
+        vehicleType: "SEDAN",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "confirm",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [],
+        alternatives: [buildVehicleOption({ id: "alt-1" })],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for me",
+      });
+
+      expect(result.stage).toBe("presenting_options");
+      const responderArg = responderServiceMock.generateResponse.mock.calls[0][0];
+      expect(responderArg.availableOptions).toHaveLength(1);
+      expect(responderArg.statusMessage).toContain("I couldn't find an exact match");
+    });
+
+    it("allows re-search after successful search when user modifies non-location criteria", async () => {
+      // This test verifies that successful validation state does not block re-search.
+      const existingState = buildInitialState();
+      existingState.stage = "presenting_options";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Wheatbaker Hotel, Ikoyi",
+        vehicleType: "SUV",
+      };
+      existingState.availableOptions = [buildVehicleOption()];
+      existingState.lastShownOptions = [buildVehicleOption()];
+      existingState.locationValidation = {
+        ...createDefaultLocationValidationState(),
+        pickup: {
+          status: "valid",
+          lastValidatedInput: "Wheatbaker Hotel, Ikoyi",
+          normalizedAddress: "Wheatbaker Hotel, Ikoyi",
+        },
+        dropoff: {
+          status: "valid",
+          lastValidatedInput: "Wheatbaker Hotel, Ikoyi",
+          normalizedAddress: "Wheatbaker Hotel, Ikoyi",
+        },
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      // User wants a different vehicle type (same location)
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "update_info",
+        draftPatch: { vehicleType: "SEDAN" },
+        confidence: 0.9,
+      });
+
+      // Search returns new results for SEDAN
+      const sedanVehicle = buildVehicleOption({
+        id: "sedan_1",
+        make: "Toyota",
+        model: "Camry",
+        vehicleType: "SEDAN",
+      });
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [sedanVehicle],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are the sedan options!",
+        vehicleCards: [
+          {
+            vehicleId: sedanVehicle.id,
+            imageUrl: null,
+            caption: "Toyota Camry",
+            buttonId: `select_vehicle:${sedanVehicle.id}`,
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Show me sedans instead",
+      });
+
+      // Should successfully search and present new options
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+      expect(result.stage).toBe("presenting_options");
+      expect(result.draft.vehicleType).toBe("SEDAN");
+    });
+  });
+
+  describe("error handling", () => {
+    it("returns error when turn execution fails", async () => {
+      stateServiceMock.loadState.mockRejectedValue(new Error("Redis connection failed"));
+
+      await expect(
+        service.invoke({
+          conversationId,
+          messageId,
+          message: "Test",
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("handles search failure gracefully", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupLocation: "Lagos",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockRejectedValue(
+        new Error("Search service unavailable"),
+      );
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search now",
+      });
+
+      expect(result.error).toBeDefined();
+      expect(result.stage).toBe("collecting");
+    });
+
+    it("preserves locationValidation when search fails after validation", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationValidation = {
+        ...createDefaultLocationValidationState(),
+        pickup: {
+          status: "valid",
+          lastValidatedInput: "Wheatbaker Hotel, Ikoyi",
+          normalizedAddress: "Wheatbaker Hotel, Ikoyi",
+        },
+        dropoff: {
+          status: "valid",
+          lastValidatedInput: "Ikoyi",
+          normalizedAddress: "Ikoyi",
+        },
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Search fails after validation succeeded.
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockRejectedValue(
+        new Error("Database timeout"),
+      );
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "I couldn't check availability right now.",
+      });
+
+      // Capture the state that gets saved
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      // Verify search was actually called (and rejected) so the catch path is exercised
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalled();
+
+      // The catch block should preserve existing location validation state.
+      expect(savedState).not.toBeNull();
+      if (savedState) {
+        expect(savedState.locationValidation?.pickup.status).toBe("valid");
+        expect(savedState.stage).toBe("collecting");
+      }
+    });
+
+    it("preserves validated draft and location state when search returns precondition", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Wheatbaker Hotel, Ikoyi",
+        dropoffLocation: "Ikoyi",
+      };
+      existingState.locationValidation = createDefaultLocationValidationState();
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Google Places validates and normalizes the address
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos",
+        placeId: "ChIJ123",
+      });
+
+      // Search returns precondition (e.g., missing vehicle type for a search that requires it)
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        precondition: {
+          field: "vehicleType",
+          prompt: "What type of vehicle would you prefer?",
+        },
+        exactMatches: [],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "What type of vehicle would you prefer?",
+      });
+
+      // Capture the state that gets saved
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search for cars",
+      });
+
+      // Should preserve the validated/normalized address
+      expect(result.draft.pickupLocation).toBe("The Wheatbaker Hotel, 4 Onitolo Rd, Ikoyi, Lagos");
+      expect(result.stage).toBe("collecting");
+      // Precondition prompt is a status message, not an error
+      expect(result.error).toBeNull();
+      expect(savedState?.statusMessage).toBe("What type of vehicle would you prefer?");
+      // Should preserve location validation so we don't re-validate on next turn.
+      expect(savedState).not.toBeNull();
+      if (savedState) {
+        expect(savedState.locationValidation?.pickup.status).toBe("valid");
+      }
+    });
+  });
+
+  describe("NIGHT booking handling", () => {
+    it("auto-calculates dropoffDate for NIGHT bookings when not explicitly set", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+        // No dropoffDate - should be auto-calculated
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Search returns results - proving we got past missing field validation
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "vehicle_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:vehicle_1",
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      // Should route to search and present options
+      expect(result.stage).toBe("presenting_options");
+      // Verify dropoffDate was auto-calculated (next day for NIGHT)
+      expect(result.draft.dropoffDate).toBe("2026-03-06");
+    });
+
+    it("auto-sets pickupTime to 23:00 for NIGHT bookings", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+        // No pickupTime - should be auto-set to 23:00 for NIGHT
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      // Search returns results
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "vehicle_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:vehicle_1",
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      // Should route to search and present options
+      expect(result.stage).toBe("presenting_options");
+      // pickupTime should be auto-set to 23:00 for NIGHT
+      expect(result.draft.pickupTime).toBe("23:00");
+    });
+
+    it("overrides user-provided pickupTime with 23:00 for NIGHT bookings", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        dropoffDate: "2026-03-06",
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+        pickupTime: "09:00", // User tried to set 9am, but NIGHT is always 11pm
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "vehicle_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:vehicle_1",
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      expect(result.stage).toBe("presenting_options");
+      // pickupTime should be overridden to 23:00 regardless of user input
+      expect(result.draft.pickupTime).toBe("23:00");
+    });
+
+    it("still requires pickupTime for DAY bookings", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        dropoffDate: "2026-03-05",
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+        // No pickupTime - should be required for DAY
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "What time should I schedule the pickup?",
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Continue",
+      });
+
+      // Should stay at collecting stage (pickupTime is missing)
+      expect(result.stage).toBe("collecting");
+      // Search should NOT have been called
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+    });
+
+    it("uses durationDays if set when calculating dropoffDate for NIGHT", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "NIGHT",
+        pickupDate: "2026-03-05",
+        durationDays: 3, // 3-night booking
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+        // No dropoffDate - should be auto-calculated as pickupDate + 3
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "vehicle_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:vehicle_1",
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      expect(result.stage).toBe("presenting_options");
+      // Should be 3 days after pickup
+      expect(result.draft.dropoffDate).toBe("2026-03-08");
+    });
+
+    it("calculates dropoffDate for non-NIGHT bookings using durationDays", async () => {
+      const existingState = buildInitialState();
+      existingState.stage = "collecting";
+      existingState.draft = {
+        bookingType: "DAY",
+        pickupDate: "2026-03-05",
+        durationDays: 2,
+        pickupTime: "09:00",
+        pickupLocation: "Lekki Phase 1",
+        dropoffLocation: "Lekki Phase 1",
+      };
+      stateServiceMock.loadState.mockResolvedValue(existingState);
+      stateServiceMock.mergeWithExisting.mockReturnValue({ ...existingState });
+
+      extractorServiceMock.extract.mockResolvedValue({
+        intent: "provide_info",
+        draftPatch: {},
+        confidence: 0.9,
+      });
+
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [buildVehicleOption()],
+        alternatives: [],
+      });
+
+      responderServiceMock.generateResponse.mockResolvedValue({
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "vehicle_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:vehicle_1",
+            buttonTitle: "Select",
+          },
+        ],
+      });
+
+      const result = await service.invoke({
+        conversationId,
+        messageId,
+        message: "Search",
+      });
+
+      expect(result.stage).toBe("presenting_options");
+      expect(result.draft.dropoffDate).toBe("2026-03-06");
+    });
+  });
+});

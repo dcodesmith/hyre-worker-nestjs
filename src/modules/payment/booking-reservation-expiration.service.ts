@@ -18,12 +18,19 @@ const EXPIRED_RESERVATION_BATCH_SIZE = 50;
 const RECONCILIATION_CONCURRENCY = 5;
 const EVERY_MINUTE = "* * * * *";
 const FINAL_UNPAID_STATUSES = new Set(["cancelled", "failed"]);
+const CONFIRMED_BOOKING_STATUSES = new Set<BookingStatus>([
+  BookingStatus.CONFIRMED,
+  BookingStatus.ACTIVE,
+  BookingStatus.COMPLETED,
+]);
 
 interface ExpiredReservation {
   id: string;
   paymentIntent: string | null;
   kind: "booking" | "extension";
 }
+
+export type ExpiredReservationReconciliationOutcome = "confirmed" | "cancelled" | "retained";
 
 @Injectable()
 export class BookingReservationExpirationService {
@@ -80,7 +87,9 @@ export class BookingReservationExpirationService {
     }
   }
 
-  async reconcileExpiredReservation(bookingId: string): Promise<boolean> {
+  async reconcileExpiredReservation(
+    bookingId: string,
+  ): Promise<ExpiredReservationReconciliationOutcome> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservation = await this.databaseService.booking.findFirst({
@@ -102,11 +111,15 @@ export class BookingReservationExpirationService {
       },
     });
 
-    if (!reservation) return false;
+    if (!reservation) {
+      return this.classifyPersistedOutcome({ id: bookingId, kind: "booking" });
+    }
     return this.reconcileReservation({ ...reservation, kind: "booking" });
   }
 
-  async reconcileExpiredExtension(extensionId: string): Promise<boolean> {
+  async reconcileExpiredExtension(
+    extensionId: string,
+  ): Promise<ExpiredReservationReconciliationOutcome> {
     const now = new Date();
     const orphanedBefore = new Date(now.getTime() - BOOKING_PAYMENT_SESSION_DURATION_MS);
     const reservation = await this.databaseService.extension.findFirst({
@@ -128,7 +141,9 @@ export class BookingReservationExpirationService {
       },
     });
 
-    if (!reservation) return false;
+    if (!reservation) {
+      return this.classifyPersistedOutcome({ id: extensionId, kind: "extension" });
+    }
     return this.reconcileReservation({ ...reservation, kind: "extension" });
   }
 
@@ -208,7 +223,7 @@ export class BookingReservationExpirationService {
       const reconciled = await Promise.all(
         batch.map((reservation) => this.reconcileReservation(reservation, onFailure)),
       );
-      reconciledCount += reconciled.filter(Boolean).length;
+      reconciledCount += reconciled.filter((outcome) => outcome !== "retained").length;
     }
     return reconciledCount;
   }
@@ -216,7 +231,7 @@ export class BookingReservationExpirationService {
   private async reconcileReservation(
     reservation: ExpiredReservation,
     onFailure?: (error: unknown) => void,
-  ): Promise<boolean> {
+  ): Promise<ExpiredReservationReconciliationOutcome> {
     const paymentReferences = this.paymentReferencesFor(reservation);
 
     try {
@@ -234,20 +249,23 @@ export class BookingReservationExpirationService {
           payment_type: transaction.payment_type ?? "unknown",
           created_at: transaction.created_at,
         });
-        return true;
+        return this.classifyPersistedOutcome(reservation);
       }
 
       if (
         transaction === null ||
         FINAL_UNPAID_STATUSES.has(transaction.status.trim().toLowerCase())
       ) {
-        return reservation.kind === "booking"
-          ? this.bookingReservationService.cancelExpiredReservation(reservation.id)
-          : this.extensionReservationService.cancelExpiredReservation(reservation.id);
+        if (reservation.kind === "booking") {
+          await this.bookingReservationService.cancelExpiredReservation(reservation.id);
+        } else {
+          await this.extensionReservationService.cancelExpiredReservation(reservation.id);
+        }
+        return this.classifyPersistedOutcome(reservation);
       }
       // Any other provider status is non-terminal. Keep the slot reserved and
       // retry on the next run rather than risk releasing a successfully paid car.
-      return false;
+      return "retained";
     } catch (error) {
       onFailure?.(error);
       this.logger.warn(
@@ -259,8 +277,52 @@ export class BookingReservationExpirationService {
         },
         "Retaining expired reservation while payment status is uncertain",
       );
-      return false;
+      return "retained";
     }
+  }
+
+  private async classifyPersistedOutcome(
+    reservation: Pick<ExpiredReservation, "id" | "kind">,
+  ): Promise<ExpiredReservationReconciliationOutcome> {
+    if (reservation.kind === "booking") {
+      const booking = await this.databaseService.booking.findUnique({
+        where: { id: reservation.id },
+        select: {
+          status: true,
+          paymentStatus: true,
+        },
+      });
+      if (!booking) return "retained";
+      if (
+        booking.paymentStatus === PaymentStatus.PAID &&
+        CONFIRMED_BOOKING_STATUSES.has(booking.status)
+      ) {
+        return "confirmed";
+      }
+      if (
+        booking.paymentStatus === PaymentStatus.UNPAID &&
+        booking.status === BookingStatus.CANCELLED
+      ) {
+        return "cancelled";
+      }
+      return "retained";
+    }
+
+    const extension = await this.databaseService.extension.findUnique({
+      where: { id: reservation.id },
+      select: {
+        status: true,
+        paymentStatus: true,
+      },
+    });
+    if (!extension) return "retained";
+    if (extension.paymentStatus === PaymentStatus.PAID && extension.status === "ACTIVE") {
+      return "confirmed";
+    }
+    if (extension.paymentStatus === PaymentStatus.UNPAID && extension.status === "CANCELLED") {
+      return "cancelled";
+    }
+    return "retained";
   }
 
   private async markReconciliationChecked(reservation: ExpiredReservation): Promise<void> {

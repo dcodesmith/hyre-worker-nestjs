@@ -206,7 +206,9 @@ describe("PaymentApiService", () => {
           bookingStatus: BookingStatus.CANCELLED,
           lifecycleState: "EXPIRED",
         });
-      bookingReservationExpirationService.reconcileExpiredReservation.mockResolvedValueOnce(true);
+      bookingReservationExpirationService.reconcileExpiredReservation.mockResolvedValueOnce(
+        "cancelled",
+      );
 
       await expect(
         service.reconcileBookingExpiration(
