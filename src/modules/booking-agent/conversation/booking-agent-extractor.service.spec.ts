@@ -734,6 +734,7 @@ describe("BookingAgentExtractorService", () => {
             }),
           ]),
         }),
+        { timeout: 10_000, maxRetries: 1 },
       );
     });
   });
@@ -778,6 +779,7 @@ describe("BookingAgentExtractorService", () => {
             }),
           ]),
         }),
+        { timeout: 10_000, maxRetries: 1 },
       );
 
       // Verify the conversation history is included

@@ -13,6 +13,8 @@ import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
 import {
   BOOKING_AGENT_BUTTON_ID,
+  BOOKING_AGENT_MODEL_MAX_RETRIES,
+  BOOKING_AGENT_MODEL_TIMEOUT_MS,
   BOOKING_AGENT_RESPONSE_MAX_TOKENS,
   BOOKING_AGENT_RESPONSE_MODEL,
   BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
@@ -77,14 +79,19 @@ export class BookingAgentResponderService {
 
       this.logger.debug({ conversationId, userContext }, "Responder user context diagnostics");
 
-      const response = await this.claude.messages.create({
-        model: BOOKING_AGENT_RESPONSE_MODEL,
-        max_tokens: BOOKING_AGENT_RESPONSE_MAX_TOKENS,
-        system: systemPrompt,
-        // The installed SDK types predate Sonnet 5.5. `disabled` is rejected.
-        thinking: { type: "between_tools" } as unknown as MessageCreateParams["thinking"],
-        messages: this.buildModelMessages(messages, userContext),
-      });
+      const response = await this.claude.messages.create(
+        {
+          model: BOOKING_AGENT_RESPONSE_MODEL,
+          max_tokens: BOOKING_AGENT_RESPONSE_MAX_TOKENS,
+          system: systemPrompt,
+          thinking: { type: "between_tools" },
+          messages: this.buildModelMessages(messages, userContext),
+        },
+        {
+          timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
+          maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
+        },
+      );
 
       const content = this.getTextFromClaudeResponse(response.content);
 

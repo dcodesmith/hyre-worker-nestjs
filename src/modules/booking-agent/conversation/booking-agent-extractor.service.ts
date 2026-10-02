@@ -10,7 +10,12 @@ import {
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./control-intent.policy";
-import { BOOKING_AGENT_BUTTON_ID, BOOKING_AGENT_EXTRACTION_MODEL } from "./conversation.const";
+import {
+  BOOKING_AGENT_BUTTON_ID,
+  BOOKING_AGENT_EXTRACTION_MODEL,
+  BOOKING_AGENT_MODEL_MAX_RETRIES,
+  BOOKING_AGENT_MODEL_TIMEOUT_MS,
+} from "./conversation.const";
 import { BookingAgentExtractionFailedException } from "./conversation.error";
 import type {
   BookingAgentState,
@@ -92,14 +97,20 @@ export class BookingAgentExtractorService {
         stage,
         messages,
       });
-      const response = await this.openai.chat.completions.create({
-        model: BOOKING_AGENT_EXTRACTION_MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: inboundMessage },
-        ],
-        response_format: { type: "json_object" },
-      });
+      const response = await this.openai.chat.completions.create(
+        {
+          model: BOOKING_AGENT_EXTRACTION_MODEL,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: inboundMessage },
+          ],
+          response_format: { type: "json_object" },
+        },
+        {
+          timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
+          maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
+        },
+      );
       this.logger.debug({ conversationId }, "Extraction response received");
 
       const content = response.choices[0]?.message.content ?? "";

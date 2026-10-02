@@ -79,6 +79,7 @@ describe("BookingAgentResponderService", () => {
             }),
           ]),
         }),
+        { timeout: 10_000, maxRetries: 1 },
       );
     });
 
