@@ -460,9 +460,9 @@ describe("WhatsAppPersistenceService", () => {
         where: { dedupeKey: "dedupe-1" },
         update: {},
         create: expect.objectContaining({
+          conversationId: "conv-1",
           dedupeKey: "dedupe-1",
           maxAttempts: 5,
-          conversation: { connect: { id: "conv-1" } },
         }),
       }),
     );

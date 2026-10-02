@@ -279,6 +279,7 @@ export class WhatsAppPersistenceService {
       where: { dedupeKey: input.dedupeKey },
       update: {},
       create: {
+        conversationId: input.conversationId,
         dedupeKey: input.dedupeKey,
         mode: input.mode,
         textBody: input.textBody ?? null,
@@ -289,9 +290,6 @@ export class WhatsAppPersistenceService {
           ? (input.templateVariables as unknown as Prisma.InputJsonValue)
           : undefined,
         updatedAt: now,
-        conversation: {
-          connect: { id: input.conversationId },
-        },
       },
       select: { id: true },
     });
