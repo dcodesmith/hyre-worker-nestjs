@@ -326,7 +326,7 @@ describe("BookingAgentTurnService", () => {
       );
       const confirmation = "Payment confirmed — your booking is confirmed.";
       const responder = new BookingAgentResponderService(
-        { invoke: vi.fn() } as never,
+        { messages: { create: vi.fn() } } as never,
         { setContext: vi.fn() } as never,
       );
       responderServiceMock.generateResponse.mockImplementation((state: BookingAgentState) =>

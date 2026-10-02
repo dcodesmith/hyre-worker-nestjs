@@ -1,7 +1,6 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { BullBoardModule } from "@bull-board/nestjs";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatOpenAI } from "@langchain/openai";
 import { BullModule } from "@nestjs/bullmq";
 import { Inject, Module, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -28,12 +27,7 @@ import { BookingAgentResponderService } from "./conversation/booking-agent-respo
 import { BookingAgentStateService } from "./conversation/booking-agent-state.service";
 import { BookingAgentTurnService } from "./conversation/booking-agent-turn.service";
 import {
-  BOOKING_AGENT_EXTRACTION_MODEL,
-  BOOKING_AGENT_RESPONSE_MODEL,
-} from "./conversation/conversation.const";
-import {
   BOOKING_AGENT_ANTHROPIC_CLIENT,
-  BOOKING_AGENT_OPENAI_CLIENT,
   BOOKING_AGENT_REDIS_CLIENT,
 } from "./conversation/conversation.tokens";
 import { CreateBookingAction } from "./conversation/create-booking.action";
@@ -78,21 +72,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
       inject: [ConfigService],
       useFactory: (configService: ConfigService<EnvConfig>) => {
         const apiKey = configService.get("ANTHROPIC_API_KEY", { infer: true });
-        return new ChatAnthropic({
-          apiKey,
-          model: BOOKING_AGENT_RESPONSE_MODEL,
-        });
-      },
-    },
-    {
-      provide: BOOKING_AGENT_OPENAI_CLIENT,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService<EnvConfig>) => {
-        const apiKey = configService.get("OPENAI_API_KEY", { infer: true });
-        return new ChatOpenAI({
-          apiKey,
-          model: BOOKING_AGENT_EXTRACTION_MODEL,
-        });
+        return new Anthropic({ apiKey });
       },
     },
     {

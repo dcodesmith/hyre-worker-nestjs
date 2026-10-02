@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
+import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
 import {
   isAgentRequestControl,
   isBareCancelControl,
@@ -9,15 +10,13 @@ import {
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./control-intent.policy";
-import { BOOKING_AGENT_BUTTON_ID } from "./conversation.const";
+import { BOOKING_AGENT_BUTTON_ID, BOOKING_AGENT_EXTRACTION_MODEL } from "./conversation.const";
 import { BookingAgentExtractionFailedException } from "./conversation.error";
 import type {
   BookingAgentState,
   ExtractionResult,
   InteractiveReply,
 } from "./conversation.interface";
-import type { BookingAgentOpenAIClient } from "./conversation.tokens";
-import { BOOKING_AGENT_OPENAI_CLIENT } from "./conversation.tokens";
 import { buildExtractorSystemPrompt } from "./prompts/extractor.prompt";
 
 const extractionSchema = z.object({
@@ -59,7 +58,7 @@ const extractionSchema = z.object({
 @Injectable()
 export class BookingAgentExtractorService {
   constructor(
-    @Inject(BOOKING_AGENT_OPENAI_CLIENT) private readonly openai: BookingAgentOpenAIClient,
+    @Inject(OPENAI_SDK_CLIENT) private readonly openai: OpenAiSdkClient,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingAgentExtractorService.name);
@@ -93,13 +92,17 @@ export class BookingAgentExtractorService {
         stage,
         messages,
       });
-      const response = await this.openai.invoke([
-        { role: "system", content: systemPrompt },
-        { role: "user", content: inboundMessage },
-      ]);
+      const response = await this.openai.chat.completions.create({
+        model: BOOKING_AGENT_EXTRACTION_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: inboundMessage },
+        ],
+        response_format: { type: "json_object" },
+      });
       this.logger.debug({ conversationId }, "Extraction response received");
 
-      const content = this.getTextContent(response.content);
+      const content = response.choices[0]?.message.content ?? "";
       const parsed = JSON.parse(content);
       const validated = extractionSchema.parse(parsed);
 
@@ -294,15 +297,5 @@ export class BookingAgentExtractorService {
     }
 
     return null;
-  }
-
-  private getTextContent(content: unknown): string {
-    if (typeof content === "string") {
-      return content;
-    }
-    if (Array.isArray(content) && content.length > 0 && content[0]?.type === "text") {
-      return String(content[0].text ?? "");
-    }
-    return "";
   }
 }
