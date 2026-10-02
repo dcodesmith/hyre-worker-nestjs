@@ -20,10 +20,15 @@ export class MergeAction {
       return {};
     }
 
-    const baseDraft = shouldApplyDraftPatch(extraction.intent)
-      ? { ...draft, ...extraction.draftPatch }
-      : { ...draft };
-    const newDraft = applyDerivedDraftFields(baseDraft, state.inboundMessage);
+    const shouldUpdateDraft = shouldApplyDraftPatch(extraction.intent);
+    const baseDraft = shouldUpdateDraft ? { ...draft, ...extraction.draftPatch } : { ...draft };
+    const newDraft = shouldUpdateDraft
+      ? applyDerivedDraftFields(baseDraft, state.inboundMessage, extraction.draftPatch)
+      : baseDraft;
+    if (extraction.clarificationPrompt) {
+      delete newDraft.durationDays;
+      delete newDraft.dropoffDate;
+    }
 
     const newPreferences = this.mergePreferencesWithHint(preferences, extraction.preferenceHint);
 

@@ -36,6 +36,9 @@ describe("booking-agent-booking-rules", () => {
     expect(getDurationUnitClarification("Day booking from tomorrow for 2 nights", "DAY")).toBe(
       "You mentioned a Day booking for 2 nights. Do you want a Day booking for 2 days, or a Night booking for 2 nights?",
     );
+    expect(getDurationUnitClarification("Day booking for 2 days, actually 3 nights", "DAY")).toBe(
+      "You mentioned a Day booking for 3 nights. Do you want a Day booking for 3 days, or a Night booking for 3 nights?",
+    );
     expect(getDurationUnitClarification("Night booking for 2 nights", "NIGHT")).toBeNull();
   });
 

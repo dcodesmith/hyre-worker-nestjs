@@ -180,10 +180,16 @@ describe("booking-agent-router.policy", () => {
     expect(decision.nextAction).not.toBe("create_booking");
   });
 
-  it("clears state for reset intent", () => {
+  it("clears state for reset intent even when duration clarification is present", () => {
     const decision = resolveRouteDecision(
       buildState({
-        extraction: { intent: "reset", draftPatch: {}, confidence: 1 },
+        extraction: {
+          intent: "reset",
+          draftPatch: {},
+          clarificationPrompt:
+            "Do you want a Day booking for 2 days, or a Night booking for 2 nights?",
+          confidence: 1,
+        },
         selectedOption: buildVehicleOption(),
         availableOptions: [buildVehicleOption()],
       }),

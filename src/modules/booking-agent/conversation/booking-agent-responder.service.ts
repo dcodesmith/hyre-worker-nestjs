@@ -136,8 +136,8 @@ export class BookingAgentResponderService {
     } = state;
 
     return (
-      this.buildClarificationResponse(extraction?.clarificationPrompt) ??
       this.buildResetResponse(extraction?.intent) ??
+      this.buildClarificationResponse(extraction?.clarificationPrompt) ??
       this.buildGreetingErrorResponse(stage, error) ??
       this.buildCompletedStatusResponse(stage, statusMessage) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??

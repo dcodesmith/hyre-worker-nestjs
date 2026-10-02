@@ -31,13 +31,20 @@ export function hasDraftChanged(oldDraft: BookingDraft, newDraft: BookingDraft):
   return keyFields.some((field) => oldDraft[field] !== newDraft[field]);
 }
 
-export function applyDerivedDraftFields(draft: BookingDraft, inboundMessage: string): BookingDraft {
+export function applyDerivedDraftFields(
+  draft: BookingDraft,
+  inboundMessage: string,
+  draftPatch: Partial<BookingDraft> = {},
+): BookingDraft {
   const updatedDraft: BookingDraft = { ...draft };
+  const extractedDropoffLocation = draftPatch.dropoffLocation;
+  const hasNewExplicitDropoff =
+    extractedDropoffLocation && !hasSameLocationInstruction(extractedDropoffLocation);
 
   if (
     updatedDraft.pickupLocation &&
     hasSameLocationInstruction(inboundMessage) &&
-    (!updatedDraft.dropoffLocation || hasSameLocationInstruction(updatedDraft.dropoffLocation))
+    !hasNewExplicitDropoff
   ) {
     updatedDraft.dropoffLocation = updatedDraft.pickupLocation;
   }
@@ -73,8 +80,12 @@ export function getDurationUnitClarification(
   message: string,
   bookingType: BookingDraft["bookingType"],
 ): string | null {
-  const durationMatch =
-    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(days?|nights?)\b/i.exec(message);
+  const durationMatches = [
+    ...message.matchAll(
+      /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(days?|nights?)\b/gi,
+    ),
+  ];
+  const durationMatch = durationMatches[durationMatches.length - 1];
   if (!durationMatch || !bookingType || bookingType === "AIRPORT_PICKUP") {
     return null;
   }

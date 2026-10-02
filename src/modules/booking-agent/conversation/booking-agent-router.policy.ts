@@ -20,7 +20,7 @@ export function resolveRouteDecision(state: BookingAgentState): BookingAgentRout
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
   }
 
-  if (extraction.clarificationPrompt) {
+  if (extraction.clarificationPrompt && extraction.intent !== "reset") {
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
   }
 
