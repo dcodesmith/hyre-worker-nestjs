@@ -50,6 +50,16 @@ describe("BookingAgentResponderService", () => {
       await expect(service.generateResponse(state)).rejects.toThrow();
     });
 
+    it("throws when the API response contains no text", async () => {
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "thinking", thinking: "Internal reasoning", signature: "signature" }],
+      });
+
+      const state = buildState();
+
+      await expect(service.generateResponse(state)).rejects.toThrow();
+    });
+
     it("includes conversation history in context", async () => {
       claudeMock.messages.create.mockResolvedValue({
         content: [{ type: "text", text: "Response" }],

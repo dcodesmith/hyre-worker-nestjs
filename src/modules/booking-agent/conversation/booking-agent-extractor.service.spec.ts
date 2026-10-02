@@ -596,7 +596,13 @@ describe("BookingAgentExtractorService", () => {
 
     it("throws on invalid JSON response", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
-        content: "not valid json",
+        choices: [
+          {
+            message: {
+              content: "not valid json",
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "test" });

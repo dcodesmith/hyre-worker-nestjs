@@ -93,13 +93,16 @@ export class BookingAgentResponderService {
         },
       );
 
-      const content = this.getTextFromClaudeResponse(response.content);
+      const text = this.getTextFromClaudeResponse(response.content).trim();
+      if (!text) {
+        throw new Error("Anthropic response contained no text");
+      }
 
       const interactive = this.determineInteractive(stage, draft, selectedOption, state.error);
       const vehicleCards = this.buildVehicleCards(stage, availableOptions, draft);
 
       return {
-        text: String(content).trim(),
+        text,
         interactive,
         vehicleCards,
       };
