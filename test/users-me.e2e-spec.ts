@@ -27,7 +27,7 @@ vi.mock("twilio", () => ({
 
 const seededProfile = {
   name: "Ada Lovelace",
-  phoneNumber: "+2348012345678",
+  phoneNumber: "+2348012345603",
   phoneVerified: false,
   city: "Lagos",
   address: "12 Marina",
@@ -89,7 +89,9 @@ describe("Current user profile E2E Tests", () => {
     await app.init();
 
     userEmail = uniqueEmail("users-me");
-    const auth = await factory.authenticateAndGetUser(userEmail, "user");
+    const auth = await factory.authenticateAndGetUser(userEmail, "user", "mobile", {
+      phoneVerified: false,
+    });
     userCookie = auth.cookie;
     userId = auth.user.id;
   });

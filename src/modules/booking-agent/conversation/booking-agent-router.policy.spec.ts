@@ -68,6 +68,36 @@ describe("booking-agent-router.policy", () => {
     expect(decision.nextAction).toBe("prepare_quote");
   });
 
+  it("handles retry and agent buttons after the transient error has been cleared", () => {
+    const base = {
+      stage: "confirming" as const,
+      error: null,
+      selectedOption: buildVehicleOption(),
+      pricingPreview: buildPricingPreview(),
+      extraction: { intent: "unknown" as const, draftPatch: {}, confidence: 0.5 },
+    };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...base,
+          inboundInteractive: {
+            type: "button",
+            buttonId: BOOKING_AGENT_BUTTON_ID.RETRY_BOOKING,
+          },
+        }),
+      ),
+    ).toEqual({ nextAction: "create_booking" });
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...base,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.AGENT },
+        }),
+      ),
+    ).toEqual({ nextAction: "handoff" });
+  });
+
   it("routes to collecting and clears selection for negative confirming response", () => {
     const vehicle = buildVehicleOption();
     const state = buildState({

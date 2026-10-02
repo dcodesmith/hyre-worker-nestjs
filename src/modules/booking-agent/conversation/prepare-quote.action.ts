@@ -68,6 +68,18 @@ export class PrepareQuoteAction {
         };
       }
 
+      if (state.stage === "confirming" && !state.pricingPreview) {
+        const pricing = await this.preview(
+          state,
+          state.requiresFullTank ?? true,
+          Math.max(0, state.useCredits ?? 0),
+        );
+        return {
+          pricingPreview: pricing,
+          stage: "confirming",
+        };
+      }
+
       return {};
     } catch (error) {
       this.logger.error(

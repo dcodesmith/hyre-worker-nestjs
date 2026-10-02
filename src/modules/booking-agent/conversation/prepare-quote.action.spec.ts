@@ -256,6 +256,34 @@ describe("PrepareQuoteAction", () => {
     });
   });
 
+  it("rebuilds a missing quote while remaining in the confirming stage", async () => {
+    const preview = buildPricingPreview({ totalAmount: 150000 });
+    pricingPreviewService.preview.mockResolvedValue(preview);
+
+    const result = await action.run(
+      buildState({
+        stage: "confirming",
+        draft: readyDraft,
+        selectedOption: buildVehicleOption(),
+        pricingPreview: null,
+        requiresFullTank: false,
+        useCredits: 1000,
+      }),
+    );
+
+    expect(pricingPreviewService.preview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiresFullTank: false,
+        useCredits: 1000,
+      }),
+      null,
+    );
+    expect(result).toEqual({
+      pricingPreview: preview,
+      stage: "confirming",
+    });
+  });
+
   it("returns a confirming error when pricing fails", async () => {
     addonsService.listPublic.mockResolvedValue({ addons: [] });
     pricingPreviewService.preview.mockRejectedValue(new Error("pricing down"));

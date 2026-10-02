@@ -142,6 +142,12 @@ describe("WhatsAppPersistenceService", () => {
 
     it("links a verified phone and clears state before the database update", async () => {
       const order: string[] = [];
+      databaseService.$transaction.mockImplementation(
+        async (callback: (tx: typeof databaseService) => unknown) => {
+          order.push("transaction");
+          return callback(databaseService);
+        },
+      );
       databaseService.whatsAppConversation.findUnique.mockResolvedValue({
         phoneE164: "+2348012345678",
         linkedUserId: null,
@@ -157,7 +163,7 @@ describe("WhatsAppPersistenceService", () => {
         order.push("clear");
       });
 
-      expect(order).toEqual(["clear", "update"]);
+      expect(order).toEqual(["clear", "transaction", "update"]);
       expect(databaseService.$queryRaw).toHaveBeenCalled();
       expect(databaseService.user.findFirst).toHaveBeenCalledWith({
         where: {
@@ -273,6 +279,29 @@ describe("WhatsAppPersistenceService", () => {
           throw clearError;
         }),
       ).rejects.toBe(clearError);
+      expect(databaseService.$transaction).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("preserves revocation when the row changes after state is cleared", async () => {
+      databaseService.whatsAppConversation.findUnique
+        .mockResolvedValueOnce({
+          phoneE164: "+2348012345678",
+          linkedUserId: null,
+          linkStatus: WhatsAppLinkStatus.UNLINKED,
+        })
+        .mockResolvedValueOnce({
+          phoneE164: "+2348012345678",
+          linkedUserId: null,
+          linkStatus: WhatsAppLinkStatus.REVOKED,
+        });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      const clearState = vi.fn().mockResolvedValue(undefined);
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).toHaveBeenCalledOnce();
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
       expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
     });
   });

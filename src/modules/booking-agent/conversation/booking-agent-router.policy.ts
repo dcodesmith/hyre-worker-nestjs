@@ -273,6 +273,9 @@ function resolveInteractiveConfirmation(
   state: BookingAgentState,
   interactiveId: string,
 ): BookingAgentRouteDecision {
+  if (interactiveId === BOOKING_AGENT_BUTTON_ID.AGENT) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.HANDOFF };
+  }
   if (interactiveId === BOOKING_AGENT_BUTTON_ID.CANCEL) {
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "cancelled" };
   }
@@ -300,7 +303,8 @@ function resolveInteractiveConfirmation(
     return buildRejectDecision(state);
   } else if (
     interactiveId !== BOOKING_AGENT_BUTTON_ID.CONFIRM &&
-    interactiveId !== BOOKING_AGENT_BUTTON_ID.YES
+    interactiveId !== BOOKING_AGENT_BUTTON_ID.YES &&
+    interactiveId !== BOOKING_AGENT_BUTTON_ID.RETRY_BOOKING
   ) {
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
   }

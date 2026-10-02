@@ -91,6 +91,37 @@ export class WhatsAppPersistenceService {
     conversationId: string,
     beforeIdentityChange: () => Promise<void>,
   ): Promise<void> {
+    const currentConversation = await this.databaseService.whatsAppConversation.findUnique({
+      where: { id: conversationId },
+      select: {
+        phoneE164: true,
+        linkedUserId: true,
+        linkStatus: true,
+      },
+    });
+    if (!currentConversation || currentConversation.linkStatus === WhatsAppLinkStatus.REVOKED) {
+      return;
+    }
+
+    const currentVerifiedUser = await this.databaseService.user.findFirst({
+      where: {
+        phoneNumber: currentConversation.phoneE164,
+        phoneVerifiedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    const currentLinkedUserId = currentVerifiedUser?.id ?? null;
+    const identityWillChange =
+      currentConversation.linkedUserId !== currentLinkedUserId ||
+      (currentLinkedUserId !== null &&
+        currentConversation.linkStatus !== WhatsAppLinkStatus.LINKED);
+    if (!identityWillChange) {
+      return;
+    }
+
+    // Redis may be slow or unavailable, so clear it before holding the database row lock.
+    await beforeIdentityChange();
+
     await this.databaseService.$transaction(async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM "WhatsAppConversation" WHERE id = ${conversationId}::uuid FOR UPDATE`,
@@ -122,7 +153,6 @@ export class WhatsAppPersistenceService {
         return;
       }
 
-      await beforeIdentityChange();
       await tx.whatsAppConversation.update({
         where: { id: conversationId },
         data: verifiedUser

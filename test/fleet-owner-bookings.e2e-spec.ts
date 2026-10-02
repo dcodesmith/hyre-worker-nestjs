@@ -46,8 +46,6 @@ describe("Fleet Owner Booking E2E Tests", () => {
         fleetOwnerStatus: "APPROVED",
         hasOnboarded: true,
         emailVerified: true,
-        phoneNumber: "+2348012345678",
-        phoneVerifiedAt: new Date(),
       },
     });
 

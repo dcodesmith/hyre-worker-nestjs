@@ -117,8 +117,6 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       where: { id: auth.user.id },
       data: {
         emailVerified: true,
-        phoneNumber: "+2348012345678",
-        phoneVerifiedAt: new Date(),
         hasOnboarded: true,
         fleetOwnerStatus: "APPROVED",
         isOwnerDriver: extras.isOwnerDriver ?? false,

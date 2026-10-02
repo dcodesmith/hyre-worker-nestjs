@@ -111,7 +111,7 @@ describe("Booking Agent", () => {
         hasOnboarded: true,
         isOwnerDriver: true,
         emailVerified: true,
-        phoneNumber: "+2348012345678",
+        phoneNumber: "+2348012345602",
         phoneVerifiedAt: new Date(),
       },
     });
