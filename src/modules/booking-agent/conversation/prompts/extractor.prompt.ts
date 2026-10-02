@@ -151,5 +151,12 @@ RULES:
 10. If user explicitly says a brand/model with vehicle type, extract it:
    - "Toyota SUV" -> make: "Toyota"
    - "Toyota Highlander SUV" -> make: "Toyota", model: "Highlander"
-11. If user does NOT explicitly mention make/model, do NOT invent them`;
+11. If user does NOT explicitly mention make/model/color, do NOT invent them
+12. Record explicit no-preference answers using "ANY":
+   - "any make" or "no make preference" -> make: "ANY"
+   - "any model" or "no model preference" -> model: "ANY"
+   - "any make or model" -> make: "ANY", model: "ANY"
+13. Vehicle type is required before search. Make, model, and color are optional filters:
+    - "SUV" is sufficient to search all available SUVs
+    - Add make/model/color only when the user explicitly provides them`;
 }

@@ -9,6 +9,7 @@ describe("booking-agent-router.policy", () => {
     const state = buildState({
       draft: {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         pickupLocation: "Victoria Island",
@@ -27,6 +28,7 @@ describe("booking-agent-router.policy", () => {
     const state = buildState({
       draft: {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         pickupLocation: "Victoria Island",
@@ -40,6 +42,27 @@ describe("booking-agent-router.policy", () => {
     const decision = resolveRouteDecision(state);
     expect(decision.nextAction).toBe("respond");
     expect(decision.stage).toBe("presenting_options");
+  });
+
+  it("keeps collecting when vehicle type is missing", () => {
+    const state = buildState({
+      draft: {
+        bookingType: "DAY",
+        make: "Toyota",
+        model: "Prado",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        pickupLocation: "Victoria Island",
+        dropoffDate: "2026-03-01",
+        dropoffLocation: "Lekki",
+      },
+      extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.9 },
+    });
+
+    expect(resolveRouteDecision(state)).toEqual({
+      nextAction: "respond",
+      stage: "collecting",
+    });
   });
 
   it("routes to create_booking for affirmative confirming response when the quote is ready", () => {

@@ -400,6 +400,39 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.pickupLocation).toBe("Victoria Island");
     });
 
+    it("requests clarification for conflicting booking type and duration units", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  bookingType: "DAY",
+                  pickupDate: "2026-10-03",
+                  durationDays: 2,
+                  dropoffDate: "2026-10-04",
+                },
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({ inboundMessage: "Day booking from tomorrow for 2 nights" }),
+      );
+
+      expect(result.clarificationPrompt).toContain(
+        "Do you want a Day booking for 2 days, or a Night booking for 2 nights?",
+      );
+      expect(result.draftPatch).toEqual({
+        bookingType: "DAY",
+        pickupDate: "2026-10-03",
+      });
+    });
+
     it("uses make when extractor returns explicit brand from message", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
         choices: [

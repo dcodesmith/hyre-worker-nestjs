@@ -136,6 +136,7 @@ export class BookingAgentResponderService {
     } = state;
 
     return (
+      this.buildClarificationResponse(extraction?.clarificationPrompt) ??
       this.buildResetResponse(extraction?.intent) ??
       this.buildGreetingErrorResponse(stage, error) ??
       this.buildCompletedStatusResponse(stage, statusMessage) ??
@@ -147,6 +148,10 @@ export class BookingAgentResponderService {
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
       this.buildAwaitingPaymentResponse(stage, paymentLink, holdExpiresAt, selectedOption, draft)
     );
+  }
+
+  private buildClarificationResponse(clarificationPrompt?: string): AgentResponse | null {
+    return clarificationPrompt ? { text: clarificationPrompt } : null;
   }
 
   private buildResetResponse(intent?: string): AgentResponse | null {

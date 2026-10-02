@@ -20,6 +20,10 @@ export function resolveRouteDecision(state: BookingAgentState): BookingAgentRout
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
   }
 
+  if (extraction.clarificationPrompt) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
+  }
+
   const interactiveGuard = getInteractiveStageGuard(state);
   if (interactiveGuard) {
     return interactiveGuard;

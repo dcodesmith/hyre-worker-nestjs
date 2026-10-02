@@ -35,6 +35,7 @@ describe("responder.prompt contract", () => {
     expect(context).toContain("CURRENT STATE: collecting");
     expect(context).toContain("USER INTENT: provide_info");
     expect(context).toContain("MISSING REQUIRED FIELDS:");
+    expect(context).toContain("vehicleType");
     expect(context).toContain("INSTRUCTION: Ask for ALL missing fields");
   });
 

@@ -60,6 +60,24 @@ describe("BookingAgentResponderService", () => {
       await expect(service.generateResponse(state)).rejects.toThrow();
     });
 
+    it("returns duration clarification without calling the model", async () => {
+      const clarificationPrompt =
+        "Do you want a Day booking for 2 days, or a Night booking for 2 nights?";
+      const response = await service.generateResponse(
+        buildState({
+          extraction: {
+            intent: "provide_info",
+            draftPatch: { bookingType: "DAY" },
+            clarificationPrompt,
+            confidence: 0.9,
+          },
+        }),
+      );
+
+      expect(response.text).toBe(clarificationPrompt);
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
+    });
+
     it("includes conversation history in context", async () => {
       claudeMock.messages.create.mockResolvedValue({
         content: [{ type: "text", text: "Response" }],

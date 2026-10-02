@@ -68,7 +68,7 @@ export class BookingAgentOrchestratorService {
           this.buildSingleOutboxReply(context, {
             dedupeKey: `media-fallback:${context.messageId}`,
             textBody:
-              "Thanks. For now, please send your pickup location, date/time, and booking type (DAY, NIGHT, or FULL_DAY) as text.",
+              "Thanks. For now, please send your pickup and drop-off locations, date/time, booking type, and preferred vehicle type as text. Include a make, model, or colour only if you have a preference.",
           }),
         ],
       };
