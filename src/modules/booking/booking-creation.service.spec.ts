@@ -28,6 +28,7 @@ import { ReferralProgramService } from "../referral/referral-program.service";
 import {
   BookingCreationFailedException,
   BookingPaymentSyncFailedException,
+  BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
   BookingValidationException,
   CarNotAvailableException,
@@ -78,6 +79,13 @@ const createGuestBookingInput = (
 };
 
 // Helper to create session user context (AuthSession["user"] type from Better Auth)
+const verifiedBookingUser = (overrides: Parameters<typeof createUser>[0] = {}) =>
+  createUser({
+    phoneNumber: "+2348012345678",
+    phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+    ...overrides,
+  });
+
 const createSessionUser = (overrides: Partial<AuthSession["user"]> = {}): AuthSession["user"] => ({
   id: "user-123",
   email: "user@example.com",
@@ -262,7 +270,7 @@ describe("BookingCreationService", () => {
       vi.mocked(addonsService.resolveBookingAddons).mockResolvedValue([]);
 
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
 
       vi.mocked(legService.generateLegs).mockReturnValue([
         {
@@ -461,13 +469,48 @@ describe("BookingCreationService", () => {
       );
     });
 
+    it("rejects an authenticated booking when the phone is missing or unverified", async () => {
+      setupSuccessfulMocks();
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({ phoneNumber: "+2348012345678", phoneVerifiedAt: null }),
+      );
+
+      const error = await service
+        .createBooking({ input: createBookingInput(), sessionUser: createSessionUser() })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(BookingPhoneVerificationRequiredException);
+      expect((error as BookingPhoneVerificationRequiredException).getErrorCode()).toBe(
+        "BOOKING_PHONE_VERIFICATION_REQUIRED",
+      );
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it("rejects an authenticated booking when the user has no phone number", async () => {
+      setupSuccessfulMocks();
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({
+          phoneNumber: null,
+          phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+      );
+
+      await expect(
+        service.createBooking({ input: createBookingInput(), sessionUser: createSessionUser() }),
+      ).rejects.toBeInstanceOf(BookingPhoneVerificationRequiredException);
+    });
+
     it("should create a booking successfully for guest user", async () => {
       setupSuccessfulMocks();
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({ phoneNumber: null, phoneVerifiedAt: null }),
+      );
 
       const booking = createGuestBookingInput();
 
       const result = await service.createBooking({ input: booking, sessionUser: null });
 
+      expect(databaseService.user.findUnique).not.toHaveBeenCalled();
       expect(result).toEqual({
         bookingId: "booking-123",
         txRef: "pi-123",
@@ -517,6 +560,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingValidationException when date validation fails", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockImplementation(() => {
         throw new BookingValidationException([
           { field: "startDate", message: "Start date cannot be in the past" },
@@ -534,7 +578,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw CarNotAvailableException when car is not available", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockRejectedValue(
         new CarNotAvailableException("car-123", "Car is not available for the selected dates"),
@@ -602,7 +646,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw CarNotFoundException when car does not exist", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(null);
@@ -616,7 +660,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingValidationException when price does not match", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(databaseService.car.findUnique).mockResolvedValue(createCar());
@@ -701,6 +745,7 @@ describe("BookingCreationService", () => {
     });
 
     it("does not create another payment intent when resuming an uncertain provider result", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(idempotencyService.claim).mockResolvedValueOnce({
         kind: "resume",
         id: "idempotency-123",
@@ -723,7 +768,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw BookingCreationFailedException when numberOfLegs is zero", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
       vi.mocked(validationService.validateExpectedPrice).mockReturnValue(undefined);
@@ -778,7 +823,7 @@ describe("BookingCreationService", () => {
 
   describe("createBooking - Airport Pickup", () => {
     it("rejects invalid flight timing data before persistence", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
         flight: {
@@ -816,7 +861,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should validate flight for airport pickup bookings", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       // Validation methods now return void
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
@@ -924,7 +969,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw FlightNotFoundException when flight is not found", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
@@ -947,7 +992,7 @@ describe("BookingCreationService", () => {
     });
 
     it("should throw FlightAlreadyLandedException when flight has already landed", async () => {
-      vi.mocked(databaseService.user.findUnique).mockResolvedValue(createUser());
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
 
@@ -983,7 +1028,7 @@ describe("BookingCreationService", () => {
     it("should apply referral discount for eligible users", async () => {
       // Mock user in database with referral info (fetched for preliminary check)
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
-        createUser({
+        verifiedBookingUser({
           referredByUserId: "referrer-123", // User was referred
           referralDiscountUsed: false, // Discount not yet used
         }),
@@ -1079,7 +1124,7 @@ describe("BookingCreationService", () => {
     it("should reserve referral discount without marking it used before payment", async () => {
       // Mock user in database with referral info
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
-        createUser({
+        verifiedBookingUser({
           referredByUserId: "referrer-123",
           referralDiscountUsed: false,
         }),
@@ -1164,7 +1209,7 @@ describe("BookingCreationService", () => {
 
     it("creates no referral reward or reservation when the final discount is zero", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
-        createUser({
+        verifiedBookingUser({
           referredByUserId: "referrer-123",
           referralDiscountUsed: false,
         }),
@@ -1248,7 +1293,7 @@ describe("BookingCreationService", () => {
     it("should throw ReferralDiscountNoLongerAvailableException when discount was already used (race condition)", async () => {
       // Mock user in database - preliminary check shows eligible
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
-        createUser({
+        verifiedBookingUser({
           referredByUserId: "referrer-123",
           referralDiscountUsed: false,
         }),
@@ -1379,7 +1424,7 @@ describe("BookingCreationService", () => {
     it("should not apply referral discount when user has already used it (preliminary check)", async () => {
       // User was referred but already used their one-time discount
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(
-        createUser({
+        verifiedBookingUser({
           referredByUserId: "referrer-123",
           referralDiscountUsed: true, // ✅ Already used!
         }),

@@ -3,6 +3,7 @@ import {
   ChauffeurApprovalStatus,
   ChauffeurVerificationStage,
   ChauffeurVerificationStatus,
+  Prisma,
   ProviderVerificationStatus,
   VerificationDecisionStatus,
 } from "@prisma/client";
@@ -377,6 +378,82 @@ describe("ChauffeurActivationService", () => {
       }),
     });
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+  });
+
+  it("fails closed when the verified phone belongs to a different account", async () => {
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
+    database.user.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    database.user.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "other-phone-owner" });
+
+    await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(false);
+
+    expect(database.user.findFirst).toHaveBeenCalledWith({
+      where: {
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    expect(database.user.update).not.toHaveBeenCalled();
+    expect(database.chauffeurVerification.update).toHaveBeenCalledWith({
+      where: { id: VERIFICATION_ID },
+      data: expect.objectContaining({
+        driversLicenseDecision: VerificationDecisionStatus.REJECTED,
+        faceDecision: VerificationDecisionStatus.REJECTED,
+        selfieObjectKey: null,
+      }),
+    });
+    expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+  });
+
+  it("does not treat the chauffeur's own verified phone as a conflict", async () => {
+    const uniqueError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
+    database.user.create.mockRejectedValueOnce(uniqueError);
+    database.user.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "same-user",
+        fleetOwnerId: OWNER_ID,
+        isOwnerDriver: false,
+        roles: [{ name: USER }],
+        chauffeurVerification: null,
+      })
+      .mockResolvedValueOnce({ id: "same-user" });
+
+    await expect(service.activateIfEligible(VERIFICATION_ID)).rejects.toBe(uniqueError);
+    expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
+  });
+
+  it("ignores an unverified phone when resolving a rolled-back unique conflict", async () => {
+    const uniqueError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+    database.chauffeurVerification.findUnique.mockResolvedValue(verification());
+    database.user.create.mockRejectedValueOnce(uniqueError);
+    database.user.findFirst.mockResolvedValue(null);
+
+    await expect(service.activateIfEligible(VERIFICATION_ID)).rejects.toBe(uniqueError);
+    expect(database.user.findFirst).toHaveBeenCalledWith({
+      where: {
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
   });
 
   it("logs a selfie purge failure without failing the activation", async () => {

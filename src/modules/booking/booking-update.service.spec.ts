@@ -760,6 +760,50 @@ describe("BookingUpdateService", () => {
       );
     });
 
+    it("redacts customer phone and email from a fleet-owner assignment response", async () => {
+      const tx = {
+        booking: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+            flightId: null,
+            status: BookingStatus.CONFIRMED,
+            ...bookingWindow,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: vi.fn().mockResolvedValue({
+            id: "booking-1",
+            chauffeurId: "chauffeur-1",
+            user: { name: "Ada", email: "ada@example.com", phoneNumber: "+2348012345678" },
+            guestUser: {
+              name: "Guest",
+              guestEmail: "guest@example.com",
+              guestPhone: "08012345678",
+            },
+          }),
+        },
+        user: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "chauffeur-1",
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          }),
+          findUnique: vi.fn(),
+        },
+      };
+      databaseServiceMock.$transaction.mockImplementationOnce(
+        (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+      );
+
+      await expect(service.assignChauffeur("booking-1", "owner-1", "chauffeur-1")).resolves.toEqual(
+        {
+          id: "booking-1",
+          chauffeurId: "chauffeur-1",
+          user: { name: "Ada" },
+          guestUser: { name: "Guest" },
+        },
+      );
+    });
+
     it("returns booking details for idempotent chauffeur assignment", async () => {
       const tx = {
         booking: {

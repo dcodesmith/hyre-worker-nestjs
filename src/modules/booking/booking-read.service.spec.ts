@@ -346,6 +346,50 @@ describe("BookingReadService", () => {
     );
   });
 
+  it("keeps customer contact details on the customer's own booking", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-123",
+      userId: "user-1",
+      status: "CONFIRMED",
+      totalAmount: { toNumber: () => 12000 },
+      user: { name: "Ada", email: "ada@example.com", phoneNumber: "+2348012345678" },
+      guestUser: null,
+      legs: [{ id: "leg-1" }],
+    });
+
+    const result = await service.getBookingById("booking-123", customerSessionUser);
+
+    expect(result.user).toEqual({
+      name: "Ada",
+      email: "ada@example.com",
+      phoneNumber: "+2348012345678",
+    });
+  });
+
+  it("redacts customer phone and email from a fleet-owner booking", async () => {
+    databaseServiceMock.booking.findFirst.mockResolvedValueOnce({
+      id: "booking-123",
+      userId: "user-2",
+      status: "CONFIRMED",
+      totalAmount: { toNumber: () => 12000 },
+      user: { name: "Ada", email: "ada@example.com", phoneNumber: "+2348012345678" },
+      guestUser: {
+        name: "Guest",
+        email: "guest@example.com",
+        guestEmail: "guest@example.com",
+        guestPhone: "08012345678",
+        phone: "08012345678",
+        phoneNumber: "+2348012345678",
+      },
+      legs: [{ id: "leg-1" }],
+    });
+
+    const result = await service.getBookingById("booking-123", fleetOwnerSessionUser);
+
+    expect(result.user).toEqual({ name: "Ada" });
+    expect(result.guestUser).toEqual({ name: "Guest" });
+  });
+
   it("throws BookingNotFoundException when booking does not exist for customer", async () => {
     databaseServiceMock.booking.findFirst.mockResolvedValueOnce(null);
 

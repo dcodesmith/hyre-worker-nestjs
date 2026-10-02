@@ -10,13 +10,14 @@ import { PinoLogger } from "nestjs-pino";
 import twilio, { type Twilio } from "twilio";
 import { isThrottled } from "../../common/throttling/throttling.helper";
 import type { EnvConfig } from "../../config/env.config";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import type {
   CheckPhoneVerificationDto,
   SendPhoneVerificationDto,
 } from "./account-verification.dto";
 import {
   PhoneVerificationCodeInvalidException,
+  PhoneVerificationNumberUnavailableException,
   PhoneVerificationProviderUnavailableException,
 } from "./account-verification.error";
 
@@ -75,10 +76,17 @@ export class PhoneVerificationService {
     }
 
     await this.checkCode(`user:${userId}`, input.phoneNumber, input.code);
-    await this.databaseService.user.update({
-      where: { id: userId },
-      data: { phoneNumber: input.phoneNumber, phoneVerifiedAt: new Date() },
-    });
+    try {
+      await this.databaseService.user.update({
+        where: { id: userId },
+        data: { phoneNumber: input.phoneNumber, phoneVerifiedAt: new Date() },
+      });
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        throw new PhoneVerificationNumberUnavailableException();
+      }
+      throw error;
+    }
     return this.response("VERIFIED", input.phoneNumber);
   }
 

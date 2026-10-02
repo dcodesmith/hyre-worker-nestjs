@@ -41,7 +41,7 @@ describe("Car Search Availability E2E Flow", () => {
         hasOnboarded: true,
         isOwnerDriver: true,
         emailVerified: true,
-        phoneNumber: "+2348012345678",
+        phoneNumber: "+2348012345601",
         phoneVerifiedAt: new Date(),
       },
     });

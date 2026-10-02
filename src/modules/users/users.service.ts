@@ -20,6 +20,7 @@ import type { CurrentUserProfile } from "./users.interface";
 const currentUserProfileSelect = {
   name: true,
   phoneNumber: true,
+  phoneVerifiedAt: true,
   city: true,
   address: true,
   marketingConsent: true,
@@ -159,7 +160,11 @@ export class UsersService {
       throw new UsersUserNotFoundException();
     }
 
-    return user;
+    const { phoneVerifiedAt, ...profile } = user;
+    return {
+      ...profile,
+      phoneVerified: phoneVerifiedAt !== null,
+    };
   }
 
   async updateCurrentUserProfile(
@@ -167,26 +172,21 @@ export class UsersService {
     dto: UpdateCurrentUserBodyDto,
   ): Promise<CurrentUserProfile> {
     try {
-      const current = await this.databaseService.user.findUnique({
-        where: { id: userId },
-        select: { phoneNumber: true },
-      });
-      if (!current) {
-        throw new UsersUserNotFoundException();
-      }
-      return await this.databaseService.user.update({
+      const updated = await this.databaseService.user.update({
         where: { id: userId },
         data: {
           name: dto.name,
-          phoneNumber: dto.phoneNumber,
-          ...(dto.phoneNumber !== undefined &&
-            dto.phoneNumber !== current.phoneNumber && { phoneVerifiedAt: null }),
           city: dto.city,
           address: dto.address,
           marketingConsent: dto.marketingConsent,
         },
         select: currentUserProfileSelect,
       });
+      const { phoneVerifiedAt, ...profile } = updated;
+      return {
+        ...profile,
+        phoneVerified: phoneVerifiedAt !== null,
+      };
     } catch (error) {
       if (isRecordNotFoundError(error)) {
         throw new UsersUserNotFoundException();

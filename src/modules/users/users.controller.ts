@@ -1,7 +1,15 @@
-import { Controller, Get, HttpCode, HttpStatus, Patch, UseGuards } from "@nestjs/common";
+import { Controller, Get, HttpCode, HttpStatus, Patch, Post, UseGuards } from "@nestjs/common";
 import { ZodBody } from "../../common/decorators/zod-validation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { type AuthSession, SessionGuard } from "../auth/guards/session.guard";
+import {
+  type CheckPhoneVerificationDto,
+  checkPhoneVerificationSchema,
+  type SendPhoneVerificationDto,
+  sendPhoneVerificationSchema,
+} from "../verification/account-verification.dto";
+import { PhoneVerificationService } from "../verification/phone-verification.service";
+import { VerificationThrottlerGuard } from "../verification/verification-throttler.guard";
 import {
   type UpdateCurrentUserBodyDto,
   updateCurrentUserBodySchema,
@@ -12,7 +20,10 @@ import { UsersService } from "./users.service";
 @Controller("api/users/me")
 @UseGuards(SessionGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly phoneVerificationService: PhoneVerificationService,
+  ) {}
 
   @Get()
   async getCurrentUserProfile(
@@ -28,5 +39,23 @@ export class UsersController {
     @ZodBody(updateCurrentUserBodySchema) body: UpdateCurrentUserBodyDto,
   ): Promise<CurrentUserProfile> {
     return this.usersService.updateCurrentUserProfile(user.id, body);
+  }
+
+  @Post("phone-verifications")
+  @UseGuards(VerificationThrottlerGuard)
+  sendPhoneVerification(
+    @CurrentUser() user: AuthSession["user"],
+    @ZodBody(sendPhoneVerificationSchema) body: SendPhoneVerificationDto,
+  ) {
+    return this.phoneVerificationService.send(user.id, body);
+  }
+
+  @Post("phone-verification-checks")
+  @UseGuards(VerificationThrottlerGuard)
+  checkPhoneVerification(
+    @CurrentUser() user: AuthSession["user"],
+    @ZodBody(checkPhoneVerificationSchema) body: CheckPhoneVerificationDto,
+  ) {
+    return this.phoneVerificationService.check(user.id, body);
   }
 }

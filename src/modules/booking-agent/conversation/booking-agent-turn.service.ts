@@ -13,6 +13,7 @@ import { CreateBookingAction } from "./create-booking.action";
 import { ExtractAction } from "./extract.action";
 import { HandoffAction } from "./handoff.action";
 import { MergeAction } from "./merge.action";
+import { PrepareQuoteAction } from "./prepare-quote.action";
 import { RespondAction } from "./respond.action";
 import { RouteAction } from "./route.action";
 import { SearchAction } from "./search.action";
@@ -26,6 +27,7 @@ export class BookingAgentTurnService {
     private readonly mergeAction: MergeAction,
     private readonly routeAction: RouteAction,
     private readonly searchAction: SearchAction,
+    private readonly prepareQuoteAction: PrepareQuoteAction,
     private readonly createBookingAction: CreateBookingAction,
     private readonly respondAction: RespondAction,
     private readonly handoffAction: HandoffAction,
@@ -87,6 +89,10 @@ export class BookingAgentTurnService {
           break;
         case BOOKING_AGENT_ACTIONS.CREATE_BOOKING:
           state = this.applyActionResult(state, await this.createBookingAction.run(state));
+          state = this.applyActionResult(state, await this.respondAction.run(state));
+          break;
+        case BOOKING_AGENT_ACTIONS.PREPARE_QUOTE:
+          state = this.applyActionResult(state, await this.prepareQuoteAction.run(state));
           state = this.applyActionResult(state, await this.respondAction.run(state));
           break;
         case BOOKING_AGENT_ACTIONS.HANDOFF:

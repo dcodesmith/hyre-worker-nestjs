@@ -108,6 +108,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
   let databaseService: DatabaseService;
   let factory: TestDataFactory;
   let ownerCookie: string;
+  let ownerPhone: string;
   let userCookie: string;
   let adminCookie: string;
   let monoService: {
@@ -132,21 +133,25 @@ describe("Fleet-owner account verification E2E Tests", () => {
     return req.set("Cookie", cookie).set("X-Forwarded-For", clientIp);
   }
 
-  async function readyOwner(emailPrefix: string): Promise<{ cookie: string; id: string }> {
+  async function readyOwner(
+    emailPrefix: string,
+  ): Promise<{ cookie: string; id: string; phoneNumber: string }> {
     const auth = await factory.authenticateAndGetUser(
       uniqueEmail(emailPrefix),
       "fleetOwner",
       "web",
     );
-    await databaseService.user.update({
+    const user = await databaseService.user.update({
       where: { id: auth.user.id },
       data: {
         emailVerified: true,
-        phoneNumber: PHONE,
-        phoneVerifiedAt: new Date(),
       },
+      select: { phoneNumber: true },
     });
-    return { cookie: auth.cookie, id: auth.user.id };
+    if (!user.phoneNumber) {
+      throw new Error(`Ready fleet owner ${auth.user.id} is missing a verified phone`);
+    }
+    return { cookie: auth.cookie, id: auth.user.id, phoneNumber: user.phoneNumber };
   }
 
   function accountVerificationRequest(cookie: string, idempotencyKey: string) {
@@ -354,6 +359,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
     const owner = await readyOwner("acct-owner");
     ownerCookie = owner.cookie;
+    ownerPhone = owner.phoneNumber;
 
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("acct-user"), "user");
     userCookie = userAuth.cookie;
@@ -496,10 +502,13 @@ describe("Fleet-owner account verification E2E Tests", () => {
   it("POST /api/fleet-owner/phone-verifications is idempotent for an already-verified number", async () => {
     const response = await http("post", "/api/fleet-owner/phone-verifications")
       .set("Cookie", ownerCookie)
-      .send({ phoneNumber: PHONE });
+      .send({ phoneNumber: ownerPhone });
 
     expect(response.status).toBe(HttpStatus.CREATED);
-    expect(response.body).toEqual({ status: "VERIFIED", phoneNumber: "**********5678" });
+    expect(response.body).toEqual({
+      status: "VERIFIED",
+      phoneNumber: `**********${ownerPhone.slice(-4)}`,
+    });
     expect(twilioMocks.createVerification).not.toHaveBeenCalled();
   });
 
@@ -694,7 +703,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(status.status).toBe(HttpStatus.OK);
     expect(status.body).toMatchObject({
       status: "VERIFIED",
-      phone: { number: "**********5678", verified: true },
+      phone: { number: `**********${owner.phoneNumber.slice(-4)}`, verified: true },
       bank: { accountNumber: "******6789", verified: true },
     });
   });
@@ -1043,6 +1052,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       uniqueEmail("acct-unverified-ops"),
       "fleetOwner",
       "web",
+      { phoneVerified: false },
     );
 
     const onboarding = await http("get", "/api/fleet-owner/onboarding").set("Cookie", owner.cookie);

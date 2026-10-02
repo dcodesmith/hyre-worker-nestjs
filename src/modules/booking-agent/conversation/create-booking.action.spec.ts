@@ -2,6 +2,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
+  BookingPhoneVerificationRequiredException,
+  BookingPriceChangedException,
   BookingRequestInProgressException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -12,11 +14,11 @@ import { BookingPricingPreviewService } from "../../booking/booking-pricing-prev
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
-import { CreateBookingAction } from "./create-booking.action";
 import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
-import { buildVehicleOption } from "./conversation.factory";
-import { createDefaultLocationValidationState } from "./conversation.interface";
+import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
 import type { BookingAgentState } from "./conversation.interface";
+import { createDefaultLocationValidationState } from "./conversation.interface";
+import { CreateBookingAction } from "./create-booking.action";
 
 function buildTestState(overrides: Partial<BookingAgentState> = {}): BookingAgentState {
   return {
@@ -31,6 +33,7 @@ function buildTestState(overrides: Partial<BookingAgentState> = {}): BookingAgen
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
+    pricingPreview: buildPricingPreview(),
     holdId: null,
     holdExpiresAt: null,
     bookingId: null,
@@ -152,6 +155,9 @@ describe("CreateBookingAction", () => {
         input: expect.objectContaining({
           guestEmail: "whatsapp.2348012345678@tripdly.com",
           addonIds: [],
+          requiresFullTank: false,
+          useCredits: 0,
+          expectedTotalAmount: "150000",
         }),
         sessionUser: null,
         context: { guestContactSource: "WHATSAPP_AGENT" },
@@ -188,10 +194,102 @@ describe("CreateBookingAction", () => {
     expect(result).toEqual(
       expect.objectContaining({
         stage: "confirming",
-        selectedOption: expect.objectContaining({ estimatedTotalInclVat: 172000 }),
-        statusMessage: expect.stringContaining("₦172,000"),
+        pricingPreview: expect.objectContaining({ totalAmount: 172000 }),
+        statusMessage:
+          "Pricing changed while you were confirming. Please review the updated quote.",
       }),
     );
+    expect(result.selectedOption).toBeUndefined();
+    expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+  });
+
+  it("keeps the confirmed quote when a later price change includes the new breakdown", async () => {
+    const currentPricing = buildPricingPreview({ totalAmount: 172000, vatAmount: 12000 });
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new BookingPriceChangedException("150000", currentPricing),
+    );
+
+    const result = await createBookingAction.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+          notes: "Child seat",
+        },
+        selectedAddonIds: ["addon-wifi"],
+        requiresFullTank: true,
+        useCredits: 4000,
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(bookingCreationServiceMock.createBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          addonIds: ["addon-wifi"],
+          requiresFullTank: true,
+          useCredits: 4000,
+          specialRequests: "Child seat",
+          expectedTotalAmount: "150000",
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      pricingPreview: currentPricing,
+      error: null,
+      stage: "confirming",
+      statusMessage: "Pricing changed while you were confirming. Please review the updated quote.",
+    });
+  });
+
+  it("asks the linked customer to verify their phone before booking", async () => {
+    whatsAppPersistenceServiceMock.getConversationLinkState.mockResolvedValue({
+      linkedUserId: "user-1",
+      linkStatus: "LINKED",
+    });
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new BookingPhoneVerificationRequiredException(),
+    );
+
+    const result = await createBookingAction.run(
+      buildTestState({
+        draft: {
+          bookingType: "DAY",
+          pickupDate: "2026-03-01",
+          pickupTime: "09:00",
+          dropoffDate: "2026-03-01",
+          pickupLocation: "Victoria Island",
+          dropoffLocation: "Lekki",
+        },
+        selectedOption: buildVehicleOption(),
+      }),
+    );
+
+    expect(result).toEqual({
+      error:
+        "Verify your phone number in your Tripdly account settings, then return here and try again.",
+      statusMessage: null,
+      stage: "confirming",
+    });
+  });
+
+  it("refuses to create a booking before the final quote exists", async () => {
+    const result = await createBookingAction.run(
+      buildTestState({
+        pricingPreview: null,
+        selectedOption: buildVehicleOption(),
+        draft: { bookingType: "DAY", pickupDate: "2026-03-01" },
+      }),
+    );
+
+    expect(result).toEqual({
+      error: "The final quote is not ready yet. Please try again.",
+      stage: "confirming",
+    });
     expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
   });
 

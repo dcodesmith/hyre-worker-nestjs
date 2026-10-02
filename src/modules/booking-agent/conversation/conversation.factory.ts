@@ -1,3 +1,4 @@
+import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import type { BookingAgentState, VehicleSearchOption } from "./conversation.interface";
 
 export function buildState(overrides?: Partial<BookingAgentState>): BookingAgentState {
@@ -24,6 +25,38 @@ export function buildState(overrides?: Partial<BookingAgentState>): BookingAgent
     nextAction: null,
     error: null,
     statusMessage: null,
+    ...overrides,
+  };
+}
+
+export function buildPricingPreview(
+  overrides: Partial<BookingPricingPreviewResponseDto> = {},
+): BookingPricingPreviewResponseDto {
+  return {
+    currency: "NGN",
+    numberOfLegs: 1,
+    discountCoverage: "NONE",
+    segments: [],
+    baseTotal: 150000,
+    compareAtBaseTotal: 150000,
+    addons: [],
+    addonTotal: 0,
+    fuelUpgradeCost: 0,
+    platformFeeRatePercent: 0,
+    platformFeeAmount: 0,
+    compareAtPlatformFeeAmount: 0,
+    subtotalBeforeDiscounts: 150000,
+    compareAtSubtotalBeforeDiscounts: 150000,
+    referralDiscountAmount: 0,
+    creditsUsed: 0,
+    creditsApplicable: 0,
+    subtotalAfterDiscounts: 150000,
+    vatRatePercent: 7.5,
+    vatAmount: 0,
+    compareAtVatAmount: 0,
+    totalAmount: 150000,
+    compareAtTotalAmount: 150000,
+    savingsAmount: 0,
     ...overrides,
   };
 }

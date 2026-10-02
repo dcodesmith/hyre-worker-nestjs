@@ -1,16 +1,16 @@
 import { getMissingRequiredFields } from "../booking-agent.helper";
-import { BOOKING_AGENT_ACTIONS } from "./conversation.const";
-import type {
-  BookingAgentState,
-  BookingAgentRouteDecision,
-  VehicleSearchOption,
-} from "./conversation.interface";
 import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
 import {
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./control-intent.policy";
+import { BOOKING_AGENT_ACTIONS, BOOKING_AGENT_BUTTON_ID } from "./conversation.const";
+import type {
+  BookingAgentRouteDecision,
+  BookingAgentState,
+  VehicleSearchOption,
+} from "./conversation.interface";
 
 export function resolveRouteDecision(state: BookingAgentState): BookingAgentRouteDecision {
   const { extraction, draft, availableOptions } = state;
@@ -20,14 +20,26 @@ export function resolveRouteDecision(state: BookingAgentState): BookingAgentRout
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
   }
 
-  const intentDecision = resolveIntentDecision(state);
-  if (intentDecision) {
-    return intentDecision;
+  const interactiveGuard = getInteractiveStageGuard(state);
+  if (interactiveGuard) {
+    return interactiveGuard;
+  }
+
+  if (["request_agent", "cancel", "reset", "new_booking", "greeting"].includes(extraction.intent)) {
+    const controlDecision = resolveIntentDecision(state);
+    if (controlDecision) {
+      return controlDecision;
+    }
   }
 
   const stageGuard = getDeterministicStageGuard(state);
   if (stageGuard) {
     return stageGuard;
+  }
+
+  const intentDecision = resolveIntentDecision(state);
+  if (intentDecision) {
+    return intentDecision;
   }
 
   return resolveFallbackDecision(missingFields.length === 0, availableOptions.length === 0);
@@ -84,25 +96,224 @@ export function resolveSelection(
 }
 
 function getDeterministicStageGuard(state: BookingAgentState): BookingAgentRouteDecision | null {
-  if (state.stage !== "confirming" || !state.selectedOption) {
+  const interactiveId = getInteractiveId(state);
+  const normalizedMessage = normalizeControlText(state.inboundMessage);
+
+  switch (state.stage) {
+    case "selecting_addons":
+      return resolveAddonSelection(state, interactiveId, normalizedMessage);
+    case "selecting_fuel":
+      return resolveFuelSelection(interactiveId, normalizedMessage);
+    case "selecting_credits":
+      return resolveCreditsSelection(state, interactiveId, normalizedMessage);
+    case "confirming":
+      return resolveConfirmation(state, interactiveId, normalizedMessage);
+    default:
+      return null;
+  }
+}
+
+function getInteractiveStageGuard(state: BookingAgentState): BookingAgentRouteDecision | null {
+  const interactiveId = getInteractiveId(state);
+  if (!interactiveId) {
     return null;
   }
 
-  const normalizedMessage = normalizeControlText(state.inboundMessage);
-  if (isLikelyAffirmativeControl(normalizedMessage)) {
-    return { nextAction: BOOKING_AGENT_ACTIONS.CREATE_BOOKING };
+  switch (state.stage) {
+    case "selecting_addons":
+    case "selecting_fuel":
+    case "selecting_credits":
+    case "confirming":
+      return getDeterministicStageGuard(state);
+    case "collecting":
+      return !state.draft.bookingType &&
+        (interactiveId === BOOKING_AGENT_BUTTON_ID.DAY ||
+          interactiveId === BOOKING_AGENT_BUTTON_ID.NIGHT ||
+          interactiveId === BOOKING_AGENT_BUTTON_ID.FULL_DAY)
+        ? null
+        : { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+    case "presenting_options":
+      return state.extraction?.intent === "select_option"
+        ? null
+        : { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+    case "awaiting_payment":
+      return interactiveId === BOOKING_AGENT_BUTTON_ID.CANCEL ||
+        interactiveId === BOOKING_AGENT_BUTTON_ID.AGENT
+        ? null
+        : { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+    default:
+      return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+  }
+}
+
+function getInteractiveId(state: BookingAgentState): string {
+  return state.inboundInteractive?.buttonId ?? state.inboundInteractive?.listRowId ?? "";
+}
+
+function resolveAddonSelection(
+  state: BookingAgentState,
+  interactiveId: string,
+  normalizedMessage: string,
+): BookingAgentRouteDecision {
+  const availableAddons = state.availableAddons ?? [];
+  const selectedAddonIds = state.selectedAddonIds ?? [];
+  const addonSelectionIndex = state.addonSelectionIndex ?? 0;
+  const currentAddon = availableAddons[addonSelectionIndex];
+  if (!currentAddon) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE };
   }
 
-  if (isLikelyNegativeControl(normalizedMessage)) {
+  if (interactiveId === BOOKING_AGENT_BUTTON_ID.ADDON_SKIP_ALL) {
     return {
-      nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
-      stage: "collecting",
-      selectedOption: null,
-      availableOptions: [],
+      addonSelectionIndex: availableAddons.length,
+      nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
     };
   }
 
-  return null;
+  const shouldAdd =
+    interactiveId === `addon_add:${currentAddon.id}` ||
+    (!interactiveId &&
+      (normalizedMessage === "add" || isLikelyAffirmativeControl(normalizedMessage)));
+  const shouldSkip =
+    interactiveId === `addon_skip:${currentAddon.id}` ||
+    (!interactiveId &&
+      (normalizedMessage === "skip" || isLikelyNegativeControl(normalizedMessage)));
+  if (!shouldAdd && !shouldSkip) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+  }
+
+  return {
+    selectedAddonIds: shouldAdd
+      ? [...new Set([...selectedAddonIds, currentAddon.id])]
+      : selectedAddonIds,
+    addonSelectionIndex: addonSelectionIndex + 1,
+    nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+  };
+}
+
+function resolveFuelSelection(
+  interactiveId: string,
+  normalizedMessage: string,
+): BookingAgentRouteDecision {
+  if (
+    interactiveId === BOOKING_AGENT_BUTTON_ID.FUEL_APPLY ||
+    (!interactiveId &&
+      (normalizedMessage === "apply" || isLikelyAffirmativeControl(normalizedMessage)))
+  ) {
+    return { requiresFullTank: true, nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE };
+  }
+
+  if (
+    interactiveId === BOOKING_AGENT_BUTTON_ID.FUEL_SKIP ||
+    (!interactiveId && (normalizedMessage === "skip" || isLikelyNegativeControl(normalizedMessage)))
+  ) {
+    return { requiresFullTank: false, nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE };
+  }
+  return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+}
+
+function resolveCreditsSelection(
+  state: BookingAgentState,
+  interactiveId: string,
+  normalizedMessage: string,
+): BookingAgentRouteDecision {
+  if (
+    interactiveId === BOOKING_AGENT_BUTTON_ID.CREDITS_APPLY ||
+    (!interactiveId &&
+      (normalizedMessage === "apply" || isLikelyAffirmativeControl(normalizedMessage)))
+  ) {
+    return {
+      useCredits: state.pricingPreview?.creditsApplicable ?? 0,
+      nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+    };
+  }
+
+  if (
+    interactiveId === BOOKING_AGENT_BUTTON_ID.CREDITS_SKIP ||
+    (!interactiveId && (normalizedMessage === "skip" || isLikelyNegativeControl(normalizedMessage)))
+  ) {
+    return { useCredits: 0, nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE };
+  }
+  return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+}
+
+function resolveConfirmation(
+  state: BookingAgentState,
+  interactiveId: string,
+  normalizedMessage: string,
+): BookingAgentRouteDecision | null {
+  if (!state.selectedOption) return null;
+  if (interactiveId) {
+    return resolveInteractiveConfirmation(state, interactiveId);
+  }
+  if (isLikelyAffirmativeControl(normalizedMessage)) {
+    return {
+      nextAction: state.pricingPreview
+        ? BOOKING_AGENT_ACTIONS.CREATE_BOOKING
+        : BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+    };
+  }
+  if (!isLikelyNegativeControl(normalizedMessage)) return null;
+
+  return {
+    nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
+    stage: "collecting",
+    selectedOption: null,
+    availableAddons: [],
+    selectedAddonIds: [],
+    addonSelectionIndex: 0,
+    requiresFullTank: false,
+    useCredits: 0,
+    pricingPreview: null,
+    availableOptions: [],
+  };
+}
+
+function resolveInteractiveConfirmation(
+  state: BookingAgentState,
+  interactiveId: string,
+): BookingAgentRouteDecision {
+  if (interactiveId === BOOKING_AGENT_BUTTON_ID.AGENT) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.HANDOFF };
+  }
+  if (interactiveId === BOOKING_AGENT_BUTTON_ID.CANCEL) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "cancelled" };
+  }
+  if (shouldClarifyCancelIntent(state)) {
+    return interactiveId === BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS
+      ? buildRejectDecision(state)
+      : { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+  }
+  if (state.error) {
+    if (interactiveId === BOOKING_AGENT_BUTTON_ID.AGENT) {
+      return { nextAction: BOOKING_AGENT_ACTIONS.HANDOFF };
+    }
+    if (interactiveId === BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS) {
+      return buildRejectDecision(state);
+    }
+    if (interactiveId !== BOOKING_AGENT_BUTTON_ID.RETRY_BOOKING) {
+      return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+    }
+  } else if (interactiveId === BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS) {
+    return buildRejectDecision(state);
+  } else if (
+    interactiveId === BOOKING_AGENT_BUTTON_ID.NO ||
+    interactiveId === BOOKING_AGENT_BUTTON_ID.REJECT
+  ) {
+    return buildRejectDecision(state);
+  } else if (
+    interactiveId !== BOOKING_AGENT_BUTTON_ID.CONFIRM &&
+    interactiveId !== BOOKING_AGENT_BUTTON_ID.YES &&
+    interactiveId !== BOOKING_AGENT_BUTTON_ID.RETRY_BOOKING
+  ) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND };
+  }
+
+  return {
+    nextAction: state.pricingPreview
+      ? BOOKING_AGENT_ACTIONS.CREATE_BOOKING
+      : BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+  };
 }
 
 function resolveIntentDecision(state: BookingAgentState): BookingAgentRouteDecision | null {
@@ -128,7 +339,13 @@ function resolveIntentDecision(state: BookingAgentState): BookingAgentRouteDecis
     case "select_option":
       return buildSelectionDecision(extraction.selectionHint, availableOptions);
     case "confirm":
-      return selectedOption ? { nextAction: BOOKING_AGENT_ACTIONS.CREATE_BOOKING } : null;
+      return stage === "confirming" && selectedOption
+        ? {
+            nextAction: state.pricingPreview
+              ? BOOKING_AGENT_ACTIONS.CREATE_BOOKING
+              : BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+          }
+        : null;
     case "reject":
       return buildRejectDecision(state);
     default:
@@ -158,6 +375,12 @@ function buildResetDecision(): BookingAgentRouteDecision {
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
+    availableAddons: [],
+    selectedAddonIds: [],
+    addonSelectionIndex: 0,
+    requiresFullTank: false,
+    useCredits: 0,
+    pricingPreview: null,
     preferences: { __clear: true },
   };
 }
@@ -172,6 +395,12 @@ function buildNewBookingDecision(
     availableOptions: [],
     lastShownOptions: [],
     selectedOption: null,
+    availableAddons: [],
+    selectedAddonIds: [],
+    addonSelectionIndex: 0,
+    requiresFullTank: false,
+    useCredits: 0,
+    pricingPreview: null,
   };
 }
 
@@ -185,6 +414,12 @@ function buildGreetingDecision(stage: BookingAgentState["stage"]): BookingAgentR
       availableOptions: [],
       lastShownOptions: [],
       selectedOption: null,
+      availableAddons: [],
+      selectedAddonIds: [],
+      addonSelectionIndex: 0,
+      requiresFullTank: false,
+      useCredits: 0,
+      pricingPreview: null,
       preferences: { __clear: true },
     };
   }
@@ -205,9 +440,15 @@ function buildSelectionDecision(
   }
 
   return {
-    nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
-    stage: "confirming",
+    nextAction: BOOKING_AGENT_ACTIONS.PREPARE_QUOTE,
+    stage: "selecting_addons",
     selectedOption: selected,
+    availableAddons: [],
+    selectedAddonIds: [],
+    addonSelectionIndex: 0,
+    requiresFullTank: false,
+    useCredits: 0,
+    pricingPreview: null,
   };
 }
 
@@ -219,6 +460,12 @@ function buildRejectDecision(state: BookingAgentState): BookingAgentRouteDecisio
       nextAction: BOOKING_AGENT_ACTIONS.SEARCH,
       stage: "searching",
       selectedOption: null,
+      availableAddons: [],
+      selectedAddonIds: [],
+      addonSelectionIndex: 0,
+      requiresFullTank: false,
+      useCredits: 0,
+      pricingPreview: null,
       availableOptions: [],
       lastShownOptions: [],
     };
@@ -228,6 +475,12 @@ function buildRejectDecision(state: BookingAgentState): BookingAgentRouteDecisio
     nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
     stage: "collecting",
     selectedOption: null,
+    availableAddons: [],
+    selectedAddonIds: [],
+    addonSelectionIndex: 0,
+    requiresFullTank: false,
+    useCredits: 0,
+    pricingPreview: null,
     availableOptions: [],
     lastShownOptions: [],
   };

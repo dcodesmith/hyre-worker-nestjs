@@ -138,6 +138,15 @@ async function initializeWorkerIsolation(): Promise<void> {
         WHERE "status" = 'PROCESSING'
       `);
       await tx.$executeRawUnsafe(`
+        DROP INDEX IF EXISTS "User_verified_phoneNumber_key"
+      `);
+      await tx.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX "User_verified_phoneNumber_key"
+        ON "User"("phoneNumber")
+        WHERE "phoneNumber" IS NOT NULL
+          AND "phoneVerifiedAt" IS NOT NULL
+      `);
+      await tx.$executeRawUnsafe(`
         DROP INDEX IF EXISTS "ChauffeurVerification_approved_ninHash_key"
       `);
       await tx.$executeRawUnsafe(`

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import type { Prisma, PrismaClient, ReferralAttributionSource } from "@prisma/client";
 import request from "supertest";
@@ -36,6 +36,13 @@ export type ClientTypeOption = "mobile" | "web";
 
 export interface AuthenticateOptions {
   referralCode?: string;
+  phoneVerified?: boolean;
+}
+
+function verifiedPhoneForEmail(email: string): string {
+  const digest = createHash("sha256").update(email.toLowerCase()).digest("hex");
+  const suffix = (BigInt(`0x${digest.slice(0, 16)}`) % 100_000_000n).toString().padStart(8, "0");
+  return `+23480${suffix}`;
 }
 
 export interface TestUser {
@@ -192,6 +199,22 @@ export class TestDataFactory {
 
     if (!cookies) {
       throw new Error(`No session cookie set for ${email}. Status: ${verifyResponse.status}`);
+    }
+
+    if (options.phoneVerified ?? true) {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+        select: { phoneNumber: true, phoneVerifiedAt: true },
+      });
+      if (!existing?.phoneNumber || !existing.phoneVerifiedAt) {
+        await this.prisma.user.update({
+          where: { email: email.toLowerCase() },
+          data: {
+            phoneNumber: verifiedPhoneForEmail(email),
+            phoneVerifiedAt: new Date(),
+          },
+        });
+      }
     }
 
     return Array.isArray(cookies) ? cookies.join("; ") : cookies;

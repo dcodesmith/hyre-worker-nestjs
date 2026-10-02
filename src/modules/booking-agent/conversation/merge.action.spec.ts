@@ -1,7 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { buildState, buildVehicleOption } from "./conversation.factory";
+import { buildPricingPreview, buildState, buildVehicleOption } from "./conversation.factory";
 import { createDefaultLocationValidationState } from "./conversation.interface";
 import { MergeAction } from "./merge.action";
 
@@ -174,5 +174,55 @@ describe("MergeAction", () => {
 
     expect(result.preferences?.pricePreference).toBe("budget");
     expect(result.preferences?.notes).toEqual(["budget"]);
+  });
+
+  it("invalidates the quote stage when a trip detail changes", () => {
+    const result = mergeAction.run(
+      buildState({
+        stage: "selecting_fuel",
+        draft: { pickupLocation: "Ikoyi", flightNumber: "BA74" },
+        selectedOption: buildVehicleOption(),
+        availableAddons: [],
+        selectedAddonIds: ["addon-wifi"],
+        addonSelectionIndex: 2,
+        requiresFullTank: true,
+        useCredits: 4000,
+        pricingPreview: buildPricingPreview(),
+        extraction: {
+          intent: "update_info",
+          draftPatch: { flightNumber: "BA100" },
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(result.stage).toBe("collecting");
+    expect(result.selectedOption).toBeNull();
+    expect(result.availableOptions).toEqual([]);
+    expect(result.selectedAddonIds).toEqual([]);
+    expect(result.addonSelectionIndex).toBe(0);
+    expect(result.requiresFullTank).toBe(false);
+    expect(result.useCredits).toBe(0);
+    expect(result.pricingPreview).toBeNull();
+  });
+
+  it("keeps the quote when a vehicle selection does not change the draft", () => {
+    const result = mergeAction.run(
+      buildState({
+        stage: "presenting_options",
+        draft: { make: "Toyota" },
+        selectedOption: null,
+        pricingPreview: buildPricingPreview(),
+        extraction: {
+          intent: "select_option",
+          draftPatch: { make: "Toyota" },
+          confidence: 1,
+        },
+      }),
+    );
+
+    expect(result.stage).toBe("presenting_options");
+    expect(result.pricingPreview).toEqual(buildPricingPreview());
+    expect(result.selectedOption).toBeNull();
   });
 });

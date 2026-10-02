@@ -30,6 +30,7 @@ import {
   ExtensionPaymentPendingException,
 } from "./booking.error";
 import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
+import { redactBookingCustomerContacts } from "./booking-contact-privacy.helper";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
@@ -220,7 +221,7 @@ export class BookingUpdateService {
           );
         }
 
-        return omitStoredClientContext(updatedBooking);
+        return redactBookingCustomerContacts(omitStoredClientContext(updatedBooking));
       });
 
       return booking;

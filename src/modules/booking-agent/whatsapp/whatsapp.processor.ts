@@ -105,6 +105,9 @@ export class WhatsAppProcessor extends WorkerHost {
     }
 
     try {
+      await this.persistenceService.synchronizeConversationIdentity(conversationId, () =>
+        this.bookingAgentStateService.clearState(conversationId),
+      );
       const context = await this.persistenceService.getInboundMessageContext(messageId);
       if (!context) {
         return;
@@ -408,6 +411,9 @@ export class WhatsAppProcessor extends WorkerHost {
     return (
       stage === "collecting" ||
       stage === "presenting_options" ||
+      stage === "selecting_addons" ||
+      stage === "selecting_fuel" ||
+      stage === "selecting_credits" ||
       stage === "confirming" ||
       stage === "awaiting_payment"
     );

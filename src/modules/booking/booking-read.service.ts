@@ -16,6 +16,7 @@ import type {
   BookingPaymentLifecycleState,
   BookingPaymentStatusResponse,
 } from "./booking.interface";
+import { redactBookingCustomerContacts } from "./booking-contact-privacy.helper";
 import { BookingExtensionService } from "./booking-extension.service";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
@@ -159,12 +160,15 @@ export class BookingReadService {
         booking.userId === sessionUser.id,
         policyNow,
       );
-      return this.withEligibility(
+      const serializedBooking = this.withEligibility(
         booking,
         booking.userId === sessionUser.id,
         policyNow,
         legEligibilities,
       );
+      return booking.userId === sessionUser.id
+        ? serializedBooking
+        : redactBookingCustomerContacts(serializedBooking);
     } catch (error) {
       if (error instanceof BookingException) {
         throw error;

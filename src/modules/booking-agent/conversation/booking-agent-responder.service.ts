@@ -9,7 +9,11 @@ import {
 } from "../../../shared/booking-time-window.helper";
 import { calculateLegCount } from "../../booking/booking.helper";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
-import { BOOKING_AGENT_BUTTON_ID, BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
+import {
+  BOOKING_AGENT_BUTTON_ID,
+  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./conversation.const";
 import { BookingAgentResponseFailedException } from "./conversation.error";
 import type {
   AgentResponse,
@@ -22,7 +26,6 @@ import type {
 } from "./conversation.interface";
 import type { BookingAgentAnthropicClient } from "./conversation.tokens";
 import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "./conversation.tokens";
-import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
 import { buildResponderSystemPrompt, buildResponderUserContext } from "./prompts/responder.prompt";
 
 @Injectable()
@@ -125,14 +128,11 @@ export class BookingAgentResponderService {
       this.buildCompletedStatusResponse(stage, statusMessage) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
       this.buildPresentingOptionsResponse(stage, availableOptions, statusMessage, draft) ??
+      this.buildAddonSelectionResponse(state) ??
+      this.buildFuelSelectionResponse(state) ??
+      this.buildCreditsSelectionResponse(state) ??
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
-      this.buildAwaitingPaymentResponse(
-        stage,
-        paymentLink,
-        holdExpiresAt,
-        selectedOption,
-        draft,
-      )
+      this.buildAwaitingPaymentResponse(stage, paymentLink, holdExpiresAt, selectedOption, draft)
     );
   }
 
@@ -228,11 +228,70 @@ export class BookingAgentResponderService {
       };
     }
 
+    const summary = state.pricingPreview
+      ? this.buildFinalBookingSummary(state)
+      : this.buildBookingSummary(draft, selectedOption);
     return {
-      text: state.statusMessage
-        ? `${state.statusMessage}\n\n${this.buildBookingSummary(draft, selectedOption)}`
-        : this.buildBookingSummary(draft, selectedOption),
+      text: state.statusMessage ? `${state.statusMessage}\n\n${summary}` : summary,
       interactive: this.determineInteractive(state.stage, draft, selectedOption, error),
+    };
+  }
+
+  private buildAddonSelectionResponse(state: BookingAgentState): AgentResponse | null {
+    if (state.stage !== "selecting_addons") {
+      return null;
+    }
+    const addon = (state.availableAddons ?? [])[state.addonSelectionIndex ?? 0];
+    if (!addon) {
+      return { text: "I'm preparing your final quote." };
+    }
+
+    const unitLabel = addon.pricingUnit === "PER_LEG" ? "per booking leg" : "per booking";
+    return {
+      text: [
+        `Would you like to add *${addon.name}* for *${this.formatMoney(addon.unitPrice)} ${unitLabel}*?`,
+        ...(addon.description ? [addon.description] : []),
+      ].join("\n"),
+      interactive: {
+        type: "buttons",
+        buttons: [
+          { id: `addon_add:${addon.id}`, title: "✓ Add" },
+          { id: `addon_skip:${addon.id}`, title: "Skip" },
+          { id: BOOKING_AGENT_BUTTON_ID.ADDON_SKIP_ALL, title: "Skip All" },
+        ],
+      },
+    };
+  }
+
+  private buildFuelSelectionResponse(state: BookingAgentState): AgentResponse | null {
+    if (state.stage !== "selecting_fuel" || !state.pricingPreview) {
+      return null;
+    }
+    return {
+      text: `Would you like the fuel upgrade for *${this.formatMoney(state.pricingPreview.fuelUpgradeCost)}*?`,
+      interactive: {
+        type: "buttons",
+        buttons: [
+          { id: BOOKING_AGENT_BUTTON_ID.FUEL_APPLY, title: "APPLY" },
+          { id: BOOKING_AGENT_BUTTON_ID.FUEL_SKIP, title: "SKIP" },
+        ],
+      },
+    };
+  }
+
+  private buildCreditsSelectionResponse(state: BookingAgentState): AgentResponse | null {
+    if (state.stage !== "selecting_credits" || !state.pricingPreview) {
+      return null;
+    }
+    return {
+      text: `You can apply *${this.formatMoney(state.pricingPreview.creditsApplicable)}* in credits. Apply them to this booking?`,
+      interactive: {
+        type: "buttons",
+        buttons: [
+          { id: BOOKING_AGENT_BUTTON_ID.CREDITS_APPLY, title: "APPLY" },
+          { id: BOOKING_AGENT_BUTTON_ID.CREDITS_SKIP, title: "SKIP" },
+        ],
+      },
     };
   }
 
@@ -364,6 +423,52 @@ export class BookingAgentResponderService {
       ...(draft.dropoffLocation ? [`*📍 Drop-off:* ${draft.dropoffLocation}`] : []),
       "",
       `*💰 Total:* ${priceFormatted} incl. VAT`,
+      "",
+      "Ready to confirm this booking?",
+    ].join("\n");
+  }
+
+  private buildFinalBookingSummary(state: BookingAgentState): string {
+    const selectedOption = state.selectedOption;
+    const pricing = state.pricingPreview;
+    if (!selectedOption || !pricing) {
+      return "Please review and confirm your booking.";
+    }
+
+    const addonLines = pricing.addons.map(
+      (addon) => `• ${addon.name}: ${this.formatMoney(addon.totalPrice)}`,
+    );
+    const adjustmentLines = [
+      ...(pricing.fuelUpgradeCost > 0
+        ? [`• Fuel upgrade: ${this.formatMoney(pricing.fuelUpgradeCost)}`]
+        : []),
+      ...(pricing.platformFeeAmount > 0
+        ? [`• Service fee: ${this.formatMoney(pricing.platformFeeAmount)}`]
+        : []),
+      ...(pricing.referralDiscountAmount > 0
+        ? [`• Referral discount: -${this.formatMoney(pricing.referralDiscountAmount)}`]
+        : []),
+      ...(pricing.creditsUsed > 0
+        ? [`• Credits applied: -${this.formatMoney(pricing.creditsUsed)}`]
+        : []),
+    ];
+
+    return [
+      "*📋 Final Booking Quote*",
+      "",
+      `*🚗 Vehicle:* ${selectedOption.make} ${selectedOption.model}`,
+      ...(state.draft.bookingType
+        ? [`*📅 Service:* ${this.getBookingTypeLabel(state.draft.bookingType)}`]
+        : []),
+      ...this.buildBookingWindowLines(state.draft),
+      ...(state.draft.pickupLocation ? [`*📍 Pickup:* ${state.draft.pickupLocation}`] : []),
+      ...(state.draft.dropoffLocation ? [`*📍 Drop-off:* ${state.draft.dropoffLocation}`] : []),
+      "",
+      `• Base: ${this.formatMoney(pricing.baseTotal)}`,
+      ...addonLines,
+      ...adjustmentLines,
+      `• VAT: ${this.formatMoney(pricing.vatAmount)}`,
+      `*💰 Total: ${this.formatMoney(pricing.totalAmount)}*`,
       "",
       "Ready to confirm this booking?",
     ].join("\n");
@@ -533,6 +638,10 @@ export class BookingAgentResponderService {
     return `₦${estimatedTotalInclVat.toLocaleString()}`;
   }
 
+  private formatMoney(amount: number): string {
+    return `₦${amount.toLocaleString("en-NG")}`;
+  }
+
   private buildPaymentMessage(
     selectedOption: VehicleSearchOption | null,
     holdExpiresAt: string | null,
@@ -560,11 +669,7 @@ export class BookingAgentResponderService {
       return null;
     }
 
-    const friendlyExpiry = formatInTimeZone(
-      expiry,
-      "Africa/Lagos",
-      "do MMM yyyy 'at' h:mm aaa",
-    );
+    const friendlyExpiry = formatInTimeZone(expiry, "Africa/Lagos", "do MMM yyyy 'at' h:mm aaa");
     return `Your vehicle is reserved until *${friendlyExpiry} (Lagos time)*. Please pay before then.`;
   }
 

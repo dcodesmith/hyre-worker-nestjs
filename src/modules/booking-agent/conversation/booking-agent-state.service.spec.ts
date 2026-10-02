@@ -2,11 +2,11 @@ import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { BookingAgentStateService } from "./booking-agent-state.service";
 import { buildBookingAgentStateKey } from "./conversation.const";
 import { BookingAgentStateClearFailedException } from "./conversation.error";
 import type { BookingAgentState } from "./conversation.interface";
 import { BOOKING_AGENT_REDIS_CLIENT } from "./conversation.tokens";
-import { BookingAgentStateService } from "./booking-agent-state.service";
 
 describe("BookingAgentStateService", () => {
   let moduleRef: TestingModule;
@@ -280,6 +280,12 @@ describe("BookingAgentStateService", () => {
       expect(state?.draft?.pickupLocation).toBe("Ikeja");
       expect(state?.stage).toBe("collecting");
       expect(state?.paymentLink).toBeNull();
+      expect(state?.availableAddons).toEqual([]);
+      expect(state?.selectedAddonIds).toEqual([]);
+      expect(state?.addonSelectionIndex).toBe(0);
+      expect(state?.requiresFullTank).toBe(false);
+      expect(state?.useCredits).toBe(0);
+      expect(state?.pricingPreview).toBeNull();
     });
 
     it("loads a persisted paymentLink", async () => {

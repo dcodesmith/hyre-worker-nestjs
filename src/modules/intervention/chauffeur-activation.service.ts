@@ -317,12 +317,21 @@ export class ChauffeurActivationService {
           chauffeurVerification: { select: { id: true } },
         },
       });
+      const verifiedPhoneOwner = await tx.user.findFirst({
+        where: {
+          phoneNumber: verification.phoneNumber,
+          phoneVerifiedAt: { not: null },
+        },
+        select: { id: true },
+      });
       const userConflict =
         existingUser &&
         (this.isConflictingUser(existingUser, verification.fleetOwnerId) ||
           (existingUser.chauffeurVerification !== null &&
             existingUser.chauffeurVerification.id !== verification.id));
-      if (!approvedNinConflict && !userConflict) {
+      const phoneConflict =
+        verifiedPhoneOwner !== null && verifiedPhoneOwner.id !== existingUser?.id;
+      if (!approvedNinConflict && !userConflict && !phoneConflict) {
         return { handled: false, activated: false, selfieObjectKey: null };
       }
       if (

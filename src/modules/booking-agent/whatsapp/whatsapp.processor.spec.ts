@@ -64,6 +64,7 @@ describe("WhatsAppProcessor", () => {
     markInboundMessageProcessed: ReturnType<typeof vi.fn>;
     markInboundMessageFailed: ReturnType<typeof vi.fn>;
     releaseProcessingLock: ReturnType<typeof vi.fn>;
+    synchronizeConversationIdentity: ReturnType<typeof vi.fn>;
   };
   let orchestratorService: {
     decide: ReturnType<typeof vi.fn>;
@@ -98,6 +99,7 @@ describe("WhatsAppProcessor", () => {
       markInboundMessageProcessed: vi.fn(),
       markInboundMessageFailed: vi.fn(),
       releaseProcessingLock: vi.fn(),
+      synchronizeConversationIdentity: vi.fn().mockResolvedValue(undefined),
     };
     orchestratorService = {
       decide: vi.fn(),
@@ -219,6 +221,45 @@ describe("WhatsAppProcessor", () => {
       expect.anything(),
     );
     expect(persistenceService.markInboundMessageProcessed).toHaveBeenCalledWith("msg-1");
+    expect(persistenceService.releaseProcessingLock).toHaveBeenCalledWith(
+      "conv-1",
+      expect.any(String),
+    );
+    expect(persistenceService.synchronizeConversationIdentity).toHaveBeenCalledWith(
+      "conv-1",
+      expect.any(Function),
+    );
+    expect(
+      persistenceService.synchronizeConversationIdentity.mock.invocationCallOrder[0],
+    ).toBeLessThan(persistenceService.getInboundMessageContext.mock.invocationCallOrder[0]);
+  });
+
+  it("retries the inbound message when clearing state for an identity change fails", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.synchronizeConversationIdentity.mockImplementation(
+      async (_conversationId: string, beforeIdentityChange: () => Promise<void>) => {
+        await beforeIdentityChange();
+      },
+    );
+    bookingAgentStateService.clearState.mockRejectedValue(new Error("redis unavailable"));
+
+    await expect(
+      processor.process(
+        buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          dedupeKey: "dedupe-1",
+        }),
+      ),
+    ).rejects.toThrow("redis unavailable");
+
+    expect(bookingAgentStateService.clearState).toHaveBeenCalledWith("conv-1");
+    expect(persistenceService.getInboundMessageContext).not.toHaveBeenCalled();
+    expect(orchestratorService.decide).not.toHaveBeenCalled();
+    expect(persistenceService.markInboundMessageFailed).toHaveBeenCalledWith(
+      "msg-1",
+      expect.stringContaining("redis unavailable"),
+    );
     expect(persistenceService.releaseProcessingLock).toHaveBeenCalledWith(
       "conv-1",
       expect.any(String),

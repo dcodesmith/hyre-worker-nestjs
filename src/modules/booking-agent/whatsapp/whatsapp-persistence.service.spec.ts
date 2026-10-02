@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
+import { WhatsAppLinkStatus, WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../../database/database.service";
@@ -30,6 +30,8 @@ describe("WhatsAppPersistenceService", () => {
       findUnique: ReturnType<typeof vi.fn>;
     };
     $transaction: ReturnType<typeof vi.fn>;
+    $queryRaw: ReturnType<typeof vi.fn>;
+    user: { findFirst: ReturnType<typeof vi.fn> };
   };
 
   beforeEach(async () => {
@@ -53,7 +55,11 @@ describe("WhatsAppPersistenceService", () => {
         delete: vi.fn(),
         findUnique: vi.fn(),
       },
-      $transaction: vi.fn(),
+      $transaction: vi.fn(async (callback: (tx: typeof databaseService) => unknown) =>
+        callback(databaseService),
+      ),
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "conv-1" }]),
+      user: { findFirst: vi.fn().mockResolvedValue(null) },
     };
 
     moduleRef = await Test.createTestingModule({
@@ -128,6 +134,175 @@ describe("WhatsAppPersistenceService", () => {
         status: "CLOSED",
       },
       data: { status: "ACTIVE" },
+    });
+  });
+
+  describe("synchronizeConversationIdentity", () => {
+    const conversationId = "018f47a2-7b3c-7d4e-8f90-1234567894a1";
+
+    it("links a verified phone and clears state before the database update", async () => {
+      const order: string[] = [];
+      databaseService.$transaction.mockImplementation(
+        async (callback: (tx: typeof databaseService) => unknown) => {
+          order.push("transaction");
+          return callback(databaseService);
+        },
+      );
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: null,
+        linkStatus: WhatsAppLinkStatus.UNLINKED,
+      });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      databaseService.whatsAppConversation.update.mockImplementation(async () => {
+        order.push("update");
+        return { id: conversationId };
+      });
+
+      await service.synchronizeConversationIdentity(conversationId, async () => {
+        order.push("clear");
+      });
+
+      expect(order).toEqual(["clear", "transaction", "update"]);
+      expect(databaseService.$queryRaw).toHaveBeenCalled();
+      expect(databaseService.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          phoneNumber: "+2348012345678",
+          phoneVerifiedAt: { not: null },
+        },
+        select: { id: true },
+      });
+      expect(databaseService.whatsAppConversation.update).toHaveBeenCalledWith({
+        where: { id: conversationId },
+        data: {
+          linkedUserId: "user-verified",
+          linkStatus: WhatsAppLinkStatus.LINKED,
+          linkVerifiedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it("unlinks a conversation when the phone is no longer verified", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: "user-old",
+        linkStatus: WhatsAppLinkStatus.LINKED,
+      });
+      databaseService.user.findFirst.mockResolvedValue(null);
+      const clearState = vi.fn().mockResolvedValue(undefined);
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).toHaveBeenCalledOnce();
+      expect(databaseService.whatsAppConversation.update).toHaveBeenCalledWith({
+        where: { id: conversationId },
+        data: {
+          linkedUserId: null,
+          linkStatus: WhatsAppLinkStatus.UNLINKED,
+          linkVerifiedAt: null,
+        },
+      });
+    });
+
+    it("relinks a conversation when a different verified user owns the phone", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: "user-old",
+        linkStatus: WhatsAppLinkStatus.LINKED,
+      });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-new" });
+      const clearState = vi.fn().mockResolvedValue(undefined);
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).toHaveBeenCalledBefore(databaseService.whatsAppConversation.update);
+      expect(databaseService.whatsAppConversation.update).toHaveBeenCalledWith({
+        where: { id: conversationId },
+        data: expect.objectContaining({
+          linkedUserId: "user-new",
+          linkStatus: WhatsAppLinkStatus.LINKED,
+        }),
+      });
+    });
+
+    it("does nothing when the conversation row is missing", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue(null);
+      const clearState = vi.fn();
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("leaves a revoked conversation unchanged", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: "user-old",
+        linkStatus: WhatsAppLinkStatus.REVOKED,
+      });
+      const clearState = vi.fn();
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).not.toHaveBeenCalled();
+      expect(databaseService.user.findFirst).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("does not clear state when the linked identity is already current", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: "user-verified",
+        linkStatus: WhatsAppLinkStatus.LINKED,
+      });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      const clearState = vi.fn();
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("does not update the conversation when clearing state fails", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: null,
+        linkStatus: WhatsAppLinkStatus.UNLINKED,
+      });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      const clearError = new Error("redis unavailable");
+
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, async () => {
+          throw clearError;
+        }),
+      ).rejects.toBe(clearError);
+      expect(databaseService.$transaction).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("preserves revocation when the row changes after state is cleared", async () => {
+      databaseService.whatsAppConversation.findUnique
+        .mockResolvedValueOnce({
+          phoneE164: "+2348012345678",
+          linkedUserId: null,
+          linkStatus: WhatsAppLinkStatus.UNLINKED,
+        })
+        .mockResolvedValueOnce({
+          phoneE164: "+2348012345678",
+          linkedUserId: null,
+          linkStatus: WhatsAppLinkStatus.REVOKED,
+        });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      const clearState = vi.fn().mockResolvedValue(undefined);
+
+      await service.synchronizeConversationIdentity(conversationId, clearState);
+
+      expect(clearState).toHaveBeenCalledOnce();
+      expect(databaseService.$transaction).toHaveBeenCalledOnce();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
     });
   });
 

@@ -6,6 +6,7 @@ export const AccountVerificationErrorCode = {
   PHONE_NOT_VERIFIED: "ACCOUNT_PHONE_NOT_VERIFIED",
   PHONE_CODE_INVALID: "PHONE_VERIFICATION_CODE_INVALID",
   PHONE_PROVIDER_UNAVAILABLE: "PHONE_VERIFICATION_PROVIDER_UNAVAILABLE",
+  PHONE_NUMBER_UNAVAILABLE: "PHONE_VERIFICATION_NUMBER_UNAVAILABLE",
   DOCUMENT_INVALID: "ACCOUNT_DOCUMENT_INVALID",
   DRIVER_LICENSE_REQUIRED: "OWNER_DRIVER_LICENSE_REQUIRED",
   DRIVER_LICENSE_NOT_VERIFIED: "OWNER_DRIVER_LICENSE_NOT_VERIFIED",
@@ -73,6 +74,17 @@ export class PhoneVerificationProviderUnavailableException extends AccountVerifi
       "Phone verification is temporarily unavailable",
       HttpStatus.BAD_GATEWAY,
       { title: "Phone Verification Unavailable" },
+    );
+  }
+}
+
+export class PhoneVerificationNumberUnavailableException extends AccountVerificationException {
+  constructor() {
+    super(
+      AccountVerificationErrorCode.PHONE_NUMBER_UNAVAILABLE,
+      "This phone number cannot be verified for this account",
+      HttpStatus.CONFLICT,
+      { title: "Phone Verification Conflict" },
     );
   }
 }
