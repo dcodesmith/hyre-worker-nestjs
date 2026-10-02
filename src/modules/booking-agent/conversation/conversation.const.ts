@@ -9,6 +9,7 @@ export const BOOKING_AGENT_RESPONSE_MODEL = "claude-sonnet-5-5";
 export const BOOKING_AGENT_RESPONSE_MAX_TOKENS = 4096;
 export const BOOKING_AGENT_MODEL_TIMEOUT_MS = 10_000;
 export const BOOKING_AGENT_MODEL_MAX_RETRIES = 1;
+export const BOOKING_AGENT_ANY_VEHICLE_PREFERENCE = "ANY";
 
 /**
  * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.
@@ -28,6 +29,7 @@ export const CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3";
 export const REQUIRED_SEARCH_FIELDS: (keyof BookingDraft)[] = [
   "pickupDate",
   "bookingType",
+  "vehicleType",
   "pickupLocation",
   "pickupTime",
   "dropoffDate",

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyDerivedDraftFields, hasDraftChanged, shouldApplyDraftPatch } from "./booking-rules";
+import {
+  applyDerivedDraftFields,
+  getDurationUnitClarification,
+  hasDraftChanged,
+  shouldApplyDraftPatch,
+} from "./booking-rules";
 
 describe("booking-agent-booking-rules", () => {
   it("applies same-location fallback when explicitly requested", () => {
@@ -13,6 +18,28 @@ describe("booking-agent-booking-rules", () => {
 
     const result = applyDerivedDraftFields(draft, "drop me off at the same place");
     expect(result.dropoffLocation).toBe("5 Glover Road, Ikoyi");
+  });
+
+  it("replaces an extracted same-location phrase with the pickup address", () => {
+    const result = applyDerivedDraftFields(
+      {
+        pickupLocation: "Mason Apartments, Ikoyi",
+        dropoffLocation: "Same as pickup location",
+      },
+      "9am\nMason Apartments, Ikoyi\nSame as pickup location",
+    );
+
+    expect(result.dropoffLocation).toBe("Mason Apartments, Ikoyi");
+  });
+
+  it("detects conflicting booking type and duration units", () => {
+    expect(getDurationUnitClarification("Day booking from tomorrow for 2 nights", "DAY")).toBe(
+      "You mentioned a Day booking for 2 nights. Do you want a Day booking for 2 days, or a Night booking for 2 nights?",
+    );
+    expect(getDurationUnitClarification("Day booking for 2 days, actually 3 nights", "DAY")).toBe(
+      "You mentioned a Day booking for 3 nights. Do you want a Day booking for 3 days, or a Night booking for 3 nights?",
+    );
+    expect(getDurationUnitClarification("Night booking for 2 nights", "NIGHT")).toBeNull();
   });
 
   it("auto-derives NIGHT pickupTime and dropoffDate", () => {

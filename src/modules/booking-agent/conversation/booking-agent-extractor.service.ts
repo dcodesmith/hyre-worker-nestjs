@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
+import { getDurationUnitClarification } from "./booking-rules";
 import {
   isAgentRequestControl,
   isBareCancelControl,
@@ -116,13 +117,23 @@ export class BookingAgentExtractorService {
       const content = response.choices[0]?.message.content ?? "";
       const parsed = JSON.parse(content);
       const validated = extractionSchema.parse(parsed);
+      const draftPatch: ExtractionResult["draftPatch"] = { ...validated.draftPatch };
+      const clarificationPrompt = getDurationUnitClarification(
+        inboundMessage,
+        draftPatch.bookingType ?? draft.bookingType,
+      );
+      if (clarificationPrompt) {
+        delete draftPatch.durationDays;
+        delete draftPatch.dropoffDate;
+      }
 
       return {
         intent: validated.intent,
-        draftPatch: validated.draftPatch,
+        draftPatch,
         selectionHint: validated.selectionHint,
         preferenceHint: validated.preferenceHint,
         question: validated.question,
+        clarificationPrompt: clarificationPrompt ?? undefined,
         confidence: validated.confidence,
       };
     } catch (error) {

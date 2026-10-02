@@ -561,6 +561,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -598,6 +599,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -612,7 +614,7 @@ describe("BookingAgentTurnService", () => {
 
       extractorServiceMock.extract.mockResolvedValue({
         intent: "provide_info",
-        draftPatch: {},
+        draftPatch: { dropoffLocation: "Same as pickup location" },
         confidence: 0.9,
       });
 
@@ -634,6 +636,7 @@ describe("BookingAgentTurnService", () => {
       });
 
       expect(result.draft.dropoffLocation).toBe("5 Glover Road, Ikoyi");
+      expect(googlePlacesServiceMock.validateAddress).toHaveBeenCalledTimes(1);
     });
 
     it("keeps dropoffLocation in sync when pickupLocation is normalized and they were equal", async () => {
@@ -641,6 +644,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -687,6 +691,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -737,6 +742,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -786,6 +792,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -826,6 +833,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -1521,6 +1529,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -1597,6 +1606,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-01",
         pickupTime: "09:00",
         dropoffDate: "2026-03-01",
@@ -1681,6 +1691,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "09:00",
         dropoffDate: "2026-03-05",
@@ -1720,6 +1731,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "09:00",
         dropoffDate: "2026-03-05",
@@ -1768,6 +1780,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "09:00",
         dropoffDate: "2026-03-05",
@@ -1909,6 +1922,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "NIGHT",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "23:00",
         dropoffDate: "2026-03-06",
@@ -2108,6 +2122,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "09:00",
         dropoffDate: "2026-03-05",
@@ -2174,6 +2189,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupTime: "09:00",
         dropoffDate: "2026-03-05",
@@ -2197,18 +2213,18 @@ describe("BookingAgentTurnService", () => {
         placeId: "ChIJ123",
       });
 
-      // Search returns precondition (e.g., missing vehicle type for a search that requires it)
+      // Search returns a defensive lower-level precondition.
       toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
         precondition: {
-          field: "vehicleType",
-          prompt: "What type of vehicle would you prefer?",
+          missingField: "to",
+          prompt: "Please clarify the search dates.",
         },
         exactMatches: [],
         alternatives: [],
       });
 
       responderServiceMock.generateResponse.mockResolvedValue({
-        text: "What type of vehicle would you prefer?",
+        text: "Please clarify the search dates.",
       });
 
       // Capture the state that gets saved
@@ -2229,7 +2245,7 @@ describe("BookingAgentTurnService", () => {
       expect(result.stage).toBe("collecting");
       // Precondition prompt is a status message, not an error
       expect(result.error).toBeNull();
-      expect(savedState?.statusMessage).toBe("What type of vehicle would you prefer?");
+      expect(savedState?.statusMessage).toBe("Please clarify the search dates.");
       // Should preserve location validation so we don't re-validate on next turn.
       expect(savedState).not.toBeNull();
       if (savedState) {
@@ -2244,6 +2260,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "NIGHT",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         pickupLocation: "Lekki Phase 1",
         dropoffLocation: "Lekki Phase 1",
@@ -2294,6 +2311,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "NIGHT",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         dropoffDate: "2026-03-06",
         pickupLocation: "Lekki Phase 1",
@@ -2345,6 +2363,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "NIGHT",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         dropoffDate: "2026-03-06",
         pickupLocation: "Lekki Phase 1",
@@ -2430,6 +2449,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "NIGHT",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         durationDays: 3, // 3-night booking
         pickupLocation: "Lekki Phase 1",
@@ -2479,6 +2499,7 @@ describe("BookingAgentTurnService", () => {
       existingState.stage = "collecting";
       existingState.draft = {
         bookingType: "DAY",
+        vehicleType: "SUV",
         pickupDate: "2026-03-05",
         durationDays: 2,
         pickupTime: "09:00",

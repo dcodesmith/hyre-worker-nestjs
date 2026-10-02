@@ -3,13 +3,17 @@ import { PinoLogger } from "nestjs-pino";
 import { GooglePlacesService } from "../../maps/google-places.service";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
-import { BOOKING_AGENT_OUTBOUND_MODE, BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import {
+  BOOKING_AGENT_OUTBOUND_MODE,
+  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./conversation.const";
 import {
   type BookingAgentLocationValidationState,
   type BookingAgentState,
   type BookingDraft,
   convertToExtractedParams,
   createDefaultLocationValidationState,
+  isAnyVehiclePreference,
   type LocationValidationState,
   type VehicleSearchOption,
 } from "./conversation.interface";
@@ -194,8 +198,8 @@ export class SearchAction {
       draft.color?.trim() ||
         draft.vehicleType ||
         draft.serviceTier ||
-        draft.make?.trim() ||
-        draft.model?.trim(),
+        (draft.make?.trim() && !isAnyVehiclePreference(draft.make)) ||
+        (draft.model?.trim() && !isAnyVehiclePreference(draft.model)),
     );
   }
 
@@ -235,7 +239,9 @@ export class SearchAction {
       return `a ${parts.join(" ")}`;
     }
 
-    const makeModel = [draft.make?.trim(), draft.model?.trim()].filter(Boolean).join(" ");
+    const makeModel = [draft.make, draft.model]
+      .filter((value) => value?.trim() && !isAnyVehiclePreference(value))
+      .join(" ");
     return makeModel ? `"${makeModel}"` : "your requested vehicle";
   }
 

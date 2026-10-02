@@ -92,6 +92,64 @@ describe("MergeAction", () => {
     expect(result.lastShownOptions).toEqual([]);
   });
 
+  it("clears stale duration fields while asking for duration clarification", () => {
+    const result = mergeAction.run(
+      buildState({
+        inboundMessage: "Night booking for 2 days",
+        draft: {
+          bookingType: "NIGHT",
+          pickupDate: "2026-03-05",
+          durationDays: 3,
+          dropoffDate: "2026-03-08",
+        },
+        extraction: {
+          intent: "provide_info",
+          draftPatch: { bookingType: "NIGHT" },
+          clarificationPrompt:
+            "Do you want a Night booking for 2 nights, or a Day booking for 2 days?",
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(result.draft?.durationDays).toBeUndefined();
+    expect(result.draft?.dropoffDate).toBeUndefined();
+  });
+
+  it("uses pickup for an explicit same-location update but preserves a new destination", () => {
+    const sameLocation = mergeAction.run(
+      buildState({
+        inboundMessage: "Actually, same as pickup",
+        draft: {
+          pickupLocation: "Mason Apartments, Ikoyi",
+          dropoffLocation: "Lekki Phase 1",
+        },
+        extraction: {
+          intent: "update_info",
+          draftPatch: {},
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(sameLocation.draft?.dropoffLocation).toBe("Mason Apartments, Ikoyi");
+
+    const explicitDestination = mergeAction.run(
+      buildState({
+        inboundMessage: "Use Eko Hotel, not the same as pickup",
+        draft: {
+          pickupLocation: "Mason Apartments, Ikoyi",
+          dropoffLocation: "Lekki Phase 1",
+        },
+        extraction: {
+          intent: "update_info",
+          draftPatch: { dropoffLocation: "Eko Hotel, Victoria Island" },
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(explicitDestination.draft?.dropoffLocation).toBe("Eko Hotel, Victoria Island");
+  });
+
   it("clears selectedOption when pickupTime or dropoffLocation changes", () => {
     const selected = buildVehicleOption();
     const timeChange = mergeAction.run(

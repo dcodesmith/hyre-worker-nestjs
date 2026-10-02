@@ -542,6 +542,86 @@ describe("Booking Agent", () => {
     ).toBe(true);
   });
 
+  it("Scenario 8: resolves same-as-pickup and searches when only vehicle type is provided", async () => {
+    await seedCar({
+      make: "Toyota",
+      model: "Prado",
+      vehicleType: "SUV",
+      dayRate: 65000,
+      registrationNumber: "WA-S8-001",
+    });
+
+    extractorService.extract
+      .mockResolvedValueOnce({
+        intent: "provide_info",
+        draftPatch: {
+          bookingType: "DAY",
+          pickupDate: FUTURE_PICKUP_DATE,
+          dropoffDate: FUTURE_NEXT_DAY_DROPOFF_DATE,
+          durationDays: 2,
+        },
+        confidence: 0.95,
+      })
+      .mockResolvedValueOnce({
+        intent: "provide_info",
+        draftPatch: {
+          pickupTime: "09:00",
+          pickupLocation: "Mason Apartments, Ikoyi",
+          dropoffLocation: "Same as pickup location",
+        },
+        confidence: 0.95,
+      })
+      .mockResolvedValueOnce({
+        intent: "provide_info",
+        draftPatch: {
+          vehicleType: "SUV",
+        },
+        confidence: 0.95,
+      });
+
+    await orchestratorService.decide({
+      messageId: "msg_s8_dates",
+      conversationId: "conv_s8",
+      body: "Day booking from tomorrow for 2 days",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
+    });
+
+    const locationsTurn = await orchestratorService.decide({
+      messageId: "msg_s8_locations",
+      conversationId: "conv_s8",
+      body: "9am\nMason Apartments, Ikoyi\nSame as pickup location",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
+    });
+
+    const locationsState = await app.get(BookingAgentStateService).loadState("conv_s8");
+    expect(locationsState?.draft.dropoffLocation).toBe(locationsState?.draft.pickupLocation);
+    expect(locationsTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s8_locations");
+    expect(
+      locationsTurn.enqueueOutbox.some((item) =>
+        item.dedupeKey.startsWith("booking-agent:msg_s8_locations:vehicle:"),
+      ),
+    ).toBe(false);
+
+    const vehicleTypeTurn = await orchestratorService.decide({
+      messageId: "msg_s8_vehicle_type",
+      conversationId: "conv_s8",
+      body: "SUV",
+      kind: WhatsAppMessageKind.TEXT,
+      windowExpiresAt: FUTURE_WINDOW_EXPIRES_AT,
+    });
+
+    expect(vehicleTypeTurn.enqueueOutbox[0]?.dedupeKey).toBe(
+      "booking-agent:msg_s8_vehicle_type:intro",
+    );
+    expect(
+      vehicleTypeTurn.enqueueOutbox.some((item) =>
+        item.dedupeKey.startsWith("booking-agent:msg_s8_vehicle_type:vehicle:"),
+      ),
+    ).toBe(true);
+  });
+
   it("preserves draft and options when extract fails on a later turn", async () => {
     await seedCar({
       make: "Toyota",

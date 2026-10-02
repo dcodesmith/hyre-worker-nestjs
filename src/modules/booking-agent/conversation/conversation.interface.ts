@@ -3,6 +3,7 @@ import type { PublicAddon } from "../../addons/addons.interface";
 import type { ExtractedAiSearchParams } from "../../ai-search/ai-search.interface";
 import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
+import { BOOKING_AGENT_ANY_VEHICLE_PREFERENCE } from "./conversation.const";
 
 export type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
 
@@ -72,6 +73,7 @@ export interface ExtractionResult {
   selectionHint?: string;
   preferenceHint?: string;
   question?: string;
+  clarificationPrompt?: string;
   confidence: number;
 }
 
@@ -255,8 +257,8 @@ export interface PersistedState {
 export function convertToExtractedParams(draft: BookingDraft): ExtractedAiSearchParams {
   return {
     color: draft.color,
-    make: draft.make,
-    model: draft.model,
+    make: toOptionalVehicleFilter(draft.make),
+    model: toOptionalVehicleFilter(draft.model),
     vehicleType: draft.vehicleType,
     serviceTier: draft.serviceTier,
     from: draft.pickupDate,
@@ -267,6 +269,14 @@ export function convertToExtractedParams(draft: BookingDraft): ExtractedAiSearch
     dropoffLocation: draft.dropoffLocation,
     flightNumber: draft.flightNumber,
   };
+}
+
+export function isAnyVehiclePreference(value: string | undefined): boolean {
+  return value?.trim().toUpperCase() === BOOKING_AGENT_ANY_VEHICLE_PREFERENCE;
+}
+
+function toOptionalVehicleFilter(value: string | undefined): string | undefined {
+  return isAnyVehiclePreference(value) ? undefined : value;
 }
 
 export function convertFromExtractedParams(params: ExtractedAiSearchParams): Partial<BookingDraft> {
