@@ -5,11 +5,13 @@ import type { Job } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
+  PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
   PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
   PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
   PROCESS_WHATSAPP_INBOUND_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
+import { EmailService } from "../../email/email.service";
 import { captureTerminalJobFailure } from "../../infra/queue-infra/bullmq-telemetry";
 
 const { captureTerminalJobFailureMock } = vi.hoisted(() => ({
@@ -22,6 +24,7 @@ vi.mock("../../infra/queue-infra/bullmq-telemetry", () => ({
 
 import { WhatsAppProcessingLockAcquireFailedException } from "../booking-agent.error";
 import type {
+  ProcessWhatsAppAccountLinkNotificationJobData,
   ProcessWhatsAppInactivityClearJobData,
   ProcessWhatsAppInactivityNudgeJobData,
   ProcessWhatsAppInboundJobData,
@@ -41,6 +44,7 @@ type ProcessorTestInternals = {
 type WhatsAppAgentJobData =
   | ProcessWhatsAppInboundJobData
   | ProcessWhatsAppOutboxJobData
+  | ProcessWhatsAppAccountLinkNotificationJobData
   | ProcessWhatsAppInactivityNudgeJobData
   | ProcessWhatsAppInactivityClearJobData;
 
@@ -65,6 +69,8 @@ describe("WhatsAppProcessor", () => {
     markInboundMessageFailed: ReturnType<typeof vi.fn>;
     releaseProcessingLock: ReturnType<typeof vi.fn>;
     synchronizeConversationIdentity: ReturnType<typeof vi.fn>;
+    getPendingLinkNotificationEmail: ReturnType<typeof vi.fn>;
+    markLinkNotificationCompleted: ReturnType<typeof vi.fn>;
   };
   let orchestratorService: {
     decide: ReturnType<typeof vi.fn>;
@@ -84,6 +90,9 @@ describe("WhatsAppProcessor", () => {
     add: ReturnType<typeof vi.fn>;
     getJob: ReturnType<typeof vi.fn>;
   };
+  let emailService: {
+    sendEmail: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -99,7 +108,9 @@ describe("WhatsAppProcessor", () => {
       markInboundMessageProcessed: vi.fn(),
       markInboundMessageFailed: vi.fn(),
       releaseProcessingLock: vi.fn(),
-      synchronizeConversationIdentity: vi.fn().mockResolvedValue(undefined),
+      synchronizeConversationIdentity: vi.fn().mockResolvedValue(null),
+      getPendingLinkNotificationEmail: vi.fn(),
+      markLinkNotificationCompleted: vi.fn(),
     };
     orchestratorService = {
       decide: vi.fn(),
@@ -118,6 +129,9 @@ describe("WhatsAppProcessor", () => {
     whatsappAgentQueue = {
       add: vi.fn().mockResolvedValue(undefined),
       getJob: vi.fn().mockResolvedValue(null),
+    };
+    emailService = {
+      sendEmail: vi.fn().mockResolvedValue({ data: { id: "email-1" } }),
     };
 
     moduleRef = await Test.createTestingModule({
@@ -146,6 +160,10 @@ describe("WhatsAppProcessor", () => {
         {
           provide: getQueueToken(WHATSAPP_AGENT_QUEUE),
           useValue: whatsappAgentQueue,
+        },
+        {
+          provide: EmailService,
+          useValue: emailService,
         },
       ],
     })
@@ -232,6 +250,40 @@ describe("WhatsAppProcessor", () => {
     expect(
       persistenceService.synchronizeConversationIdentity.mock.invocationCallOrder[0],
     ).toBeLessThan(persistenceService.getInboundMessageContext.mock.invocationCallOrder[0]);
+    expect(whatsappAgentQueue.add).not.toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("enqueues account-link notification after identity sync returns a pending link", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.synchronizeConversationIdentity.mockResolvedValue({
+      userId: "user-linked",
+      linkedAt: "2026-03-01T12:00:00.000Z",
+    });
+    persistenceService.getInboundMessageContext.mockResolvedValue(null);
+
+    await processor.process(
+      buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        dedupeKey: "dedupe-1",
+      }),
+    );
+
+    expect(whatsappAgentQueue.add).toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
+      {
+        conversationId: "conv-1",
+        userId: "user-linked",
+        linkedAt: "2026-03-01T12:00:00.000Z",
+      },
+      {
+        jobId: "whatsapp-account-link_conv-1_msg-1",
+      },
+    );
   });
 
   it("retries the inbound message when clearing state for an identity change fails", async () => {
@@ -703,6 +755,82 @@ describe("WhatsAppProcessor", () => {
 
     expect(bookingAgentStateService.clearState).not.toHaveBeenCalled();
     expect(senderService.enqueueOutbound).not.toHaveBeenCalled();
+  });
+
+  describe("account-link notification job", () => {
+    const linkedAt = "2026-03-01T12:00:00.000Z";
+    const jobData: ProcessWhatsAppAccountLinkNotificationJobData = {
+      conversationId: "conv-1",
+      userId: "user-linked",
+      linkedAt,
+    };
+    const notificationKey = `conv-1_user-linked_${Date.parse(linkedAt)}`;
+
+    function buildAccountLinkJob(
+      progress: unknown = {},
+    ): Job<ProcessWhatsAppAccountLinkNotificationJobData, unknown, string> {
+      return {
+        name: PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
+        data: jobData,
+        progress,
+        updateProgress: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Job<ProcessWhatsAppAccountLinkNotificationJobData, unknown, string>;
+    }
+
+    it("exits when pending notification data is stale or missing", async () => {
+      persistenceService.getPendingLinkNotificationEmail.mockResolvedValue(null);
+
+      await processor.process(buildAccountLinkJob());
+
+      expect(senderService.enqueueOutbound).not.toHaveBeenCalled();
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+      expect(persistenceService.markLinkNotificationCompleted).not.toHaveBeenCalled();
+    });
+
+    it("sends both channels and marks completion when pending", async () => {
+      persistenceService.getPendingLinkNotificationEmail.mockResolvedValue("user@example.com");
+      const job = buildAccountLinkJob();
+
+      await processor.process(job);
+
+      expect(senderService.enqueueOutbound).toHaveBeenCalledWith({
+        conversationId: "conv-1",
+        dedupeKey: `account-linked:${notificationKey}`,
+        mode: WhatsAppDeliveryMode.FREE_FORM,
+        textBody:
+          "Welcome back! We matched this WhatsApp number to your verified Tripdly account. Eligible account benefits are available for this booking.",
+      });
+      expect(emailService.sendEmail).toHaveBeenCalledWith({
+        to: "user@example.com",
+        subject: "Your Tripdly account was linked to WhatsApp",
+        html: expect.stringContaining("verified phone number"),
+        idempotencyKey: `account-link_${notificationKey}`,
+      });
+      expect(job.updateProgress).toHaveBeenCalledWith({ emailSent: true });
+      expect(persistenceService.markLinkNotificationCompleted).toHaveBeenCalledWith(jobData);
+    });
+
+    it("skips email on retry but still re-enqueues WhatsApp and completes", async () => {
+      persistenceService.getPendingLinkNotificationEmail.mockResolvedValue("user@example.com");
+      const job = buildAccountLinkJob({ emailSent: true });
+
+      await processor.process(job);
+
+      expect(senderService.enqueueOutbound).toHaveBeenCalledTimes(1);
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+      expect(job.updateProgress).not.toHaveBeenCalled();
+      expect(persistenceService.markLinkNotificationCompleted).toHaveBeenCalledWith(jobData);
+    });
+
+    it("does not mark completion when email delivery fails", async () => {
+      persistenceService.getPendingLinkNotificationEmail.mockResolvedValue("user@example.com");
+      emailService.sendEmail.mockRejectedValue(new Error("resend down"));
+
+      await expect(processor.process(buildAccountLinkJob())).rejects.toThrow("resend down");
+
+      expect(senderService.enqueueOutbound).toHaveBeenCalledTimes(1);
+      expect(persistenceService.markLinkNotificationCompleted).not.toHaveBeenCalled();
+    });
   });
 
   it("delegates a missing-job worker failure to terminal capture", () => {

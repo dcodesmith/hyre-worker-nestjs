@@ -15,16 +15,16 @@ export class EmailService {
     this.logger.setContext(EmailService.name);
   }
 
-  async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
+  async sendEmail(payload: EmailPayload): Promise<EmailSendResult> {
     try {
-      return await this.transport.sendEmail({ to, subject, html });
+      return await this.transport.sendEmail(payload);
     } catch (error) {
       if (error instanceof EmailException) {
         throw error;
       }
 
       this.logger.error(
-        { recipient: maskEmail(to), err: toLogError(error) },
+        { recipient: maskEmail(payload.to), err: toLogError(error) },
         "Failed to send email",
       );
 

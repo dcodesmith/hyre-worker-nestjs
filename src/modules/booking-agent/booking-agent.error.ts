@@ -5,7 +5,6 @@ export const BookingAgentErrorCode = {
   WHATSAPP_AGENT_JOB_TYPE_UNKNOWN: "WHATSAPP_AGENT_JOB_TYPE_UNKNOWN",
   WHATSAPP_AGENT_LOCK_ACQUIRE_FAILED: "WHATSAPP_AGENT_LOCK_ACQUIRE_FAILED",
   WHATSAPP_INBOUND_MESSAGE_ID_MISSING: "WHATSAPP_INBOUND_MESSAGE_ID_MISSING",
-  WHATSAPP_OUTBOUND_OUTBOX_ID_MISSING: "WHATSAPP_OUTBOUND_OUTBOX_ID_MISSING",
   WHATSAPP_OUTBOUND_TEMPLATE_INVALID: "WHATSAPP_OUTBOUND_TEMPLATE_INVALID",
   WHATSAPP_OUTBOUND_MESSAGE_EMPTY: "WHATSAPP_OUTBOUND_MESSAGE_EMPTY",
   WHATSAPP_OPERATION_TIMEOUT: "WHATSAPP_OPERATION_TIMEOUT",
@@ -49,19 +48,6 @@ export class WhatsAppInboundMessageIdMissingException extends BookingAgentExcept
       HttpStatus.INTERNAL_SERVER_ERROR,
       {
         title: "WhatsApp Inbound Message Id Missing",
-      },
-    );
-  }
-}
-
-export class WhatsAppOutboundOutboxIdMissingException extends BookingAgentException {
-  constructor() {
-    super(
-      BookingAgentErrorCode.WHATSAPP_OUTBOUND_OUTBOX_ID_MISSING,
-      "Outbound enqueue did not return outbox id",
-      HttpStatus.INTERNAL_SERVER_ERROR,
-      {
-        title: "WhatsApp Outbound Outbox Id Missing",
       },
     );
   }

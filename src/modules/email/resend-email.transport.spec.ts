@@ -52,6 +52,30 @@ describe("ResendEmailTransport", () => {
     transport = module.get<ResendEmailTransport>(ResendEmailTransport);
   });
 
+  it("forwards idempotencyKey to Resend send options", async () => {
+    mockSend.mockResolvedValueOnce({
+      data: { id: "email-1" },
+      error: null,
+    });
+
+    await transport.sendEmail({
+      to: "recipient@example.com",
+      subject: "Test Subject",
+      html: "<p>Test HTML</p>",
+      idempotencyKey: "account-link_conv-1_user_123",
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      {
+        from: "Test Sender from Test App <test@example.com>",
+        to: "recipient@example.com",
+        subject: "Test Subject",
+        html: "<p>Test HTML</p>",
+      },
+      { idempotencyKey: "account-link_conv-1_user_123" },
+    );
+  });
+
   it("should throw error when API returns an error", async () => {
     mockSend.mockResolvedValueOnce({
       data: null,

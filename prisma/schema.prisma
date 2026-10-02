@@ -1173,30 +1173,31 @@ model BookingDraft {
 }
 
 model WhatsAppConversation {
-  id                      String                     @id @default(uuid(7)) @db.Uuid
-  phoneE164               String                     @unique
-  waId                    String?                    @unique
-  profileName             String?
-  status                  WhatsAppConversationStatus @default(ACTIVE)
-  linkedUserId            String?                    @db.Uuid
-  linkStatus              WhatsAppLinkStatus         @default(UNLINKED)
-  linkRequestedAt         DateTime?
-  linkVerifiedAt          DateTime?
-  lastInboundAt           DateTime?
-  lastOutboundAt          DateTime?
-  windowExpiresAt         DateTime?
-  handoffReason           String?
-  handoffAt               DateTime?
-  activeBookingDraftId    String?                    @db.Uuid
-  activeBookingDraft      BookingDraft?              @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
-  linkedUser              User?                      @relation("WhatsAppConversationLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
-  processingLockToken     String?
-  processingLockExpiresAt DateTime?
-  messages                WhatsAppMessage[]
-  outboxItems             WhatsAppOutbox[]
-  bookingDrafts           BookingDraft[]             @relation("ConversationDrafts")
-  createdAt               DateTime                   @default(now())
-  updatedAt               DateTime                   @updatedAt
+  id                          String                     @id @default(uuid(7)) @db.Uuid
+  phoneE164                   String                     @unique
+  waId                        String?                    @unique
+  profileName                 String?
+  status                      WhatsAppConversationStatus @default(ACTIVE)
+  linkedUserId                String?                    @db.Uuid
+  linkStatus                  WhatsAppLinkStatus         @default(UNLINKED)
+  linkRequestedAt             DateTime?
+  linkVerifiedAt              DateTime?
+  linkNotificationCompletedAt DateTime?
+  lastInboundAt               DateTime?
+  lastOutboundAt              DateTime?
+  windowExpiresAt             DateTime?
+  handoffReason               String?
+  handoffAt                   DateTime?
+  activeBookingDraftId        String?                    @db.Uuid
+  activeBookingDraft          BookingDraft?              @relation("ActiveConversationDraft", fields: [activeBookingDraftId], references: [id], onDelete: SetNull)
+  linkedUser                  User?                      @relation("WhatsAppConversationLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+  processingLockToken         String?
+  processingLockExpiresAt     DateTime?
+  messages                    WhatsAppMessage[]
+  outboxItems                 WhatsAppOutbox[]
+  bookingDrafts               BookingDraft[]             @relation("ConversationDrafts")
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   @@index([status])
   @@index([linkedUserId])

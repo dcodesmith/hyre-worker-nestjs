@@ -12,7 +12,11 @@ import {
   WHATSAPP_OUTBOX_PROCESSING_TTL_MS,
   WHATSAPP_PROCESSING_LOCK_TTL_MS,
 } from "../booking-agent.const";
-import type { CreateOutboxInput, TwilioInboundWebhookPayload } from "../booking-agent.interface";
+import type {
+  CreateOutboxInput,
+  ProcessWhatsAppAccountLinkNotificationJobData,
+  TwilioInboundWebhookPayload,
+} from "../booking-agent.interface";
 
 export const INBOUND_MESSAGE_CONTEXT_SELECT = Prisma.validator<Prisma.WhatsAppMessageSelect>()({
   id: true,
@@ -90,17 +94,19 @@ export class WhatsAppPersistenceService {
   async synchronizeConversationIdentity(
     conversationId: string,
     beforeIdentityChange: () => Promise<void>,
-  ): Promise<void> {
+  ): Promise<{ userId: string; linkedAt: string } | null> {
     const currentConversation = await this.databaseService.whatsAppConversation.findUnique({
       where: { id: conversationId },
       select: {
         phoneE164: true,
         linkedUserId: true,
         linkStatus: true,
+        linkVerifiedAt: true,
+        linkNotificationCompletedAt: true,
       },
     });
     if (!currentConversation || currentConversation.linkStatus === WhatsAppLinkStatus.REVOKED) {
-      return;
+      return null;
     }
 
     const currentVerifiedUser = await this.databaseService.user.findFirst({
@@ -116,13 +122,23 @@ export class WhatsAppPersistenceService {
       (currentLinkedUserId !== null &&
         currentConversation.linkStatus !== WhatsAppLinkStatus.LINKED);
     if (!identityWillChange) {
-      return;
+      if (
+        currentLinkedUserId &&
+        currentConversation.linkVerifiedAt &&
+        !currentConversation.linkNotificationCompletedAt
+      ) {
+        return {
+          userId: currentLinkedUserId,
+          linkedAt: currentConversation.linkVerifiedAt.toISOString(),
+        };
+      }
+      return null;
     }
 
     // Redis may be slow or unavailable, so clear it before holding the database row lock.
     await beforeIdentityChange();
 
-    await this.databaseService.$transaction(async (tx) => {
+    return this.databaseService.$transaction(async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM "WhatsAppConversation" WHERE id = ${conversationId}::uuid FOR UPDATE`,
       );
@@ -132,10 +148,12 @@ export class WhatsAppPersistenceService {
           phoneE164: true,
           linkedUserId: true,
           linkStatus: true,
+          linkVerifiedAt: true,
+          linkNotificationCompletedAt: true,
         },
       });
       if (!conversation || conversation.linkStatus === WhatsAppLinkStatus.REVOKED) {
-        return;
+        return null;
       }
 
       const verifiedUser = await tx.user.findFirst({
@@ -150,23 +168,68 @@ export class WhatsAppPersistenceService {
         conversation.linkedUserId !== nextLinkedUserId ||
         (nextLinkedUserId !== null && conversation.linkStatus !== WhatsAppLinkStatus.LINKED);
       if (!identityChanged) {
-        return;
+        if (
+          nextLinkedUserId &&
+          conversation.linkVerifiedAt &&
+          !conversation.linkNotificationCompletedAt
+        ) {
+          return {
+            userId: nextLinkedUserId,
+            linkedAt: conversation.linkVerifiedAt.toISOString(),
+          };
+        }
+        return null;
       }
 
+      const linkedAt = new Date();
       await tx.whatsAppConversation.update({
         where: { id: conversationId },
         data: verifiedUser
           ? {
               linkedUserId: verifiedUser.id,
               linkStatus: WhatsAppLinkStatus.LINKED,
-              linkVerifiedAt: new Date(),
+              linkVerifiedAt: linkedAt,
+              linkNotificationCompletedAt: null,
             }
           : {
               linkedUserId: null,
               linkStatus: WhatsAppLinkStatus.UNLINKED,
               linkVerifiedAt: null,
+              linkNotificationCompletedAt: null,
             },
       });
+      return verifiedUser ? { userId: verifiedUser.id, linkedAt: linkedAt.toISOString() } : null;
+    });
+  }
+
+  async getPendingLinkNotificationEmail(
+    input: ProcessWhatsAppAccountLinkNotificationJobData,
+  ): Promise<string | null> {
+    const conversation = await this.databaseService.whatsAppConversation.findFirst({
+      where: {
+        id: input.conversationId,
+        linkedUserId: input.userId,
+        linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt: new Date(input.linkedAt),
+        linkNotificationCompletedAt: null,
+      },
+      select: { linkedUser: { select: { email: true } } },
+    });
+    return conversation?.linkedUser?.email ?? null;
+  }
+
+  async markLinkNotificationCompleted(
+    input: ProcessWhatsAppAccountLinkNotificationJobData,
+  ): Promise<void> {
+    await this.databaseService.whatsAppConversation.updateMany({
+      where: {
+        id: input.conversationId,
+        linkedUserId: input.userId,
+        linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt: new Date(input.linkedAt),
+        linkNotificationCompletedAt: null,
+      },
+      data: { linkNotificationCompletedAt: new Date() },
     });
   }
 
@@ -212,8 +275,10 @@ export class WhatsAppPersistenceService {
     maxAttempts: number,
   ): Promise<{ id: string }> {
     const now = new Date();
-    return this.databaseService.whatsAppOutbox.create({
-      data: {
+    return this.databaseService.whatsAppOutbox.upsert({
+      where: { dedupeKey: input.dedupeKey },
+      update: {},
+      create: {
         dedupeKey: input.dedupeKey,
         mode: input.mode,
         textBody: input.textBody ?? null,
@@ -230,10 +295,6 @@ export class WhatsAppPersistenceService {
       },
       select: { id: true },
     });
-  }
-
-  async deleteOutbox(outboxId: string): Promise<void> {
-    await this.databaseService.whatsAppOutbox.delete({ where: { id: outboxId } });
   }
 
   async claimOutboxForProcessing(outboxId: string, now: Date): Promise<boolean> {

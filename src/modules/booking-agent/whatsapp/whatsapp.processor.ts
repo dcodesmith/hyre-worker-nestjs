@@ -6,12 +6,14 @@ import { Job, type Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError, toPersistedErrorMessage } from "../../../common/logging/error-logging.helper";
 import {
+  PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
   PROCESS_WHATSAPP_INACTIVITY_CLEAR_JOB,
   PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB,
   PROCESS_WHATSAPP_INBOUND_JOB,
   PROCESS_WHATSAPP_OUTBOX_JOB,
   WHATSAPP_AGENT_QUEUE,
 } from "../../../config/constants";
+import { EmailService } from "../../email/email.service";
 import { captureTerminalJobFailure } from "../../infra/queue-infra/bullmq-telemetry";
 import {
   WHATSAPP_INACTIVITY_CLEAR_DELAY_MS,
@@ -28,6 +30,7 @@ import {
 import type {
   InboundMessageContext,
   OrchestratorResult,
+  ProcessWhatsAppAccountLinkNotificationJobData,
   ProcessWhatsAppInactivityClearJobData,
   ProcessWhatsAppInactivityNudgeJobData,
   ProcessWhatsAppInboundJobData,
@@ -44,6 +47,7 @@ import { WhatsAppSenderService } from "./whatsapp-sender.service";
 type WhatsAppAgentJobData =
   | ProcessWhatsAppInboundJobData
   | ProcessWhatsAppOutboxJobData
+  | ProcessWhatsAppAccountLinkNotificationJobData
   | ProcessWhatsAppInactivityNudgeJobData
   | ProcessWhatsAppInactivityClearJobData;
 
@@ -56,6 +60,7 @@ export class WhatsAppProcessor extends WorkerHost {
     private readonly bookingAgentStateService: BookingAgentStateService,
     private readonly senderService: WhatsAppSenderService,
     private readonly audioTranscriptionService: WhatsAppAudioTranscriptionService,
+    private readonly emailService: EmailService,
     private readonly logger: PinoLogger,
     @InjectQueue(WHATSAPP_AGENT_QUEUE)
     private readonly whatsappAgentQueue: Queue<WhatsAppAgentJobData>,
@@ -72,6 +77,12 @@ export class WhatsAppProcessor extends WorkerHost {
 
       case PROCESS_WHATSAPP_OUTBOX_JOB:
         await this.processOutbox(job as Job<ProcessWhatsAppOutboxJobData, unknown, string>);
+        return { success: true };
+
+      case PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB:
+        await this.processAccountLinkNotification(
+          job as Job<ProcessWhatsAppAccountLinkNotificationJobData, unknown, string>,
+        );
         return { success: true };
 
       case PROCESS_WHATSAPP_INACTIVITY_NUDGE_JOB:
@@ -105,9 +116,23 @@ export class WhatsAppProcessor extends WorkerHost {
     }
 
     try {
-      await this.persistenceService.synchronizeConversationIdentity(conversationId, () =>
-        this.bookingAgentStateService.clearState(conversationId),
+      const linkedAccount = await this.persistenceService.synchronizeConversationIdentity(
+        conversationId,
+        () => this.bookingAgentStateService.clearState(conversationId),
       );
+      if (linkedAccount) {
+        await this.whatsappAgentQueue.add(
+          PROCESS_WHATSAPP_ACCOUNT_LINK_NOTIFICATION_JOB,
+          {
+            conversationId,
+            userId: linkedAccount.userId,
+            linkedAt: linkedAccount.linkedAt,
+          },
+          {
+            jobId: `whatsapp-account-link_${conversationId}_${messageId}`,
+          },
+        );
+      }
       const context = await this.persistenceService.getInboundMessageContext(messageId);
       if (!context) {
         return;
@@ -268,6 +293,44 @@ export class WhatsAppProcessor extends WorkerHost {
     job: Job<ProcessWhatsAppOutboxJobData, unknown, string>,
   ): Promise<void> {
     await this.senderService.processOutbox(job.data.outboxId);
+  }
+
+  private async processAccountLinkNotification(
+    job: Job<ProcessWhatsAppAccountLinkNotificationJobData, unknown, string>,
+  ): Promise<void> {
+    const email = await this.persistenceService.getPendingLinkNotificationEmail(job.data);
+    if (!email) {
+      return;
+    }
+
+    const notificationKey = `${job.data.conversationId}_${job.data.userId}_${Date.parse(
+      job.data.linkedAt,
+    )}`;
+    const progress =
+      typeof job.progress === "object" && job.progress !== null
+        ? (job.progress as { emailSent?: boolean })
+        : {};
+
+    await this.senderService.enqueueOutbound({
+      conversationId: job.data.conversationId,
+      dedupeKey: `account-linked:${notificationKey}`,
+      mode: WhatsAppDeliveryMode.FREE_FORM,
+      textBody:
+        "Welcome back! We matched this WhatsApp number to your verified Tripdly account. Eligible account benefits are available for this booking.",
+    });
+
+    if (!progress.emailSent) {
+      await this.emailService.sendEmail({
+        to: email,
+        subject: "Your Tripdly account was linked to WhatsApp",
+        html: "<p>Your verified phone number was used to link a WhatsApp conversation to your Tripdly account.</p><p>If this was not you, contact Tripdly support immediately.</p>",
+        idempotencyKey: `account-link_${notificationKey}`,
+      });
+      progress.emailSent = true;
+      await job.updateProgress(progress);
+    }
+
+    await this.persistenceService.markLinkNotificationCompleted(job.data);
   }
 
   private async processInactivityNudge(
