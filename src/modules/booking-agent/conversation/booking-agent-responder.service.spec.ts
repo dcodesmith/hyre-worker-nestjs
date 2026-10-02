@@ -13,12 +13,12 @@ describe("BookingAgentResponderService", () => {
   let moduleRef: TestingModule;
   let service: BookingAgentResponderService;
   let claudeMock: {
-    invoke: ReturnType<typeof vi.fn>;
+    messages: { create: ReturnType<typeof vi.fn> };
   };
 
   beforeEach(async () => {
     claudeMock = {
-      invoke: vi.fn(),
+      messages: { create: vi.fn() },
     };
 
     moduleRef = await Test.createTestingModule({
@@ -43,7 +43,17 @@ describe("BookingAgentResponderService", () => {
 
   describe("generateResponse", () => {
     it("throws on API error", async () => {
-      claudeMock.invoke.mockRejectedValue(new Error("API timeout"));
+      claudeMock.messages.create.mockRejectedValue(new Error("API timeout"));
+
+      const state = buildState();
+
+      await expect(service.generateResponse(state)).rejects.toThrow();
+    });
+
+    it("throws when the API response contains no text", async () => {
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "thinking", thinking: "Internal reasoning", signature: "signature" }],
+      });
 
       const state = buildState();
 
@@ -51,7 +61,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("includes conversation history in context", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Response" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Response" }],
+      });
 
       const state = buildState({
         messages: [
@@ -63,17 +75,28 @@ describe("BookingAgentResponderService", () => {
 
       await service.generateResponse(state);
 
-      expect(claudeMock.invoke).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ role: "user", content: "Hi" }),
-          expect.objectContaining({ role: "assistant", content: "Hello!" }),
-          expect.objectContaining({ role: "user", content: "I need a car" }),
-        ]),
+      expect(claudeMock.messages.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "claude-sonnet-5-5",
+          max_tokens: 4096,
+          thinking: { type: "between_tools" },
+          messages: expect.arrayContaining([
+            expect.objectContaining({ role: "user", content: "Hi" }),
+            expect.objectContaining({ role: "assistant", content: "Hello!" }),
+            expect.objectContaining({
+              role: "user",
+              content: expect.stringContaining("I need a car"),
+            }),
+          ]),
+        }),
+        { timeout: 10_000, maxRetries: 1 },
       );
     });
 
     it("limits conversation history to last 6 messages", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Response" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Response" }],
+      });
 
       const messages = Array.from({ length: 10 }, (_, i) => ({
         role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
@@ -85,7 +108,7 @@ describe("BookingAgentResponderService", () => {
 
       await service.generateResponse(state);
 
-      const callArgs = claudeMock.invoke.mock.calls[0][0];
+      const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const messageRoles = callArgs.filter(
         (m: { role: string }) => m.role === "user" || m.role === "assistant",
       );
@@ -399,7 +422,7 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.buttons).toHaveLength(2);
       expect(response.interactive?.buttons?.[0].id).toBe("cancel");
       expect(response.interactive?.buttons?.[1].id).toBe("show_others");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("prepends availability fallback message when presenting refreshed options", async () => {
@@ -420,7 +443,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("returns payment stage buttons", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Payment pending" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Payment pending" }],
+      });
 
       const state = buildState({
         stage: "awaiting_payment",
@@ -450,7 +475,7 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.buttons).toHaveLength(2);
       expect(response.interactive?.buttons?.[0].id).toBe("cancel");
       expect(response.interactive?.buttons?.[1].id).toBe("agent");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("includes a reserved-until line when the payment hold has an expiry", async () => {
@@ -467,11 +492,13 @@ describe("BookingAgentResponderService", () => {
       );
       expect(response.text).toContain("Please pay before then.");
       expect(response.text).not.toMatch(/HOLD ACTIVE/i);
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns booking type buttons when collecting without booking type", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "What type of booking?" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "What type of booking?" }],
+      });
 
       const state = buildState({
         stage: "collecting",
@@ -498,7 +525,7 @@ describe("BookingAgentResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toContain("no longer available");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns collecting location guidance from statusMessage without LLM call", async () => {
@@ -513,7 +540,7 @@ describe("BookingAgentResponderService", () => {
 
       expect(response.text).toContain("Xyzzyville");
       expect(response.text).toContain("more specific pickup location");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns greeting error deterministically without LLM call", async () => {
@@ -526,7 +553,7 @@ describe("BookingAgentResponderService", () => {
       const response = await service.generateResponse(state);
 
       expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns greeting outage text even when options are still present", async () => {
@@ -540,7 +567,7 @@ describe("BookingAgentResponderService", () => {
 
       expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
       expect(response.text).not.toContain("Here are your options");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("service-unavailable override: prefers system error over statusMessage", async () => {
@@ -556,7 +583,7 @@ describe("BookingAgentResponderService", () => {
 
       expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
       expect(response.text).not.toBe("What type of vehicle would you prefer?");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("keeps confirming retry/agent actions for service-unavailable booking error", async () => {
@@ -582,11 +609,13 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.buttons?.[0].id).toBe("retry_booking");
       expect(response.interactive?.buttons?.[1].id).toBe("show_others");
       expect(response.interactive?.buttons?.[2].id).toBe("agent");
-      expect(claudeMock.invoke).not.toHaveBeenCalled();
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns no interactive when booking type is set", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "When do you need pickup?" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "When do you need pickup?" }],
+      });
 
       const state = buildState({
         stage: "collecting",
@@ -599,7 +628,7 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("returns no interactive for greeting stage", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Hello!" });
+      claudeMock.messages.create.mockResolvedValue({ content: [{ type: "text", text: "Hello!" }] });
 
       const state = buildState({
         stage: "greeting",
@@ -611,7 +640,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("returns no interactive for empty options in presenting_options", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "No vehicles found" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "No vehicles found" }],
+      });
 
       const state = buildState({
         stage: "presenting_options",
@@ -624,7 +655,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("returns no interactive for confirming without selection", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Please select an option first" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Please select an option first" }],
+      });
 
       const state = buildState({
         stage: "confirming",
@@ -637,7 +670,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("limits list options to 10 items", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Many options:" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Many options:" }],
+      });
 
       const options = Array.from({ length: 15 }, (_, i) =>
         buildVehicleOption({ id: `v${i}`, make: `Make${i}` }),
@@ -656,7 +691,7 @@ describe("BookingAgentResponderService", () => {
 
   describe("context building", () => {
     it("includes draft info in context", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Got it" });
+      claudeMock.messages.create.mockResolvedValue({ content: [{ type: "text", text: "Got it" }] });
 
       const state = buildState({
         draft: {
@@ -668,7 +703,7 @@ describe("BookingAgentResponderService", () => {
 
       await service.generateResponse(state);
 
-      const callArgs = claudeMock.invoke.mock.calls[0][0];
+      const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("DAY");
       expect(userContext.content).toContain("2026-03-01");
@@ -676,7 +711,9 @@ describe("BookingAgentResponderService", () => {
     });
 
     it("includes extraction intent in context", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Let me help" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Let me help" }],
+      });
 
       const state = buildState({
         extraction: {
@@ -689,14 +726,16 @@ describe("BookingAgentResponderService", () => {
 
       await service.generateResponse(state);
 
-      const callArgs = claudeMock.invoke.mock.calls[0][0];
+      const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("ask_question");
       expect(userContext.content).toContain("What is the price?");
     });
 
     it("includes available options in context", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Here are options" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Here are options" }],
+      });
 
       const options = [
         buildVehicleOption({ make: "Toyota", model: "Prado", estimatedTotalInclVat: 100000 }),
@@ -708,20 +747,22 @@ describe("BookingAgentResponderService", () => {
 
       await service.generateResponse(state);
 
-      const callArgs = claudeMock.invoke.mock.calls[0][0];
+      const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("Toyota Prado");
       expect(userContext.content).toContain("100,000");
     });
 
     it("includes turn count in context", async () => {
-      claudeMock.invoke.mockResolvedValue({ content: "Response" });
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Response" }],
+      });
 
       const state = buildState({ turnCount: 5 });
 
       await service.generateResponse(state);
 
-      const callArgs = claudeMock.invoke.mock.calls[0][0];
+      const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("TURN: 5");
     });

@@ -6,6 +6,9 @@ export const BOOKING_AGENT_STATE_TTL_SECONDS = 24 * 60 * 60;
 export const BOOKING_AGENT_EXTRACTION_MODEL = "gpt-4o-mini";
 
 export const BOOKING_AGENT_RESPONSE_MODEL = "claude-sonnet-5-5";
+export const BOOKING_AGENT_RESPONSE_MAX_TOKENS = 4096;
+export const BOOKING_AGENT_MODEL_TIMEOUT_MS = 10_000;
+export const BOOKING_AGENT_MODEL_MAX_RETRIES = 1;
 
 /**
  * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.

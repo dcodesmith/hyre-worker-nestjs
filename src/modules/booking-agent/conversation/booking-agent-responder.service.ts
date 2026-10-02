@@ -1,3 +1,4 @@
+import type { Message, MessageCreateParams } from "@anthropic-ai/sdk/resources/messages/messages";
 import { Inject, Injectable } from "@nestjs/common";
 import { BookingType } from "@prisma/client";
 import { addHours, format } from "date-fns";
@@ -12,6 +13,10 @@ import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
 import {
   BOOKING_AGENT_BUTTON_ID,
+  BOOKING_AGENT_MODEL_MAX_RETRIES,
+  BOOKING_AGENT_MODEL_TIMEOUT_MS,
+  BOOKING_AGENT_RESPONSE_MAX_TOKENS,
+  BOOKING_AGENT_RESPONSE_MODEL,
   BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
 } from "./conversation.const";
 import { BookingAgentResponseFailedException } from "./conversation.error";
@@ -74,22 +79,30 @@ export class BookingAgentResponderService {
 
       this.logger.debug({ conversationId, userContext }, "Responder user context diagnostics");
 
-      const response = await this.claude.invoke([
-        { role: "system", content: systemPrompt },
-        ...messages.slice(-BookingAgentResponderService.MAX_MESSAGE_HISTORY).map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        { role: "user", content: userContext },
-      ]);
+      const response = await this.claude.messages.create(
+        {
+          model: BOOKING_AGENT_RESPONSE_MODEL,
+          max_tokens: BOOKING_AGENT_RESPONSE_MAX_TOKENS,
+          system: systemPrompt,
+          thinking: { type: "between_tools" },
+          messages: this.buildModelMessages(messages, userContext),
+        },
+        {
+          timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
+          maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
+        },
+      );
 
-      const content = this.getTextFromClaudeResponse(response.content);
+      const text = this.getTextFromClaudeResponse(response.content).trim();
+      if (!text) {
+        throw new Error("Anthropic response contained no text");
+      }
 
       const interactive = this.determineInteractive(stage, draft, selectedOption, state.error);
       const vehicleCards = this.buildVehicleCards(stage, availableOptions, draft);
 
       return {
-        text: String(content).trim(),
+        text,
         interactive,
         vehicleCards,
       };
@@ -311,24 +324,33 @@ export class BookingAgentResponderService {
     return null;
   }
 
-  private getTextFromClaudeResponse(contentBlock: unknown): string {
-    if (typeof contentBlock === "string") {
-      return contentBlock;
+  private buildModelMessages(
+    messages: BookingAgentState["messages"],
+    userContext: string,
+  ): MessageCreateParams["messages"] {
+    const pending = [
+      ...messages
+        .slice(-BookingAgentResponderService.MAX_MESSAGE_HISTORY)
+        .map((message) => ({ role: message.role, content: message.content })),
+      { role: "user" as const, content: userContext },
+    ];
+    const merged: MessageCreateParams["messages"] = [];
+
+    for (const message of pending) {
+      const previous = merged.at(-1);
+      if (previous && previous.role === message.role && typeof previous.content === "string") {
+        previous.content = `${previous.content}\n${message.content}`;
+        continue;
+      }
+      merged.push(message);
     }
 
-    if (
-      Array.isArray(contentBlock) &&
-      contentBlock.length > 0 &&
-      typeof contentBlock[0] === "object" &&
-      contentBlock[0] !== null &&
-      "type" in contentBlock[0] &&
-      contentBlock[0].type === "text" &&
-      "text" in contentBlock[0]
-    ) {
-      return String(contentBlock[0].text ?? "");
-    }
+    return merged;
+  }
 
-    return "";
+  private getTextFromClaudeResponse(content: Message["content"]): string {
+    const textBlock = content.find((block) => block.type === "text");
+    return textBlock?.type === "text" ? textBlock.text : "";
   }
 
   private buildVehicleCards(

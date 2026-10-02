@@ -19,7 +19,7 @@ describe("Booking Agent", () => {
   let databaseService: DatabaseService;
   let orchestratorService: BookingAgentOrchestratorService;
   let extractorService: { extract: ReturnType<typeof vi.fn> };
-  let claudeService: { invoke: ReturnType<typeof vi.fn> };
+  let claudeService: { messages: { create: ReturnType<typeof vi.fn> } };
   let googlePlacesService: { validateAddress: ReturnType<typeof vi.fn> };
   let factory: TestDataFactory;
   let ownerId: string;
@@ -72,7 +72,11 @@ describe("Booking Agent", () => {
     };
 
     claudeService = {
-      invoke: vi.fn().mockResolvedValue({ content: "Please share the missing booking details." }),
+      messages: {
+        create: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "Please share the missing booking details." }],
+        }),
+      },
     };
 
     googlePlacesService = {
@@ -120,9 +124,9 @@ describe("Booking Agent", () => {
   beforeEach(async () => {
     await databaseService.car.deleteMany({ where: { ownerId } });
     extractorService.extract.mockReset();
-    claudeService.invoke.mockReset();
-    claudeService.invoke.mockResolvedValue({
-      content: "Please share the missing booking details.",
+    claudeService.messages.create.mockReset();
+    claudeService.messages.create.mockResolvedValue({
+      content: [{ type: "text", text: "Please share the missing booking details." }],
     });
     googlePlacesService.validateAddress.mockReset();
     setDefaultValidateAddressMock();
@@ -206,7 +210,7 @@ describe("Booking Agent", () => {
     expect(text).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
     expect(text).not.toContain("Here are your options");
     expect(extractorService.extract).toHaveBeenCalled();
-    expect(claudeService.invoke).not.toHaveBeenCalled();
+    expect(claudeService.messages.create).not.toHaveBeenCalled();
     expect(googlePlacesService.validateAddress).not.toHaveBeenCalled();
   });
 
@@ -575,7 +579,7 @@ describe("Booking Agent", () => {
       windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
     expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("Here are your options");
-    const claudeCallsBeforeOutage = claudeService.invoke.mock.calls.length;
+    const claudeCallsBeforeOutage = claudeService.messages.create.mock.calls.length;
 
     const outageTurn = await orchestratorService.decide({
       messageId: "msg_outage_preserve_2",
@@ -588,7 +592,7 @@ describe("Booking Agent", () => {
     const outageText = outageTurn.enqueueOutbox.map((item) => item.textBody ?? "").join("\n");
     expect(outageText).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
     expect(outageText).not.toContain("Here are your options");
-    expect(claudeService.invoke).toHaveBeenCalledTimes(claudeCallsBeforeOutage);
+    expect(claudeService.messages.create).toHaveBeenCalledTimes(claudeCallsBeforeOutage);
 
     const persisted = await app.get(BookingAgentStateService).loadState("conv_outage_preserve");
     expect(persisted?.draft.pickupLocation).toBe("Wheatbaker hotel, Ikoyi");

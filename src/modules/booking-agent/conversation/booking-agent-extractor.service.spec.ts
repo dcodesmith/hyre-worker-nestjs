@@ -1,28 +1,28 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { OPENAI_SDK_CLIENT } from "../../openai-sdk/openai-sdk.tokens";
+import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
 import { buildState, buildVehicleOption } from "./conversation.factory";
 import type { InteractiveReply } from "./conversation.interface";
-import { BOOKING_AGENT_OPENAI_CLIENT } from "./conversation.tokens";
-import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
 
 describe("BookingAgentExtractorService", () => {
   let moduleRef: TestingModule;
   let service: BookingAgentExtractorService;
   let openaiMock: {
-    invoke: ReturnType<typeof vi.fn>;
+    chat: { completions: { create: ReturnType<typeof vi.fn> } };
   };
 
   beforeEach(async () => {
     openaiMock = {
-      invoke: vi.fn(),
+      chat: { completions: { create: vi.fn() } },
     };
 
     moduleRef = await Test.createTestingModule({
       providers: [
         BookingAgentExtractorService,
         {
-          provide: BOOKING_AGENT_OPENAI_CLIENT,
+          provide: OPENAI_SDK_CLIENT,
           useValue: openaiMock,
         },
       ],
@@ -52,7 +52,7 @@ describe("BookingAgentExtractorService", () => {
       expect(result.intent).toBe("confirm");
       expect(result.confidence).toBe(1);
       expect(result.draftPatch).toEqual({});
-      expect(openaiMock.invoke).not.toHaveBeenCalled();
+      expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
     });
 
     it("handles yes button", async () => {
@@ -339,17 +339,23 @@ describe("BookingAgentExtractorService", () => {
 
         expect(result.intent).toBe(intent);
         expect(result.confidence).toBe(confidence);
-        expect(openaiMock.invoke).not.toHaveBeenCalled();
+        expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
       },
     );
 
     it("extracts greeting intent", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "greeting",
-          draftPatch: {},
-          confidence: 0.95,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "greeting",
+                draftPatch: {},
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "Hello" });
@@ -358,21 +364,27 @@ describe("BookingAgentExtractorService", () => {
 
       expect(result.intent).toBe("greeting");
       expect(result.confidence).toBe(0.95);
-      expect(openaiMock.invoke).toHaveBeenCalled();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalled();
     });
 
     it("extracts booking info from message", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "provide_info",
-          draftPatch: {
-            bookingType: "DAY",
-            pickupDate: "2026-03-01",
-            pickupTime: "09:00",
-            pickupLocation: "Victoria Island",
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  bookingType: "DAY",
+                  pickupDate: "2026-03-01",
+                  pickupTime: "09:00",
+                  pickupLocation: "Victoria Island",
+                },
+                confidence: 0.9,
+              }),
+            },
           },
-          confidence: 0.9,
-        }),
+        ],
       });
 
       const state = buildState({
@@ -389,15 +401,21 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("uses make when extractor returns explicit brand from message", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "provide_info",
-          draftPatch: {
-            vehicleType: "SUV",
-            make: "Toyota",
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  vehicleType: "SUV",
+                  make: "Toyota",
+                },
+                confidence: 0.9,
+              }),
+            },
           },
-          confidence: 0.9,
-        }),
+        ],
       });
 
       const state = buildState({
@@ -410,18 +428,24 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.vehicleType).toBe("SUV");
       expect(result.draftPatch.make).toBe("Toyota");
       expect(result.draftPatch.model).toBeUndefined();
-      expect(openaiMock.invoke).toHaveBeenCalledTimes(1);
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
     });
 
     it("does not force make or model when none is explicitly mentioned", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "provide_info",
-          draftPatch: {
-            vehicleType: "SUV",
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  vehicleType: "SUV",
+                },
+                confidence: 0.9,
+              }),
+            },
           },
-          confidence: 0.9,
-        }),
+        ],
       });
 
       const state = buildState({
@@ -437,16 +461,22 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("uses make and model when extractor returns both explicitly", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "provide_info",
-          draftPatch: {
-            vehicleType: "SUV",
-            make: "Toyota",
-            model: "Highlander",
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  vehicleType: "SUV",
+                  make: "Toyota",
+                  model: "Highlander",
+                },
+                confidence: 0.9,
+              }),
+            },
           },
-          confidence: 0.9,
-        }),
+        ],
       });
 
       const state = buildState({
@@ -458,17 +488,23 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.make).toBe("Toyota");
       expect(result.draftPatch.model).toBe("Highlander");
       expect(result.draftPatch.vehicleType).toBe("SUV");
-      expect(openaiMock.invoke).toHaveBeenCalledTimes(1);
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
     });
 
     it("extracts selection hint when selecting option", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "select_option",
-          draftPatch: {},
-          selectionHint: "cheapest",
-          confidence: 0.85,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "select_option",
+                draftPatch: {},
+                selectionHint: "cheapest",
+                confidence: 0.85,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "Give me the cheapest one" });
@@ -480,13 +516,19 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("extracts preference hint", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "provide_info",
-          draftPatch: { color: "black" },
-          preferenceHint: "black",
-          confidence: 0.8,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: { color: "black" },
+                preferenceHint: "black",
+                confidence: 0.8,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "I prefer black cars" });
@@ -498,13 +540,19 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("extracts question from user", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "ask_question",
-          draftPatch: {},
-          question: "What are the prices?",
-          confidence: 0.9,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "ask_question",
+                draftPatch: {},
+                question: "What are the prices?",
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "What are the prices?" });
@@ -516,15 +564,16 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("handles text response from LLM", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: [
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
           {
-            type: "text",
-            text: JSON.stringify({
-              intent: "provide_info",
-              draftPatch: { vehicleType: "SUV" },
-              confidence: 0.85,
-            }),
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: { vehicleType: "SUV" },
+                confidence: 0.85,
+              }),
+            },
           },
         ],
       });
@@ -538,7 +587,7 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("throws on extraction failure", async () => {
-      openaiMock.invoke.mockRejectedValue(new Error("API error"));
+      openaiMock.chat.completions.create.mockRejectedValue(new Error("API error"));
 
       const state = buildState({ inboundMessage: "test" });
 
@@ -546,8 +595,14 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("throws on invalid JSON response", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: "not valid json",
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: "not valid json",
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "test" });
@@ -556,12 +611,18 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("throws on schema validation failure", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "invalid_intent",
-          draftPatch: {},
-          confidence: 0.5,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "invalid_intent",
+                draftPatch: {},
+                confidence: 0.5,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "test" });
@@ -570,12 +631,18 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("extracts reset intent", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "reset",
-          draftPatch: {},
-          confidence: 1,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "reset",
+                draftPatch: {},
+                confidence: 1,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "RESET" });
@@ -588,12 +655,18 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("extracts new_booking intent with vehicle preference", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "new_booking",
-          draftPatch: { vehicleType: "SEDAN" },
-          confidence: 0.9,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "new_booking",
+                draftPatch: { vehicleType: "SEDAN" },
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "I need a sedan" });
@@ -605,12 +678,18 @@ describe("BookingAgentExtractorService", () => {
     });
 
     it("extracts new_booking intent for generic car request", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "new_booking",
-          draftPatch: {},
-          confidence: 0.85,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "new_booking",
+                draftPatch: {},
+                confidence: 0.85,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({ inboundMessage: "I want to book a car" });
@@ -628,13 +707,19 @@ describe("BookingAgentExtractorService", () => {
         buildVehicleOption({ id: "2", make: "Lexus", model: "GX460" }),
       ];
 
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "select_option",
-          draftPatch: {},
-          selectionHint: "1",
-          confidence: 0.9,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "select_option",
+                draftPatch: {},
+                selectionHint: "1",
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({
@@ -644,25 +729,36 @@ describe("BookingAgentExtractorService", () => {
 
       await service.extract(state);
 
-      expect(openaiMock.invoke).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: "system",
-            content: expect.stringContaining("Toyota Prado"),
-          }),
-        ]),
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-4o-mini",
+          response_format: { type: "json_object" },
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "system",
+              content: expect.stringContaining("Toyota Prado"),
+            }),
+          ]),
+        }),
+        { timeout: 10_000, maxRetries: 1 },
       );
     });
   });
 
   describe("extract - with conversation history", () => {
     it("includes conversation history in system prompt for context", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "confirm",
-          draftPatch: {},
-          confidence: 0.95,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "confirm",
+                draftPatch: {},
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({
@@ -680,28 +776,37 @@ describe("BookingAgentExtractorService", () => {
 
       await service.extract(state);
 
-      expect(openaiMock.invoke).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: "system",
-            content: expect.stringContaining("RECENT CONVERSATION HISTORY"),
-          }),
-        ]),
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "system",
+              content: expect.stringContaining("RECENT CONVERSATION HISTORY"),
+            }),
+          ]),
+        }),
+        { timeout: 10_000, maxRetries: 1 },
       );
 
       // Verify the conversation history is included
-      const systemCall = openaiMock.invoke.mock.calls[0][0];
+      const systemCall = openaiMock.chat.completions.create.mock.calls[0][0].messages;
       const systemPrompt = systemCall.find((m: { role: string }) => m.role === "system")?.content;
       expect(systemPrompt).toContain("Ready to confirm this booking?");
     });
 
     it("extracts confirm intent when user says yes to confirmation question", async () => {
-      openaiMock.invoke.mockResolvedValue({
-        content: JSON.stringify({
-          intent: "confirm",
-          draftPatch: {},
-          confidence: 0.95,
-        }),
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "confirm",
+                draftPatch: {},
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
       });
 
       const state = buildState({
@@ -721,7 +826,7 @@ describe("BookingAgentExtractorService", () => {
 
       expect(result.intent).toBe("confirm");
       expect(result.confidence).toBe(0.95);
-      expect(openaiMock.invoke).toHaveBeenCalled();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalled();
     });
   });
 });
