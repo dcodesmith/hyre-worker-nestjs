@@ -136,7 +136,12 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
 
   async function invite(
     cookie: string,
-    extras: { email?: string; idempotencyKey?: string; name?: string } = {},
+    extras: {
+      email?: string;
+      idempotencyKey?: string;
+      name?: string;
+      phoneNumber?: string;
+    } = {},
   ) {
     const email = extras.email ?? uniqueEmail("chauffeur-invitee");
     const response = await http("post", "/api/fleet-owner/chauffeur-invitations")
@@ -145,7 +150,7 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       .send({
         ...splitInvitedName(extras.name ?? "Ada Driver"),
         email,
-        phoneNumber: PHONE,
+        phoneNumber: extras.phoneNumber ?? PHONE,
       });
     if (response.status >= 500) {
       throw new Error(
@@ -628,7 +633,11 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
       name: "Existing Driver",
       roles: ["user"],
     });
-    await invite(ownerCookie, { email, name: "Ada Lovelace" });
+    await invite(ownerCookie, {
+      email,
+      name: "Ada Lovelace",
+      phoneNumber: "+2348091112222",
+    });
     const token = extractInviteToken(htmlSentTo(email));
     const session = (await exchange(token)).body.sessionToken as string;
 

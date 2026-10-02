@@ -703,7 +703,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(status.status).toBe(HttpStatus.OK);
     expect(status.body).toMatchObject({
       status: "VERIFIED",
-      phone: { number: "**********5678", verified: true },
+      phone: { number: `**********${owner.phoneNumber.slice(-4)}`, verified: true },
       bank: { accountNumber: "******6789", verified: true },
     });
   });

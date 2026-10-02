@@ -56,7 +56,7 @@ describe("Current user profile E2E Tests", () => {
   ): Promise<void> {
     await databaseService.user.update({
       where: { id },
-      data: { ...persistedSeed, ...data },
+      data: { ...persistedSeed, ...data, phoneVerifiedAt: null },
     });
   }
 

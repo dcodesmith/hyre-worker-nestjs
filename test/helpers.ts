@@ -202,13 +202,19 @@ export class TestDataFactory {
     }
 
     if (options.phoneVerified ?? true) {
-      await this.prisma.user.update({
+      const existing = await this.prisma.user.findUnique({
         where: { email: email.toLowerCase() },
-        data: {
-          phoneNumber: verifiedPhoneForEmail(email),
-          phoneVerifiedAt: new Date(),
-        },
+        select: { phoneNumber: true, phoneVerifiedAt: true },
       });
+      if (!existing?.phoneNumber || !existing.phoneVerifiedAt) {
+        await this.prisma.user.update({
+          where: { email: email.toLowerCase() },
+          data: {
+            phoneNumber: verifiedPhoneForEmail(email),
+            phoneVerifiedAt: new Date(),
+          },
+        });
+      }
     }
 
     return Array.isArray(cookies) ? cookies.join("; ") : cookies;

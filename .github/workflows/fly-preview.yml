@@ -364,6 +364,26 @@ jobs:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
         run: pnpm exec prisma migrate reset --force
 
+      - name: Roll back failed preview migrations before retry
+        env:
+          DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
+        run: |
+          set -euo pipefail
+          status="$(pnpm exec prisma migrate status 2>&1 || true)"
+          printf '%s\n' "$status"
+          failed="$(printf '%s\n' "$status" | awk '
+            /Following migrations? have failed:/ { capture = 1; next }
+            capture && NF == 0 { exit }
+            capture { print }
+          ')"
+          if [ -n "$failed" ]; then
+            while IFS= read -r migration; do
+              [ -n "$migration" ] || continue
+              echo "Marking failed preview migration as rolled back: $migration"
+              pnpm exec prisma migrate resolve --rolled-back "$migration"
+            done <<< "$failed"
+          fi
+
       - name: Run Prisma migrations on preview branch
         env:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
