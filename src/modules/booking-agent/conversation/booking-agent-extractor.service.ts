@@ -1,11 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
-import { BOOKING_AGENT_BUTTON_ID } from "./conversation.const";
-import { BookingAgentExtractionFailedException } from "./conversation.error";
-import type { BookingAgentState, ExtractionResult, InteractiveReply } from "./conversation.interface";
-import type { BookingAgentOpenAIClient } from "./conversation.tokens";
-import { BOOKING_AGENT_OPENAI_CLIENT } from "./conversation.tokens";
 import {
   isAgentRequestControl,
   isBareCancelControl,
@@ -14,6 +9,15 @@ import {
   isLikelyNegativeControl,
   normalizeControlText,
 } from "./control-intent.policy";
+import { BOOKING_AGENT_BUTTON_ID } from "./conversation.const";
+import { BookingAgentExtractionFailedException } from "./conversation.error";
+import type {
+  BookingAgentState,
+  ExtractionResult,
+  InteractiveReply,
+} from "./conversation.interface";
+import type { BookingAgentOpenAIClient } from "./conversation.tokens";
+import { BOOKING_AGENT_OPENAI_CLIENT } from "./conversation.tokens";
 import { buildExtractorSystemPrompt } from "./prompts/extractor.prompt";
 
 const extractionSchema = z.object({
@@ -269,6 +273,15 @@ export class BookingAgentExtractorService {
 
     if (isCancelIntentControl(normalized)) {
       return { intent: "cancel", draftPatch: {}, confidence: 1 };
+    }
+
+    if (
+      ["selecting_addons", "selecting_fuel", "selecting_credits"].includes(stage) &&
+      (["add", "apply", "skip"].includes(normalized) ||
+        isLikelyAffirmativeControl(normalized) ||
+        isLikelyNegativeControl(normalized))
+    ) {
+      return BookingAgentExtractorService.UNKNOWN_RESULT;
     }
 
     if (stage === "confirming") {

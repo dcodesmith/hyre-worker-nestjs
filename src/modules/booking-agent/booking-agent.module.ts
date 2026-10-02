@@ -9,6 +9,7 @@ import Redis from "ioredis";
 import { PinoLogger } from "nestjs-pino";
 import { WHATSAPP_AGENT_QUEUE } from "../../config/constants";
 import type { EnvConfig } from "../../config/env.config";
+import { AddonsModule } from "../addons/addons.module";
 import { BookingModule } from "../booking/booking.module";
 import { CarModule } from "../car/car.module";
 import { DatabaseModule } from "../database/database.module";
@@ -38,6 +39,7 @@ import { CreateBookingAction } from "./conversation/create-booking.action";
 import { ExtractAction } from "./conversation/extract.action";
 import { HandoffAction } from "./conversation/handoff.action";
 import { MergeAction } from "./conversation/merge.action";
+import { PrepareQuoteAction } from "./conversation/prepare-quote.action";
 import { RespondAction } from "./conversation/respond.action";
 import { RouteAction } from "./conversation/route.action";
 import { SearchAction } from "./conversation/search.action";
@@ -51,6 +53,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
 @Module({
   imports: [
     DatabaseModule,
+    AddonsModule,
     BookingModule,
     CarModule,
     MapsModule,
@@ -119,6 +122,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     MergeAction,
     RouteAction,
     SearchAction,
+    PrepareQuoteAction,
     CreateBookingAction,
     RespondAction,
     HandoffAction,

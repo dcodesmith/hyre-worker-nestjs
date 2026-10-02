@@ -26,6 +26,7 @@ import {
   BookingCreationFailedException,
   BookingException,
   BookingPaymentSyncFailedException,
+  BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
   CarNotAvailableException,
   PaymentIntentFailedException,
@@ -119,6 +120,7 @@ export class BookingCreationService {
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
     validateCreditsRequireAuthentication(normalizedBooking.useCredits, sessionUser);
+    await this.ensureAuthenticatedPhoneVerified(sessionUser);
     const customerScope = this.idempotencyService.getCustomerScope(normalizedBooking, sessionUser);
     const requestHash = this.idempotencyService.createRequestHash(
       normalizedBooking,
@@ -263,6 +265,22 @@ export class BookingCreationService {
       endDate: normalizedWindow.endDate,
       addonIds: [...booking.addonIds].sort(),
     };
+  }
+
+  private async ensureAuthenticatedPhoneVerified(
+    sessionUser: AuthSession["user"] | null,
+  ): Promise<void> {
+    if (!sessionUser) {
+      return;
+    }
+
+    const user = await this.databaseService.user.findUnique({
+      where: { id: sessionUser.id },
+      select: { phoneNumber: true, phoneVerifiedAt: true },
+    });
+    if (!user?.phoneNumber || !user.phoneVerifiedAt) {
+      throw new BookingPhoneVerificationRequiredException();
+    }
   }
 
   private calculateFinancials(

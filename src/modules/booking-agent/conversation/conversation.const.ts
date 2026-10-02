@@ -33,6 +33,7 @@ export const REQUIRED_SEARCH_FIELDS: (keyof BookingDraft)[] = [
 
 export const BOOKING_AGENT_ACTIONS = {
   SEARCH: "search",
+  PREPARE_QUOTE: "prepare_quote",
   CREATE_BOOKING: "create_booking",
   RESPOND: "respond",
   HANDOFF: "handoff",
@@ -56,6 +57,11 @@ export const BOOKING_AGENT_BUTTON_ID = {
   NIGHT: "night",
   FULL_DAY: "fullday",
   RETRY_BOOKING: "retry_booking",
+  ADDON_SKIP_ALL: "addon_skip_all",
+  FUEL_APPLY: "fuel_apply",
+  FUEL_SKIP: "fuel_skip",
+  CREDITS_APPLY: "credits_apply",
+  CREDITS_SKIP: "credits_skip",
 } as const;
 
 export const BOOKING_AGENT_REDIS_KEY_PREFIX = "booking-agent";

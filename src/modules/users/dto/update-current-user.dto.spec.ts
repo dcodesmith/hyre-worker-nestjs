@@ -20,7 +20,6 @@ describe("updateCurrentUserBodySchema", () => {
   it("trims strings and treats empty strings as null", () => {
     const parsed = updateCurrentUserBodySchema.safeParse({
       name: "  Ada Lovelace  ",
-      phoneNumber: "   ",
       address: "",
     });
 
@@ -28,10 +27,17 @@ describe("updateCurrentUserBodySchema", () => {
     if (parsed.success) {
       expect(parsed.data).toEqual({
         name: "Ada Lovelace",
-        phoneNumber: null,
         address: null,
       });
     }
+  });
+
+  it("rejects phoneNumber", () => {
+    const parsed = updateCurrentUserBodySchema.safeParse({
+      phoneNumber: "+2348012345678",
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it("rejects an empty body", () => {

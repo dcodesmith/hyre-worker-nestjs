@@ -27,6 +27,7 @@ export const BookingErrorCode = {
   BOOKING_PAYMENT_SYNC_FAILED: "BOOKING_PAYMENT_SYNC_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
   BOOKING_PRICE_CHANGED: "BOOKING_PRICE_CHANGED",
+  BOOKING_PHONE_VERIFICATION_REQUIRED: "BOOKING_PHONE_VERIFICATION_REQUIRED",
   IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
   BOOKING_REQUEST_IN_PROGRESS: "BOOKING_REQUEST_IN_PROGRESS",
   EXTENSION_IDEMPOTENCY_KEY_REUSED: "EXTENSION_IDEMPOTENCY_KEY_REUSED",
@@ -83,6 +84,17 @@ export class BookingPriceChangedException extends BookingException {
         title: "Booking Price Changed",
         details: { expectedTotalAmount, currentPricing },
       },
+    );
+  }
+}
+
+export class BookingPhoneVerificationRequiredException extends BookingException {
+  constructor() {
+    super(
+      BookingErrorCode.BOOKING_PHONE_VERIFICATION_REQUIRED,
+      "Verify your phone number before creating a booking",
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      { title: "Phone Verification Required" },
     );
   }
 }

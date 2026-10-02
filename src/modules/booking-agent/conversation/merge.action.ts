@@ -1,15 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
+import { applyDerivedDraftFields, hasDraftChanged, shouldApplyDraftPatch } from "./booking-rules";
 import {
   type BookingAgentLocationValidationState,
   type BookingAgentState,
   createDefaultLocationValidationState,
 } from "./conversation.interface";
-import {
-  applyDerivedDraftFields,
-  hasDraftChanged,
-  shouldApplyDraftPatch,
-} from "./booking-rules";
 
 @Injectable()
 export class MergeAction {
@@ -31,10 +27,9 @@ export class MergeAction {
 
     const newPreferences = this.mergePreferencesWithHint(preferences, extraction.preferenceHint);
 
-    const draftChanged = hasDraftChanged(draft, newDraft);
+    const draftChanged = extraction.intent !== "select_option" && hasDraftChanged(draft, newDraft);
     const pickupLocationChanged = draft.pickupLocation !== newDraft.pickupLocation;
     const dropoffLocationChanged = draft.dropoffLocation !== newDraft.dropoffLocation;
-    const shouldClearOptions = draftChanged && state.availableOptions.length > 0;
 
     this.logger.debug(
       {
@@ -57,9 +52,16 @@ export class MergeAction {
     return {
       draft: newDraft,
       preferences: newPreferences,
-      availableOptions: shouldClearOptions ? [] : state.availableOptions,
+      stage: draftChanged ? "collecting" : state.stage,
+      availableOptions: draftChanged ? [] : state.availableOptions,
       lastShownOptions: draftChanged ? [] : state.lastShownOptions,
       selectedOption: draftChanged ? null : state.selectedOption,
+      availableAddons: draftChanged ? [] : (state.availableAddons ?? []),
+      selectedAddonIds: draftChanged ? [] : (state.selectedAddonIds ?? []),
+      addonSelectionIndex: draftChanged ? 0 : (state.addonSelectionIndex ?? 0),
+      requiresFullTank: draftChanged ? false : (state.requiresFullTank ?? false),
+      useCredits: draftChanged ? 0 : (state.useCredits ?? 0),
+      pricingPreview: draftChanged ? null : (state.pricingPreview ?? null),
       locationValidation: nextLocationValidation,
     };
   }

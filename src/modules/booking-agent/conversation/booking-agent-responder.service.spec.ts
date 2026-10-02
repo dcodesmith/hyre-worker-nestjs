@@ -1,10 +1,13 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
-import { buildState, buildVehicleOption } from "./conversation.factory";
-import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "./conversation.tokens";
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
+import {
+  BOOKING_AGENT_BUTTON_ID,
+  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./conversation.const";
+import { buildPricingPreview, buildState, buildVehicleOption } from "./conversation.factory";
+import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "./conversation.tokens";
 
 describe("BookingAgentResponderService", () => {
   let moduleRef: TestingModule;
@@ -172,6 +175,100 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.buttons?.[0].id).toBe("confirm");
       expect(response.interactive?.buttons?.[1].id).toBe("no");
       expect(response.interactive?.buttons?.[2].id).toBe("show_others");
+    });
+
+    it("uses the authoritative quote breakdown when a final price is ready", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "confirming",
+          selectedOption: buildVehicleOption(),
+          draft: {
+            bookingType: "DAY",
+            pickupDate: "2026-03-01",
+            pickupTime: "09:00",
+            dropoffDate: "2026-03-01",
+            pickupLocation: "Victoria Island",
+          },
+          pricingPreview: buildPricingPreview({
+            baseTotal: 140000,
+            addonTotal: 5000,
+            addons: [
+              {
+                id: "addon-wifi",
+                code: "WIFI",
+                name: "Wi-Fi",
+                pricingUnit: "PER_BOOKING",
+                unitPrice: 5000,
+                quantity: 1,
+                totalPrice: 5000,
+              },
+            ],
+            fuelUpgradeCost: 8000,
+            creditsUsed: 4000,
+            vatAmount: 11250,
+            totalAmount: 160250,
+          }),
+        }),
+      );
+
+      expect(response.text).toContain("Final Booking Quote");
+      expect(response.text).toContain("Wi-Fi");
+      expect(response.text).toContain("Fuel upgrade");
+      expect(response.text).toContain("Credits applied");
+      expect(response.text).toContain("160,250");
+      expect(response.interactive?.buttons?.[0].id).toBe(BOOKING_AGENT_BUTTON_ID.CONFIRM);
+    });
+
+    it("offers add, skip, and skip-all buttons for the current add-on", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "selecting_addons",
+          availableAddons: [
+            {
+              id: "addon-wifi",
+              code: "WIFI",
+              name: "Wi-Fi",
+              description: "Hotspot",
+              pricingUnit: "PER_BOOKING",
+              unitPrice: 5000,
+              currency: "NGN",
+            },
+          ],
+          addonSelectionIndex: 0,
+        }),
+      );
+
+      expect(response.text).toContain("Wi-Fi");
+      expect(response.interactive?.buttons?.map((button) => button.id)).toEqual([
+        "addon_add:addon-wifi",
+        "addon_skip:addon-wifi",
+        BOOKING_AGENT_BUTTON_ID.ADDON_SKIP_ALL,
+      ]);
+    });
+
+    it("offers fuel and exact credit choices", async () => {
+      const fuel = await service.generateResponse(
+        buildState({
+          stage: "selecting_fuel",
+          pricingPreview: buildPricingPreview({ fuelUpgradeCost: 8000 }),
+        }),
+      );
+      const credits = await service.generateResponse(
+        buildState({
+          stage: "selecting_credits",
+          pricingPreview: buildPricingPreview({ creditsApplicable: 4000 }),
+        }),
+      );
+
+      expect(fuel.interactive?.buttons?.map((button) => button.id)).toEqual([
+        BOOKING_AGENT_BUTTON_ID.FUEL_APPLY,
+        BOOKING_AGENT_BUTTON_ID.FUEL_SKIP,
+      ]);
+      expect(credits.text).toContain("4,000");
+      expect(credits.interactive?.buttons?.map((button) => button.id)).toEqual([
+        BOOKING_AGENT_BUTTON_ID.CREDITS_APPLY,
+        BOOKING_AGENT_BUTTON_ID.CREDITS_SKIP,
+      ]);
     });
 
     it("derives duration from dates when durationDays is not present", async () => {

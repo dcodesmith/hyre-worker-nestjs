@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyDerivedDraftFields,
-  hasDraftChanged,
-  shouldApplyDraftPatch,
-} from "./booking-rules";
+import { applyDerivedDraftFields, hasDraftChanged, shouldApplyDraftPatch } from "./booking-rules";
 
 describe("booking-agent-booking-rules", () => {
   it("applies same-location fallback when explicitly requested", () => {
@@ -121,7 +117,8 @@ describe("booking-agent-booking-rules", () => {
 
     expect(hasDraftChanged(oldDraft, { ...oldDraft, pickupTime: "10:00" })).toBe(true);
     expect(hasDraftChanged(oldDraft, { ...oldDraft, dropoffLocation: "Lekki" })).toBe(true);
-    expect(hasDraftChanged(oldDraft, { ...oldDraft, flightNumber: "P4 123" })).toBe(false);
+    expect(hasDraftChanged(oldDraft, { ...oldDraft, flightNumber: "P4 123" })).toBe(true);
+    expect(hasDraftChanged(oldDraft, { ...oldDraft, notes: "Gate 4 pickup" })).toBe(false);
     expect(hasDraftChanged(oldDraft, oldDraft)).toBe(false);
   });
 

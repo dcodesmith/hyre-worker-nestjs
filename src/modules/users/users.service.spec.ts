@@ -10,12 +10,33 @@ import {
 } from "./users.error";
 import { UsersService } from "./users.service";
 
-const profile = {
+const verifiedAt = new Date("2026-01-01T00:00:00.000Z");
+
+const profileRecord = {
   name: "Ada Lovelace",
   phoneNumber: "+2348012345678",
+  phoneVerifiedAt: verifiedAt,
   city: "Lagos",
   address: "12 Marina",
   marketingConsent: false,
+};
+
+const profile = {
+  name: profileRecord.name,
+  phoneNumber: profileRecord.phoneNumber,
+  phoneVerified: true,
+  city: profileRecord.city,
+  address: profileRecord.address,
+  marketingConsent: profileRecord.marketingConsent,
+};
+
+const profileSelect = {
+  name: true,
+  phoneNumber: true,
+  phoneVerifiedAt: true,
+  city: true,
+  address: true,
+  marketingConsent: true,
 };
 
 const recordNotFoundError = () =>
@@ -72,19 +93,25 @@ describe("UsersService", () => {
     service = module.get<UsersService>(UsersService);
   });
 
-  it("returns the current user's editable profile", async () => {
-    databaseService.user.findUnique.mockResolvedValue(profile);
+  it("returns the current user's editable profile with phone verification", async () => {
+    databaseService.user.findUnique.mockResolvedValue(profileRecord);
 
     await expect(service.getCurrentUserProfile("user-1")).resolves.toEqual(profile);
     expect(databaseService.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-1" },
-      select: {
-        name: true,
-        phoneNumber: true,
-        city: true,
-        address: true,
-        marketingConsent: true,
-      },
+      select: profileSelect,
+    });
+  });
+
+  it("reports phoneVerified false when the stored phone is unverified", async () => {
+    databaseService.user.findUnique.mockResolvedValue({
+      ...profileRecord,
+      phoneVerifiedAt: null,
+    });
+
+    await expect(service.getCurrentUserProfile("user-1")).resolves.toEqual({
+      ...profile,
+      phoneVerified: false,
     });
   });
 
@@ -96,9 +123,8 @@ describe("UsersService", () => {
     );
   });
 
-  it("updates only the provided profile fields", async () => {
-    const updated = { ...profile, city: "Abuja", marketingConsent: true };
-    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
+  it("updates only the provided profile fields and leaves the phone untouched", async () => {
+    const updated = { ...profileRecord, city: "Abuja", marketingConsent: true };
     databaseService.user.update.mockResolvedValue(updated);
 
     const result = await service.updateCurrentUserProfile("user-1", {
@@ -106,87 +132,34 @@ describe("UsersService", () => {
       marketingConsent: true,
     });
 
-    expect(databaseService.user.findUnique).toHaveBeenCalledWith({
-      where: { id: "user-1" },
-      select: { phoneNumber: true },
-    });
+    expect(databaseService.user.findUnique).not.toHaveBeenCalled();
     expect(databaseService.user.update).toHaveBeenCalledWith({
       where: { id: "user-1" },
-      data: expect.objectContaining({
+      data: {
         name: undefined,
-        phoneNumber: undefined,
         city: "Abuja",
         address: undefined,
         marketingConsent: true,
-      }),
-      select: {
-        name: true,
-        phoneNumber: true,
-        city: true,
-        address: true,
-        marketingConsent: true,
       },
+      select: profileSelect,
     });
-    expect(result).toEqual(updated);
-  });
-
-  it("clears phoneVerifiedAt when the phone number changes", async () => {
-    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
-    databaseService.user.update.mockResolvedValue({
-      ...profile,
-      phoneNumber: "+2348099999999",
-    });
-
-    await service.updateCurrentUserProfile("user-1", { phoneNumber: "+2348099999999" });
-
-    expect(databaseService.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
-      data: expect.objectContaining({
-        phoneNumber: "+2348099999999",
-        phoneVerifiedAt: null,
-      }),
-      select: expect.any(Object),
-    });
-  });
-
-  it("does not clear phoneVerifiedAt when the phone number is unchanged", async () => {
-    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
-    databaseService.user.update.mockResolvedValue(profile);
-
-    await service.updateCurrentUserProfile("user-1", { phoneNumber: profile.phoneNumber });
-
-    expect(databaseService.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
-      data: expect.not.objectContaining({ phoneVerifiedAt: null }),
-      select: expect.any(Object),
-    });
-  });
-
-  it("does not clear phoneVerifiedAt when the phone number is omitted", async () => {
-    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
-    databaseService.user.update.mockResolvedValue({ ...profile, city: "Abuja" });
-
-    await service.updateCurrentUserProfile("user-1", { city: "Abuja" });
-
-    expect(databaseService.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
-      data: expect.not.objectContaining({ phoneVerifiedAt: null }),
-      select: expect.any(Object),
-    });
+    expect(result).toEqual({ ...profile, city: "Abuja", marketingConsent: true });
+    expect(databaseService.user.update.mock.calls[0]?.[0].data).not.toHaveProperty("phoneNumber");
+    expect(databaseService.user.update.mock.calls[0]?.[0].data).not.toHaveProperty(
+      "phoneVerifiedAt",
+    );
   });
 
   it("throws not found when updating a missing user", async () => {
-    databaseService.user.findUnique.mockResolvedValue(null);
+    databaseService.user.update.mockRejectedValue(recordNotFoundError());
 
     await expect(
       service.updateCurrentUserProfile("missing-user", { city: "Lagos" }),
     ).rejects.toThrow(UsersUserNotFoundException);
-    expect(databaseService.user.update).not.toHaveBeenCalled();
   });
 
   it("rethrows unexpected update errors", async () => {
     const unexpected = new Error("db failure");
-    databaseService.user.findUnique.mockResolvedValue({ phoneNumber: profile.phoneNumber });
     databaseService.user.update.mockRejectedValue(unexpected);
 
     await expect(service.updateCurrentUserProfile("user-1", { city: "Lagos" })).rejects.toBe(

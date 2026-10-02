@@ -5,6 +5,8 @@ import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { PRICE_TOLERANCE } from "../../booking/booking.const";
 import {
+  BookingPhoneVerificationRequiredException,
+  BookingPriceChangedException,
   BookingRequestInProgressException,
   CarNotAvailableException,
   CarNotFoundException,
@@ -13,9 +15,11 @@ import {
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
+import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import { DatabaseService } from "../../database/database.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
+import { buildBookingInputFromDraft, buildGuestIdentity } from "./booking-orchestrator";
 import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
 import {
   type BookingAgentState,
@@ -23,7 +27,6 @@ import {
   convertToExtractedParams,
   type VehicleSearchOption,
 } from "./conversation.interface";
-import { buildBookingInputFromDraft, buildGuestIdentity } from "./booking-orchestrator";
 import { normalizeActionError } from "./conversation-log-utils";
 
 const MAX_FALLBACK_OPTIONS = 5;
@@ -54,6 +57,13 @@ export class CreateBookingAction {
         stage: "confirming",
       };
     }
+    if (!state.pricingPreview) {
+      return {
+        error: "The final quote is not ready yet. Please try again.",
+        stage: "confirming",
+      };
+    }
+    const confirmedPricing = state.pricingPreview;
 
     try {
       const conversation = await this.getConversationForBooking(state.conversationId);
@@ -87,7 +97,12 @@ export class CreateBookingAction {
         input: bookingInput,
         normalizedStartDate,
         normalizedEndDate,
-      } = buildBookingInputFromDraft(draft, selectedOption, guestIdentity);
+      } = buildBookingInputFromDraft(draft, selectedOption, guestIdentity, {
+        addonIds: state.selectedAddonIds ?? [],
+        requiresFullTank: state.requiresFullTank ?? false,
+        useCredits: state.useCredits ?? 0,
+        expectedTotalAmount: new Decimal(confirmedPricing.totalAmount).toString(),
+      });
 
       const conversationLinkState = await this.whatsAppPersistenceService.getConversationLinkState(
         state.conversationId,
@@ -108,25 +123,18 @@ export class CreateBookingAction {
           pickupTime: bookingInput.pickupTime,
           addonIds: bookingInput.addonIds,
           requiresFullTank: bookingInput.requiresFullTank,
-          useCredits: 0,
+          useCredits: bookingInput.useCredits,
         },
         sessionUser,
       );
       if (
-        new Decimal(pricing.totalAmount)
-          .sub(selectedOption.estimatedTotalInclVat)
-          .abs()
-          .gt(PRICE_TOLERANCE)
+        new Decimal(pricing.totalAmount).sub(confirmedPricing.totalAmount).abs().gt(PRICE_TOLERANCE)
       ) {
         return {
-          selectedOption: {
-            ...selectedOption,
-            estimatedSubtotal: pricing.subtotalBeforeDiscounts,
-            estimatedVatAmount: pricing.vatAmount,
-            estimatedTotalInclVat: pricing.totalAmount,
-          },
+          pricingPreview: pricing,
           stage: "confirming",
-          statusMessage: `The final price is ₦${pricing.totalAmount.toLocaleString("en-NG")}. Please confirm this updated amount to continue.`,
+          statusMessage:
+            "Pricing changed while you were confirming. Please review the updated quote.",
         };
       }
       const authoritativeBookingInput = {
@@ -166,6 +174,30 @@ export class CreateBookingAction {
       };
     } catch (error) {
       this.logBookingCreationFailure(state, selectedOption, error);
+
+      if (error instanceof BookingPriceChangedException) {
+        const currentPricing = error.getDetails()?.currentPricing as
+          | BookingPricingPreviewResponseDto
+          | undefined;
+        if (currentPricing) {
+          return {
+            pricingPreview: currentPricing,
+            error: null,
+            stage: "confirming",
+            statusMessage:
+              "Pricing changed while you were confirming. Please review the updated quote.",
+          };
+        }
+      }
+
+      if (error instanceof BookingPhoneVerificationRequiredException) {
+        return {
+          error:
+            "Verify your phone number in your Tripdly account settings, then return here and try again.",
+          statusMessage: null,
+          stage: "confirming",
+        };
+      }
 
       if (error instanceof CarNotAvailableException || error instanceof CarNotFoundException) {
         const fallbackOptions = await this.fetchFreshOptionsForDraft(

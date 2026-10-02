@@ -1,5 +1,7 @@
 import type { BookingType, WhatsAppDeliveryMode } from "@prisma/client";
+import type { PublicAddon } from "../../addons/addons.interface";
 import type { ExtractedAiSearchParams } from "../../ai-search/ai-search.interface";
+import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
 
 export type { InteractiveReply, VehicleSearchOption } from "../booking-agent.interface";
@@ -41,6 +43,9 @@ export type BookingStage =
   | "searching"
   | "presenting_options"
   | "awaiting_selection"
+  | "selecting_addons"
+  | "selecting_fuel"
+  | "selecting_credits"
   | "confirming"
   | "creating_hold"
   | "awaiting_payment"
@@ -162,6 +167,12 @@ export interface BookingAgentState {
   availableOptions: VehicleSearchOption[];
   lastShownOptions: VehicleSearchOption[];
   selectedOption: VehicleSearchOption | null;
+  availableAddons?: PublicAddon[];
+  selectedAddonIds?: string[];
+  addonSelectionIndex?: number;
+  requiresFullTank?: boolean;
+  useCredits?: number;
+  pricingPreview?: BookingPricingPreviewResponseDto | null;
   holdId: string | null;
   holdExpiresAt: string | null;
   bookingId: string | null;
@@ -226,6 +237,12 @@ export interface PersistedState {
   availableOptions: VehicleSearchOption[];
   lastShownOptions: VehicleSearchOption[];
   selectedOption: VehicleSearchOption | null;
+  availableAddons: PublicAddon[];
+  selectedAddonIds: string[];
+  addonSelectionIndex: number;
+  requiresFullTank: boolean;
+  useCredits: number;
+  pricingPreview: BookingPricingPreviewResponseDto | null;
   preferences: UserPreferences;
   holdId: string | null;
   holdExpiresAt: string | null;

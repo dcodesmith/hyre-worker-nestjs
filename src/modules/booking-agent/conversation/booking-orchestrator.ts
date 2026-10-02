@@ -25,11 +25,23 @@ export function buildBookingInputFromDraft(
   draft: BookingDraft,
   selectedOption: VehicleSearchOption,
   guestIdentity: WhatsAppGuestIdentity,
+  selections:
+    | {
+        addonIds: string[];
+        requiresFullTank: boolean;
+        useCredits: number;
+        expectedTotalAmount: string;
+      }
+    | undefined = undefined,
 ): {
   input: CreateBookingInput;
   normalizedStartDate: Date;
   normalizedEndDate: Date;
 } {
+  if (!selections) {
+    throw new Error("Booking selections are required");
+  }
+
   const bookingType = draft.bookingType ?? "DAY";
   const pickupTime = draft.pickupTime ?? getDefaultPickupTime(bookingType);
 
@@ -51,12 +63,11 @@ export function buildBookingInputFromDraft(
       bookingType,
       pickupTime: normalizePickupTimeTo12Hour(pickupTime),
       flightNumber: draft.flightNumber,
-      addonIds: [],
-      requiresFullTank: false,
-      useCredits: 0,
-      // Placeholder required by CreateBookingInput. CreateBookingAction replaces it
-      // with the authoritative pricing-preview total before creating the booking.
-      expectedTotalAmount: selectedOption.estimatedTotalInclVat.toString(),
+      addonIds: selections.addonIds,
+      requiresFullTank: selections.requiresFullTank,
+      specialRequests: draft.notes,
+      useCredits: selections.useCredits,
+      expectedTotalAmount: selections.expectedTotalAmount,
       guestEmail: guestIdentity.guestEmail,
       guestName: guestIdentity.guestName,
       guestPhone: guestIdentity.guestPhone,

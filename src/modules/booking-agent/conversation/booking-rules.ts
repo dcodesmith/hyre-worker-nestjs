@@ -1,6 +1,6 @@
 import { addDays, format, parseISO } from "date-fns";
-import type { BookingDraft, UserIntent } from "./conversation.interface";
 import { normalizeControlText } from "./control-intent.policy";
+import type { BookingDraft, UserIntent } from "./conversation.interface";
 
 export function shouldApplyDraftPatch(intent: UserIntent): boolean {
   return (
@@ -16,10 +16,16 @@ export function hasDraftChanged(oldDraft: BookingDraft, newDraft: BookingDraft):
     "pickupDate",
     "pickupTime",
     "dropoffDate",
+    "durationDays",
     "bookingType",
     "pickupLocation",
     "dropoffLocation",
     "vehicleType",
+    "serviceTier",
+    "color",
+    "make",
+    "model",
+    "flightNumber",
   ];
 
   return keyFields.some((field) => oldDraft[field] !== newDraft[field]);

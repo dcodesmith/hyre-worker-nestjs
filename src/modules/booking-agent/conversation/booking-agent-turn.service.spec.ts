@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { AddonsService } from "../../addons/addons.service";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
@@ -10,18 +11,19 @@ import { BookingReservationExpirationService } from "../../payment/booking-reser
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
-import { BookingAgentTurnService } from "./booking-agent-turn.service";
-import { CreateBookingAction } from "./create-booking.action";
-import { ExtractAction } from "./extract.action";
-import { HandoffAction } from "./handoff.action";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
-import { buildVehicleOption } from "./conversation.factory";
-import type { BookingAgentState } from "./conversation.interface";
-import { createDefaultLocationValidationState } from "./conversation.interface";
 import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
 import { BookingAgentStateService } from "./booking-agent-state.service";
+import { BookingAgentTurnService } from "./booking-agent-turn.service";
+import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
+import type { BookingAgentState } from "./conversation.interface";
+import { createDefaultLocationValidationState } from "./conversation.interface";
+import { CreateBookingAction } from "./create-booking.action";
+import { ExtractAction } from "./extract.action";
+import { HandoffAction } from "./handoff.action";
 import { MergeAction } from "./merge.action";
+import { PrepareQuoteAction } from "./prepare-quote.action";
 import { RespondAction } from "./respond.action";
 import { RouteAction } from "./route.action";
 import { SearchAction } from "./search.action";
@@ -180,11 +182,13 @@ describe("BookingAgentTurnService", () => {
         {
           provide: BookingPricingPreviewService,
           useValue: {
-            preview: vi.fn().mockResolvedValue({
-              subtotalBeforeDiscounts: 150000,
-              vatAmount: 0,
-              totalAmount: 150000,
-            }),
+            preview: vi.fn().mockResolvedValue(buildPricingPreview()),
+          },
+        },
+        {
+          provide: AddonsService,
+          useValue: {
+            listPublic: vi.fn().mockResolvedValue({ addons: [] }),
           },
         },
         { provide: DatabaseService, useValue: databaseServiceMock },
@@ -194,6 +198,7 @@ describe("BookingAgentTurnService", () => {
         MergeAction,
         RouteAction,
         SearchAction,
+        PrepareQuoteAction,
         CreateBookingAction,
         RespondAction,
         HandoffAction,
@@ -383,9 +388,7 @@ describe("BookingAgentTurnService", () => {
 
       expect(
         bookingReservationExpirationServiceMock.reconcileExpiredReservation,
-      ).toHaveBeenCalledWith(
-        "booking_123",
-      );
+      ).toHaveBeenCalledWith("booking_123");
       expect(stateAfterHoldCheck.stage).toBe(existingState.stage);
       expect(stateAfterHoldCheck.holdId).toBe(existingState.holdId);
       expect(stateAfterHoldCheck.holdExpiresAt).toBe(existingState.holdExpiresAt);
@@ -404,9 +407,7 @@ describe("BookingAgentTurnService", () => {
 
       expect(
         bookingReservationExpirationServiceMock.reconcileExpiredReservation,
-      ).toHaveBeenCalledWith(
-        "booking_123",
-      );
+      ).toHaveBeenCalledWith("booking_123");
       expect(stateAfterHoldCheck.stage).toBe(existingState.stage);
       expect(stateAfterHoldCheck.holdId).toBe(existingState.holdId);
       expect(stateAfterHoldCheck.holdExpiresAt).toBe(existingState.holdExpiresAt);
@@ -910,6 +911,7 @@ describe("BookingAgentTurnService", () => {
     it("sets selected option on selection intent", async () => {
       const vehicle = buildVehicleOption({ id: "veh_1" });
       const existingState = buildInitialState();
+      existingState.draft = { bookingType: "DAY" };
       existingState.stage = "presenting_options";
       existingState.availableOptions = [vehicle];
       existingState.lastShownOptions = [vehicle];
@@ -940,6 +942,7 @@ describe("BookingAgentTurnService", () => {
       const cheapVehicle = buildVehicleOption({ id: "v1", estimatedTotalInclVat: 80000 });
       const expensiveVehicle = buildVehicleOption({ id: "v2", estimatedTotalInclVat: 150000 });
       const existingState = buildInitialState();
+      existingState.draft = { bookingType: "DAY" };
       existingState.stage = "presenting_options";
       existingState.availableOptions = [expensiveVehicle, cheapVehicle];
       existingState.lastShownOptions = [expensiveVehicle, cheapVehicle];
@@ -969,6 +972,7 @@ describe("BookingAgentTurnService", () => {
       const existingState = buildInitialState();
       existingState.stage = "confirming";
       existingState.selectedOption = vehicle;
+      existingState.pricingPreview = buildPricingPreview();
       existingState.draft = {
         bookingType: "DAY",
         pickupDate: "2026-03-01",
@@ -1069,6 +1073,7 @@ describe("BookingAgentTurnService", () => {
       const existingState = buildInitialState();
       existingState.stage = "confirming";
       existingState.selectedOption = vehicle;
+      existingState.pricingPreview = buildPricingPreview();
       existingState.draft = {
         bookingType: "DAY",
         pickupDate: "2026-03-01",
@@ -1110,6 +1115,7 @@ describe("BookingAgentTurnService", () => {
       const existingState = buildInitialState();
       existingState.stage = "confirming";
       existingState.selectedOption = selected;
+      existingState.pricingPreview = buildPricingPreview();
       existingState.availableOptions = [selected];
       existingState.lastShownOptions = [selected];
       existingState.draft = {
@@ -1166,6 +1172,7 @@ describe("BookingAgentTurnService", () => {
       const existingState = buildInitialState();
       existingState.stage = "confirming";
       existingState.selectedOption = selected;
+      existingState.pricingPreview = buildPricingPreview();
       existingState.draft = {
         bookingType: "DAY",
         pickupDate: "2026-03-01",
@@ -1239,6 +1246,7 @@ describe("BookingAgentTurnService", () => {
       const existingState = buildInitialState();
       existingState.stage = "confirming";
       existingState.selectedOption = vehicle;
+      existingState.pricingPreview = buildPricingPreview();
       existingState.draft = {
         bookingType: "DAY",
         pickupDate: "2026-03-01",

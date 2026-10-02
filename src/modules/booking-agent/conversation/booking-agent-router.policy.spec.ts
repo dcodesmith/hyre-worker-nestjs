@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildState, buildVehicleOption } from "./conversation.factory";
+import type { PublicAddon } from "../../addons/addons.interface";
 import { resolveRouteDecision } from "./booking-agent-router.policy";
+import { BOOKING_AGENT_BUTTON_ID } from "./conversation.const";
+import { buildPricingPreview, buildState, buildVehicleOption } from "./conversation.factory";
 
 describe("booking-agent-router.policy", () => {
   it("routes to search when all required fields exist and options are empty", () => {
@@ -40,16 +42,30 @@ describe("booking-agent-router.policy", () => {
     expect(decision.stage).toBe("presenting_options");
   });
 
-  it("routes to create_booking for affirmative confirming response", () => {
+  it("routes to create_booking for affirmative confirming response when the quote is ready", () => {
     const state = buildState({
       stage: "confirming",
       inboundMessage: "yes please, go ahead",
       selectedOption: buildVehicleOption(),
+      pricingPreview: buildPricingPreview(),
       extraction: { intent: "provide_info", draftPatch: {}, confidence: 0.4 },
     });
 
     const decision = resolveRouteDecision(state);
     expect(decision.nextAction).toBe("create_booking");
+  });
+
+  it("prepares the quote before creating a booking when confirmation has no priced quote", () => {
+    const decision = resolveRouteDecision(
+      buildState({
+        stage: "confirming",
+        inboundMessage: "yes",
+        selectedOption: buildVehicleOption(),
+        extraction: { intent: "confirm", draftPatch: {}, confidence: 1 },
+      }),
+    );
+
+    expect(decision.nextAction).toBe("prepare_quote");
   });
 
   it("routes to collecting and clears selection for negative confirming response", () => {
@@ -153,5 +169,205 @@ describe("booking-agent-router.policy", () => {
     expect(decision.selectedOption).toBeNull();
     expect(decision.availableOptions).toEqual([]);
     expect(decision.lastShownOptions).toEqual([]);
+  });
+
+  it("adds or skips the current add-on and can skip the rest", () => {
+    const addon: PublicAddon = {
+      id: "addon-wifi",
+      code: "WIFI",
+      name: "Wi-Fi",
+      description: null,
+      pricingUnit: "PER_BOOKING",
+      unitPrice: 5000,
+      currency: "NGN",
+    };
+    const seat: PublicAddon = {
+      id: "addon-seat",
+      code: "SEAT",
+      name: "Seat",
+      description: null,
+      pricingUnit: "PER_LEG",
+      unitPrice: 3000,
+      currency: "NGN",
+    };
+    const base = {
+      stage: "selecting_addons" as const,
+      availableAddons: [addon, seat],
+      selectedAddonIds: [] as string[],
+      addonSelectionIndex: 0,
+      selectedOption: buildVehicleOption(),
+      extraction: { intent: "unknown" as const, draftPatch: {}, confidence: 0.5 },
+    };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...base,
+          inboundInteractive: { type: "button", buttonId: "addon_add:addon-wifi" },
+        }),
+      ),
+    ).toEqual({
+      selectedAddonIds: ["addon-wifi"],
+      addonSelectionIndex: 1,
+      nextAction: "prepare_quote",
+    });
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...base,
+          inboundMessage: "skip",
+          extraction: { intent: "unknown", draftPatch: {}, confidence: 0.5 },
+        }),
+      ),
+    ).toEqual({
+      selectedAddonIds: [],
+      addonSelectionIndex: 1,
+      nextAction: "prepare_quote",
+    });
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...base,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.ADDON_SKIP_ALL },
+        }),
+      ),
+    ).toEqual({
+      addonSelectionIndex: 2,
+      nextAction: "prepare_quote",
+    });
+  });
+
+  it("fails closed on a stale add-on button", () => {
+    const addon: PublicAddon = {
+      id: "addon-wifi",
+      code: "WIFI",
+      name: "Wi-Fi",
+      description: null,
+      pricingUnit: "PER_BOOKING",
+      unitPrice: 5000,
+      currency: "NGN",
+    };
+    const decision = resolveRouteDecision(
+      buildState({
+        stage: "selecting_addons",
+        availableAddons: [addon],
+        addonSelectionIndex: 0,
+        inboundInteractive: { type: "button", buttonId: "addon_add:addon-old" },
+        extraction: { intent: "unknown", draftPatch: {}, confidence: 0.5 },
+      }),
+    );
+
+    expect(decision).toEqual({ nextAction: "respond" });
+  });
+
+  it("applies or skips fuel without accepting a custom amount", () => {
+    const fuelState = {
+      stage: "selecting_fuel" as const,
+      selectedOption: buildVehicleOption(),
+      pricingPreview: buildPricingPreview({ fuelUpgradeCost: 8000 }),
+      extraction: { intent: "unknown" as const, draftPatch: {}, confidence: 0.5 },
+    };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...fuelState,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.FUEL_APPLY },
+        }),
+      ),
+    ).toEqual({ requiresFullTank: true, nextAction: "prepare_quote" });
+    expect(resolveRouteDecision(buildState({ ...fuelState, inboundMessage: "skip" }))).toEqual({
+      requiresFullTank: false,
+      nextAction: "prepare_quote",
+    });
+    expect(resolveRouteDecision(buildState({ ...fuelState, inboundMessage: "5000" }))).toEqual({
+      nextAction: "respond",
+    });
+  });
+
+  it("applies the quoted credit balance or skips credits", () => {
+    const creditState = {
+      stage: "selecting_credits" as const,
+      selectedOption: buildVehicleOption(),
+      pricingPreview: buildPricingPreview({ creditsApplicable: 4000 }),
+      extraction: { intent: "unknown" as const, draftPatch: {}, confidence: 0.5 },
+    };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...creditState,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.CREDITS_APPLY },
+        }),
+      ),
+    ).toEqual({ useCredits: 4000, nextAction: "prepare_quote" });
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...creditState,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.CREDITS_SKIP },
+        }),
+      ),
+    ).toEqual({ useCredits: 0, nextAction: "prepare_quote" });
+    expect(
+      resolveRouteDecision(buildState({ ...creditState, inboundMessage: "use 1000 credits" })),
+    ).toEqual({ nextAction: "respond" });
+  });
+
+  it("fails closed when an interactive button does not belong to the current stage", () => {
+    const staleConfirm = resolveRouteDecision(
+      buildState({
+        stage: "collecting",
+        draft: { bookingType: "DAY" },
+        inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.CONFIRM },
+        extraction: { intent: "confirm", draftPatch: {}, confidence: 1 },
+      }),
+    );
+    const staleFuel = resolveRouteDecision(
+      buildState({
+        stage: "awaiting_payment",
+        inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.FUEL_APPLY },
+        extraction: { intent: "unknown", draftPatch: {}, confidence: 0.5 },
+      }),
+    );
+
+    expect(staleConfirm).toEqual({ nextAction: "respond" });
+    expect(staleFuel).toEqual({ nextAction: "respond" });
+  });
+
+  it("cancels from the clarification button and keeps other stale buttons closed", () => {
+    const clarification = {
+      stage: "confirming" as const,
+      inboundMessage: "cancel",
+      selectedOption: buildVehicleOption(),
+      extraction: { intent: "cancel" as const, draftPatch: {}, confidence: 0.6 },
+    };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...clarification,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.CANCEL },
+        }),
+      ),
+    ).toEqual({ nextAction: "respond", stage: "cancelled" });
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...clarification,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS },
+        }),
+      ).stage,
+    ).toBe("collecting");
+    expect(
+      resolveRouteDecision(
+        buildState({
+          ...clarification,
+          inboundInteractive: { type: "button", buttonId: BOOKING_AGENT_BUTTON_ID.CONFIRM },
+        }),
+      ),
+    ).toEqual({ nextAction: "respond" });
   });
 });

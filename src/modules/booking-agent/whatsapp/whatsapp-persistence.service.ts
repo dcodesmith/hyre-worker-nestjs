@@ -55,34 +55,89 @@ export class WhatsAppPersistenceService {
     windowExpiresAt: Date;
   }): Promise<{ id: string }> {
     const { phoneE164, payload, now, windowExpiresAt } = input;
-    const conversation = await this.databaseService.whatsAppConversation.upsert({
-      where: { phoneE164 },
-      create: {
-        phoneE164,
-        waId: payload.WaId ?? null,
-        profileName: payload.ProfileName ?? null,
-        lastInboundAt: now,
-        windowExpiresAt,
-      },
-      update: {
-        waId: payload.WaId ?? undefined,
-        profileName: payload.ProfileName ?? undefined,
-        lastInboundAt: now,
-        windowExpiresAt,
-      },
-      select: { id: true },
-    });
+    return this.databaseService.$transaction(async (tx) => {
+      const conversation = await tx.whatsAppConversation.upsert({
+        where: { phoneE164 },
+        create: {
+          phoneE164,
+          waId: payload.WaId ?? null,
+          profileName: payload.ProfileName ?? null,
+          lastInboundAt: now,
+          windowExpiresAt,
+        },
+        update: {
+          waId: payload.WaId ?? undefined,
+          profileName: payload.ProfileName ?? undefined,
+          lastInboundAt: now,
+          windowExpiresAt,
+        },
+        select: { id: true },
+      });
 
-    // Reactivate closed chats; never clobber active human handoff.
-    await this.databaseService.whatsAppConversation.updateMany({
-      where: {
-        id: conversation.id,
-        status: "CLOSED",
-      },
-      data: { status: "ACTIVE" },
-    });
+      // Reactivate closed chats; never clobber active human handoff.
+      await tx.whatsAppConversation.updateMany({
+        where: {
+          id: conversation.id,
+          status: "CLOSED",
+        },
+        data: { status: "ACTIVE" },
+      });
 
-    return conversation;
+      return conversation;
+    });
+  }
+
+  async synchronizeConversationIdentity(
+    conversationId: string,
+    beforeIdentityChange: () => Promise<void>,
+  ): Promise<void> {
+    await this.databaseService.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM "WhatsAppConversation" WHERE id = ${conversationId}::uuid FOR UPDATE`,
+      );
+      const conversation = await tx.whatsAppConversation.findUnique({
+        where: { id: conversationId },
+        select: {
+          phoneE164: true,
+          linkedUserId: true,
+          linkStatus: true,
+        },
+      });
+      if (!conversation || conversation.linkStatus === WhatsAppLinkStatus.REVOKED) {
+        return;
+      }
+
+      const verifiedUser = await tx.user.findFirst({
+        where: {
+          phoneNumber: conversation.phoneE164,
+          phoneVerifiedAt: { not: null },
+        },
+        select: { id: true },
+      });
+      const nextLinkedUserId = verifiedUser?.id ?? null;
+      const identityChanged =
+        conversation.linkedUserId !== nextLinkedUserId ||
+        (nextLinkedUserId !== null && conversation.linkStatus !== WhatsAppLinkStatus.LINKED);
+      if (!identityChanged) {
+        return;
+      }
+
+      await beforeIdentityChange();
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: verifiedUser
+          ? {
+              linkedUserId: verifiedUser.id,
+              linkStatus: WhatsAppLinkStatus.LINKED,
+              linkVerifiedAt: new Date(),
+            }
+          : {
+              linkedUserId: null,
+              linkStatus: WhatsAppLinkStatus.UNLINKED,
+              linkVerifiedAt: null,
+            },
+      });
+    });
   }
 
   async createInboundMessage(input: {

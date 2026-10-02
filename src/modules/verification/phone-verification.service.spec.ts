@@ -2,12 +2,14 @@ import { createHmac } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerException, ThrottlerStorage } from "@nestjs/throttler";
+import { Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import {
   PhoneVerificationCodeInvalidException,
+  PhoneVerificationNumberUnavailableException,
   PhoneVerificationProviderUnavailableException,
 } from "./account-verification.error";
 import { PhoneVerificationService } from "./phone-verification.service";
@@ -256,6 +258,45 @@ describe("PhoneVerificationService", () => {
         ).rejects.toBeInstanceOf(PhoneVerificationCodeInvalidException);
       },
     );
+
+    it("maps a unique verified-phone conflict to number unavailable", async () => {
+      twilioMocks.createVerificationCheck.mockResolvedValueOnce({ status: "approved" });
+      databaseService.user.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+
+      await expect(
+        service.check(USER_ID, { phoneNumber: PHONE, code: "123456" }),
+      ).rejects.toBeInstanceOf(PhoneVerificationNumberUnavailableException);
+    });
+
+    it("rethrows unexpected persistence errors after an approved code", async () => {
+      const unexpected = new Error("db down");
+      twilioMocks.createVerificationCheck.mockResolvedValueOnce({ status: "approved" });
+      databaseService.user.update.mockRejectedValueOnce(unexpected);
+
+      await expect(service.check(USER_ID, { phoneNumber: PHONE, code: "123456" })).rejects.toBe(
+        unexpected,
+      );
+    });
+
+    it("checks the session user rather than another account", async () => {
+      twilioMocks.createVerificationCheck.mockResolvedValueOnce({ status: "approved" });
+
+      await service.check("user-session", { phoneNumber: PHONE, code: "123456" });
+
+      expect(databaseService.user.findUnique).toHaveBeenCalledWith({
+        where: { id: "user-session" },
+        select: { phoneNumber: true, phoneVerifiedAt: true },
+      });
+      expect(databaseService.user.update).toHaveBeenCalledWith({
+        where: { id: "user-session" },
+        data: { phoneNumber: PHONE, phoneVerifiedAt: expect.any(Date) },
+      });
+    });
 
     it("maps an unexpected Twilio check failure to provider unavailable", async () => {
       twilioMocks.createVerificationCheck.mockRejectedValueOnce({ status: 500, code: 20500 });
