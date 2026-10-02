@@ -32,6 +32,12 @@ export interface ProcessWhatsAppOutboxJobData {
   outboxId: string;
 }
 
+export interface ProcessWhatsAppAccountLinkNotificationJobData {
+  conversationId: string;
+  userId: string;
+  linkedAt: string;
+}
+
 export interface ProcessWhatsAppInactivityNudgeJobData {
   conversationId: string;
   messageId: string;

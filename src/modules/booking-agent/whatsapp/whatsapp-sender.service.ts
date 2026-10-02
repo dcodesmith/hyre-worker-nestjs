@@ -16,7 +16,6 @@ import {
 } from "../booking-agent.const";
 import {
   WhatsAppOutboundMessageEmptyException,
-  WhatsAppOutboundOutboxIdMissingException,
   WhatsAppOutboundTemplateInvalidException,
 } from "../booking-agent.error";
 import type { CreateOutboxInput, ProcessWhatsAppOutboxJobData } from "../booking-agent.interface";
@@ -42,51 +41,19 @@ export class WhatsAppSenderService {
   }
 
   async enqueueOutbound(input: CreateOutboxInput): Promise<void> {
-    let outboxId: string | null = null;
+    const { id: outboxId } = await this.persistenceService.createOutboundOutbox(
+      input,
+      WHATSAPP_OUTBOX_MAX_ATTEMPTS,
+    );
 
-    try {
-      const outbox = await this.persistenceService.createOutboundOutbox(
-        input,
-        WHATSAPP_OUTBOX_MAX_ATTEMPTS,
-      );
-      outboxId = outbox.id;
-    } catch (error) {
-      if (this.persistenceService.isUniqueViolation(error)) {
-        this.logger.debug({ dedupeKey: input.dedupeKey }, "Skipping duplicate outbound enqueue");
-        return;
-      }
-      throw error;
-    }
-
-    if (!outboxId) {
-      throw new WhatsAppOutboundOutboxIdMissingException();
-    }
-
-    try {
-      await this.whatsappAgentQueue.add(
-        PROCESS_WHATSAPP_OUTBOX_JOB,
-        { outboxId },
-        {
-          ...WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
-          jobId: `whatsapp-outbox_${outboxId}`,
-        },
-      );
-    } catch (error) {
-      try {
-        await this.persistenceService.deleteOutbox(outboxId);
-      } catch (cleanupError) {
-        this.logger.error(
-          {
-            outboxId,
-            dedupeKey: input.dedupeKey,
-            cleanupError:
-              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-          },
-          "Failed to cleanup outbound outbox record after queue failure",
-        );
-      }
-      throw error;
-    }
+    await this.whatsappAgentQueue.add(
+      PROCESS_WHATSAPP_OUTBOX_JOB,
+      { outboxId },
+      {
+        ...WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
+        jobId: `whatsapp-outbox_${outboxId}`,
+      },
+    );
   }
 
   async processOutbox(outboxId: string): Promise<void> {

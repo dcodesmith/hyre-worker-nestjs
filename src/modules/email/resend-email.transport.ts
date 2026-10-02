@@ -25,16 +25,19 @@ export class ResendEmailTransport implements EmailTransport {
     this.logger.info("Resend email transport initialized");
   }
 
-  async sendEmail({ to, subject, html }: EmailPayload): Promise<EmailSendResult> {
+  async sendEmail({ to, subject, html, idempotencyKey }: EmailPayload): Promise<EmailSendResult> {
     const recipientDomain = to.includes("@") ? to.split("@")[1] : "unknown";
     let result: EmailSendResult;
     try {
-      result = await this.resend.emails.send({
-        from: this.from,
-        to,
-        subject,
-        html,
-      });
+      result = await this.resend.emails.send(
+        {
+          from: this.from,
+          to,
+          subject,
+          html,
+        },
+        { idempotencyKey },
+      );
     } catch (error) {
       this.logger.error(
         {

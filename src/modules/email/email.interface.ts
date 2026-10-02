@@ -2,6 +2,7 @@ export interface EmailPayload {
   to: string;
   subject: string;
   html: string;
+  idempotencyKey?: string;
 }
 
 export interface EmailSendResult {

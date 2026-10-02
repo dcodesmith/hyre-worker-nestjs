@@ -15,6 +15,7 @@ describe("WhatsAppPersistenceService", () => {
       update: ReturnType<typeof vi.fn>;
       upsert: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
     };
     whatsAppMessage: {
       update: ReturnType<typeof vi.fn>;
@@ -25,8 +26,7 @@ describe("WhatsAppPersistenceService", () => {
     whatsAppOutbox: {
       updateMany: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
-      create: ReturnType<typeof vi.fn>;
-      delete: ReturnType<typeof vi.fn>;
+      upsert: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
     };
     $transaction: ReturnType<typeof vi.fn>;
@@ -41,6 +41,7 @@ describe("WhatsAppPersistenceService", () => {
         update: vi.fn(),
         upsert: vi.fn(),
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
       },
       whatsAppMessage: {
         update: vi.fn(),
@@ -51,8 +52,7 @@ describe("WhatsAppPersistenceService", () => {
       whatsAppOutbox: {
         updateMany: vi.fn(),
         update: vi.fn(),
-        create: vi.fn(),
-        delete: vi.fn(),
+        upsert: vi.fn(),
         findUnique: vi.fn(),
       },
       $transaction: vi.fn(async (callback: (tx: typeof databaseService) => unknown) =>
@@ -152,6 +152,8 @@ describe("WhatsAppPersistenceService", () => {
         phoneE164: "+2348012345678",
         linkedUserId: null,
         linkStatus: WhatsAppLinkStatus.UNLINKED,
+        linkVerifiedAt: null,
+        linkNotificationCompletedAt: null,
       });
       databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
       databaseService.whatsAppConversation.update.mockImplementation(async () => {
@@ -159,8 +161,13 @@ describe("WhatsAppPersistenceService", () => {
         return { id: conversationId };
       });
 
-      await service.synchronizeConversationIdentity(conversationId, async () => {
-        order.push("clear");
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, async () => {
+          order.push("clear");
+        }),
+      ).resolves.toEqual({
+        userId: "user-verified",
+        linkedAt: expect.any(String),
       });
 
       expect(order).toEqual(["clear", "transaction", "update"]);
@@ -178,6 +185,7 @@ describe("WhatsAppPersistenceService", () => {
           linkedUserId: "user-verified",
           linkStatus: WhatsAppLinkStatus.LINKED,
           linkVerifiedAt: expect.any(Date),
+          linkNotificationCompletedAt: null,
         },
       });
     });
@@ -187,11 +195,15 @@ describe("WhatsAppPersistenceService", () => {
         phoneE164: "+2348012345678",
         linkedUserId: "user-old",
         linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        linkNotificationCompletedAt: new Date("2026-01-02T00:00:00.000Z"),
       });
       databaseService.user.findFirst.mockResolvedValue(null);
       const clearState = vi.fn().mockResolvedValue(undefined);
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
 
       expect(clearState).toHaveBeenCalledOnce();
       expect(databaseService.whatsAppConversation.update).toHaveBeenCalledWith({
@@ -200,6 +212,7 @@ describe("WhatsAppPersistenceService", () => {
           linkedUserId: null,
           linkStatus: WhatsAppLinkStatus.UNLINKED,
           linkVerifiedAt: null,
+          linkNotificationCompletedAt: null,
         },
       });
     });
@@ -209,11 +222,18 @@ describe("WhatsAppPersistenceService", () => {
         phoneE164: "+2348012345678",
         linkedUserId: "user-old",
         linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        linkNotificationCompletedAt: new Date("2026-01-02T00:00:00.000Z"),
       });
       databaseService.user.findFirst.mockResolvedValue({ id: "user-new" });
       const clearState = vi.fn().mockResolvedValue(undefined);
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toEqual({
+        userId: "user-new",
+        linkedAt: expect.any(String),
+      });
 
       expect(clearState).toHaveBeenCalledBefore(databaseService.whatsAppConversation.update);
       expect(databaseService.whatsAppConversation.update).toHaveBeenCalledWith({
@@ -221,6 +241,7 @@ describe("WhatsAppPersistenceService", () => {
         data: expect.objectContaining({
           linkedUserId: "user-new",
           linkStatus: WhatsAppLinkStatus.LINKED,
+          linkNotificationCompletedAt: null,
         }),
       });
     });
@@ -229,7 +250,9 @@ describe("WhatsAppPersistenceService", () => {
       databaseService.whatsAppConversation.findUnique.mockResolvedValue(null);
       const clearState = vi.fn();
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
 
       expect(clearState).not.toHaveBeenCalled();
       expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
@@ -240,26 +263,77 @@ describe("WhatsAppPersistenceService", () => {
         phoneE164: "+2348012345678",
         linkedUserId: "user-old",
         linkStatus: WhatsAppLinkStatus.REVOKED,
+        linkVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+        linkNotificationCompletedAt: null,
       });
       const clearState = vi.fn();
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
 
       expect(clearState).not.toHaveBeenCalled();
       expect(databaseService.user.findFirst).not.toHaveBeenCalled();
       expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
     });
 
-    it("does not clear state when the linked identity is already current", async () => {
+    it("returns pending notification intent without clearing state when already linked", async () => {
+      const linkVerifiedAt = new Date("2026-03-01T12:00:00.000Z");
       databaseService.whatsAppConversation.findUnique.mockResolvedValue({
         phoneE164: "+2348012345678",
         linkedUserId: "user-verified",
         linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt,
+        linkNotificationCompletedAt: null,
       });
       databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
       const clearState = vi.fn();
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toEqual({
+        userId: "user-verified",
+        linkedAt: linkVerifiedAt.toISOString(),
+      });
+
+      expect(clearState).not.toHaveBeenCalled();
+      expect(databaseService.$transaction).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("returns null when link notification was already completed", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: "user-verified",
+        linkStatus: WhatsAppLinkStatus.LINKED,
+        linkVerifiedAt: new Date("2026-03-01T12:00:00.000Z"),
+        linkNotificationCompletedAt: new Date("2026-03-01T12:05:00.000Z"),
+      });
+      databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
+      const clearState = vi.fn();
+
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
+
+      expect(clearState).not.toHaveBeenCalled();
+      expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
+    });
+
+    it("does not link when no verified user matches the phone", async () => {
+      databaseService.whatsAppConversation.findUnique.mockResolvedValue({
+        phoneE164: "+2348012345678",
+        linkedUserId: null,
+        linkStatus: WhatsAppLinkStatus.UNLINKED,
+        linkVerifiedAt: null,
+        linkNotificationCompletedAt: null,
+      });
+      databaseService.user.findFirst.mockResolvedValue(null);
+      const clearState = vi.fn();
+
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
 
       expect(clearState).not.toHaveBeenCalled();
       expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
@@ -270,6 +344,8 @@ describe("WhatsAppPersistenceService", () => {
         phoneE164: "+2348012345678",
         linkedUserId: null,
         linkStatus: WhatsAppLinkStatus.UNLINKED,
+        linkVerifiedAt: null,
+        linkNotificationCompletedAt: null,
       });
       databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
       const clearError = new Error("redis unavailable");
@@ -289,21 +365,107 @@ describe("WhatsAppPersistenceService", () => {
           phoneE164: "+2348012345678",
           linkedUserId: null,
           linkStatus: WhatsAppLinkStatus.UNLINKED,
+          linkVerifiedAt: null,
+          linkNotificationCompletedAt: null,
         })
         .mockResolvedValueOnce({
           phoneE164: "+2348012345678",
           linkedUserId: null,
           linkStatus: WhatsAppLinkStatus.REVOKED,
+          linkVerifiedAt: null,
+          linkNotificationCompletedAt: null,
         });
       databaseService.user.findFirst.mockResolvedValue({ id: "user-verified" });
       const clearState = vi.fn().mockResolvedValue(undefined);
 
-      await service.synchronizeConversationIdentity(conversationId, clearState);
+      await expect(
+        service.synchronizeConversationIdentity(conversationId, clearState),
+      ).resolves.toBeNull();
 
       expect(clearState).toHaveBeenCalledOnce();
       expect(databaseService.$transaction).toHaveBeenCalledOnce();
       expect(databaseService.whatsAppConversation.update).not.toHaveBeenCalled();
     });
+  });
+
+  describe("link notification persistence", () => {
+    const jobData = {
+      conversationId: "018f47a2-7b3c-7d4e-8f90-1234567894a1",
+      userId: "user-verified",
+      linkedAt: "2026-03-01T12:00:00.000Z",
+    };
+
+    it("loads pending notification email scoped to link timestamp and status", async () => {
+      databaseService.whatsAppConversation.findFirst.mockResolvedValue({
+        linkedUser: { email: "user@example.com" },
+      });
+
+      await expect(service.getPendingLinkNotificationEmail(jobData)).resolves.toBe(
+        "user@example.com",
+      );
+
+      expect(databaseService.whatsAppConversation.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: jobData.conversationId,
+          linkedUserId: jobData.userId,
+          linkStatus: WhatsAppLinkStatus.LINKED,
+          linkVerifiedAt: new Date(jobData.linkedAt),
+          linkNotificationCompletedAt: null,
+        },
+        select: { linkedUser: { select: { email: true } } },
+      });
+    });
+
+    it("returns null when no pending notification row matches", async () => {
+      databaseService.whatsAppConversation.findFirst.mockResolvedValue(null);
+
+      await expect(service.getPendingLinkNotificationEmail(jobData)).resolves.toBeNull();
+    });
+
+    it("marks notification completed only for matching pending rows", async () => {
+      databaseService.whatsAppConversation.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.markLinkNotificationCompleted(jobData);
+
+      expect(databaseService.whatsAppConversation.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: jobData.conversationId,
+          linkedUserId: jobData.userId,
+          linkStatus: WhatsAppLinkStatus.LINKED,
+          linkVerifiedAt: new Date(jobData.linkedAt),
+          linkNotificationCompletedAt: null,
+        },
+        data: { linkNotificationCompletedAt: expect.any(Date) },
+      });
+    });
+  });
+
+  it("upserts outbound outbox rows by dedupe key", async () => {
+    databaseService.whatsAppOutbox.upsert.mockResolvedValue({ id: "outbox-1" });
+
+    await expect(
+      service.createOutboundOutbox(
+        {
+          conversationId: "conv-1",
+          dedupeKey: "dedupe-1",
+          mode: "FREE_FORM",
+          textBody: "hello",
+        },
+        5,
+      ),
+    ).resolves.toEqual({ id: "outbox-1" });
+
+    expect(databaseService.whatsAppOutbox.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { dedupeKey: "dedupe-1" },
+        update: {},
+        create: expect.objectContaining({
+          conversationId: "conv-1",
+          dedupeKey: "dedupe-1",
+          maxAttempts: 5,
+        }),
+      }),
+    );
   });
 
   it("returns null link state when conversation is missing", async () => {

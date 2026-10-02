@@ -4,7 +4,11 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { WhatsAppMessageKind, WhatsAppOutboxStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
+import { PROCESS_WHATSAPP_OUTBOX_JOB, WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
+import {
+  WHATSAPP_OUTBOX_MAX_ATTEMPTS,
+  WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
+} from "../booking-agent.const";
 import { WhatsAppPersistenceService } from "./whatsapp-persistence.service";
 import { WhatsAppSenderService } from "./whatsapp-sender.service";
 
@@ -25,8 +29,6 @@ describe("WhatsAppSenderService", () => {
   let service: WhatsAppSenderService;
   let persistenceService: {
     createOutboundOutbox: ReturnType<typeof vi.fn>;
-    deleteOutbox: ReturnType<typeof vi.fn>;
-    isUniqueViolation: ReturnType<typeof vi.fn>;
     claimOutboxForProcessing: ReturnType<typeof vi.fn>;
     getOutboxForDispatch: ReturnType<typeof vi.fn>;
     markOutboxFailed: ReturnType<typeof vi.fn>;
@@ -38,8 +40,6 @@ describe("WhatsAppSenderService", () => {
     twilioMocks.createMessage.mockReset();
     persistenceService = {
       createOutboundOutbox: vi.fn(),
-      deleteOutbox: vi.fn(),
-      isUniqueViolation: vi.fn().mockReturnValue(false),
       claimOutboxForProcessing: vi.fn(),
       getOutboxForDispatch: vi.fn(),
       markOutboxFailed: vi.fn(),
@@ -80,9 +80,9 @@ describe("WhatsAppSenderService", () => {
     service = moduleRef.get(WhatsAppSenderService);
   });
 
-  it("skips duplicate outbox enqueue", async () => {
-    persistenceService.createOutboundOutbox.mockRejectedValue(new Error("duplicate"));
-    persistenceService.isUniqueViolation.mockReturnValue(true);
+  it("enqueues outbox processing after upserting the durable row", async () => {
+    persistenceService.createOutboundOutbox.mockResolvedValue({ id: "outbox-1" });
+    whatsappAgentQueue.add.mockResolvedValue(undefined);
 
     await service.enqueueOutbound({
       conversationId: "conv-1",
@@ -91,7 +91,56 @@ describe("WhatsAppSenderService", () => {
       textBody: "hello",
     });
 
-    expect(whatsappAgentQueue.add).not.toHaveBeenCalled();
+    expect(persistenceService.createOutboundOutbox).toHaveBeenCalledWith(
+      {
+        conversationId: "conv-1",
+        dedupeKey: "dedupe-1",
+        mode: "FREE_FORM",
+        textBody: "hello",
+      },
+      WHATSAPP_OUTBOX_MAX_ATTEMPTS,
+    );
+    expect(whatsappAgentQueue.add).toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_OUTBOX_JOB,
+      { outboxId: "outbox-1" },
+      {
+        ...WHATSAPP_OUTBOX_QUEUE_JOB_OPTIONS,
+        jobId: "whatsapp-outbox_outbox-1",
+      },
+    );
+  });
+
+  it("re-enqueues processing when upsert returns an existing outbox row", async () => {
+    persistenceService.createOutboundOutbox.mockResolvedValue({ id: "outbox-existing" });
+
+    await service.enqueueOutbound({
+      conversationId: "conv-1",
+      dedupeKey: "account-linked:conv-1_user_123",
+      mode: "FREE_FORM",
+      textBody: "Welcome back!",
+    });
+
+    expect(whatsappAgentQueue.add).toHaveBeenCalledWith(
+      PROCESS_WHATSAPP_OUTBOX_JOB,
+      { outboxId: "outbox-existing" },
+      expect.objectContaining({ jobId: "whatsapp-outbox_outbox-existing" }),
+    );
+  });
+
+  it("propagates queue failures without deleting the outbox row", async () => {
+    persistenceService.createOutboundOutbox.mockResolvedValue({ id: "outbox-1" });
+    whatsappAgentQueue.add.mockRejectedValue(new Error("redis unavailable"));
+
+    await expect(
+      service.enqueueOutbound({
+        conversationId: "conv-1",
+        dedupeKey: "dedupe-1",
+        mode: "FREE_FORM",
+        textBody: "hello",
+      }),
+    ).rejects.toThrow("redis unavailable");
+
+    expect(persistenceService.createOutboundOutbox).toHaveBeenCalledTimes(1);
   });
 
   it("returns early when outbox claim fails for an already-sent row", async () => {

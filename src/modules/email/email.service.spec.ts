@@ -61,5 +61,17 @@ describe("EmailService", () => {
 
       expect(logger.error).not.toHaveBeenCalled();
     });
+
+    it("forwards the full payload including idempotencyKey to the transport", async () => {
+      const payload = {
+        ...emailData,
+        idempotencyKey: "account-link_conv-1_user_123",
+      };
+      mockTransport.sendEmail.mockResolvedValueOnce({ data: { id: "email-1" } });
+
+      await service.sendEmail(payload);
+
+      expect(mockTransport.sendEmail).toHaveBeenCalledWith(payload);
+    });
   });
 });
