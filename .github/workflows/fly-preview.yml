@@ -369,6 +369,7 @@ jobs:
           DATABASE_URL: ${{ steps.neon_db.outputs.db_url }}
         run: |
           set -euo pipefail
+          recoverable="20261001210000_unique_user_phone_number"
           status="$(pnpm exec prisma migrate status 2>&1 || true)"
           printf '%s\n' "$status"
           failed="$(printf '%s\n' "$status" | awk '
@@ -377,11 +378,15 @@ jobs:
             capture { print }
           ')"
           if [ -n "$failed" ]; then
-            while IFS= read -r migration; do
-              [ -n "$migration" ] || continue
-              echo "Marking failed preview migration as rolled back: $migration"
-              pnpm exec prisma migrate resolve --rolled-back "$migration"
-            done <<< "$failed"
+            if [ "$failed" != "$recoverable" ]; then
+              echo "Preview migration requires manual recovery:" >&2
+              printf '%s\n' "$failed" >&2
+              exit 1
+            fi
+            echo 'DROP INDEX IF EXISTS "User_verified_phoneNumber_key";' |
+              pnpm exec prisma db execute --stdin
+            echo "Retrying cleaned-up preview migration: $recoverable"
+            pnpm exec prisma migrate resolve --rolled-back "$recoverable"
           fi
 
       - name: Run Prisma migrations on preview branch
