@@ -134,16 +134,21 @@ export class BookingAgentResponderService {
       error,
       statusMessage,
     } = state;
-    const staleChangeDetails =
-      state.inboundInteractive?.buttonId === BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS &&
-      stage !== "confirming";
+    const isChangeDetails =
+      state.inboundInteractive?.buttonId === BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS;
+    if (extraction?.intent === "ask_question" && extraction.question && !isChangeDetails) {
+      return null;
+    }
+    const staleChangeDetails = isChangeDetails && stage !== "confirming";
+    const changeDetailsPrompt =
+      isChangeDetails && stage === "confirming" ? extraction?.question : undefined;
 
     return (
       this.buildResetResponse(extraction?.intent) ??
       (staleChangeDetails
         ? { text: "That change option is no longer active. Please continue from here." }
         : null) ??
-      this.buildClarificationResponse(extraction?.clarificationPrompt ?? extraction?.question) ??
+      this.buildClarificationResponse(extraction?.clarificationPrompt ?? changeDetailsPrompt) ??
       this.buildGreetingErrorResponse(stage, error) ??
       this.buildCompletedStatusResponse(stage, statusMessage) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
