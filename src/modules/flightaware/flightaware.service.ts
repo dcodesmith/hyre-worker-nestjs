@@ -442,19 +442,20 @@ export class FlightAwareService {
     let nextFlightDate: string | null = null;
 
     for (const flight of flights) {
-      const arrivalTimeUTC = this.getFlightArrivalFields(flight).arrivalTime;
-      const arrivalDate = new Date(arrivalTimeUTC);
-      const localeDateStr = this.toLocaleDateString(arrivalDate);
+      const arrival = this.getFlightArrivalFields(flight);
+      const scheduledArrivalDate = new Date(arrival.scheduledArrival);
+      const currentArrivalDate = new Date(arrival.arrivalTime);
+      const scheduledLocaleDateStr = this.toLocaleDateString(scheduledArrivalDate);
 
-      if (localeDateStr === pickupDateStr) {
-        if (arrivalDate < now) {
+      if (scheduledLocaleDateStr === pickupDateStr) {
+        if (currentArrivalDate < now) {
           landedFlight = flight;
         } else {
           matchingFlight = flight;
           break;
         }
-      } else if (arrivalDate > now && !nextFlightDate) {
-        nextFlightDate = localeDateStr;
+      } else if (currentArrivalDate > now && !nextFlightDate) {
+        nextFlightDate = scheduledLocaleDateStr;
       }
     }
 

@@ -27,6 +27,7 @@ import { MapsService } from "../maps/maps.service";
 import { ReferralProgramService } from "../referral/referral-program.service";
 import {
   BookingCreationFailedException,
+  BookingFlightWindowChangedException,
   BookingPaymentSyncFailedException,
   BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
@@ -860,6 +861,65 @@ describe("BookingCreationService", () => {
       expect(mockTransaction).not.toHaveBeenCalled();
     });
 
+    it("requires confirmation before persisting a refreshed flight window", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+        flight: {
+          flightNumber: "BA74",
+          flightId: "BA74-20250201",
+          origin: "EGLL",
+          destination: "DNMM",
+          scheduledDeparture: "2025-02-01T08:00:00Z",
+          scheduledArrival: "2025-02-01T14:30:00Z",
+          arrivalTime: "2025-02-01T14:30:00Z",
+          arrivalTimeSource: "scheduled",
+          isLive: true,
+        },
+      });
+      vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
+        durationMinutes: 60,
+        distanceMeters: 30000,
+        isEstimate: false,
+      });
+      const refreshedStartDate = new Date("2025-02-01T15:10:00Z");
+      const refreshedEndDate = new Date("2025-02-01T16:22:00Z");
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: refreshedStartDate,
+          legStartTime: refreshedStartDate,
+          legEndTime: refreshedEndDate,
+        },
+      ]);
+
+      const error = await service
+        .createBooking({
+          input: createBookingInput({
+            bookingType: "AIRPORT_PICKUP",
+            flightNumber: "BA74",
+            startDate: new Date("2025-02-01T15:00:00Z"),
+            endDate: new Date("2025-02-01T16:12:00Z"),
+            pickupTime: undefined,
+            sameLocation: false,
+            dropOffAddress: "Victoria Island, Lagos",
+          }),
+          sessionUser: createSessionUser(),
+          context: { requireFlightWindowConfirmation: true },
+        })
+        .catch((caughtError: unknown) => caughtError);
+
+      expect(error).toBeInstanceOf(BookingFlightWindowChangedException);
+      if (!(error instanceof BookingFlightWindowChangedException)) {
+        throw new Error("Expected BookingFlightWindowChangedException");
+      }
+      expect(error.getDetails()).toEqual({
+        currentStartDate: refreshedStartDate.toISOString(),
+        currentEndDate: refreshedEndDate.toISOString(),
+      });
+      expect(idempotencyService.release).toHaveBeenCalledWith("idempotency-123");
+      expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
     it("should validate flight for airport pickup bookings", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       // Validation methods now return void
@@ -948,6 +1008,8 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput({
         bookingType: "AIRPORT_PICKUP",
         flightNumber: "BA74",
+        startDate: refreshedLegStart,
+        endDate: refreshedLegEnd,
         pickupTime: undefined,
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",

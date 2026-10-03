@@ -27,6 +27,7 @@ import {
 import {
   BookingCreationFailedException,
   BookingException,
+  BookingFlightWindowChangedException,
   BookingPaymentSyncFailedException,
   BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
@@ -60,6 +61,7 @@ import { isGuestBooking } from "./dto/create-booking.dto";
 export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
 export type BookingCreationContext = {
   guestContactSource?: GuestContactSource;
+  requireFlightWindowConfirmation?: boolean;
 };
 export type CreateBookingRequest = {
   input: CreateBookingInput;
@@ -184,8 +186,17 @@ export class BookingCreationService {
         }),
       );
       if (flightData) {
-        normalizedBooking.startDate = legs[0].legStartTime;
-        normalizedBooking.endDate = legs[legs.length - 1].legEndTime;
+        const refreshedStartDate = legs[0].legStartTime;
+        const refreshedEndDate = legs[legs.length - 1].legEndTime;
+        if (
+          context?.requireFlightWindowConfirmation &&
+          (refreshedStartDate.getTime() !== normalizedBooking.startDate.getTime() ||
+            refreshedEndDate.getTime() !== normalizedBooking.endDate.getTime())
+        ) {
+          throw new BookingFlightWindowChangedException(refreshedStartDate, refreshedEndDate);
+        }
+        normalizedBooking.startDate = refreshedStartDate;
+        normalizedBooking.endDate = refreshedEndDate;
       }
       this.validationService.validateDates({
         startDate: normalizedBooking.startDate,

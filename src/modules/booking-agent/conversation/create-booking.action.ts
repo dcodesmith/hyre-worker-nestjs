@@ -1,10 +1,12 @@
 import { Injectable } from "@nestjs/common";
+import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { PRICE_TOLERANCE } from "../../booking/booking.const";
 import {
+  BookingFlightWindowChangedException,
   BookingPhoneVerificationRequiredException,
   BookingPriceChangedException,
   BookingRequestInProgressException,
@@ -156,6 +158,9 @@ export class CreateBookingAction {
             input: this.buildAuthenticatedBookingInput(authoritativeBookingInput),
             sessionUser,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
+            context: {
+              requireFlightWindowConfirmation: true,
+            },
           })
         : await this.bookingCreationService.createBooking({
             input: authoritativeBookingInput,
@@ -163,6 +168,7 @@ export class CreateBookingAction {
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
               guestContactSource: "WHATSAPP_AGENT",
+              requireFlightWindowConfirmation: true,
             },
           });
 
@@ -191,6 +197,10 @@ export class CreateBookingAction {
               "Pricing changed while you were confirming. Please review the updated quote.",
           };
         }
+      }
+
+      if (error instanceof BookingFlightWindowChangedException) {
+        return this.mapFlightWindowChange(state.draft, error);
       }
 
       if (error instanceof BookingPhoneVerificationRequiredException) {
@@ -371,6 +381,39 @@ export class CreateBookingAction {
       return this.returnToFlightCollection(draft, message);
     }
     return null;
+  }
+
+  private mapFlightWindowChange(
+    draft: BookingDraft,
+    error: BookingFlightWindowChangedException,
+  ): Partial<BookingAgentState> {
+    const pickupDateTime = error.currentStartDate.toISOString();
+    const dropoffDateTime = error.currentEndDate.toISOString();
+    const updatedDraft: BookingDraft = {
+      ...draft,
+      pickupDateTime,
+      pickupTime: formatInTimeZone(error.currentStartDate, "Africa/Lagos", "HH:mm"),
+      dropoffDate: formatInTimeZone(error.currentEndDate, "Africa/Lagos", "yyyy-MM-dd"),
+      dropoffDateTime,
+    };
+
+    const pickupDisplay = formatInTimeZone(
+      error.currentStartDate,
+      "Africa/Lagos",
+      "MMM d, yyyy 'at' h:mm a",
+    );
+    const dropoffDisplay = formatInTimeZone(
+      error.currentEndDate,
+      "Africa/Lagos",
+      "MMM d, yyyy 'at' h:mm a",
+    );
+
+    return {
+      draft: updatedDraft,
+      error: null,
+      stage: "confirming",
+      statusMessage: `Your flight timing changed. Pickup is now ${pickupDisplay}, with estimated drop-off at ${dropoffDisplay}. Please confirm the updated booking times.`,
+    };
   }
 
   private async fetchFreshOptionsForDraft(

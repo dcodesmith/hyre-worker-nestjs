@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import {
+  BookingFlightWindowChangedException,
   BookingPhoneVerificationRequiredException,
   BookingPriceChangedException,
   BookingRequestInProgressException,
@@ -162,7 +163,10 @@ describe("CreateBookingAction", () => {
           expectedTotalAmount: "150000",
         }),
         sessionUser: null,
-        context: { guestContactSource: "WHATSAPP_AGENT" },
+        context: {
+          guestContactSource: "WHATSAPP_AGENT",
+          requireFlightWindowConfirmation: true,
+        },
       }),
     );
     expect(bookingPricingPreviewServiceMock.preview).toHaveBeenCalledWith(
@@ -513,6 +517,46 @@ describe("CreateBookingAction", () => {
     expect(result.availableOptions).toBeUndefined();
     expect(result.lastShownOptions).toBeUndefined();
     expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+  });
+
+  it("asks for confirmation when refreshed flight times change", async () => {
+    const selected = buildVehicleOption();
+    bookingCreationServiceMock.createBooking.mockRejectedValue(
+      new BookingFlightWindowChangedException(
+        new Date("2026-03-02T00:10:00.000Z"),
+        new Date("2026-03-02T01:22:00.000Z"),
+      ),
+    );
+
+    const result = await createBookingAction.run(
+      buildTestState({
+        selectedOption: selected,
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-03-01",
+          pickupDateTime: "2026-03-01T23:40:00.000Z",
+          pickupTime: "00:40",
+          pickupLocation: "Murtala Muhammed International Airport, Lagos",
+          dropoffDate: "2026-03-02",
+          dropoffDateTime: "2026-03-02T00:52:00.000Z",
+          dropoffLocation: "Victoria Island",
+          flightNumber: "BA74",
+          vehicleType: "SUV",
+        },
+      }),
+    );
+
+    expect(result.stage).toBe("confirming");
+    expect(result.error).toBeNull();
+    expect(result.draft).toMatchObject({
+      pickupDate: "2026-03-01",
+      pickupDateTime: "2026-03-02T00:10:00.000Z",
+      pickupTime: "01:10",
+      dropoffDate: "2026-03-02",
+      dropoffDateTime: "2026-03-02T01:22:00.000Z",
+    });
+    expect(result.statusMessage).toContain("Pickup is now Mar 2, 2026 at 1:10 AM");
+    expect(result.statusMessage).toContain("Please confirm the updated booking times.");
   });
 
   it("returns airport flight and validation failures to collecting", async () => {

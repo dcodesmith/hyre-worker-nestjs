@@ -212,6 +212,35 @@ describe("FlightAwareService", () => {
       expect(result.actualArrival).toBeUndefined();
     });
 
+    it("should retain the scheduled occurrence when a delay shifts arrival to the next date", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BAW74",
+              fa_flight_id: "BAW74-20260720",
+              origin: { code: "EGLL", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2026-07-20T15:00:00Z",
+              scheduled_in: "2026-07-20T22:30:00Z",
+              estimated_in: "2026-07-20T23:30:00Z",
+              status: "Delayed",
+            },
+          ],
+        },
+      });
+      vi.setSystemTime(new Date("2026-07-20T20:00:00Z"));
+
+      const result = await service.validateFlight("BA74", "2026-07-20");
+
+      expect(result).toMatchObject({
+        flightId: "BAW74-20260720",
+        scheduledArrival: "2026-07-20T22:30:00Z",
+        arrivalTime: "2026-07-20T23:30:00Z",
+        arrivalTimeSource: "estimated",
+      });
+    });
+
     it("should prefer a runway actual over a stale gate estimate", async () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: {
