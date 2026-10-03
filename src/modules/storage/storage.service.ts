@@ -3,17 +3,25 @@ import {
   CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   type S3Client,
 } from "@aws-sdk/client-s3";
 import { Inject, Injectable } from "@nestjs/common";
 import sharp from "sharp";
 import { STORAGE_S3_CLIENT, STORAGE_SETTINGS, type StorageSettings } from "./storage.client";
+import {
+  StorageJpegConversionCapacityExceededException,
+  StorageObjectBodyMissingException,
+  StoragePublicImageOriginInvalidException,
+} from "./storage.error";
 import type { PreparedStorageObject, StoredObject, StoredObjectStream } from "./storage.interface";
 
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const PRIVATE_OBJECT_KEY_MARKER = "/documents/";
 const WEBP_CONTENT_TYPE = "image/webp";
+const WHATSAPP_JPEG_MAX_WIDTH = 1600;
+const MAX_CONCURRENT_JPEG_CONVERSIONS = 3;
 export const MAX_IMAGE_PIXELS = 25_000_000;
 export const WEBP_MAX_DIMENSION = 16_383;
 
@@ -52,6 +60,8 @@ export async function prepareStorageObject(
 
 @Injectable()
 export class StorageService {
+  private readonly jpegConversions = new Map<string, Promise<string>>();
+
   constructor(
     @Inject(STORAGE_S3_CLIENT) private readonly s3Client: S3Client,
     @Inject(STORAGE_SETTINGS) private readonly settings: StorageSettings,
@@ -107,11 +117,19 @@ export class StorageService {
       throw new Error("Refusing to delete an object outside the configured storage write prefix");
     }
 
-    await this.s3Client.send(
-      new DeleteObjectCommand({
-        Bucket: this.bucketForKey(key),
-        Key: key,
-      }),
+    const keys =
+      /(^|\/)cars\//.test(key) && key.endsWith(".webp")
+        ? [key, key.replace(/\.webp$/, ".jpg")]
+        : [key];
+    await Promise.all(
+      keys.map((objectKey) =>
+        this.s3Client.send(
+          new DeleteObjectCommand({
+            Bucket: this.bucketForKey(objectKey),
+            Key: objectKey,
+          }),
+        ),
+      ),
     );
   }
 
@@ -124,7 +142,7 @@ export class StorageService {
     );
 
     if (!response.Body) {
-      throw new Error("Storage object has no body");
+      throw new StorageObjectBodyMissingException("object");
     }
 
     return {
@@ -132,6 +150,88 @@ export class StorageService {
       contentType: response.ContentType,
       contentLength: response.ContentLength,
     };
+  }
+
+  async ensurePublicJpeg(publicUrl: string): Promise<string> {
+    const publicPrefix = `${this.settings.publicObjectUrlPrefix.replace(/\/$/, "")}/`;
+    if (!publicUrl.startsWith(publicPrefix)) {
+      throw new StoragePublicImageOriginInvalidException();
+    }
+    const sourceKey = decodeURIComponent(publicUrl.slice(publicPrefix.length));
+    const writableSourceKey =
+      this.settings.writePrefix && !sourceKey.startsWith(`${this.settings.writePrefix}/`)
+        ? `${this.settings.writePrefix}/${sourceKey}`
+        : sourceKey;
+    const jpegKey = writableSourceKey.replace(/\.[^./]+$/, ".jpg");
+    const jpegUrl = `${publicPrefix}${jpegKey}`;
+
+    try {
+      await this.s3Client.send(
+        new HeadObjectCommand({
+          Bucket: this.settings.bucketName,
+          Key: jpegKey,
+        }),
+      );
+      return jpegUrl;
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+        ?.httpStatusCode;
+      if (status !== 404) {
+        throw error;
+      }
+    }
+
+    const activeConversion = this.jpegConversions.get(jpegKey);
+    if (activeConversion) {
+      return activeConversion;
+    }
+    if (this.jpegConversions.size >= MAX_CONCURRENT_JPEG_CONVERSIONS) {
+      throw new StorageJpegConversionCapacityExceededException(MAX_CONCURRENT_JPEG_CONVERSIONS);
+    }
+
+    const conversion = this.convertPublicImageToJpeg(sourceKey, jpegKey, jpegUrl);
+    this.jpegConversions.set(jpegKey, conversion);
+    try {
+      return await conversion;
+    } finally {
+      this.jpegConversions.delete(jpegKey);
+    }
+  }
+
+  private async convertPublicImageToJpeg(
+    sourceKey: string,
+    jpegKey: string,
+    jpegUrl: string,
+  ): Promise<string> {
+    const source = await this.s3Client.send(
+      new GetObjectCommand({
+        Bucket: this.settings.bucketName,
+        Key: sourceKey,
+      }),
+    );
+    if (!source.Body) {
+      throw new StorageObjectBodyMissingException("public image");
+    }
+
+    const jpeg = await sharp(Buffer.from(await source.Body.transformToByteArray()), {
+      failOn: "error",
+      limitInputPixels: MAX_IMAGE_PIXELS,
+    })
+      .resize({ width: WHATSAPP_JPEG_MAX_WIDTH, withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.settings.bucketName,
+        Key: jpegKey,
+        Body: jpeg,
+        ContentType: "image/jpeg",
+        CacheControl: IMMUTABLE_CACHE_CONTROL,
+      }),
+    );
+
+    return jpegUrl;
   }
 
   private bucketForKey(key: string): string {

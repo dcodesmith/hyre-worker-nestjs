@@ -231,8 +231,36 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons).toHaveLength(3);
       expect(response.interactive?.buttons?.[0].id).toBe("confirm");
-      expect(response.interactive?.buttons?.[1].id).toBe("no");
+      expect(response.interactive?.buttons?.[1].id).toBe("change_details");
       expect(response.interactive?.buttons?.[2].id).toBe("show_others");
+    });
+
+    it("prompts for current change details and rejects a stale button", async () => {
+      const extraction = {
+        intent: "ask_question" as const,
+        draftPatch: {},
+        question: "What would you like to change?",
+        confidence: 1,
+      };
+      const inboundInteractive = {
+        type: "button" as const,
+        buttonId: BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS,
+      };
+      const currentResponse = await service.generateResponse(
+        buildState({ stage: "confirming", extraction, inboundInteractive }),
+      );
+      const staleResponse = await service.generateResponse(
+        buildState({
+          stage: "collecting",
+          extraction,
+          inboundInteractive,
+        }),
+      );
+
+      expect(currentResponse.text).toBe("What would you like to change?");
+      expect(staleResponse.text).toBe(
+        "That change option is no longer active. Please continue from here.",
+      );
     });
 
     it("uses the authoritative quote breakdown when a final price is ready", async () => {
@@ -754,7 +782,7 @@ describe("BookingAgentResponderService", () => {
         extraction: {
           intent: "ask_question",
           draftPatch: {},
-          question: "What is the price?",
+          question: "Is fuel included?",
           confidence: 0.9,
         },
       });
@@ -764,7 +792,7 @@ describe("BookingAgentResponderService", () => {
       const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("ask_question");
-      expect(userContext.content).toContain("What is the price?");
+      expect(userContext.content).toContain("USER QUESTION: Is fuel included?");
     });
 
     it("includes available options in context", async () => {

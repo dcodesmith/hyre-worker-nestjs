@@ -134,10 +134,21 @@ export class BookingAgentResponderService {
       error,
       statusMessage,
     } = state;
+    const isChangeDetails =
+      state.inboundInteractive?.buttonId === BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS;
+    if (extraction?.intent === "ask_question" && extraction.question && !isChangeDetails) {
+      return null;
+    }
+    const staleChangeDetails = isChangeDetails && stage !== "confirming";
+    const changeDetailsPrompt =
+      isChangeDetails && stage === "confirming" ? extraction?.question : undefined;
 
     return (
       this.buildResetResponse(extraction?.intent) ??
-      this.buildClarificationResponse(extraction?.clarificationPrompt) ??
+      (staleChangeDetails
+        ? { text: "That change option is no longer active. Please continue from here." }
+        : null) ??
+      this.buildClarificationResponse(extraction?.clarificationPrompt ?? changeDetailsPrompt) ??
       this.buildGreetingErrorResponse(stage, error) ??
       this.buildCompletedStatusResponse(stage, statusMessage) ??
       this.buildCollectingStatusResponse(stage, availableOptions, statusMessage) ??
@@ -721,9 +732,9 @@ export class BookingAgentResponderService {
       return {
         type: "buttons",
         buttons: [
-          { id: BOOKING_AGENT_BUTTON_ID.CONFIRM, title: "✓ Confirm" },
-          { id: BOOKING_AGENT_BUTTON_ID.NO, title: "✕ No" },
-          { id: BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS, title: "↻ Show Others" },
+          { id: BOOKING_AGENT_BUTTON_ID.CONFIRM, title: "Confirm Booking" },
+          { id: BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS, title: "Change Details" },
+          { id: BOOKING_AGENT_BUTTON_ID.SHOW_OTHERS, title: "Show Other Cars" },
         ],
       };
     }

@@ -33,6 +33,7 @@ describe("WhatsAppSenderService", () => {
     getOutboxForDispatch: ReturnType<typeof vi.fn>;
     markOutboxFailed: ReturnType<typeof vi.fn>;
     markOutboxSent: ReturnType<typeof vi.fn>;
+    markOutboxPrecedingMessageSent: ReturnType<typeof vi.fn>;
   };
   let whatsappAgentQueue: { add: ReturnType<typeof vi.fn> };
 
@@ -44,6 +45,7 @@ describe("WhatsAppSenderService", () => {
       getOutboxForDispatch: vi.fn(),
       markOutboxFailed: vi.fn(),
       markOutboxSent: vi.fn(),
+      markOutboxPrecedingMessageSent: vi.fn(),
     };
     const configService = {
       get: vi.fn((key: string) => {
@@ -269,5 +271,60 @@ describe("WhatsAppSenderService", () => {
         contentVariables: JSON.stringify({ "1": "John Doe", "2": "Ikeja" }),
       }),
     );
+  });
+
+  it("sends the preceding quote once and skips it when the sid is already stored", async () => {
+    const preceding = { sid: "SM_PRECEDING", status: "queued" };
+    const template = { sid: "SM_TEMPLATE", status: "queued" };
+    const outbox = {
+      id: "outbox-confirm",
+      conversationId: "conv-confirm",
+      mode: "TEMPLATE",
+      textBody: "Quote body",
+      mediaUrl: null,
+      templateName: "HX49f0f60de446a9b6bd2425dffab6303c",
+      templateVariables: null,
+      payload: null,
+      conversation: { phoneE164: "+2348012345678" },
+      attempts: 1,
+      maxAttempts: 3,
+      nextAttemptAt: null,
+    };
+    twilioMocks.createMessage.mockResolvedValueOnce(preceding).mockResolvedValueOnce(template);
+    persistenceService.claimOutboxForProcessing.mockResolvedValue(true);
+    persistenceService.getOutboxForDispatch.mockResolvedValue(outbox);
+
+    await service.processOutbox("outbox-confirm");
+
+    expect(twilioMocks.createMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ body: "Quote body" }),
+    );
+    expect(persistenceService.markOutboxPrecedingMessageSent).toHaveBeenCalledWith(
+      expect.objectContaining({ textBody: "Quote body", providerMessage: preceding }),
+    );
+    expect(twilioMocks.createMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ contentSid: outbox.templateName }),
+    );
+    expect(persistenceService.markOutboxSent).toHaveBeenCalledWith(
+      expect.objectContaining({ textBody: null, providerMessage: template }),
+    );
+
+    twilioMocks.createMessage.mockClear();
+    persistenceService.markOutboxPrecedingMessageSent.mockClear();
+    persistenceService.getOutboxForDispatch.mockResolvedValue({
+      ...outbox,
+      payload: { precedingMessageSid: "SM_PRECEDING" },
+    });
+    twilioMocks.createMessage.mockResolvedValue(template);
+
+    await service.processOutbox("outbox-confirm");
+
+    expect(twilioMocks.createMessage).toHaveBeenCalledTimes(1);
+    expect(twilioMocks.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentSid: outbox.templateName }),
+    );
+    expect(persistenceService.markOutboxPrecedingMessageSent).not.toHaveBeenCalled();
   });
 });

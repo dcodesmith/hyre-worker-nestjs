@@ -1,13 +1,19 @@
 import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import { calculateLegCount } from "../booking/booking.helper";
 import { CarSearchService } from "../car/car-search.service";
 import { RatesService } from "../rates/rates.service";
+import { StorageService } from "../storage/storage.service";
 import { WHATSAPP_CAR_SEARCH_TIMEOUT_MS } from "./booking-agent.const";
 import { WhatsAppOperationTimeoutException } from "./booking-agent.error";
-import type { VehicleSearchAlternative, VehicleSearchToolResult } from "./booking-agent.interface";
+import type {
+  VehicleSearchAlternative,
+  VehicleSearchOption,
+  VehicleSearchToolResult,
+} from "./booking-agent.interface";
 import { VehicleSearchAlternativeRanker } from "./vehicle-search-alternative.ranker";
 import {
   normalizeBookingType,
@@ -31,6 +37,7 @@ export class BookingAgentSearchService {
   constructor(
     private readonly carSearchService: CarSearchService,
     private readonly ratesService: RatesService,
+    private readonly storageService: StorageService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(BookingAgentSearchService.name);
@@ -116,15 +123,44 @@ export class BookingAgentSearchService {
     const enrichedAlternatives = alternatives.map((option) =>
       this.applyEstimate(option, extracted, vatRatePercent),
     );
+    const [exactMatchesWithImages, alternativesWithImages] = await Promise.all([
+      Promise.all(enrichedExactMatches.map((option) => this.withWhatsAppImage(option))),
+      Promise.all(enrichedAlternatives.map((option) => this.withWhatsAppImage(option))),
+    ]);
 
     return {
       interpretation,
       extracted,
-      exactMatches: enrichedExactMatches,
-      alternatives: enrichedAlternatives,
+      exactMatches: exactMatchesWithImages,
+      alternatives: alternativesWithImages,
       precondition: null,
       shouldClarifyBookingType: false,
     };
+  }
+
+  private async withWhatsAppImage<T extends VehicleSearchOption>(option: T): Promise<T> {
+    if (!option.imageUrl) {
+      return option;
+    }
+    try {
+      return {
+        ...option,
+        imageUrl: await this.withTimeout(
+          this.storageService.ensurePublicJpeg(option.imageUrl),
+          `vehicle-image:${option.id}`,
+          WHATSAPP_CAR_SEARCH_TIMEOUT_MS,
+        ),
+      };
+    } catch (error) {
+      this.logger.warn(
+        {
+          vehicleId: option.id,
+          err: toLogError(error),
+        },
+        "Failed to prepare WhatsApp vehicle image",
+      );
+      return { ...option, imageUrl: null };
+    }
   }
 
   private excludeOptionId<T extends { id: string }>(options: T[], excludedOptionId?: string): T[] {

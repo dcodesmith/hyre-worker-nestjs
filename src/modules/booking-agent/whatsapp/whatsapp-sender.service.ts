@@ -84,6 +84,7 @@ export class WhatsAppSenderService {
     const attemptsMade = outbox.attempts;
 
     try {
+      await this.sendPrecedingTextIfNeeded(outbox);
       const providerMessage = await this.sendViaTwilio(outbox.conversation.phoneE164, outbox);
       const sentAt = new Date();
       await this.markOutboxSent(outbox, providerMessage, sentAt);
@@ -119,6 +120,36 @@ export class WhatsAppSenderService {
         "Outbox moved to dead-letter after max attempts",
       );
     }
+  }
+
+  private async sendPrecedingTextIfNeeded(outbox: {
+    id: string;
+    conversationId: string;
+    mode: string;
+    textBody: string | null;
+    payload: Prisma.JsonValue | null;
+    conversation: { phoneE164: string };
+  }): Promise<void> {
+    if (
+      outbox.mode !== "TEMPLATE" ||
+      !outbox.textBody ||
+      this.hasPrecedingMessageSid(outbox.payload)
+    ) {
+      return;
+    }
+
+    const providerMessage = await this.twilioClient.messages.create({
+      to: `whatsapp:${outbox.conversation.phoneE164}`,
+      from: `whatsapp:${this.whatsAppNumber}`,
+      body: outbox.textBody,
+    });
+    await this.persistenceService.markOutboxPrecedingMessageSent({
+      outboxId: outbox.id,
+      conversationId: outbox.conversationId,
+      textBody: outbox.textBody,
+      providerMessage,
+      sentAt: new Date(),
+    });
   }
 
   private async sendViaTwilio(
@@ -178,21 +209,33 @@ export class WhatsAppSenderService {
     outbox: {
       id: string;
       conversationId: string;
+      mode: string;
       textBody: string | null;
       mediaUrl: string | null;
     },
     providerMessage: MessageInstance,
     sentAt: Date,
   ): Promise<void> {
+    const hasPrecedingText = outbox.mode === "TEMPLATE" && Boolean(outbox.textBody);
     await this.persistenceService.markOutboxSent({
       outboxId: outbox.id,
       conversationId: outbox.conversationId,
-      textBody: outbox.textBody,
+      textBody: hasPrecedingText ? null : outbox.textBody,
       mediaUrl: outbox.mediaUrl,
-      kind: this.deriveOutboundMessageKind(outbox),
+      kind: hasPrecedingText ? WhatsAppMessageKind.TEXT : this.deriveOutboundMessageKind(outbox),
       providerMessage,
       sentAt,
     });
+  }
+
+  private hasPrecedingMessageSid(payload: unknown): boolean {
+    return Boolean(
+      payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        "precedingMessageSid" in payload &&
+        typeof payload.precedingMessageSid === "string",
+    );
   }
 
   private deriveOutboundMessageKind(outbox: {

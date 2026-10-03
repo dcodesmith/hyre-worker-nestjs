@@ -24,6 +24,15 @@ export function resolveRouteDecision(state: BookingAgentState): BookingAgentRout
     return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: "collecting" };
   }
 
+  const isChangeDetailsButton = getInteractiveId(state) === BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS;
+  if (
+    extraction.intent === "ask_question" &&
+    extraction.question &&
+    (!isChangeDetailsButton || state.stage === "confirming")
+  ) {
+    return { nextAction: BOOKING_AGENT_ACTIONS.RESPOND, stage: state.stage };
+  }
+
   const interactiveGuard = getInteractiveStageGuard(state);
   if (interactiveGuard) {
     return interactiveGuard;

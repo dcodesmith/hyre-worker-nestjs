@@ -95,6 +95,20 @@ describe("BookingAgentExtractorService", () => {
       expect(result.intent).toBe("reject");
     });
 
+    it("handles change details as a question", async () => {
+      const result = await service.extract(
+        buildState({
+          inboundInteractive: { type: "button", buttonId: "change_details" },
+        }),
+      );
+
+      expect(result.intent).toBe("ask_question");
+      expect(result.question).toBe(
+        "What would you like to change — the car, booking type, date or time, or locations?",
+      );
+      expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
+    });
+
     it("handles show_others button", async () => {
       const interactive: InteractiveReply = {
         type: "button",
