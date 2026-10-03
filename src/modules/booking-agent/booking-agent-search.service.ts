@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { BookingType } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
 import { calculateLegCount } from "../booking/booking.helper";
 import { CarSearchService } from "../car/car-search.service";
@@ -154,7 +155,7 @@ export class BookingAgentSearchService {
       this.logger.warn(
         {
           vehicleId: option.id,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to prepare WhatsApp vehicle image",
       );

@@ -10,6 +10,7 @@ import {
   STORAGE_SETTINGS,
   type StorageSettings,
 } from "./storage.client";
+import { StorageErrorCode, StoragePublicImageOriginInvalidException } from "./storage.error";
 import {
   MAX_IMAGE_PIXELS,
   prepareStorageObject,
@@ -216,9 +217,14 @@ describe("StorageService", () => {
   });
 
   it("refuses to convert an image outside the public storage origin", async () => {
-    await expect(
-      service.ensurePublicJpeg("https://evil.example/owner/cars/file.webp"),
-    ).rejects.toThrow("Refusing to convert an image outside the configured public storage origin");
+    const error = await service
+      .ensurePublicJpeg("https://evil.example/owner/cars/file.webp")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(StoragePublicImageOriginInvalidException);
+    expect((error as StoragePublicImageOriginInvalidException).getErrorCode()).toBe(
+      StorageErrorCode.PUBLIC_IMAGE_ORIGIN_INVALID,
+    );
     expect(send).not.toHaveBeenCalled();
   });
 });

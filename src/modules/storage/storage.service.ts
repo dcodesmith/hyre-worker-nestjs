@@ -10,6 +10,11 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import sharp from "sharp";
 import { STORAGE_S3_CLIENT, STORAGE_SETTINGS, type StorageSettings } from "./storage.client";
+import {
+  StorageJpegConversionCapacityExceededException,
+  StorageObjectBodyMissingException,
+  StoragePublicImageOriginInvalidException,
+} from "./storage.error";
 import type { PreparedStorageObject, StoredObject, StoredObjectStream } from "./storage.interface";
 
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -137,7 +142,7 @@ export class StorageService {
     );
 
     if (!response.Body) {
-      throw new Error("Storage object has no body");
+      throw new StorageObjectBodyMissingException("object");
     }
 
     return {
@@ -150,7 +155,7 @@ export class StorageService {
   async ensurePublicJpeg(publicUrl: string): Promise<string> {
     const publicPrefix = `${this.settings.publicObjectUrlPrefix.replace(/\/$/, "")}/`;
     if (!publicUrl.startsWith(publicPrefix)) {
-      throw new Error("Refusing to convert an image outside the configured public storage origin");
+      throw new StoragePublicImageOriginInvalidException();
     }
     const sourceKey = decodeURIComponent(publicUrl.slice(publicPrefix.length));
     const writableSourceKey =
@@ -181,7 +186,7 @@ export class StorageService {
       return activeConversion;
     }
     if (this.jpegConversions.size >= MAX_CONCURRENT_JPEG_CONVERSIONS) {
-      throw new Error("JPEG conversion capacity exceeded");
+      throw new StorageJpegConversionCapacityExceededException(MAX_CONCURRENT_JPEG_CONVERSIONS);
     }
 
     const conversion = this.convertPublicImageToJpeg(sourceKey, jpegKey, jpegUrl);
@@ -205,7 +210,7 @@ export class StorageService {
       }),
     );
     if (!source.Body) {
-      throw new Error("Public image has no body");
+      throw new StorageObjectBodyMissingException("public image");
     }
 
     const jpeg = await sharp(Buffer.from(await source.Body.transformToByteArray()), {
