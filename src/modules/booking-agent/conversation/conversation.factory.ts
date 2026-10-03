@@ -72,6 +72,7 @@ export function buildVehicleOption(overrides?: Partial<VehicleSearchOption>): Ve
     serviceTier: "EXECUTIVE",
     imageUrl: null,
     rates: { day: 65000, night: 70000, fullDay: 110000, airportPickup: 40000 },
+    estimatedSubtotal: 150000,
     estimatedTotalInclVat: 150000,
     ...overrides,
   };

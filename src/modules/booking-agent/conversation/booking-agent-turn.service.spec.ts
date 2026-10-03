@@ -1524,6 +1524,9 @@ describe("BookingAgentTurnService", () => {
         make: "BMW",
         model: "X5",
         imageUrl: "https://example.com/bmw.jpg",
+        rates: { day: 120000, night: 70000, fullDay: 110000, airportPickup: 40000 },
+        estimatedSubtotal: 120000,
+        estimatedTotalInclVat: 129000,
       });
       const existingState = buildInitialState();
       existingState.stage = "collecting";
@@ -1581,8 +1584,8 @@ describe("BookingAgentTurnService", () => {
       expect(vehicleCard.mode).toBe("TEMPLATE");
       expect(vehicleCard.templateName).toBe("HX43448303892f9f4026057adb597e0c22");
       expect(vehicleCard.templateVariables).toEqual({
-        "1": "BMW X5 · ₦150,000",
-        "2": "₦150,000",
+        "1": "BMW X5 · ₦120,000",
+        "2": "₦120,000",
         "3": "https://example.com/bmw.jpg",
         "4": "Select",
         "5": "veh_template_test",

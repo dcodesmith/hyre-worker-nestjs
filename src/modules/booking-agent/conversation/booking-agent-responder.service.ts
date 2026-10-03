@@ -379,19 +379,18 @@ export class BookingAgentResponderService {
     }
 
     return availableOptions.map((opt, index) => {
-      const priceFormatted = this.formatRequiredPrice(opt.estimatedTotalInclVat);
+      const basePrice = opt.estimatedSubtotal ?? opt.rates.day;
+      const priceFormatted = this.formatRequiredPrice(basePrice);
 
       const caption = this.formatVehicleCaption(opt, index + 1, priceFormatted, draft);
       const buttonTitle = `✓ Select ${opt.make} ${opt.model}`.slice(0, 20);
-
-      const priceLabel = `${priceFormatted} incl. VAT`;
 
       return {
         vehicleId: opt.id,
         imageUrl: opt.imageUrl,
         caption,
-        priceLabel,
-        priceValue: opt.estimatedTotalInclVat,
+        priceLabel: priceFormatted,
+        priceValue: basePrice,
         buttonId: `select_vehicle:${opt.id}`,
         buttonTitle,
       };
@@ -415,7 +414,7 @@ export class BookingAgentResponderService {
       `⭐ Tier: ${opt.serviceTier}`,
       ...bookingTypeLine,
       "",
-      `💰 *${priceFormatted} incl. VAT*`,
+      `💰 *${priceFormatted}*`,
     ].join("\n");
   }
 

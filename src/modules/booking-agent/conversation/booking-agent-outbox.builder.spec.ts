@@ -70,7 +70,7 @@ describe("booking-agent-outbox.builder", () => {
     expect(outbox[0].templateName).toBeUndefined();
   });
 
-  it("uses vehicle estimated total for template pricing", () => {
+  it("uses the vehicle base price for template pricing", () => {
     const outbox = buildOutboxItems(
       buildState({
         stage: "presenting_options",
@@ -80,7 +80,9 @@ describe("booking-agent-outbox.builder", () => {
             id: "veh_1",
             make: "Toyota",
             model: "Corolla",
-            estimatedTotalInclVat: 210000,
+            rates: { day: 120000, night: 70000, fullDay: 110000, airportPickup: 40000 },
+            estimatedSubtotal: 120000,
+            estimatedTotalInclVat: 129000,
           }),
         ],
       }),
@@ -101,8 +103,8 @@ describe("booking-agent-outbox.builder", () => {
     );
 
     expect(outbox).toHaveLength(2);
-    expect(outbox[1].templateVariables?.["1"]).toBe("Toyota Corolla · ₦210,000");
-    expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000");
+    expect(outbox[1].templateVariables?.["1"]).toBe("Toyota Corolla · ₦120,000");
+    expect(outbox[1].templateVariables?.["2"]).toBe("₦120,000");
   });
 
   it("sends an image-less vehicle card as selectable text", () => {

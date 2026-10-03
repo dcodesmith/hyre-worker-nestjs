@@ -32,7 +32,8 @@ function extractCheckoutToken(checkoutUrl: string): string | null {
 }
 
 function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
-  return `₦${vehicle.estimatedTotalInclVat.toLocaleString()}`;
+  const basePrice = vehicle.estimatedSubtotal ?? vehicle.rates.day;
+  return `₦${basePrice.toLocaleString()}`;
 }
 
 function isConfirmationResponse(response: AgentResponse): boolean {
