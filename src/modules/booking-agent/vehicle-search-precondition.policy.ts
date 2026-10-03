@@ -4,7 +4,8 @@ import type { VehicleSearchPrecondition } from "./booking-agent.interface";
 
 export function parseSearchDate(value: string | undefined): Date | null {
   const dateOnlyPattern = /^(\d{4})-(\d{2})-(\d{2})$/;
-  const isoDateTimePattern = /^\d{4}-\d{2}-\d{2}T/;
+  const isoDateTimePattern =
+    /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
   if (!value) {
     return null;
   }
@@ -31,7 +32,19 @@ export function parseSearchDate(value: string | undefined): Date | null {
     return strictDate;
   }
 
-  if (isoDateTimePattern.test(normalized)) {
+  const isoDateTimeMatch = isoDateTimePattern.exec(normalized);
+  if (isoDateTimeMatch) {
+    const year = Number(isoDateTimeMatch[1]);
+    const monthIndex = Number(isoDateTimeMatch[2]) - 1;
+    const day = Number(isoDateTimeMatch[3]);
+    const calendarDate = new Date(Date.UTC(year, monthIndex, day));
+    if (
+      calendarDate.getUTCFullYear() !== year ||
+      calendarDate.getUTCMonth() !== monthIndex ||
+      calendarDate.getUTCDate() !== day
+    ) {
+      return null;
+    }
     const dateTime = new Date(normalized);
     return Number.isNaN(dateTime.getTime()) ? null : dateTime;
   }

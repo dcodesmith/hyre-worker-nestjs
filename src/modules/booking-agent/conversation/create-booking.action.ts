@@ -346,6 +346,8 @@ export class CreateBookingAction {
       availableAddons: [],
       selectedAddonIds: [],
       addonSelectionIndex: 0,
+      requiresFullTank: false,
+      useCredits: 0,
       pricingPreview: null,
       error: null,
       statusMessage,

@@ -543,6 +543,8 @@ describe("CreateBookingAction", () => {
         selectedOption: selected,
         availableOptions: [selected],
         lastShownOptions: [selected],
+        requiresFullTank: true,
+        useCredits: 5000,
         pricingPreview: buildPricingPreview(),
         draft: airportDraft,
       }),
@@ -552,6 +554,8 @@ describe("CreateBookingAction", () => {
     const validationResult = await createBookingAction.run(
       buildTestState({
         selectedOption: selected,
+        requiresFullTank: true,
+        useCredits: 5000,
         pricingPreview: buildPricingPreview(),
         draft: airportDraft,
       }),
@@ -563,6 +567,8 @@ describe("CreateBookingAction", () => {
       expect(result.selectedOption).toBeNull();
       expect(result.pricingPreview).toBeNull();
       expect(result.availableOptions).toEqual([]);
+      expect(result.requiresFullTank).toBe(false);
+      expect(result.useCredits).toBe(0);
       expect(result.draft?.flightNumber).toBe("BA74");
       expect(result.draft?.pickupTime).toBeUndefined();
       expect(result.draft?.pickupLocation).toBeUndefined();

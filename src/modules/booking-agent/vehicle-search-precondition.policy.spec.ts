@@ -50,11 +50,23 @@ describe("VehicleSearchPreconditionPolicy", () => {
     });
   });
 
-  it("parses ISO datetimes and rejects invalid ones", () => {
+  it("parses timezone-qualified ISO datetimes", () => {
     expect(parseSearchDate("2026-03-01T14:40:00.000Z")?.toISOString()).toBe(
       "2026-03-01T14:40:00.000Z",
     );
-    expect(parseSearchDate("2026-03-01Tnot-a-time")).toBeNull();
+    expect(parseSearchDate("2026-03-01T14:40:00+01:00")?.toISOString()).toBe(
+      "2026-03-01T13:40:00.000Z",
+    );
+  });
+
+  it.each([
+    "2026-02-30T10:00:00Z",
+    "2026-02-30T10:00:00+01:00",
+    "2026-03-01T14:40:00",
+    "2026-03-01T14:40Z",
+    "2026-03-01Tnot-a-time",
+  ])("rejects invalid or timezone-less ISO datetime %s", (value) => {
+    expect(parseSearchDate(value)).toBeNull();
   });
 
   it("accepts an ISO pickup and dropoff window", () => {
