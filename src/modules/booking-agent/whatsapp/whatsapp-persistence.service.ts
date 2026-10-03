@@ -336,9 +336,63 @@ export class WhatsAppPersistenceService {
         mediaUrl: true,
         templateName: true,
         templateVariables: true,
+        payload: true,
         nextAttemptAt: true,
         conversation: { select: { phoneE164: true } },
       },
+    });
+  }
+
+  async markOutboxPrecedingMessageSent(input: {
+    outboxId: string;
+    conversationId: string;
+    textBody: string;
+    providerMessage: MessageInstance;
+    sentAt: Date;
+  }): Promise<void> {
+    const { outboxId, conversationId, textBody, providerMessage, sentAt } = input;
+    const providerPayload = {
+      sid: providerMessage.sid,
+      status: providerMessage.status,
+      errorCode: providerMessage.errorCode ?? null,
+      errorMessage: providerMessage.errorMessage ?? null,
+      dateCreated: providerMessage.dateCreated?.toISOString() ?? null,
+      dateUpdated: providerMessage.dateUpdated?.toISOString() ?? null,
+    };
+
+    await this.databaseService.$transaction(async (tx) => {
+      await tx.whatsAppOutbox.update({
+        where: { id: outboxId },
+        data: {
+          payload: { precedingMessageSid: providerMessage.sid },
+        },
+      });
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { lastOutboundAt: sentAt },
+      });
+      await tx.whatsAppMessage.create({
+        data: {
+          providerMessageSid: providerMessage.sid,
+          dedupeKey: `outbox:${outboxId}:preceding`,
+          direction: "OUTBOUND",
+          kind: WhatsAppMessageKind.TEXT,
+          status: "SENT",
+          body: textBody,
+          mediaUrl: null,
+          mediaContentType: null,
+          providerStatus: providerMessage.status ?? null,
+          errorCode: providerMessage.errorCode ? String(providerMessage.errorCode) : null,
+          errorMessage: providerMessage.errorMessage ?? null,
+          rawPayload: providerPayload as unknown as Prisma.InputJsonValue,
+          receivedAt: sentAt,
+          processedAt: sentAt,
+          sentAt,
+          conversation: {
+            connect: { id: conversationId },
+          },
+        },
+      });
     });
   }
 

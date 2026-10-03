@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildState, buildVehicleOption } from "./conversation.factory";
 import { buildOutboxItems } from "./booking-agent-outbox.builder";
+import { BOOKING_AGENT_BUTTON_ID, BOOKING_CONFIRMATION_CONTENT_SID } from "./conversation.const";
+import { buildState, buildVehicleOption } from "./conversation.factory";
 
 describe("booking-agent-outbox.builder", () => {
   it("builds intro + template cards mapped by vehicleId", () => {
@@ -88,7 +89,7 @@ describe("booking-agent-outbox.builder", () => {
         vehicleCards: [
           {
             vehicleId: "veh_1",
-            imageUrl: null,
+            imageUrl: "https://img/1.jpg",
             caption: "Fallback caption ₦222,000",
             priceLabel: "₦180,000",
             priceValue: 195000,
@@ -101,6 +102,58 @@ describe("booking-agent-outbox.builder", () => {
 
     expect(outbox).toHaveLength(2);
     expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000 incl. VAT");
+  });
+
+  it("sends an image-less vehicle card as selectable text", () => {
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "presenting_options",
+        availableOptions: [buildVehicleOption({ id: "veh_1" })],
+      }),
+      {
+        text: "Here are your options!",
+        vehicleCards: [
+          {
+            vehicleId: "veh_1",
+            imageUrl: null,
+            caption: "Toyota Prado",
+            buttonId: "select_vehicle:veh_1",
+            buttonTitle: "Select",
+          },
+        ],
+      },
+    );
+
+    expect(outbox[1]).toMatchObject({
+      mode: "FREE_FORM",
+      textBody: 'Toyota Prado\n\nReply "Option 1" to select this car.',
+    });
+  });
+
+  it("sends one confirmation template with the quote body and static quick replies", () => {
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "confirming",
+        selectedOption: buildVehicleOption(),
+      }),
+      {
+        text: "Booking summary\n\nReady to confirm this booking?",
+        interactive: {
+          type: "buttons",
+          buttons: [{ id: BOOKING_AGENT_BUTTON_ID.CONFIRM, title: "Confirm Booking" }],
+        },
+      },
+    );
+
+    expect(outbox).toEqual([
+      {
+        conversationId: "conv_test",
+        dedupeKey: "booking-agent:msg_1:confirmation",
+        mode: "TEMPLATE",
+        textBody: "Booking summary",
+        templateName: BOOKING_CONFIRMATION_CONTENT_SID,
+      },
+    ]);
   });
 
   it("builds checkout link as template in awaiting_payment stage", () => {

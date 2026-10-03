@@ -18,6 +18,7 @@ import { TwilioWebhookGuard } from "../messaging/guards/twilio-webhook.guard";
 import { OpenAiSdkModule } from "../openai-sdk/openai-sdk.module";
 import { PaymentModule } from "../payment/payment.module";
 import { RatesModule } from "../rates/rates.module";
+import { StorageModule } from "../storage/storage.module";
 import { WHATSAPP_QUEUE_DEFAULT_JOB_OPTIONS } from "./booking-agent.const";
 import { BookingAgentOrchestratorService } from "./booking-agent-orchestrator.service";
 import { BookingAgentSearchService } from "./booking-agent-search.service";
@@ -54,6 +55,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     EmailModule,
     MapsModule,
     RatesModule,
+    StorageModule,
     OpenAiSdkModule,
     PaymentModule,
     BullModule.registerQueue({

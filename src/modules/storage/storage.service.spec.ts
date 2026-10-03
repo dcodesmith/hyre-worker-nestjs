@@ -1,3 +1,4 @@
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import sharp from "sharp";
@@ -29,6 +30,16 @@ function solidImage(format: "jpeg" | "png", background: { r: number; g: number; 
   })
     [format]()
     .toBuffer();
+}
+
+function storageStatusError(status: number, message = "storage error"): Error {
+  return Object.assign(new Error(message), { $metadata: { httpStatusCode: status } });
+}
+
+function commandsOf(send: ReturnType<typeof vi.fn>, commandName: string) {
+  return send.mock.calls
+    .map((call) => call[0])
+    .filter((command) => command.constructor.name === commandName);
 }
 
 const r2Env = {
@@ -202,6 +213,13 @@ describe("StorageService", () => {
       contentType: "application/pdf",
       contentLength: 12,
     });
+  });
+
+  it("refuses to convert an image outside the public storage origin", async () => {
+    await expect(
+      service.ensurePublicJpeg("https://evil.example/owner/cars/file.webp"),
+    ).rejects.toThrow("Refusing to convert an image outside the configured public storage origin");
+    expect(send).not.toHaveBeenCalled();
   });
 });
 
@@ -427,5 +445,36 @@ describe("StorageService write prefix", () => {
       Bucket: "hyre-assets-images-development",
       Key: "previews/pr-12/owner/car/images/file.webp",
     });
+  });
+
+  it("creates a preview-prefixed jpeg and reuses the cached object", async () => {
+    const { send, service } = await createPrefixedService();
+    const source = await solidImage("png", { r: 8, g: 9, b: 10 });
+    let cached = false;
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) {
+        if (!cached) throw storageStatusError(404, "NotFound");
+        return {};
+      }
+      if (command instanceof GetObjectCommand) {
+        return { Body: { transformToByteArray: async () => source } };
+      }
+      cached = true;
+      return {};
+    });
+
+    const url = "https://images-dev.tripdly.com/owner/cars/photo.webp";
+    const created = await service.ensurePublicJpeg(url);
+
+    expect(created).toBe("https://images-dev.tripdly.com/previews/pr-12/owner/cars/photo.jpg");
+    expect(commandsOf(send, "GetObjectCommand")[0].input.Key).toBe("owner/cars/photo.webp");
+    expect(commandsOf(send, "PutObjectCommand")[0].input).toMatchObject({
+      Key: "previews/pr-12/owner/cars/photo.jpg",
+      ContentType: "image/jpeg",
+    });
+
+    await expect(service.ensurePublicJpeg(url)).resolves.toBe(created);
+    expect(commandsOf(send, "GetObjectCommand")).toHaveLength(1);
+    expect(commandsOf(send, "PutObjectCommand")).toHaveLength(1);
   });
 });

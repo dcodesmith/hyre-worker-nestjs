@@ -4,6 +4,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { CarSearchService } from "../car/car-search.service";
 import type { CarSearchResponseDto, SearchCarDto } from "../car/dto/car-search.dto";
 import { RatesService } from "../rates/rates.service";
+import { StorageService } from "../storage/storage.service";
 import { WHATSAPP_CAR_SEARCH_TIMEOUT_MS } from "./booking-agent.const";
 import { WhatsAppOperationTimeoutException } from "./booking-agent.error";
 import { BookingAgentSearchService } from "./booking-agent-search.service";
@@ -13,6 +14,7 @@ describe("BookingAgentSearchService", () => {
   let service: BookingAgentSearchService;
   let carSearchService: { searchCars: ReturnType<typeof vi.fn> };
   let ratesService: { getRates: ReturnType<typeof vi.fn> };
+  let storageService: { ensurePublicJpeg: ReturnType<typeof vi.fn> };
 
   const buildSearchResponse = (cars: SearchCarDto[]): CarSearchResponseDto => ({
     cars,
@@ -73,6 +75,9 @@ describe("BookingAgentSearchService", () => {
         vatRatePercent: 7.5,
       }),
     };
+    storageService = {
+      ensurePublicJpeg: vi.fn(async (url: string) => url),
+    };
 
     moduleRef = await Test.createTestingModule({
       providers: [
@@ -84,6 +89,10 @@ describe("BookingAgentSearchService", () => {
         {
           provide: RatesService,
           useValue: ratesService,
+        },
+        {
+          provide: StorageService,
+          useValue: storageService,
         },
       ],
     })
@@ -340,6 +349,30 @@ describe("BookingAgentSearchService", () => {
     expect(result.alternatives.some((option) => option.reason === "SIMILAR_PRICE_RANGE")).toBe(
       false,
     );
+  });
+
+  it("uses a prepared jpeg and clears the image when preparation fails", async () => {
+    const fromDate = makeIsoDate(2);
+    storageService.ensurePublicJpeg.mockImplementation(async (url: string) => {
+      if (url.includes("broken")) throw new Error("convert failed");
+      return url.replace(/\.webp$/, ".jpg");
+    });
+    carSearchService.searchCars.mockResolvedValue(
+      buildSearchResponse([
+        buildCar("car_ok", { images: [{ url: "https://cdn.tripdly.test/car_ok.webp" }] }),
+        buildCar("car_broken", { images: [{ url: "https://cdn.tripdly.test/broken.webp" }] }),
+      ]),
+    );
+
+    const result = await service.searchVehiclesFromExtracted(
+      { make: "Toyota", model: "Prado", color: "Black", from: fromDate },
+      "Looking for: black toyota prado",
+    );
+
+    expect(result.exactMatches.map((option) => [option.id, option.imageUrl])).toEqual([
+      ["car_ok", "https://cdn.tripdly.test/car_ok.jpg"],
+      ["car_broken", null],
+    ]);
   });
 
   it("throws timeout when car search exceeds timeout window", async () => {

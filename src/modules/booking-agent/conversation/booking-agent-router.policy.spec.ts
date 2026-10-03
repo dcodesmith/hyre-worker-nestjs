@@ -396,6 +396,38 @@ describe("booking-agent-router.policy", () => {
     expect(staleFuel).toEqual({ nextAction: "respond" });
   });
 
+  it("routes change details only while confirming", () => {
+    const extraction = {
+      intent: "ask_question" as const,
+      draftPatch: {},
+      question: "What would you like to change?",
+      confidence: 1,
+    };
+    const button = { type: "button" as const, buttonId: BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS };
+
+    expect(
+      resolveRouteDecision(
+        buildState({
+          stage: "confirming",
+          selectedOption: buildVehicleOption(),
+          pricingPreview: buildPricingPreview(),
+          inboundInteractive: button,
+          extraction,
+        }),
+      ),
+    ).toEqual({ nextAction: "respond", stage: "confirming" });
+    expect(
+      resolveRouteDecision(
+        buildState({
+          stage: "collecting",
+          draft: { bookingType: "DAY" },
+          inboundInteractive: button,
+          extraction,
+        }),
+      ),
+    ).toEqual({ nextAction: "respond" });
+  });
+
   it("cancels from the clarification button and keeps other stale buttons closed", () => {
     const clarification = {
       stage: "confirming" as const,

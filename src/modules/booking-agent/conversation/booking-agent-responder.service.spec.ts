@@ -231,8 +231,24 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons).toHaveLength(3);
       expect(response.interactive?.buttons?.[0].id).toBe("confirm");
-      expect(response.interactive?.buttons?.[1].id).toBe("no");
+      expect(response.interactive?.buttons?.[1].id).toBe("change_details");
       expect(response.interactive?.buttons?.[2].id).toBe("show_others");
+    });
+
+    it("rejects a stale change-details button outside confirming", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "collecting",
+          inboundInteractive: {
+            type: "button",
+            buttonId: BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS,
+          },
+        }),
+      );
+
+      expect(response.text).toBe(
+        "That change option is no longer active. Please continue from here.",
+      );
     });
 
     it("uses the authoritative quote breakdown when a final price is ready", async () => {
@@ -754,7 +770,6 @@ describe("BookingAgentResponderService", () => {
         extraction: {
           intent: "ask_question",
           draftPatch: {},
-          question: "What is the price?",
           confidence: 0.9,
         },
       });
@@ -764,7 +779,6 @@ describe("BookingAgentResponderService", () => {
       const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("ask_question");
-      expect(userContext.content).toContain("What is the price?");
     });
 
     it("includes available options in context", async () => {

@@ -581,4 +581,42 @@ describe("WhatsAppPersistenceService", () => {
     );
     expect(tx.whatsAppMessage.create.mock.calls[0]?.[0].data).not.toHaveProperty("id");
   });
+
+  it("records a preceding outbound message and stores its sid on the outbox", async () => {
+    const sentAt = new Date("2026-03-02T10:00:00.000Z");
+    const tx = {
+      whatsAppOutbox: { update: vi.fn().mockResolvedValue({}) },
+      whatsAppConversation: { update: vi.fn().mockResolvedValue({}) },
+      whatsAppMessage: { create: vi.fn().mockResolvedValue({}) },
+    };
+    databaseService.$transaction.mockImplementation(async (callback) => callback(tx));
+
+    await service.markOutboxPrecedingMessageSent({
+      outboxId: "outbox-1",
+      conversationId: "conv-1",
+      textBody: "Quote body",
+      providerMessage: {
+        sid: "SM_PRECEDING",
+        status: "queued",
+        errorCode: null,
+        errorMessage: null,
+        dateCreated: sentAt,
+        dateUpdated: sentAt,
+      } as never,
+      sentAt,
+    });
+
+    expect(tx.whatsAppOutbox.update).toHaveBeenCalledWith({
+      where: { id: "outbox-1" },
+      data: { payload: { precedingMessageSid: "SM_PRECEDING" } },
+    });
+    expect(tx.whatsAppMessage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        providerMessageSid: "SM_PRECEDING",
+        dedupeKey: "outbox:outbox-1:preceding",
+        body: "Quote body",
+        conversation: { connect: { id: "conv-1" } },
+      }),
+    });
+  });
 });
