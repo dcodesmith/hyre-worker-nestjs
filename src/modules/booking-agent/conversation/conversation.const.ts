@@ -19,7 +19,8 @@ export const BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE =
   "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.";
 
 // Twilio Content Template for vehicle selection cards
-// Template variables: {{1}}=title, {{2}}=body, {{3}}=mediaUrl, {{4}}=buttonText, {{5}}=vehicleId
+// Template variables: {{1}}=WhatsApp-visible title with price, {{2}}=RCS-only body,
+// {{3}}=mediaUrl, {{4}}=buttonText, {{5}}=vehicleId
 export const VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";
 
 // Twilio Content Template for confirmation quick replies (no variables)

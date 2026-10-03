@@ -31,12 +31,8 @@ function extractCheckoutToken(checkoutUrl: string): string | null {
   }
 }
 
-function normalizePriceLabel(price: string): string {
-  return /\bincl\.\s*VAT\b/i.test(price) ? price : `${price} incl. VAT`;
-}
-
 function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
-  return normalizePriceLabel(`₦${vehicle.estimatedTotalInclVat.toLocaleString()}`);
+  return `₦${vehicle.estimatedTotalInclVat.toLocaleString()}`;
 }
 
 function isConfirmationResponse(response: AgentResponse): boolean {
@@ -81,7 +77,7 @@ export function buildOutboxItems(
 
       const priceLabel = formatPriceForTemplate(vehicle);
       const templateVariables = {
-        "1": `${vehicle.make} ${vehicle.model}`,
+        "1": `${vehicle.make} ${vehicle.model} · ${priceLabel}`,
         "2": priceLabel,
         "3": card.imageUrl,
         "4": "Select",
