@@ -172,6 +172,7 @@ export class BookingCreationService {
           normalizedBooking.flightNumber,
           normalizedBooking.startDate,
           normalizedBooking.dropOffAddress,
+          normalizedBooking.flightDate,
         );
       }
 
@@ -381,9 +382,11 @@ export class BookingCreationService {
     flightNumber: string,
     pickupDate: Date,
     dropOffAddress: string,
+    flightDate?: string,
   ): Promise<FlightDataForBooking> {
-    const flightDate = subMinutes(pickupDate, AIRPORT_PICKUP_BUFFER_MINUTES);
-    const pickupDateStr = formatInTimeZone(flightDate, "Africa/Lagos", "yyyy-MM-dd");
+    const derivedFlightDate = subMinutes(pickupDate, AIRPORT_PICKUP_BUFFER_MINUTES);
+    const pickupDateStr =
+      flightDate ?? formatInTimeZone(derivedFlightDate, "Africa/Lagos", "yyyy-MM-dd");
 
     // Airport pickup search enforces Lagos destination via typed error codes.
     const { flight } = await this.flightAwareService.searchAirportPickupFlight(

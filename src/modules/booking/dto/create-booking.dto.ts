@@ -38,6 +38,7 @@ const coreBookingFields = z
     }),
     pickupTime: z.string().min(1, "Pickup time is required"),
     flightNumber: z.string().optional(),
+    flightDate: z.iso.date().optional(),
     addonIds: bookingAddonIdsSchema,
     requiresFullTank: z.boolean().default(false),
     specialRequests: z.string().optional(),

@@ -33,6 +33,7 @@ describe("CreateBookingSchema", () => {
         ...validBaseBooking,
         bookingType: "AIRPORT_PICKUP" as const,
         flightNumber: "BA74",
+        flightDate: "2025-02-01",
         pickupTime: "9 AM",
         sameLocation: true as const,
       };
@@ -62,6 +63,24 @@ describe("CreateBookingSchema", () => {
       const result = createBookingSchema.safeParse(booking);
 
       expect(result.success).toBe(true);
+    });
+
+    it("should reject an invalid flightDate", () => {
+      const booking = {
+        ...validBaseBooking,
+        bookingType: "AIRPORT_PICKUP" as const,
+        flightNumber: "BA74",
+        flightDate: "2025-02-30",
+        sameLocation: false as const,
+        dropOffAddress: "Victoria Island, Lagos",
+      };
+
+      const result = createBookingSchema.safeParse(booking);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes("flightDate"))).toBe(true);
+      }
     });
 
     it("should require flightNumber for AIRPORT_PICKUP", () => {

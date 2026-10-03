@@ -118,6 +118,7 @@ describe("buildBookingInputFromDraft", () => {
 
     expect(input.startDate.toISOString()).toBe(pickupDateTime);
     expect(input.endDate.toISOString()).toBe(dropoffDateTime);
+    expect(input.flightDate).toBe("2026-03-01");
     expect(normalizedStartDate.toISOString()).toBe(pickupDateTime);
     expect(normalizedEndDate.toISOString()).toBe(dropoffDateTime);
   });

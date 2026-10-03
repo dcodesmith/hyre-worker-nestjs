@@ -557,6 +557,9 @@ describe("CreateBookingAction", () => {
     });
     expect(result.statusMessage).toContain("Pickup is now Mar 2, 2026 at 1:10 AM");
     expect(result.statusMessage).toContain("Please confirm the updated booking times.");
+    expect(bookingCreationServiceMock.createBooking.mock.calls[0]?.[0]?.input.flightDate).toBe(
+      "2026-03-01",
+    );
   });
 
   it("returns airport flight and validation failures to collecting", async () => {

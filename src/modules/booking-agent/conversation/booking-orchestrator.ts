@@ -68,6 +68,7 @@ export function buildBookingInputFromDraft(
       bookingType,
       pickupTime: normalizePickupTimeTo12Hour(pickupTime),
       flightNumber: draft.flightNumber,
+      ...(useDerivedAirportWindow && draft.pickupDate ? { flightDate: draft.pickupDate } : {}),
       addonIds: selections.addonIds,
       requiresFullTank: selections.requiresFullTank,
       specialRequests: draft.notes,

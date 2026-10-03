@@ -861,7 +861,7 @@ describe("BookingCreationService", () => {
       expect(mockTransaction).not.toHaveBeenCalled();
     });
 
-    it("requires confirmation before persisting a refreshed flight window", async () => {
+    it("refreshes by scheduled flight date before requiring confirmation", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
         flight: {
@@ -869,10 +869,11 @@ describe("BookingCreationService", () => {
           flightId: "BA74-20250201",
           origin: "EGLL",
           destination: "DNMM",
-          scheduledDeparture: "2025-02-01T08:00:00Z",
-          scheduledArrival: "2025-02-01T14:30:00Z",
-          arrivalTime: "2025-02-01T14:30:00Z",
-          arrivalTimeSource: "scheduled",
+          scheduledDeparture: "2025-02-01T15:00:00Z",
+          scheduledArrival: "2025-02-01T22:30:00Z",
+          estimatedArrival: "2025-02-01T23:30:00Z",
+          arrivalTime: "2025-02-01T23:30:00Z",
+          arrivalTimeSource: "estimated",
           isLive: true,
         },
       });
@@ -881,8 +882,8 @@ describe("BookingCreationService", () => {
         distanceMeters: 30000,
         isEstimate: false,
       });
-      const refreshedStartDate = new Date("2025-02-01T15:10:00Z");
-      const refreshedEndDate = new Date("2025-02-01T16:22:00Z");
+      const refreshedStartDate = new Date("2025-02-02T00:10:00Z");
+      const refreshedEndDate = new Date("2025-02-02T01:22:00Z");
       vi.mocked(legService.generateLegs).mockReturnValue([
         {
           legDate: refreshedStartDate,
@@ -896,8 +897,9 @@ describe("BookingCreationService", () => {
           input: createBookingInput({
             bookingType: "AIRPORT_PICKUP",
             flightNumber: "BA74",
-            startDate: new Date("2025-02-01T15:00:00Z"),
-            endDate: new Date("2025-02-01T16:12:00Z"),
+            flightDate: "2025-02-01",
+            startDate: new Date("2025-02-02T00:00:00Z"),
+            endDate: new Date("2025-02-02T01:12:00Z"),
             pickupTime: undefined,
             sameLocation: false,
             dropOffAddress: "Victoria Island, Lagos",
@@ -915,6 +917,11 @@ describe("BookingCreationService", () => {
         currentStartDate: refreshedStartDate.toISOString(),
         currentEndDate: refreshedEndDate.toISOString(),
       });
+      expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith(
+        "BA74",
+        "2025-02-01",
+        { skipCache: true },
+      );
       expect(idempotencyService.release).toHaveBeenCalledWith("idempotency-123");
       expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
       expect(mockTransaction).not.toHaveBeenCalled();
