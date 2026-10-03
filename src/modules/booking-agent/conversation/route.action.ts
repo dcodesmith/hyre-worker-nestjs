@@ -1,14 +1,17 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { getMissingRequiredFields } from "../booking-agent.helper";
-import { BOOKING_AGENT_ACTIONS, BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { resolveRouteDecision } from "./booking-agent-router.policy";
+import {
+  BOOKING_AGENT_ACTIONS,
+  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+} from "./conversation.const";
 import {
   type BookingAgentRouteDecision,
   type BookingAgentState,
   createDefaultLocationValidationState,
   type LocationValidationState,
 } from "./conversation.interface";
-import { resolveRouteDecision } from "./booking-agent-router.policy";
 
 @Injectable()
 export class RouteAction {
@@ -57,6 +60,7 @@ export class RouteAction {
       !isControlIntent &&
       (decision.nextAction ?? BOOKING_AGENT_ACTIONS.RESPOND) === BOOKING_AGENT_ACTIONS.RESPOND &&
       (decision.stage ?? stage) === "collecting" &&
+      draft.bookingType !== "AIRPORT_PICKUP" &&
       !!draft.pickupLocation &&
       this.shouldValidateLocationField(
         draft.pickupLocation,

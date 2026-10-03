@@ -1,11 +1,29 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
-import { applyDerivedDraftFields, hasDraftChanged, shouldApplyDraftPatch } from "./booking-rules";
+import {
+  applyDerivedDraftFields,
+  clearDerivedAirportFields,
+  hasDraftChanged,
+  shouldApplyDraftPatch,
+} from "./booking-rules";
 import {
   type BookingAgentLocationValidationState,
   type BookingAgentState,
+  type BookingDraft,
   createDefaultLocationValidationState,
 } from "./conversation.interface";
+
+function hasAirportSourceChanged(current: BookingDraft, patched: BookingDraft): boolean {
+  if (current.bookingType !== "AIRPORT_PICKUP" && patched.bookingType !== "AIRPORT_PICKUP") {
+    return false;
+  }
+  return (
+    current.bookingType !== patched.bookingType ||
+    current.flightNumber !== patched.flightNumber ||
+    current.pickupDate !== patched.pickupDate ||
+    current.dropoffLocation !== patched.dropoffLocation
+  );
+}
 
 @Injectable()
 export class MergeAction {
@@ -21,10 +39,18 @@ export class MergeAction {
     }
 
     const shouldUpdateDraft = shouldApplyDraftPatch(extraction.intent);
-    const baseDraft = shouldUpdateDraft ? { ...draft, ...extraction.draftPatch } : { ...draft };
-    const newDraft = shouldUpdateDraft
+    const patchedDraft = shouldUpdateDraft ? { ...draft, ...extraction.draftPatch } : { ...draft };
+    const airportSourceChanged = hasAirportSourceChanged(draft, patchedDraft);
+    const mergeBase = airportSourceChanged ? clearDerivedAirportFields(draft) : draft;
+    const baseDraft = shouldUpdateDraft
+      ? { ...mergeBase, ...extraction.draftPatch }
+      : { ...mergeBase };
+    let newDraft = shouldUpdateDraft
       ? applyDerivedDraftFields(baseDraft, state.inboundMessage, extraction.draftPatch)
       : baseDraft;
+    if (airportSourceChanged && newDraft.bookingType === "AIRPORT_PICKUP") {
+      newDraft = clearDerivedAirportFields(newDraft);
+    }
     if (extraction.clarificationPrompt) {
       delete newDraft.durationDays;
       delete newDraft.dropoffDate;
@@ -67,6 +93,7 @@ export class MergeAction {
       requiresFullTank: draftChanged ? false : (state.requiresFullTank ?? false),
       useCredits: draftChanged ? 0 : (state.useCredits ?? 0),
       pricingPreview: draftChanged ? null : (state.pricingPreview ?? null),
+      statusMessage: draftChanged ? null : state.statusMessage,
       locationValidation: nextLocationValidation,
     };
   }

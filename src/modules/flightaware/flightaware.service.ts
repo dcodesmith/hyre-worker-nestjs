@@ -85,7 +85,11 @@ export class FlightAwareService {
    * @throws InvalidFlightNumberException if the flight number format is invalid
    * @throws FlightAwareApiException if there's an API error
    */
-  async validateFlight(flightNumber: string, pickupDate: string): Promise<ValidatedFlight> {
+  async validateFlight(
+    flightNumber: string,
+    pickupDate: string,
+    options: { skipCache?: boolean } = {},
+  ): Promise<ValidatedFlight> {
     // 1. Validate format
     if (!this.isValidFlightNumberFormat(flightNumber)) {
       throw new InvalidFlightNumberException(flightNumber);
@@ -95,16 +99,18 @@ export class FlightAwareService {
     const normalizedPickupDate = this.normalizePickupDate(pickupDate);
 
     // 2. Check cache
-    const cached = await this.cacheService.get(normalizedFlightNumber, normalizedPickupDate);
-    if (cached !== undefined) {
-      this.logger.debug(
-        { flightNumber: normalizedFlightNumber, pickupDate: normalizedPickupDate },
-        "Flight cache HIT",
-      );
-      if (cached === null) {
-        throw new FlightNotFoundException(normalizedFlightNumber, normalizedPickupDate);
+    if (!options.skipCache) {
+      const cached = await this.cacheService.get(normalizedFlightNumber, normalizedPickupDate);
+      if (cached !== undefined) {
+        this.logger.debug(
+          { flightNumber: normalizedFlightNumber, pickupDate: normalizedPickupDate },
+          "Flight cache HIT",
+        );
+        if (cached === null) {
+          throw new FlightNotFoundException(normalizedFlightNumber, normalizedPickupDate);
+        }
+        return cached;
       }
-      return cached;
     }
 
     this.logger.debug(
@@ -144,8 +150,9 @@ export class FlightAwareService {
   async searchAirportPickupFlight(
     flightNumber: string,
     pickupDate: string,
+    options: { skipCache?: boolean } = {},
   ): Promise<SearchFlightResult> {
-    const flight = await this.validateFlight(flightNumber, pickupDate);
+    const flight = await this.validateFlight(flightNumber, pickupDate, options);
     const destinationCode = this.normalizeDestinationCode(
       flight.destinationIATA,
       flight.destination,

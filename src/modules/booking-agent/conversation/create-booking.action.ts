@@ -8,6 +8,7 @@ import {
   BookingPhoneVerificationRequiredException,
   BookingPriceChangedException,
   BookingRequestInProgressException,
+  BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
   IdempotencyKeyReusedException,
@@ -17,9 +18,11 @@ import { BookingPricingPreviewService } from "../../booking/booking-pricing-prev
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import { DatabaseService } from "../../database/database.service";
+import { FlightAwareException } from "../../flightaware/flightaware.error";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./booking-orchestrator";
+import { clearDerivedAirportFields } from "./booking-rules";
 import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
 import {
   type BookingAgentState,
@@ -199,6 +202,9 @@ export class CreateBookingAction {
         };
       }
 
+      const flightCollectionResult = this.mapFlightCollectionError(state.draft, error);
+      if (flightCollectionResult) return flightCollectionResult;
+
       if (error instanceof CarNotAvailableException || error instanceof CarNotFoundException) {
         const fallbackOptions = await this.fetchFreshOptionsForDraft(
           state.draft,
@@ -293,6 +299,13 @@ export class CreateBookingAction {
     draft: BookingDraft,
   ): Partial<BookingAgentState> | null {
     if (!draft.pickupDate || !draft.dropoffDate || !draft.pickupTime) {
+      if (draft.bookingType === "AIRPORT_PICKUP") {
+        return this.returnToFlightCollection(
+          draft,
+          "I need to validate your flight again. Please confirm the flight number and flight date.",
+        );
+      }
+
       const missingRequiredDraftFields: string[] = [];
       if (!draft.pickupDate) {
         missingRequiredDraftFields.push("pickupDate");
@@ -318,6 +331,43 @@ export class CreateBookingAction {
       };
     }
 
+    return null;
+  }
+
+  private returnToFlightCollection(
+    draft: BookingDraft,
+    statusMessage: string,
+  ): Partial<BookingAgentState> {
+    return {
+      draft: clearDerivedAirportFields(draft),
+      selectedOption: null,
+      availableOptions: [],
+      lastShownOptions: [],
+      availableAddons: [],
+      selectedAddonIds: [],
+      addonSelectionIndex: 0,
+      pricingPreview: null,
+      error: null,
+      statusMessage,
+      stage: "collecting",
+    };
+  }
+
+  private mapFlightCollectionError(
+    draft: BookingDraft,
+    error: unknown,
+  ): Partial<BookingAgentState> | null {
+    if (error instanceof FlightAwareException) {
+      return this.returnToFlightCollection(draft, error.message);
+    }
+    if (error instanceof BookingValidationException && draft.bookingType === "AIRPORT_PICKUP") {
+      const message =
+        error
+          .getProblemDetails()
+          .errors?.map((fieldError) => fieldError.message)
+          .join(" ") || error.message;
+      return this.returnToFlightCollection(draft, message);
+    }
     return null;
   }
 

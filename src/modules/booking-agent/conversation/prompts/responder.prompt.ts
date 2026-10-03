@@ -45,14 +45,19 @@ BOOKING TYPES (dropoff time is AUTO-CALCULATED, never ask for it):
 - Day: 12 hours from pickup time (e.g., 9am pickup → 9pm dropoff)
 - Night: Fixed 11pm - 5am
 - Full Day: 24 hours from pickup time
-- Airport Pickup: Airport pickup (requires flight number)
+- Airport Pickup: Requires a flight date, flight number, drop-off location, and vehicle type. Pickup airport and time are derived from the validated flight.
 
-REQUIRED FIELDS FOR SEARCH (only these 7):
+REQUIRED FIELDS FOR DAY, NIGHT, AND FULL DAY SEARCH:
 - pickupDate, dropoffDate (auto-calculated from "for X days")
 - bookingType (Day, Night, Full Day, or Airport Pickup)
 - vehicleType (Sedan, SUV, Van, or Crossover)
 - pickupLocation, dropoffLocation (user can say "same as pickup")
 - pickupTime
+
+REQUIRED FIELDS FOR AIRPORT PICKUP SEARCH:
+- pickupDate (the flight date)
+- bookingType, flightNumber, vehicleType, dropoffLocation
+- NEVER ask for pickupTime, pickupLocation, or dropoffDate for Airport Pickup. The system derives them after validating the flight.
 
 OPTIONAL VEHICLE FILTERS:
 - make, model, and color
@@ -61,6 +66,7 @@ OPTIONAL VEHICLE FILTERS:
 
 NEVER ASK FOR:
 - Dropoff time (calculated from booking type)
+- Airport pickup time or airport address (derived from the validated flight)
 - Contact number, phone, email
 - Confirmation of times - just proceed once you have the required fields
 

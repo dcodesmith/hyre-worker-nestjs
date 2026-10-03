@@ -643,5 +643,43 @@ describe("FlightAwareService", () => {
         expect(result.flight.destinationIATA).toBe("");
       }
     });
+
+    it("bypasses the cache when skipCache is set", async () => {
+      mockFlightCache.get.mockResolvedValue({
+        flightNumber: "BA74",
+        flightId: "cached-flight",
+        origin: "LHR",
+        destination: "LOS",
+        scheduledDeparture: "2025-12-25T08:00:00Z",
+        scheduledArrival: "2025-12-25T14:00:00Z",
+        arrivalTime: "2025-12-25T14:30:00Z",
+        arrivalTimeSource: "estimated",
+        isLive: true,
+      });
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-live",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2025-12-25T08:00:00Z",
+              scheduled_on: "2025-12-25T14:00:00Z",
+              status: "Scheduled",
+            },
+          ],
+        },
+      });
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.searchAirportPickupFlight("BA74", "2025-12-25", {
+        skipCache: true,
+      });
+
+      expect(mockFlightCache.get).not.toHaveBeenCalled();
+      expect(mockHttpClient.get).toHaveBeenCalled();
+      expect(result.flight.flightId).toBe("BA74-live");
+    });
   });
 });

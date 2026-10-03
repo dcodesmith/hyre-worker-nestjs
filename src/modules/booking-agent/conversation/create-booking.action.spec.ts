@@ -5,6 +5,7 @@ import {
   BookingPhoneVerificationRequiredException,
   BookingPriceChangedException,
   BookingRequestInProgressException,
+  BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
   IdempotencyKeyReusedException,
@@ -12,6 +13,7 @@ import {
 import { BookingCreationService } from "../../booking/booking-creation.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import { DatabaseService } from "../../database/database.service";
+import { FlightNotFoundException } from "../../flightaware/flightaware.error";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
@@ -511,5 +513,95 @@ describe("CreateBookingAction", () => {
     expect(result.availableOptions).toBeUndefined();
     expect(result.lastShownOptions).toBeUndefined();
     expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+  });
+
+  it("returns airport flight and validation failures to collecting", async () => {
+    const flightError = new FlightNotFoundException("BA74", "2026-03-01");
+    const validationError = new BookingValidationException([
+      {
+        field: "sameLocation",
+        message: "Airport pickup bookings require a different drop-off location",
+      },
+    ]);
+    const selected = buildVehicleOption();
+    const airportDraft = {
+      bookingType: "AIRPORT_PICKUP" as const,
+      pickupDate: "2026-03-01",
+      pickupDateTime: "2026-03-01T14:40:00.000Z",
+      dropoffDateTime: "2026-03-01T15:54:00.000Z",
+      pickupTime: "15:40",
+      pickupLocation: "Murtala Muhammed International Airport, Lagos",
+      dropoffDate: "2026-03-01",
+      dropoffLocation: "Victoria Island",
+      flightNumber: "BA74",
+      vehicleType: "SUV" as const,
+    };
+
+    bookingCreationServiceMock.createBooking.mockRejectedValueOnce(flightError);
+    const flightResult = await createBookingAction.run(
+      buildTestState({
+        selectedOption: selected,
+        availableOptions: [selected],
+        lastShownOptions: [selected],
+        pricingPreview: buildPricingPreview(),
+        draft: airportDraft,
+      }),
+    );
+
+    bookingCreationServiceMock.createBooking.mockRejectedValueOnce(validationError);
+    const validationResult = await createBookingAction.run(
+      buildTestState({
+        selectedOption: selected,
+        pricingPreview: buildPricingPreview(),
+        draft: airportDraft,
+      }),
+    );
+
+    for (const result of [flightResult, validationResult]) {
+      expect(result.stage).toBe("collecting");
+      expect(result.error).toBeNull();
+      expect(result.selectedOption).toBeNull();
+      expect(result.pricingPreview).toBeNull();
+      expect(result.availableOptions).toEqual([]);
+      expect(result.draft?.flightNumber).toBe("BA74");
+      expect(result.draft?.pickupTime).toBeUndefined();
+      expect(result.draft?.pickupLocation).toBeUndefined();
+      expect(result.draft?.pickupDateTime).toBeUndefined();
+      expect(result.draft?.dropoffDate).toBeUndefined();
+      expect(result.draft?.dropoffDateTime).toBeUndefined();
+      expect(result.statusMessage).not.toMatch(/pickup time|pickup address|airport address/i);
+    }
+    expect(flightResult.statusMessage).toBe(flightError.message);
+    expect(validationResult.statusMessage).toBe(
+      "Airport pickup bookings require a different drop-off location",
+    );
+  });
+
+  it("asks to revalidate the flight when derived airport times are missing", async () => {
+    const result = await createBookingAction.run(
+      buildTestState({
+        selectedOption: buildVehicleOption(),
+        pricingPreview: buildPricingPreview(),
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-03-01",
+          flightNumber: "BA74",
+          dropoffLocation: "Victoria Island",
+          pickupLocation: "stale airport address",
+          pickupDateTime: "2026-03-01T14:40:00.000Z",
+        },
+      }),
+    );
+
+    expect(bookingCreationServiceMock.createBooking).not.toHaveBeenCalled();
+    expect(result.stage).toBe("collecting");
+    expect(result.error).toBeNull();
+    expect(result.selectedOption).toBeNull();
+    expect(result.pricingPreview).toBeNull();
+    expect(result.statusMessage).toBe(
+      "I need to validate your flight again. Please confirm the flight number and flight date.",
+    );
+    expect(result.draft?.pickupLocation).toBeUndefined();
+    expect(result.draft?.pickupDateTime).toBeUndefined();
   });
 });

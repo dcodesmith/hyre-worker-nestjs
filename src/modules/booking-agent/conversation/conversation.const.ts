@@ -30,15 +30,18 @@ export const BOOKING_CONFIRMATION_CONTENT_SID = "HX49f0f60de446a9b6bd2425dffab63
 // Template variables: {{1}}=body text, {{2}}=checkout token segment from /pay/{token}
 export const CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3";
 
-export const REQUIRED_SEARCH_FIELDS: (keyof BookingDraft)[] = [
-  "pickupDate",
-  "bookingType",
-  "vehicleType",
-  "pickupLocation",
-  "pickupTime",
-  "dropoffDate",
-  "dropoffLocation",
-];
+export const REQUIRED_SEARCH_FIELDS = {
+  DEFAULT: [
+    "pickupDate",
+    "bookingType",
+    "vehicleType",
+    "pickupLocation",
+    "pickupTime",
+    "dropoffDate",
+    "dropoffLocation",
+  ],
+  AIRPORT_PICKUP: ["pickupDate", "bookingType", "flightNumber", "vehicleType", "dropoffLocation"],
+} as const satisfies Record<"DEFAULT" | "AIRPORT_PICKUP", readonly (keyof BookingDraft)[]>;
 
 export const BOOKING_AGENT_ACTIONS = {
   SEARCH: "search",

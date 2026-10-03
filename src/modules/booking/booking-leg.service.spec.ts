@@ -1,6 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it } from "vitest";
-import { AIRPORT_PICKUP_BUFFER_MINUTES } from "./booking.const";
+import {
+  AIRPORT_PICKUP_BUFFER_MINUTES,
+  AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER,
+} from "./booking.const";
 import { LegGenerationInput } from "./booking.interface";
 import { BookingLegService } from "./booking-leg.service";
 
@@ -295,8 +298,8 @@ describe("BookingLegService", () => {
       expect(legs[0].legEndTime.getTime()).toBe(expectedEndMs);
     });
 
-    it("should use startDate as fallback if flightArrivalTime not provided", () => {
-      const startDate = new Date("2025-03-01T14:00:00Z");
+    it("treats startDate as already buffered when flight arrival is absent", () => {
+      const startDate = new Date("2025-03-01T14:40:00Z");
 
       const input: LegGenerationInput = {
         startDate,
@@ -307,9 +310,39 @@ describe("BookingLegService", () => {
 
       const legs = service.generateLegs(input);
 
-      // Should use startDate + 40 min buffer
-      const expectedStartMs = startDate.getTime() + AIRPORT_PICKUP_BUFFER_MINUTES * 60 * 1000;
-      expect(legs[0].legStartTime.getTime()).toBe(expectedStartMs);
+      expect(legs[0].legStartTime).toEqual(startDate);
+      expect(legs[0].legDate).toEqual(startDate);
+      expect(legs[0].legEndTime).toEqual(
+        new Date(
+          startDate.getTime() + Math.ceil(60 * AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER) * 60 * 1000,
+        ),
+      );
+    });
+
+    it("ceils the drive buffer to whole minutes and dates the leg from the buffered start", () => {
+      const flightArrival = new Date("2025-03-01T14:00:00Z");
+
+      const input: LegGenerationInput = {
+        startDate: flightArrival,
+        endDate: flightArrival,
+        bookingType: "AIRPORT_PICKUP",
+        flightArrivalTime: flightArrival,
+        driveTimeMinutes: 61,
+      };
+
+      const legs = service.generateLegs(input);
+      const expectedStart = new Date(
+        flightArrival.getTime() + AIRPORT_PICKUP_BUFFER_MINUTES * 60 * 1000,
+      );
+
+      expect(legs[0].legStartTime).toEqual(expectedStart);
+      expect(legs[0].legDate).toEqual(expectedStart);
+      expect(legs[0].legEndTime).toEqual(
+        new Date(
+          expectedStart.getTime() +
+            Math.ceil(61 * AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER) * 60 * 1000,
+        ),
+      );
     });
 
     it("should preserve exact minutes from flight arrival time", () => {

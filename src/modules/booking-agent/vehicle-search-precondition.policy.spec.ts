@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { VehicleSearchPreconditionPolicy } from "./vehicle-search-precondition.policy";
+import {
+  parseSearchDate,
+  VehicleSearchPreconditionPolicy,
+} from "./vehicle-search-precondition.policy";
 
 describe("VehicleSearchPreconditionPolicy", () => {
   const policy = new VehicleSearchPreconditionPolicy();
@@ -45,6 +48,23 @@ describe("VehicleSearchPreconditionPolicy", () => {
       missingField: "flightNumber",
       prompt: "Please share your flight number so I can check airport pickup availability.",
     });
+  });
+
+  it("parses ISO datetimes and rejects invalid ones", () => {
+    expect(parseSearchDate("2026-03-01T14:40:00.000Z")?.toISOString()).toBe(
+      "2026-03-01T14:40:00.000Z",
+    );
+    expect(parseSearchDate("2026-03-01Tnot-a-time")).toBeNull();
+  });
+
+  it("accepts an ISO pickup and dropoff window", () => {
+    const result = policy.resolve({
+      from: "2026-03-01T14:40:00.000Z",
+      to: "2026-03-01T15:54:00.000Z",
+      bookingType: "DAY",
+      pickupTime: "15:40",
+    });
+    expect(result).toBeNull();
   });
 
   describe("pickupTime validation", () => {

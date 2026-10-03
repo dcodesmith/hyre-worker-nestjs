@@ -103,9 +103,7 @@ describe("BookingAgentExtractorService", () => {
       );
 
       expect(result.intent).toBe("ask_question");
-      expect(result.question).toBe(
-        "What would you like to change — the car, booking type, date or time, or locations?",
-      );
+      expect(result.question).toBe("What booking detail would you like to change?");
       expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
     });
 

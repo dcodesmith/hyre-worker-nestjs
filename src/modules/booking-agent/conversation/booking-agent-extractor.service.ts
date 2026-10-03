@@ -188,8 +188,7 @@ export class BookingAgentExtractorService {
     [BOOKING_AGENT_BUTTON_ID.CHANGE_DETAILS]: {
       intent: "ask_question",
       draftPatch: {},
-      question:
-        "What would you like to change — the car, booking type, date or time, or locations?",
+      question: "What booking detail would you like to change?",
       confidence: 1,
     },
     [BOOKING_AGENT_BUTTON_ID.CANCEL]: { intent: "cancel", draftPatch: {}, confidence: 1 },

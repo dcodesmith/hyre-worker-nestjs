@@ -13,6 +13,7 @@ import { BookingModule } from "../booking/booking.module";
 import { CarModule } from "../car/car.module";
 import { DatabaseModule } from "../database/database.module";
 import { EmailModule } from "../email/email.module";
+import { FlightAwareModule } from "../flightaware/flightaware.module";
 import { MapsModule } from "../maps/maps.module";
 import { TwilioWebhookGuard } from "../messaging/guards/twilio-webhook.guard";
 import { OpenAiSdkModule } from "../openai-sdk/openai-sdk.module";
@@ -53,6 +54,7 @@ import { WhatsAppSenderService } from "./whatsapp/whatsapp-sender.service";
     BookingModule,
     CarModule,
     EmailModule,
+    FlightAwareModule,
     MapsModule,
     RatesModule,
     StorageModule,

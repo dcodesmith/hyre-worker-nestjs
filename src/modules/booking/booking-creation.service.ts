@@ -2,7 +2,8 @@ import type { IncomingHttpHeaders } from "node:http";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Booking, Prisma } from "@prisma/client";
-import { format } from "date-fns";
+import { subMinutes } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { type ClientRequestContext, readClientRequest } from "../../common/client-request";
@@ -19,6 +20,7 @@ import { FlightAwareApiException, FlightAwareException } from "../flightaware/fl
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { MapsService } from "../maps/maps.service";
 import {
+  AIRPORT_PICKUP_BUFFER_MINUTES,
   BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
   BOOKING_PAYMENT_SESSION_DURATION_MS,
 } from "./booking.const";
@@ -28,6 +30,7 @@ import {
   BookingPaymentSyncFailedException,
   BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
+  BookingValidationException,
   CarNotAvailableException,
   PaymentIntentFailedException,
 } from "./booking.error";
@@ -147,34 +150,29 @@ export class BookingCreationService {
         "Starting booking creation",
       );
 
-      this.validationService.validateDates({
-        startDate: normalizedBooking.startDate,
-        endDate: normalizedBooking.endDate,
-        bookingType: normalizedBooking.bookingType,
-      });
-
-      await this.validationService.checkCarAvailability({
-        carId: normalizedBooking.carId,
-        startDate: normalizedBooking.startDate,
-        endDate: normalizedBooking.endDate,
-      });
-
       if (isGuestBooking(normalizedBooking)) {
         await this.validationService.validateGuestEmail(normalizedBooking);
       }
 
       let flightData: FlightDataForBooking | null = null;
-      if (normalizedBooking.bookingType === "AIRPORT_PICKUP" && normalizedBooking.flightNumber) {
-        if (normalizedBooking.sameLocation === false) {
-          flightData = await this.validateAndGetFlightData(
-            normalizedBooking.flightNumber,
-            normalizedBooking.startDate,
-            normalizedBooking.dropOffAddress,
-          );
+      if (normalizedBooking.bookingType === "AIRPORT_PICKUP") {
+        if (!normalizedBooking.flightNumber || normalizedBooking.sameLocation !== false) {
+          throw new BookingValidationException([
+            {
+              field: normalizedBooking.flightNumber ? "sameLocation" : "flightNumber",
+              message: normalizedBooking.flightNumber
+                ? "Airport pickup bookings require a different drop-off location"
+                : "Flight number is required for AIRPORT_PICKUP bookings",
+            },
+          ]);
         }
+        flightData = await this.validateAndGetFlightData(
+          normalizedBooking.flightNumber,
+          normalizedBooking.startDate,
+          normalizedBooking.dropOffAddress,
+        );
       }
 
-      const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
       const legs = this.legService.generateLegs(
         buildLegGenerationInput({
           bookingType: normalizedBooking.bookingType,
@@ -185,6 +183,22 @@ export class BookingCreationService {
           driveTimeMinutes: flightData?.driveTimeMinutes,
         }),
       );
+      if (flightData) {
+        normalizedBooking.startDate = legs[0].legStartTime;
+        normalizedBooking.endDate = legs[legs.length - 1].legEndTime;
+      }
+      this.validationService.validateDates({
+        startDate: normalizedBooking.startDate,
+        endDate: normalizedBooking.endDate,
+        bookingType: normalizedBooking.bookingType,
+      });
+      await this.validationService.checkCarAvailability({
+        carId: normalizedBooking.carId,
+        startDate: normalizedBooking.startDate,
+        endDate: normalizedBooking.endDate,
+      });
+
+      const car = await this.persistenceService.fetchCarWithPricing(normalizedBooking.carId);
       const addons = await this.addonsService.resolveBookingAddons(
         normalizedBooking.addonIds,
         normalizedBooking.bookingType,
@@ -357,12 +371,14 @@ export class BookingCreationService {
     pickupDate: Date,
     dropOffAddress: string,
   ): Promise<FlightDataForBooking> {
-    const pickupDateStr = format(pickupDate, "yyyy-MM-dd");
+    const flightDate = subMinutes(pickupDate, AIRPORT_PICKUP_BUFFER_MINUTES);
+    const pickupDateStr = formatInTimeZone(flightDate, "Africa/Lagos", "yyyy-MM-dd");
 
     // Airport pickup search enforces Lagos destination via typed error codes.
     const { flight } = await this.flightAwareService.searchAirportPickupFlight(
       flightNumber,
       pickupDateStr,
+      { skipCache: true },
     );
 
     // Calculate drive time if we have the drop-off address

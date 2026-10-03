@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildResponderUserContext } from "./responder.prompt";
+import { buildState } from "../conversation.factory";
+import { buildResponderSystemPrompt, buildResponderUserContext } from "./responder.prompt";
 
 describe("responder.prompt contract", () => {
   it("builds stage-aware user context", () => {
@@ -37,6 +38,36 @@ describe("responder.prompt contract", () => {
     expect(context).toContain("MISSING REQUIRED FIELDS:");
     expect(context).toContain("vehicleType");
     expect(context).toContain("INSTRUCTION: Ask for ALL missing fields");
+  });
+
+  it("tells the model never to ask for airport pickup time or address", () => {
+    const prompt = buildResponderSystemPrompt(buildState());
+
+    expect(prompt).toContain(
+      "NEVER ask for pickupTime, pickupLocation, or dropoffDate for Airport Pickup",
+    );
+    expect(prompt).toContain(
+      "Airport pickup time or airport address (derived from the validated flight)",
+    );
+  });
+
+  it("lists only airport required fields when the draft is an airport pickup", () => {
+    const context = buildResponderUserContext(
+      buildState({
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-03-01",
+          flightNumber: "BA74",
+          dropoffLocation: "Victoria Island",
+        },
+      }),
+      { maxContextFieldChars: 300, maxDraftContextChars: 600, maxOptionContextItems: 5 },
+    );
+
+    expect(context).toContain("MISSING REQUIRED FIELDS: vehicleType");
+    expect(context).not.toContain("pickupTime");
+    expect(context).not.toContain("pickupLocation");
+    expect(context).not.toContain("dropoffDate");
   });
 
   it("includes status message in user context when present", () => {
