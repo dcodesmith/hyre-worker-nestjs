@@ -38,10 +38,10 @@ describe("booking-agent-outbox.builder", () => {
     expect(outbox).toHaveLength(3);
     expect(outbox[0].mode).toBe("FREE_FORM");
     expect(outbox[1].mode).toBe("TEMPLATE");
-    expect(outbox[1].templateVariables?.["1"]).toBe("Lexus GX");
-    expect(outbox[1].templateVariables?.["2"]).toContain("incl. VAT");
-    expect(outbox[2].templateVariables?.["1"]).toBe("Toyota Prado");
-    expect(outbox[2].templateVariables?.["2"]).toContain("incl. VAT");
+    expect(outbox[1].templateVariables?.["1"]).toBe("Lexus GX · ₦150,000");
+    expect(outbox[1].templateVariables?.["2"]).toBe("₦150,000");
+    expect(outbox[2].templateVariables?.["1"]).toBe("Toyota Prado · ₦150,000");
+    expect(outbox[2].templateVariables?.["2"]).toBe("₦150,000");
   });
 
   it("falls back to single free-form message when cards do not map to available options", () => {
@@ -101,7 +101,8 @@ describe("booking-agent-outbox.builder", () => {
     );
 
     expect(outbox).toHaveLength(2);
-    expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000 incl. VAT");
+    expect(outbox[1].templateVariables?.["1"]).toBe("Toyota Corolla · ₦210,000");
+    expect(outbox[1].templateVariables?.["2"]).toBe("₦210,000");
   });
 
   it("sends an image-less vehicle card as selectable text", () => {
@@ -161,7 +162,7 @@ describe("booking-agent-outbox.builder", () => {
       buildState({
         stage: "awaiting_payment",
         selectedOption: buildVehicleOption({ make: "KIA", model: "Sportage LX" }),
-        paymentLink: "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
+        paymentLink: "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
       }),
       {
         text: "Booking created. I have sent your secure checkout link below.",

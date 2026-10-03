@@ -1581,8 +1581,8 @@ describe("BookingAgentTurnService", () => {
       expect(vehicleCard.mode).toBe("TEMPLATE");
       expect(vehicleCard.templateName).toBe("HX43448303892f9f4026057adb597e0c22");
       expect(vehicleCard.templateVariables).toEqual({
-        "1": "BMW X5",
-        "2": "₦150,000 incl. VAT",
+        "1": "BMW X5 · ₦150,000",
+        "2": "₦150,000",
         "3": "https://example.com/bmw.jpg",
         "4": "Select",
         "5": "veh_template_test",
@@ -1659,11 +1659,13 @@ describe("BookingAgentTurnService", () => {
       expect(result.outboxItems[1].mode).toBe("TEMPLATE");
       expect(result.outboxItems[2].mode).toBe("TEMPLATE");
 
-      // Check each vehicle card has title + VAT-inclusive body value
+      // WhatsApp displays twilio/card title but not body, so price must be in the title.
       expect(result.outboxItems[1].templateVariables?.["1"]).toContain("Toyota Prado");
-      expect(result.outboxItems[1].templateVariables?.["2"]).toContain("incl. VAT");
+      expect(result.outboxItems[1].templateVariables?.["1"]).toContain("₦");
+      expect(result.outboxItems[1].templateVariables?.["1"]).not.toContain("incl. VAT");
       expect(result.outboxItems[2].templateVariables?.["1"]).toContain("Lexus GX");
-      expect(result.outboxItems[2].templateVariables?.["2"]).toContain("incl. VAT");
+      expect(result.outboxItems[2].templateVariables?.["1"]).toContain("₦");
+      expect(result.outboxItems[2].templateVariables?.["1"]).not.toContain("incl. VAT");
     });
 
     it("sends standard text message when no vehicle cards present", async () => {
