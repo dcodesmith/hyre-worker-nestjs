@@ -235,6 +235,29 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive?.buttons?.[2].id).toBe("show_others");
     });
 
+    it("shows exact airport pickup and dropoff datetimes in the confirmation summary", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "confirming",
+          selectedOption: buildVehicleOption(),
+          draft: {
+            bookingType: "AIRPORT_PICKUP",
+            pickupDate: "2026-03-01",
+            pickupDateTime: "2026-03-01T14:40:00.000Z",
+            dropoffDateTime: "2026-03-01T15:54:00.000Z",
+            pickupTime: "15:40",
+            pickupLocation: "Murtala Muhammed International Airport, Lagos",
+            dropoffLocation: "Victoria Island, Lagos",
+            durationDays: 3,
+          },
+        }),
+      );
+
+      expect(response.text).toContain("*🕐 Pickup:* 1st Mar 2026, 3:40 pm");
+      expect(response.text).toContain("*🏁 Estimated drop-off:* 1st Mar 2026, 4:54 pm");
+      expect(response.text).not.toContain("Booked for");
+    });
+
     it("prompts for current change details and rejects a stale button", async () => {
       const extraction = {
         intent: "ask_question" as const,

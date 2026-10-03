@@ -1,8 +1,14 @@
 import { Injectable } from "@nestjs/common";
+import { formatInTimeZone } from "date-fns-tz";
 import { PinoLogger } from "nestjs-pino";
+import { BookingLegService } from "../../booking/booking-leg.service";
+import { FlightAwareApiException, FlightAwareException } from "../../flightaware/flightaware.error";
+import { FlightAwareService } from "../../flightaware/flightaware.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
+import { MapsService } from "../../maps/maps.service";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
+import { clearDerivedAirportFields } from "./booking-rules";
 import {
   BOOKING_AGENT_OUTBOUND_MODE,
   BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
@@ -23,6 +29,9 @@ export class SearchAction {
   constructor(
     private readonly bookingAgentSearchService: BookingAgentSearchService,
     private readonly googlePlacesService: GooglePlacesService,
+    private readonly flightAwareService: FlightAwareService,
+    private readonly mapsService: MapsService,
+    private readonly bookingLegService: BookingLegService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(SearchAction.name);
@@ -30,7 +39,11 @@ export class SearchAction {
 
   async run(state: BookingAgentState): Promise<Partial<BookingAgentState>> {
     try {
-      const validationResult = await this.validateAndNormalizeLocations(state);
+      const validationState =
+        state.draft.bookingType === "AIRPORT_PICKUP"
+          ? { ...state, draft: clearDerivedAirportFields(state.draft) }
+          : state;
+      const validationResult = await this.validateAndNormalizeLocations(validationState);
       if (validationResult.earlyReturn) {
         return {
           ...validationResult.earlyReturn,
@@ -38,8 +51,39 @@ export class SearchAction {
           locationValidation: validationResult.locationValidation,
         };
       }
-      const validatedDraft = validationResult.draft;
-      const locationValidation = validationResult.locationValidation;
+
+      const validatedState = {
+        ...state,
+        draft: validationResult.draft,
+        locationValidation: validationResult.locationValidation,
+      };
+      let airportResult: Awaited<ReturnType<SearchAction["enrichAirportPickup"]>>;
+      try {
+        airportResult = await this.enrichAirportPickup(validatedState);
+      } catch (error) {
+        if (error instanceof FlightAwareException) {
+          this.logger.info(
+            {
+              errorCode: error.getErrorCode(),
+              flightNumber: validatedState.draft.flightNumber,
+              pickupDate: validatedState.draft.pickupDate,
+            },
+            "Airport pickup flight validation rejected",
+          );
+          return {
+            draft: clearDerivedAirportFields(validatedState.draft),
+            stage: "collecting",
+            availableOptions: [],
+            lastShownOptions: [],
+            error: null,
+            statusMessage: error.message,
+            locationValidation: validatedState.locationValidation,
+          };
+        }
+        throw error;
+      }
+      const validatedDraft = airportResult.draft;
+      const locationValidation = airportResult.locationValidation;
 
       if (
         this.shouldBlockSearchForInvalidLocation(
@@ -160,6 +204,8 @@ export class SearchAction {
         shouldSuppressAlternatives,
         draft: validatedDraft,
       });
+      const statusMessage =
+        [airportResult.statusMessage, noResultsMessage].filter(Boolean).join(" ") || null;
 
       return {
         draft: validatedDraft,
@@ -167,7 +213,7 @@ export class SearchAction {
         lastShownOptions: options,
         stage: newStage,
         error: null,
-        statusMessage: noResultsMessage,
+        statusMessage,
         locationValidation,
       };
     } catch (error) {
@@ -187,6 +233,84 @@ export class SearchAction {
           "I couldn't complete the car search right now. Please try again in a moment, and I'll search again.",
       };
     }
+  }
+
+  private async enrichAirportPickup(state: BookingAgentState): Promise<{
+    draft: BookingDraft;
+    locationValidation: BookingAgentLocationValidationState;
+    statusMessage: string | null;
+  }> {
+    if (state.draft.bookingType !== "AIRPORT_PICKUP") {
+      return {
+        draft: state.draft,
+        locationValidation: this.getLocationValidationState(state),
+        statusMessage: null,
+      };
+    }
+
+    const { flightNumber, pickupDate, dropoffLocation } = state.draft;
+    if (!flightNumber || !pickupDate || !dropoffLocation) {
+      return {
+        draft: clearDerivedAirportFields(state.draft),
+        locationValidation: this.getLocationValidationState(state),
+        statusMessage: null,
+      };
+    }
+
+    const { flight, warning } = await this.flightAwareService.searchAirportPickupFlight(
+      flightNumber,
+      pickupDate,
+    );
+    const arrivalTime = new Date(flight.arrivalTime);
+    if (Number.isNaN(arrivalTime.getTime())) {
+      throw new FlightAwareApiException("FlightAware returned invalid flight timing data");
+    }
+
+    const duration = await this.mapsService.calculateAirportTripDuration(dropoffLocation);
+    const [leg] = this.bookingLegService.generateLegs({
+      bookingType: "AIRPORT_PICKUP",
+      startDate: arrivalTime,
+      endDate: arrivalTime,
+      flightArrivalTime: arrivalTime,
+      driveTimeMinutes: duration.durationMinutes,
+    });
+    const pickupLocation = this.composeAirportPickupAddress(flight);
+    const draft: BookingDraft = {
+      ...state.draft,
+      pickupDateTime: leg.legStartTime.toISOString(),
+      dropoffDateTime: leg.legEndTime.toISOString(),
+      pickupTime: formatInTimeZone(leg.legStartTime, "Africa/Lagos", "HH:mm"),
+      pickupLocation,
+      dropoffDate: formatInTimeZone(leg.legEndTime, "Africa/Lagos", "yyyy-MM-dd"),
+    };
+    delete draft.durationDays;
+
+    const flightSummary = `Flight ${flight.flightNumber} arrives in Lagos at ${formatInTimeZone(arrivalTime, "Africa/Lagos", "h:mm a")}. Pickup will be around ${formatInTimeZone(leg.legStartTime, "Africa/Lagos", "h:mm a")} from ${pickupLocation}.`;
+    return {
+      draft,
+      locationValidation: {
+        ...this.getLocationValidationState(state),
+        pickup: {
+          status: "valid",
+          lastValidatedInput: pickupLocation,
+          normalizedAddress: pickupLocation,
+        },
+      },
+      statusMessage: warning ? `${warning} ${flightSummary}` : flightSummary,
+    };
+  }
+
+  private composeAirportPickupAddress(
+    flight: Awaited<ReturnType<FlightAwareService["searchAirportPickupFlight"]>>["flight"],
+  ): string {
+    const name = flight.destinationName?.trim();
+    const city = flight.destinationCity?.trim();
+    if (name && city) {
+      return `${name}, ${city}`;
+    }
+    return (
+      name || city || flight.destinationIATA?.trim() || flight.destination.trim() || "Lagos Airport"
+    );
   }
 
   private shouldAllowAlternativeMatches(preferences: BookingAgentState["preferences"]): boolean {
@@ -408,11 +532,11 @@ export class SearchAction {
     const pickupLocation = draft.pickupLocation?.trim();
     const dropoffLocation = draft.dropoffLocation?.trim();
 
-    if (!pickupLocation || !dropoffLocation) {
+    if (!dropoffLocation) {
       return { draft, locationValidation };
     }
 
-    if (pickupLocation === dropoffLocation) {
+    if (pickupLocation && pickupLocation === dropoffLocation) {
       if (locationValidation.pickup.status === "valid") {
         const normalizedAddress = locationValidation.pickup.normalizedAddress ?? pickupLocation;
         return {

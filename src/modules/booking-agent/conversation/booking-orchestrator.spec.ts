@@ -95,4 +95,31 @@ describe("buildBookingInputFromDraft", () => {
     expect(normalizedEndDate.getHours()).toBe(19);
     expect(normalizedEndDate.getTime() - normalizedStartDate.getTime()).toBe(TWELVE_HOURS);
   });
+
+  it("uses the exact derived airport pickup and dropoff datetimes", () => {
+    const pickupDateTime = "2026-03-01T14:40:00.000Z";
+    const dropoffDateTime = "2026-03-01T15:54:00.000Z";
+    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft(
+      {
+        bookingType: "AIRPORT_PICKUP",
+        pickupDate: "2026-03-01",
+        pickupDateTime,
+        dropoffDate: "2026-03-01",
+        dropoffDateTime,
+        pickupTime: "15:40",
+        pickupLocation: "Murtala Muhammed International Airport, Lagos",
+        dropoffLocation: "Victoria Island, Lagos",
+        flightNumber: "BA74",
+      },
+      selectedOption,
+      guestIdentity,
+      selections,
+    );
+
+    expect(input.startDate.toISOString()).toBe(pickupDateTime);
+    expect(input.endDate.toISOString()).toBe(dropoffDateTime);
+    expect(input.flightDate).toBe("2026-03-01");
+    expect(normalizedStartDate.toISOString()).toBe(pickupDateTime);
+    expect(normalizedEndDate.toISOString()).toBe(dropoffDateTime);
+  });
 });

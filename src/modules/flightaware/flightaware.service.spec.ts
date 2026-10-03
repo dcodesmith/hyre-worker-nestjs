@@ -212,6 +212,35 @@ describe("FlightAwareService", () => {
       expect(result.actualArrival).toBeUndefined();
     });
 
+    it("should retain the scheduled occurrence when a delay shifts arrival to the next date", async () => {
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BAW74",
+              fa_flight_id: "BAW74-20260720",
+              origin: { code: "EGLL", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2026-07-20T15:00:00Z",
+              scheduled_in: "2026-07-20T22:30:00Z",
+              estimated_in: "2026-07-20T23:30:00Z",
+              status: "Delayed",
+            },
+          ],
+        },
+      });
+      vi.setSystemTime(new Date("2026-07-20T20:00:00Z"));
+
+      const result = await service.validateFlight("BA74", "2026-07-20");
+
+      expect(result).toMatchObject({
+        flightId: "BAW74-20260720",
+        scheduledArrival: "2026-07-20T22:30:00Z",
+        arrivalTime: "2026-07-20T23:30:00Z",
+        arrivalTimeSource: "estimated",
+      });
+    });
+
     it("should prefer a runway actual over a stale gate estimate", async () => {
       mockHttpClient.get.mockResolvedValueOnce({
         data: {
@@ -642,6 +671,44 @@ describe("FlightAwareService", () => {
         expect(result.flight.destination).toBe("DNMM");
         expect(result.flight.destinationIATA).toBe("");
       }
+    });
+
+    it("bypasses the cache when skipCache is set", async () => {
+      mockFlightCache.get.mockResolvedValue({
+        flightNumber: "BA74",
+        flightId: "cached-flight",
+        origin: "LHR",
+        destination: "LOS",
+        scheduledDeparture: "2025-12-25T08:00:00Z",
+        scheduledArrival: "2025-12-25T14:00:00Z",
+        arrivalTime: "2025-12-25T14:30:00Z",
+        arrivalTimeSource: "estimated",
+        isLive: true,
+      });
+      mockHttpClient.get.mockResolvedValueOnce({
+        data: {
+          flights: [
+            {
+              ident: "BA74",
+              fa_flight_id: "BA74-live",
+              origin: { code: "LHR", code_iata: "LHR" },
+              destination: { code: "DNMM", code_iata: "LOS" },
+              scheduled_out: "2025-12-25T08:00:00Z",
+              scheduled_on: "2025-12-25T14:00:00Z",
+              status: "Scheduled",
+            },
+          ],
+        },
+      });
+      vi.setSystemTime(new Date("2025-12-25T10:00:00Z"));
+
+      const result = await service.searchAirportPickupFlight("BA74", "2025-12-25", {
+        skipCache: true,
+      });
+
+      expect(mockFlightCache.get).not.toHaveBeenCalled();
+      expect(mockHttpClient.get).toHaveBeenCalled();
+      expect(result.flight.flightId).toBe("BA74-live");
     });
   });
 });

@@ -1,6 +1,10 @@
 import { REQUIRED_SEARCH_FIELDS } from "./conversation/conversation.const";
-import { BookingDraft } from "./conversation/conversation.interface";
+import type { BookingDraft } from "./conversation/conversation.interface";
 
 export function getMissingRequiredFields(draft: BookingDraft): string[] {
-  return REQUIRED_SEARCH_FIELDS.filter((field) => !draft[field]);
+  const requiredFields =
+    draft.bookingType === "AIRPORT_PICKUP"
+      ? REQUIRED_SEARCH_FIELDS.AIRPORT_PICKUP
+      : REQUIRED_SEARCH_FIELDS.DEFAULT;
+  return requiredFields.filter((field) => !draft[field]);
 }

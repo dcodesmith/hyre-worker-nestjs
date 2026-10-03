@@ -27,6 +27,7 @@ export const BookingErrorCode = {
   BOOKING_PAYMENT_SYNC_FAILED: "BOOKING_PAYMENT_SYNC_FAILED",
   REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE: "REFERRAL_DISCOUNT_NO_LONGER_AVAILABLE",
   BOOKING_PRICE_CHANGED: "BOOKING_PRICE_CHANGED",
+  BOOKING_FLIGHT_WINDOW_CHANGED: "BOOKING_FLIGHT_WINDOW_CHANGED",
   BOOKING_PHONE_VERIFICATION_REQUIRED: "BOOKING_PHONE_VERIFICATION_REQUIRED",
   IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
   BOOKING_REQUEST_IN_PROGRESS: "BOOKING_REQUEST_IN_PROGRESS",
@@ -83,6 +84,26 @@ export class BookingPriceChangedException extends BookingException {
       {
         title: "Booking Price Changed",
         details: { expectedTotalAmount, currentPricing },
+      },
+    );
+  }
+}
+
+export class BookingFlightWindowChangedException extends BookingException {
+  constructor(
+    readonly currentStartDate: Date,
+    readonly currentEndDate: Date,
+  ) {
+    super(
+      BookingErrorCode.BOOKING_FLIGHT_WINDOW_CHANGED,
+      "The flight pickup window changed. Review the updated times before continuing.",
+      HttpStatus.CONFLICT,
+      {
+        title: "Flight Pickup Window Changed",
+        details: {
+          currentStartDate: currentStartDate.toISOString(),
+          currentEndDate: currentEndDate.toISOString(),
+        },
       },
     );
   }

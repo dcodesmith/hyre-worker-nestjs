@@ -31,6 +31,17 @@ export function hasDraftChanged(oldDraft: BookingDraft, newDraft: BookingDraft):
   return keyFields.some((field) => oldDraft[field] !== newDraft[field]);
 }
 
+export function clearDerivedAirportFields(draft: BookingDraft): BookingDraft {
+  const cleared = { ...draft };
+  delete cleared.pickupDateTime;
+  delete cleared.dropoffDateTime;
+  delete cleared.pickupTime;
+  delete cleared.pickupLocation;
+  delete cleared.dropoffDate;
+  delete cleared.durationDays;
+  return cleared;
+}
+
 export function applyDerivedDraftFields(
   draft: BookingDraft,
   inboundMessage: string,

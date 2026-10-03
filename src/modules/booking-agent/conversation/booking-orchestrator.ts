@@ -44,11 +44,16 @@ export function buildBookingInputFromDraft(
 
   const bookingType = draft.bookingType ?? "DAY";
   const pickupTime = draft.pickupTime ?? getDefaultPickupTime(bookingType);
+  const useDerivedAirportWindow = bookingType === "AIRPORT_PICKUP";
 
   const { startDate, endDate } = normalizeBookingTimeWindow({
     bookingType,
-    startDate: new Date(draft.pickupDate),
-    endDate: new Date(draft.dropoffDate),
+    startDate: new Date(
+      useDerivedAirportWindow && draft.pickupDateTime ? draft.pickupDateTime : draft.pickupDate,
+    ),
+    endDate: new Date(
+      useDerivedAirportWindow && draft.dropoffDateTime ? draft.dropoffDateTime : draft.dropoffDate,
+    ),
     pickupTime,
   });
 
@@ -63,6 +68,7 @@ export function buildBookingInputFromDraft(
       bookingType,
       pickupTime: normalizePickupTimeTo12Hour(pickupTime),
       flightNumber: draft.flightNumber,
+      ...(useDerivedAirportWindow && draft.pickupDate ? { flightDate: draft.pickupDate } : {}),
       addonIds: selections.addonIds,
       requiresFullTank: selections.requiresFullTank,
       specialRequests: draft.notes,

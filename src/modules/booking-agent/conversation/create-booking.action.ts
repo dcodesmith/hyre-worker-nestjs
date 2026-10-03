@@ -1,13 +1,16 @@
 import { Injectable } from "@nestjs/common";
+import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { PRICE_TOLERANCE } from "../../booking/booking.const";
 import {
+  BookingFlightWindowChangedException,
   BookingPhoneVerificationRequiredException,
   BookingPriceChangedException,
   BookingRequestInProgressException,
+  BookingValidationException,
   CarNotAvailableException,
   CarNotFoundException,
   IdempotencyKeyReusedException,
@@ -17,9 +20,11 @@ import { BookingPricingPreviewService } from "../../booking/booking-pricing-prev
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type { BookingPricingPreviewResponseDto } from "../../booking/dto/pricing-preview.dto";
 import { DatabaseService } from "../../database/database.service";
+import { FlightAwareException } from "../../flightaware/flightaware.error";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./booking-orchestrator";
+import { clearDerivedAirportFields } from "./booking-rules";
 import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
 import {
   type BookingAgentState,
@@ -153,6 +158,9 @@ export class CreateBookingAction {
             input: this.buildAuthenticatedBookingInput(authoritativeBookingInput),
             sessionUser,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
+            context: {
+              requireFlightWindowConfirmation: true,
+            },
           })
         : await this.bookingCreationService.createBooking({
             input: authoritativeBookingInput,
@@ -160,6 +168,7 @@ export class CreateBookingAction {
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
               guestContactSource: "WHATSAPP_AGENT",
+              requireFlightWindowConfirmation: true,
             },
           });
 
@@ -190,6 +199,10 @@ export class CreateBookingAction {
         }
       }
 
+      if (error instanceof BookingFlightWindowChangedException) {
+        return this.mapFlightWindowChange(state.draft, error);
+      }
+
       if (error instanceof BookingPhoneVerificationRequiredException) {
         return {
           error:
@@ -198,6 +211,9 @@ export class CreateBookingAction {
           stage: "confirming",
         };
       }
+
+      const flightCollectionResult = this.mapFlightCollectionError(state.draft, error);
+      if (flightCollectionResult) return flightCollectionResult;
 
       if (error instanceof CarNotAvailableException || error instanceof CarNotFoundException) {
         const fallbackOptions = await this.fetchFreshOptionsForDraft(
@@ -293,6 +309,13 @@ export class CreateBookingAction {
     draft: BookingDraft,
   ): Partial<BookingAgentState> | null {
     if (!draft.pickupDate || !draft.dropoffDate || !draft.pickupTime) {
+      if (draft.bookingType === "AIRPORT_PICKUP") {
+        return this.returnToFlightCollection(
+          draft,
+          "I need to validate your flight again. Please confirm the flight number and flight date.",
+        );
+      }
+
       const missingRequiredDraftFields: string[] = [];
       if (!draft.pickupDate) {
         missingRequiredDraftFields.push("pickupDate");
@@ -319,6 +342,78 @@ export class CreateBookingAction {
     }
 
     return null;
+  }
+
+  private returnToFlightCollection(
+    draft: BookingDraft,
+    statusMessage: string,
+  ): Partial<BookingAgentState> {
+    return {
+      draft: clearDerivedAirportFields(draft),
+      selectedOption: null,
+      availableOptions: [],
+      lastShownOptions: [],
+      availableAddons: [],
+      selectedAddonIds: [],
+      addonSelectionIndex: 0,
+      requiresFullTank: false,
+      useCredits: 0,
+      pricingPreview: null,
+      error: null,
+      statusMessage,
+      stage: "collecting",
+    };
+  }
+
+  private mapFlightCollectionError(
+    draft: BookingDraft,
+    error: unknown,
+  ): Partial<BookingAgentState> | null {
+    if (error instanceof FlightAwareException) {
+      return this.returnToFlightCollection(draft, error.message);
+    }
+    if (error instanceof BookingValidationException && draft.bookingType === "AIRPORT_PICKUP") {
+      const message =
+        error
+          .getProblemDetails()
+          .errors?.map((fieldError) => fieldError.message)
+          .join(" ") || error.message;
+      return this.returnToFlightCollection(draft, message);
+    }
+    return null;
+  }
+
+  private mapFlightWindowChange(
+    draft: BookingDraft,
+    error: BookingFlightWindowChangedException,
+  ): Partial<BookingAgentState> {
+    const pickupDateTime = error.currentStartDate.toISOString();
+    const dropoffDateTime = error.currentEndDate.toISOString();
+    const updatedDraft: BookingDraft = {
+      ...draft,
+      pickupDateTime,
+      pickupTime: formatInTimeZone(error.currentStartDate, "Africa/Lagos", "HH:mm"),
+      dropoffDate: formatInTimeZone(error.currentEndDate, "Africa/Lagos", "yyyy-MM-dd"),
+      dropoffDateTime,
+    };
+
+    const pickupDisplay = formatInTimeZone(
+      error.currentStartDate,
+      "Africa/Lagos",
+      "MMM d, yyyy 'at' h:mm a",
+    );
+    const dropoffDisplay = formatInTimeZone(
+      error.currentEndDate,
+      "Africa/Lagos",
+      "MMM d, yyyy 'at' h:mm a",
+    );
+
+    return {
+      draft: updatedDraft,
+      error: null,
+      stage: "confirming",
+      statusMessage: `Your flight timing changed. Pickup is now ${pickupDisplay}, with estimated drop-off at ${dropoffDisplay}. Please confirm the updated booking times.`,
+    };
   }
 
   private async fetchFreshOptionsForDraft(

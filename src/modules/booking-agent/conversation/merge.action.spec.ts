@@ -92,6 +92,98 @@ describe("MergeAction", () => {
     expect(result.lastShownOptions).toEqual([]);
   });
 
+  it("clears stale derived airport fields and status when the flight source changes", () => {
+    const derivedDraft = {
+      bookingType: "AIRPORT_PICKUP" as const,
+      pickupDate: "2026-03-01",
+      flightNumber: "BA74",
+      vehicleType: "SUV" as const,
+      dropoffLocation: "Victoria Island",
+      pickupDateTime: "2026-03-01T14:40:00.000Z",
+      dropoffDateTime: "2026-03-01T15:54:00.000Z",
+      pickupTime: "15:40",
+      pickupLocation: "Murtala Muhammed International Airport, Lagos",
+      dropoffDate: "2026-03-01",
+      durationDays: 1,
+    };
+    const patches = [
+      { flightNumber: "DL54" as const },
+      { pickupDate: "2026-03-02" },
+      { dropoffLocation: "Lekki Phase 1" },
+    ];
+
+    for (const draftPatch of patches) {
+      const result = mergeAction.run(
+        buildState({
+          statusMessage: "Flight BA74 arrives in Lagos at 3:00 PM.",
+          selectedOption: buildVehicleOption(),
+          pricingPreview: buildPricingPreview(),
+          draft: derivedDraft,
+          extraction: {
+            intent: "update_info",
+            draftPatch,
+            confidence: 1,
+          },
+        }),
+      );
+
+      expect(result.statusMessage).toBeNull();
+      expect(result.draft?.bookingType).toBe("AIRPORT_PICKUP");
+      expect(result.draft).toMatchObject(draftPatch);
+      expect(result.draft?.pickupDateTime).toBeUndefined();
+      expect(result.draft?.dropoffDateTime).toBeUndefined();
+      expect(result.draft?.pickupTime).toBeUndefined();
+      expect(result.draft?.pickupLocation).toBeUndefined();
+      expect(result.draft?.dropoffDate).toBeUndefined();
+      expect(result.draft?.durationDays).toBeUndefined();
+    }
+  });
+
+  it("keeps newly supplied pickup fields when leaving airport pickup", () => {
+    const result = mergeAction.run(
+      buildState({
+        statusMessage: "Flight BA74 arrives in Lagos at 3:00 PM.",
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-03-01",
+          flightNumber: "BA74",
+          pickupDateTime: "2026-03-01T14:40:00.000Z",
+          dropoffDateTime: "2026-03-01T15:54:00.000Z",
+          pickupTime: "15:40",
+          pickupLocation: "Murtala Muhammed International Airport, Lagos",
+          dropoffDate: "2026-03-01",
+          dropoffLocation: "Victoria Island",
+          durationDays: 1,
+        },
+        extraction: {
+          intent: "update_info",
+          draftPatch: {
+            bookingType: "DAY",
+            pickupTime: "10:00",
+            pickupLocation: "Eko Hotel, Victoria Island",
+            dropoffDate: "2026-03-02",
+            dropoffLocation: "Lekki Phase 1",
+          },
+          confidence: 1,
+        },
+      }),
+    );
+
+    expect(result.statusMessage).toBeNull();
+    expect(result.draft).toEqual(
+      expect.objectContaining({
+        bookingType: "DAY",
+        pickupTime: "10:00",
+        pickupLocation: "Eko Hotel, Victoria Island",
+        dropoffDate: "2026-03-02",
+        dropoffLocation: "Lekki Phase 1",
+      }),
+    );
+    expect(result.draft?.pickupDateTime).toBeUndefined();
+    expect(result.draft?.dropoffDateTime).toBeUndefined();
+    expect(result.draft?.durationDays).toBeUndefined();
+  });
+
   it("clears stale duration fields while asking for duration clarification", () => {
     const result = mergeAction.run(
       buildState({

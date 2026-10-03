@@ -4,9 +4,12 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { AddonsService } from "../../addons/addons.service";
 import { CarNotAvailableException } from "../../booking/booking.error";
 import { BookingCreationService } from "../../booking/booking-creation.service";
+import { BookingLegService } from "../../booking/booking-leg.service";
 import { BookingPricingPreviewService } from "../../booking/booking-pricing-preview.service";
 import { DatabaseService } from "../../database/database.service";
+import { FlightAwareService } from "../../flightaware/flightaware.service";
 import { GooglePlacesService } from "../../maps/google-places.service";
+import { MapsService } from "../../maps/maps.service";
 import { BookingReservationExpirationService } from "../../payment/booking-reservation-expiration.service";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
@@ -194,6 +197,9 @@ describe("BookingAgentTurnService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
+        { provide: FlightAwareService, useValue: { searchAirportPickupFlight: vi.fn() } },
+        { provide: MapsService, useValue: { calculateAirportTripDuration: vi.fn() } },
+        { provide: BookingLegService, useValue: { generateLegs: vi.fn() } },
         ExtractAction,
         MergeAction,
         RouteAction,

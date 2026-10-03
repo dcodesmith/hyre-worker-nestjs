@@ -27,6 +27,7 @@ import { MapsService } from "../maps/maps.service";
 import { ReferralProgramService } from "../referral/referral-program.service";
 import {
   BookingCreationFailedException,
+  BookingFlightWindowChangedException,
   BookingPaymentSyncFailedException,
   BookingPhoneVerificationRequiredException,
   BookingRequestInProgressException,
@@ -860,6 +861,72 @@ describe("BookingCreationService", () => {
       expect(mockTransaction).not.toHaveBeenCalled();
     });
 
+    it("refreshes by scheduled flight date before requiring confirmation", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
+      vi.mocked(flightAwareService.searchAirportPickupFlight).mockResolvedValue({
+        flight: {
+          flightNumber: "BA74",
+          flightId: "BA74-20250201",
+          origin: "EGLL",
+          destination: "DNMM",
+          scheduledDeparture: "2025-02-01T15:00:00Z",
+          scheduledArrival: "2025-02-01T22:30:00Z",
+          estimatedArrival: "2025-02-01T23:30:00Z",
+          arrivalTime: "2025-02-01T23:30:00Z",
+          arrivalTimeSource: "estimated",
+          isLive: true,
+        },
+      });
+      vi.mocked(mapsService.calculateAirportTripDuration).mockResolvedValue({
+        durationMinutes: 60,
+        distanceMeters: 30000,
+        isEstimate: false,
+      });
+      const refreshedStartDate = new Date("2025-02-02T00:10:00Z");
+      const refreshedEndDate = new Date("2025-02-02T01:22:00Z");
+      vi.mocked(legService.generateLegs).mockReturnValue([
+        {
+          legDate: refreshedStartDate,
+          legStartTime: refreshedStartDate,
+          legEndTime: refreshedEndDate,
+        },
+      ]);
+
+      const error = await service
+        .createBooking({
+          input: createBookingInput({
+            bookingType: "AIRPORT_PICKUP",
+            flightNumber: "BA74",
+            flightDate: "2025-02-01",
+            startDate: new Date("2025-02-02T00:00:00Z"),
+            endDate: new Date("2025-02-02T01:12:00Z"),
+            pickupTime: undefined,
+            sameLocation: false,
+            dropOffAddress: "Victoria Island, Lagos",
+          }),
+          sessionUser: createSessionUser(),
+          context: { requireFlightWindowConfirmation: true },
+        })
+        .catch((caughtError: unknown) => caughtError);
+
+      expect(error).toBeInstanceOf(BookingFlightWindowChangedException);
+      if (!(error instanceof BookingFlightWindowChangedException)) {
+        throw new Error("Expected BookingFlightWindowChangedException");
+      }
+      expect(error.getDetails()).toEqual({
+        currentStartDate: refreshedStartDate.toISOString(),
+        currentEndDate: refreshedEndDate.toISOString(),
+      });
+      expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith(
+        "BA74",
+        "2025-02-01",
+        { skipCache: true },
+      );
+      expect(idempotencyService.release).toHaveBeenCalledWith("idempotency-123");
+      expect(validationService.checkCarAvailability).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
     it("should validate flight for airport pickup bookings", async () => {
       vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
       // Validation methods now return void
@@ -911,6 +978,14 @@ describe("BookingCreationService", () => {
         "https://api.example.com/api/payments/callback",
       );
 
+      const bookingCreate = vi.fn().mockResolvedValue({
+        id: "booking-123",
+        bookingReference: "BK-123456-ABC",
+        totalAmount: new Decimal(56437.5),
+        status: BookingStatus.PENDING,
+      });
+      const refreshedLegStart = new Date("2025-02-01T15:10:00Z");
+      const refreshedLegEnd = new Date("2025-02-01T16:22:00Z");
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
@@ -920,12 +995,7 @@ describe("BookingCreationService", () => {
             updateMany: vi.fn(),
           },
           booking: {
-            create: vi.fn().mockResolvedValue({
-              id: "booking-123",
-              bookingReference: "BK-123456-ABC",
-              totalAmount: new Decimal(56437.5),
-              status: BookingStatus.PENDING,
-            }),
+            create: bookingCreate,
             update: vi.fn(),
           },
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
@@ -945,6 +1015,8 @@ describe("BookingCreationService", () => {
       const booking = createBookingInput({
         bookingType: "AIRPORT_PICKUP",
         flightNumber: "BA74",
+        startDate: refreshedLegStart,
+        endDate: refreshedLegEnd,
         pickupTime: undefined,
         sameLocation: false as const,
         dropOffAddress: "Victoria Island, Lagos",
@@ -957,6 +1029,7 @@ describe("BookingCreationService", () => {
       expect(flightAwareService.searchAirportPickupFlight).toHaveBeenCalledWith(
         "BA74",
         "2025-02-01",
+        { skipCache: true },
       );
       expect(mapsService.calculateAirportTripDuration).toHaveBeenCalledWith(
         "Victoria Island, Lagos",
@@ -966,6 +1039,67 @@ describe("BookingCreationService", () => {
           flightArrivalTime: new Date("2025-02-01T15:00:00Z"),
         }),
       );
+      expect(validationService.validateDates).toHaveBeenCalledWith({
+        startDate: refreshedLegStart,
+        endDate: refreshedLegEnd,
+        bookingType: "AIRPORT_PICKUP",
+      });
+      expect(validationService.checkCarAvailability).toHaveBeenCalledWith({
+        carId: "car-123",
+        startDate: refreshedLegStart,
+        endDate: refreshedLegEnd,
+      });
+      expect(bookingCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startDate: refreshedLegStart,
+          endDate: refreshedLegEnd,
+        }),
+      });
+    });
+
+    it("requires a flight number and a different drop-off before calling FlightAware", async () => {
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(verifiedBookingUser());
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({
+            bookingType: "AIRPORT_PICKUP",
+            pickupTime: undefined,
+          }),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toSatisfy((error: BookingValidationException) => {
+        expect(error).toBeInstanceOf(BookingValidationException);
+        expect(error.getProblemDetails().errors).toEqual([
+          {
+            field: "flightNumber",
+            message: "Flight number is required for AIRPORT_PICKUP bookings",
+          },
+        ]);
+        return true;
+      });
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({
+            bookingType: "AIRPORT_PICKUP",
+            flightNumber: "BA74",
+            pickupTime: undefined,
+            sameLocation: true,
+          }),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toSatisfy((error: BookingValidationException) => {
+        expect(error).toBeInstanceOf(BookingValidationException);
+        expect(error.getProblemDetails().errors).toEqual([
+          {
+            field: "sameLocation",
+            message: "Airport pickup bookings require a different drop-off location",
+          },
+        ]);
+        return true;
+      });
+      expect(flightAwareService.searchAirportPickupFlight).not.toHaveBeenCalled();
     });
 
     it("should throw FlightNotFoundException when flight is not found", async () => {

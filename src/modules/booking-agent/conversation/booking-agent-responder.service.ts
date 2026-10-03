@@ -512,6 +512,10 @@ export class BookingAgentResponderService {
   }
 
   private resolveDurationDays(draft: BookingDraft): number | null {
+    if (draft.bookingType === "AIRPORT_PICKUP") {
+      return null;
+    }
+
     if (typeof draft.durationDays === "number" && draft.durationDays > 0) {
       return draft.durationDays;
     }
@@ -574,6 +578,17 @@ export class BookingAgentResponderService {
   }
 
   private buildBookingWindowLines(draft: BookingDraft): string[] {
+    if (draft.bookingType === "AIRPORT_PICKUP" && draft.pickupDateTime && draft.dropoffDateTime) {
+      const pickup = new Date(draft.pickupDateTime);
+      const dropoff = new Date(draft.dropoffDateTime);
+      if (!Number.isNaN(pickup.getTime()) && !Number.isNaN(dropoff.getTime())) {
+        return [
+          `*🕐 Pickup:* ${formatInTimeZone(pickup, "Africa/Lagos", "do MMM yyyy, h:mm aaa")}`,
+          `*🏁 Estimated drop-off:* ${formatInTimeZone(dropoff, "Africa/Lagos", "do MMM yyyy, h:mm aaa")}`,
+        ];
+      }
+    }
+
     if (!draft.pickupDate || !draft.pickupTime) {
       return draft.pickupDate ? [`*📆 Date:* ${draft.pickupDate}`] : [];
     }

@@ -10,8 +10,10 @@ export type { InteractiveReply, VehicleSearchOption } from "../booking-agent.int
 export interface BookingDraft {
   bookingType?: BookingType;
   pickupDate?: string;
+  pickupDateTime?: string;
   pickupTime?: string;
   dropoffDate?: string;
+  dropoffDateTime?: string;
   durationDays?: number;
   pickupLocation?: string;
   dropoffLocation?: string;
@@ -255,14 +257,16 @@ export interface PersistedState {
 }
 
 export function convertToExtractedParams(draft: BookingDraft): ExtractedAiSearchParams {
+  const useDerivedAirportWindow = draft.bookingType === "AIRPORT_PICKUP";
   return {
     color: draft.color,
     make: toOptionalVehicleFilter(draft.make),
     model: toOptionalVehicleFilter(draft.model),
     vehicleType: draft.vehicleType,
     serviceTier: draft.serviceTier,
-    from: draft.pickupDate,
-    to: draft.dropoffDate,
+    from: useDerivedAirportWindow && draft.pickupDateTime ? draft.pickupDateTime : draft.pickupDate,
+    to:
+      useDerivedAirportWindow && draft.dropoffDateTime ? draft.dropoffDateTime : draft.dropoffDate,
     bookingType: draft.bookingType,
     pickupTime: draft.pickupTime,
     pickupLocation: draft.pickupLocation,

@@ -182,23 +182,21 @@ export class BookingLegService {
   ): GeneratedLeg[] {
     const { startDate, flightArrivalTime, driveTimeMinutes } = input;
 
-    // If flight arrival time is provided, use it for precise timing
-    // Otherwise, use startDate as a fallback (should already have buffer applied)
-    const baseTime = flightArrivalTime ?? startDate;
-
-    // Add 40-minute buffer after flight arrival
-    const legStartTime = new Date(baseTime.getTime() + AIRPORT_PICKUP_BUFFER_MINUTES * 60 * 1000);
+    // API clients send startDate with the pickup buffer already applied.
+    const legStartTime = flightArrivalTime
+      ? new Date(flightArrivalTime.getTime() + AIRPORT_PICKUP_BUFFER_MINUTES * 60 * 1000)
+      : new Date(startDate);
 
     // Calculate end time based on drive time with 20% buffer
     // Default to 2 hours if drive time is not provided
     const effectiveDriveTime = driveTimeMinutes ?? 120;
     const bufferedDriveTimeMs =
-      effectiveDriveTime * AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER * 60 * 1000;
+      Math.ceil(effectiveDriveTime * AIRPORT_PICKUP_DRIVE_TIME_MULTIPLIER) * 60 * 1000;
     const legEndTime = new Date(legStartTime.getTime() + bufferedDriveTimeMs);
 
     return [
       {
-        legDate: startDate,
+        legDate: legStartTime,
         legStartTime,
         legEndTime,
       },
