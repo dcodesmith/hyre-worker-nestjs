@@ -12,7 +12,7 @@ import type {
   CategoryName,
   PublicCarDto,
 } from "./dto/car-categories.dto";
-import { CATEGORY_DEFINITIONS, MIN_CATEGORY_SIZE } from "./dto/car-categories.dto";
+import { CATEGORY_DEFINITIONS } from "./dto/car-categories.dto";
 
 @Injectable()
 export class CarCategoriesService {
@@ -28,7 +28,7 @@ export class CarCategoriesService {
   /**
    * Categorizes cars into meaningful groups for display.
    * Returns an array of categories with name, title, type, and cars.
-   * Only includes categories that meet the minimum size threshold.
+   * Includes every category that has at least one matching car.
    */
   private categorizeCars(cars: PublicCarDto[]): CarCategory[] {
     const buckets = Object.fromEntries(
@@ -43,8 +43,7 @@ export class CarCategoriesService {
       }
     }
 
-    // Build result array, only including categories that meet minimum size
-    return CATEGORY_DEFINITIONS.filter(({ name }) => buckets[name].length >= MIN_CATEGORY_SIZE).map(
+    return CATEGORY_DEFINITIONS.filter(({ name }) => buckets[name].length > 0).map(
       ({ name, title, type }) => ({
         name,
         title,

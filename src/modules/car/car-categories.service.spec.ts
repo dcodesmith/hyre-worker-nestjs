@@ -204,19 +204,23 @@ describe("CarCategoriesService", () => {
       expect(popularCategory?.cars).toHaveLength(3);
     });
 
-    it("excludes categories with less than 3 cars", async () => {
+    it("includes categories that have only one matching car", async () => {
       const cars = [
-        createMockCar({ id: "suv-1", vehicleType: VehicleType.SUV }),
-        createMockCar({ id: "suv-2", vehicleType: VehicleType.SUV }),
-        // Only 2 SUVs - should not show in categories
+        createMockCar({
+          id: "suv-1",
+          make: "Mercedes",
+          vehicleType: VehicleType.SUV,
+          serviceTier: ServiceTier.EXECUTIVE,
+        }),
       ];
       databaseServiceMock.car.findMany.mockResolvedValueOnce(cars);
 
       const result = await service.getCategorizedCars({ limit: 50 });
 
-      const suvsCategory = findCategory(result.categories, "suv");
-      expect(suvsCategory).toBeUndefined();
-      expect(result.allCars).toHaveLength(2);
+      expect(findCategory(result.categories, "suv")?.cars.map((car) => car.id)).toEqual(["suv-1"]);
+      expect(findCategory(result.categories, "executive")?.cars).toHaveLength(1);
+      expect(findCategory(result.categories, "sedan")).toBeUndefined();
+      expect(result.allCars).toHaveLength(1);
     });
 
     it("allows cars to appear in multiple categories", async () => {
