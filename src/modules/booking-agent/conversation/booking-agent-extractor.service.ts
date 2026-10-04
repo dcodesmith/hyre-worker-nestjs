@@ -315,7 +315,9 @@ export class BookingAgentExtractorService {
       return { intent: "cancel", draftPatch: {}, confidence: 1 };
     }
 
-    const vehicleType = VEHICLE_TYPE_REPLIES[normalized as keyof typeof VEHICLE_TYPE_REPLIES];
+    const vehicleType = Object.hasOwn(VEHICLE_TYPE_REPLIES, normalized)
+      ? VEHICLE_TYPE_REPLIES[normalized as keyof typeof VEHICLE_TYPE_REPLIES]
+      : undefined;
     const missingFields = getMissingRequiredFields(draft);
     if (
       stage === "collecting" &&

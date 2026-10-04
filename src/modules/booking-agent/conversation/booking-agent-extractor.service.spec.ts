@@ -776,6 +776,34 @@ describe("BookingAgentExtractorService", () => {
       },
     );
 
+    it("does not treat an inherited object key as a vehicle type", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "unknown",
+                draftPatch: {},
+                confidence: 0.2,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "constructor",
+          stage: "collecting",
+          draft: airportPickupAwaitingVehicle,
+        }),
+      );
+
+      expect(result.intent).toBe("unknown");
+      expect(result.draftPatch).toEqual({});
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+
     it("uses the OpenAI result for SUV when the draft is empty", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
         choices: [
