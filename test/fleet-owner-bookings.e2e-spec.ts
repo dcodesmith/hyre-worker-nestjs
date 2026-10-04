@@ -126,15 +126,10 @@ describe("Fleet Owner Booking E2E Tests", () => {
     expect(response.body.meta).toEqual(
       expect.objectContaining({ page: 1, limit: 100, total: expect.any(Number) }),
     );
-    expect(response.body.items).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: visibleBooking.id })]),
-    );
-    expect(response.body.items).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: unpaidBooking.id }),
-        expect.objectContaining({ id: otherOwnerBooking.id }),
-      ]),
-    );
+    const ids = response.body.items.map((item: { id: string }) => item.id);
+    expect(ids).toContain(visibleBooking.id);
+    expect(ids).not.toContain(unpaidBooking.id);
+    expect(ids).not.toContain(otherOwnerBooking.id);
     expect(JSON.stringify(response.body)).not.toContain(customerEmail);
     expect(JSON.stringify(response.body)).not.toContain(customerPhone);
   });
