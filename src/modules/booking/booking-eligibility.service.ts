@@ -589,7 +589,7 @@ export class BookingEligibilityService {
               'REFUND_FAILED'
             )
               THEN "referralCreditsUsed"
-            WHEN "paymentStatus" = 'UNPAID' AND "status" <> 'CANCELLED'
+            WHEN "paymentStatus" = 'UNPAID' AND "status" NOT IN ('EXPIRED', 'CANCELLED')
               THEN "referralCreditsReserved"
             ELSE 0
           END

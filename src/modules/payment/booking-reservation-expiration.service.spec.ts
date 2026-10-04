@@ -43,7 +43,7 @@ describe("BookingReservationExpirationService", () => {
     findTransactionByReference: vi.fn(),
   };
   const bookingReservationService = {
-    cancelExpiredReservation: vi.fn(),
+    expireReservation: vi.fn(),
   };
   const extensionReservationService = {
     cancelExpiredReservation: vi.fn(),
@@ -95,7 +95,7 @@ describe("BookingReservationExpirationService", () => {
         status: "successful",
       }),
     );
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     expect(databaseService.booking.findUnique).toHaveBeenCalledWith({
       where: { id: "booking-1" },
       select: { status: true, paymentStatus: true },
@@ -126,15 +126,15 @@ describe("BookingReservationExpirationService", () => {
     "releases a reservation after Flutterwave confirms there is no successful payment",
     async (providerResult) => {
       flutterwaveService.findTransactionByReference.mockResolvedValue(providerResult);
-      bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+      bookingReservationService.expireReservation.mockResolvedValue(true);
       databaseService.booking.findUnique.mockResolvedValue({
-        status: "CANCELLED",
+        status: "EXPIRED",
         paymentStatus: "UNPAID",
       });
 
       await expect(service.reconcileExpiredReservations()).resolves.toBe(1);
 
-      expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+      expect(bookingReservationService.expireReservation).toHaveBeenCalledWith("booking-1");
       expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
     },
   );
@@ -144,7 +144,7 @@ describe("BookingReservationExpirationService", () => {
 
     await expect(service.reconcileExpiredReservations()).resolves.toBe(0);
 
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
     expect(reportBackgroundFailure).toHaveBeenCalledTimes(1);
     expect(reportBackgroundFailure).toHaveBeenCalledWith(
@@ -197,7 +197,7 @@ describe("BookingReservationExpirationService", () => {
 
     await expect(service.reconcileExpiredReservations()).resolves.toBe(0);
 
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
   });
 
@@ -207,13 +207,13 @@ describe("BookingReservationExpirationService", () => {
       paymentIntent: "booking-1",
     });
     flutterwaveService.findTransactionByReference.mockResolvedValue(null);
-    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+    bookingReservationService.expireReservation.mockResolvedValue(true);
     databaseService.booking.findUnique.mockResolvedValue({
-      status: "CANCELLED",
+      status: "EXPIRED",
       paymentStatus: "UNPAID",
     });
 
-    await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("cancelled");
+    await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("expired");
 
     expect(databaseService.booking.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -224,7 +224,7 @@ describe("BookingReservationExpirationService", () => {
         }),
       }),
     );
-    expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+    expect(bookingReservationService.expireReservation).toHaveBeenCalledWith("booking-1");
   });
 
   it("does not query Flutterwave when an on-demand reservation is not expired", async () => {
@@ -237,7 +237,7 @@ describe("BookingReservationExpirationService", () => {
     await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("retained");
 
     expect(flutterwaveService.findTransactionByReference).not.toHaveBeenCalled();
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     expect(databaseService.booking.findUnique).toHaveBeenCalledWith({
       where: { id: "booking-1" },
       select: { status: true, paymentStatus: true },
@@ -247,9 +247,9 @@ describe("BookingReservationExpirationService", () => {
   it("reconciles both deterministic references when the stored payment intent is missing", async () => {
     databaseService.booking.findMany.mockResolvedValue([{ id: "booking-1", paymentIntent: null }]);
     flutterwaveService.findTransactionByReference.mockResolvedValue(null);
-    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+    bookingReservationService.expireReservation.mockResolvedValue(true);
     databaseService.booking.findUnique.mockResolvedValue({
-      status: "CANCELLED",
+      status: "EXPIRED",
       paymentStatus: "UNPAID",
     });
 
@@ -260,7 +260,7 @@ describe("BookingReservationExpirationService", () => {
       2,
       "booking_booking-1",
     );
-    expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+    expect(bookingReservationService.expireReservation).toHaveBeenCalledWith("booking-1");
   });
 
   it("completes payment when the fallback reference resolves a successful transaction", async () => {
@@ -278,7 +278,7 @@ describe("BookingReservationExpirationService", () => {
     expect(chargeCompletedHandler.handle).toHaveBeenCalledWith(
       expect.objectContaining({ tx_ref: "booking_booking-1" }),
     );
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
   });
 
   it("confirms a successful expired extension payment", async () => {
@@ -320,7 +320,7 @@ describe("BookingReservationExpirationService", () => {
     expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
       "extension-1",
     );
-    expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+    expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
   });
 
   it("reconciles one expired extension on demand", async () => {
@@ -335,7 +335,7 @@ describe("BookingReservationExpirationService", () => {
       paymentStatus: "UNPAID",
     });
 
-    await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe("cancelled");
+    await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe("expired");
 
     expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
       "extension-1",
@@ -349,9 +349,9 @@ describe("BookingReservationExpirationService", () => {
         paymentIntent: `booking-${index + 1}`,
       })),
     );
-    bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+    bookingReservationService.expireReservation.mockResolvedValue(true);
     databaseService.booking.findUnique.mockResolvedValue({
-      status: "CANCELLED",
+      status: "EXPIRED",
       paymentStatus: "UNPAID",
     });
 
@@ -404,7 +404,7 @@ describe("BookingReservationExpirationService", () => {
       confirmed: { status: "CONFIRMED", paymentStatus: "PAID" },
       active: { status: "ACTIVE", paymentStatus: "PAID" },
       completed: { status: "COMPLETED", paymentStatus: "PAID" },
-      cancelled: { status: "CANCELLED", paymentStatus: "UNPAID" },
+      expired: { status: "EXPIRED", paymentStatus: "UNPAID" },
     } as const;
 
     it.each([
@@ -421,18 +421,18 @@ describe("BookingReservationExpirationService", () => {
 
         expect(flutterwaveService.findTransactionByReference).not.toHaveBeenCalled();
         expect(chargeCompletedHandler.handle).not.toHaveBeenCalled();
-        expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+        expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
       },
     );
 
-    it("classifies an unpaid cancelled booking as cancelled", async () => {
+    it("classifies an unpaid expired booking as expired", async () => {
       databaseService.booking.findFirst.mockResolvedValue(null);
-      databaseService.booking.findUnique.mockResolvedValue(bookingRows.cancelled);
+      databaseService.booking.findUnique.mockResolvedValue(bookingRows.expired);
 
-      await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("cancelled");
+      await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("expired");
 
       expect(flutterwaveService.findTransactionByReference).not.toHaveBeenCalled();
-      expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+      expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -440,6 +440,7 @@ describe("BookingReservationExpirationService", () => {
       ["paid but still pending", { status: "PENDING", paymentStatus: "PAID" }],
       ["unpaid but confirmed", { status: "CONFIRMED", paymentStatus: "UNPAID" }],
       ["paid and cancelled", { status: "CANCELLED", paymentStatus: "PAID" }],
+      ["unpaid and cancelled", { status: "CANCELLED", paymentStatus: "UNPAID" }],
       ["unpaid and pending", { status: "PENDING", paymentStatus: "UNPAID" }],
       ["refund processing", { status: "CONFIRMED", paymentStatus: "REFUND_PROCESSING" }],
       ["partially refunded", { status: "ACTIVE", paymentStatus: "PARTIALLY_REFUNDED" }],
@@ -468,7 +469,7 @@ describe("BookingReservationExpirationService", () => {
       await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("retained");
 
       expect(chargeCompletedHandler.handle).toHaveBeenCalled();
-      expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+      expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     });
 
     it("confirms a booking when a successful charge leaves it paid and confirmed", async () => {
@@ -482,30 +483,30 @@ describe("BookingReservationExpirationService", () => {
       await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("confirmed");
 
       expect(chargeCompletedHandler.handle).toHaveBeenCalled();
-      expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+      expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     });
 
-    it("classifies a cancellation from the persisted booking, not the cancel return value", async () => {
+    it("classifies expiration from the persisted booking, not the expire return value", async () => {
       databaseService.booking.findFirst.mockResolvedValue({
         id: "booking-1",
         paymentIntent: "booking-1",
       });
       flutterwaveService.findTransactionByReference.mockResolvedValue(null);
-      bookingReservationService.cancelExpiredReservation.mockResolvedValue(false);
-      databaseService.booking.findUnique.mockResolvedValue(bookingRows.cancelled);
+      bookingReservationService.expireReservation.mockResolvedValue(false);
+      databaseService.booking.findUnique.mockResolvedValue(bookingRows.expired);
 
-      await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("cancelled");
+      await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("expired");
 
-      expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith("booking-1");
+      expect(bookingReservationService.expireReservation).toHaveBeenCalledWith("booking-1");
     });
 
-    it("retains a booking when cancellation does not persist an unpaid cancelled row", async () => {
+    it("retains a booking when expiration does not persist an unpaid expired row", async () => {
       databaseService.booking.findFirst.mockResolvedValue({
         id: "booking-1",
         paymentIntent: "booking-1",
       });
       flutterwaveService.findTransactionByReference.mockResolvedValue(null);
-      bookingReservationService.cancelExpiredReservation.mockResolvedValue(true);
+      bookingReservationService.expireReservation.mockResolvedValue(true);
       databaseService.booking.findUnique.mockResolvedValue({
         status: "PENDING",
         paymentStatus: "UNPAID",
@@ -514,10 +515,10 @@ describe("BookingReservationExpirationService", () => {
       await expect(service.reconcileExpiredReservation("booking-1")).resolves.toBe("retained");
     });
 
-    it("counts confirmed and cancelled bookings and skips retained ones", async () => {
+    it("counts confirmed and expired bookings and skips retained ones", async () => {
       databaseService.booking.findMany.mockResolvedValue([
         { id: "paid-confirmed", paymentIntent: "paid-confirmed" },
-        { id: "unpaid-cancelled", paymentIntent: "unpaid-cancelled" },
+        { id: "unpaid-expired", paymentIntent: "unpaid-expired" },
         { id: "still-pending", paymentIntent: "still-pending" },
         { id: "provider-pending", paymentIntent: "provider-pending" },
       ]);
@@ -535,7 +536,7 @@ describe("BookingReservationExpirationService", () => {
       databaseService.booking.findUnique.mockImplementation(
         async (args: { where: { id: string } }) => {
           if (args.where.id === "paid-confirmed") return bookingRows.confirmed;
-          if (args.where.id === "unpaid-cancelled") return bookingRows.cancelled;
+          if (args.where.id === "unpaid-expired") return bookingRows.expired;
           return { status: "PENDING", paymentStatus: "UNPAID" };
         },
       );
@@ -543,15 +544,13 @@ describe("BookingReservationExpirationService", () => {
       await expect(service.reconcileExpiredReservations()).resolves.toBe(2);
 
       expect(chargeCompletedHandler.handle).toHaveBeenCalledTimes(2);
-      expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledTimes(1);
-      expect(bookingReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
-        "unpaid-cancelled",
-      );
+      expect(bookingReservationService.expireReservation).toHaveBeenCalledTimes(1);
+      expect(bookingReservationService.expireReservation).toHaveBeenCalledWith("unpaid-expired");
     });
 
     it.each([
       ["ACTIVE", { status: "ACTIVE", paymentStatus: "PAID" }, "confirmed"],
-      ["CANCELLED", { status: "CANCELLED", paymentStatus: "UNPAID" }, "cancelled"],
+      ["CANCELLED", { status: "CANCELLED", paymentStatus: "UNPAID" }, "expired"],
     ] as const)(
       "classifies an already settled %s extension as %s without calling the provider",
       async (_status, row, outcome) => {
@@ -636,7 +635,7 @@ describe("BookingReservationExpirationService", () => {
       expect(extensionReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
     });
 
-    it("classifies an extension cancellation attempt from the persisted row", async () => {
+    it("classifies an expired extension from the persisted row", async () => {
       databaseService.extension.findFirst.mockResolvedValue({
         id: "extension-1",
         paymentIntent: "ext-idem-1",
@@ -648,7 +647,7 @@ describe("BookingReservationExpirationService", () => {
         paymentStatus: "UNPAID",
       });
 
-      await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe("cancelled");
+      await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe("expired");
 
       expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
         "extension-1",
@@ -670,7 +669,7 @@ describe("BookingReservationExpirationService", () => {
       await expect(service.reconcileExpiredExtension("extension-1")).resolves.toBe("retained");
     });
 
-    it("counts confirmed and cancelled extensions and skips retained ones", async () => {
+    it("counts confirmed and expired extensions and skips retained ones", async () => {
       databaseService.booking.findMany.mockResolvedValue([]);
       databaseService.extension.findMany.mockResolvedValue([
         { id: "ext-confirmed", paymentIntent: "ext-confirmed" },
@@ -707,7 +706,7 @@ describe("BookingReservationExpirationService", () => {
       expect(extensionReservationService.cancelExpiredReservation).toHaveBeenCalledWith(
         "ext-cancelled",
       );
-      expect(bookingReservationService.cancelExpiredReservation).not.toHaveBeenCalled();
+      expect(bookingReservationService.expireReservation).not.toHaveBeenCalled();
     });
   });
 });

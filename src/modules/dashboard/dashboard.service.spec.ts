@@ -1,5 +1,5 @@
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, PayoutTransactionStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus, PayoutTransactionStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
@@ -54,6 +54,17 @@ describe("DashboardService", () => {
 
     const result = await service.getOverview("owner-1");
 
+    expect(databaseServiceMock.booking.findMany).toHaveBeenCalledWith({
+      where: {
+        deletedAt: null,
+        paymentStatus: { not: PaymentStatus.UNPAID },
+        car: { ownerId: "owner-1" },
+      },
+      select: {
+        status: true,
+        chauffeurId: true,
+      },
+    });
     expect(result).toMatchObject({
       totalBookings: 4,
       completedBookings: 2,

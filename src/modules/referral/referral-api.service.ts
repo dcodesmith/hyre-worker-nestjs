@@ -289,7 +289,7 @@ export class ReferralApiService {
       this.databaseService.booking.aggregate({
         where: {
           paymentStatus: PaymentStatus.UNPAID,
-          status: { notIn: [BookingStatus.CANCELLED] },
+          status: { notIn: [BookingStatus.EXPIRED, BookingStatus.CANCELLED] },
           userId,
           referralCreditsReserved: { gt: 0 },
         },

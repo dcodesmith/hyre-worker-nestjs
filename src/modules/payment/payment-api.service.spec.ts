@@ -203,11 +203,11 @@ describe("PaymentApiService", () => {
         .mockResolvedValueOnce(verifyingStatus)
         .mockResolvedValueOnce({
           ...verifyingStatus,
-          bookingStatus: BookingStatus.CANCELLED,
+          bookingStatus: BookingStatus.EXPIRED,
           lifecycleState: "EXPIRED",
         });
       bookingReservationExpirationService.reconcileExpiredReservation.mockResolvedValueOnce(
-        "cancelled",
+        "expired",
       );
 
       await expect(
@@ -223,7 +223,7 @@ describe("PaymentApiService", () => {
       expect(bookingReadService.getBookingPaymentStatus).toHaveBeenCalledTimes(2);
     });
 
-    it.each(["CONFIRMED", "EXPIRED"] as const)(
+    it.each(["CONFIRMED", "CANCELLED", "EXPIRED"] as const)(
       "does not reconcile an already terminal %s booking",
       async (lifecycleState) => {
         bookingReadService.getBookingPaymentStatus.mockResolvedValueOnce({
@@ -288,7 +288,9 @@ describe("PaymentApiService", () => {
       expect(databaseService.booking.updateMany).toHaveBeenCalledWith({
         where: {
           id: "booking-123",
-          status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+          status: {
+            notIn: [BookingStatus.EXPIRED, BookingStatus.CANCELLED, BookingStatus.REJECTED],
+          },
           paymentStatus: PaymentStatus.UNPAID,
           paymentIntent: null,
           paymentSessionExpiresAt: null,
@@ -511,6 +513,22 @@ describe("PaymentApiService", () => {
       );
     });
 
+    it("throws PaymentEntityNotPayableException when booking is expired", async () => {
+      const booking = createBooking({
+        id: "booking-123",
+        userId: mockUserInfo.id,
+        status: BookingStatus.EXPIRED,
+        paymentStatus: PaymentStatus.UNPAID,
+      });
+
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(booking);
+
+      await expect(service.initializePayment(validBookingDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(databaseService.booking.updateMany).not.toHaveBeenCalled();
+    });
+
     it("throws PaymentEntityNotPayableException when booking is cancelled", async () => {
       const booking = createBooking({
         id: "booking-123",
@@ -710,6 +728,29 @@ describe("PaymentApiService", () => {
         PaymentEntityNotPayableException,
       );
       expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("throws PaymentEntityNotPayableException when the parent booking is expired", async () => {
+      const extensionDto = {
+        type: "extension" as const,
+        entityId: "extension-123",
+        amount: 5000,
+        callbackUrl: "https://example.com/callback",
+      };
+
+      const extension = createExtension({
+        id: "extension-123",
+        status: "PENDING",
+        paymentStatus: PaymentStatus.UNPAID,
+        bookingLeg: { booking: { userId: mockUserInfo.id, status: BookingStatus.EXPIRED } },
+      });
+
+      vi.mocked(databaseService.extension.findUnique).mockResolvedValueOnce(extension);
+
+      await expect(service.initializePayment(extensionDto, mockUserInfo)).rejects.toThrow(
+        PaymentEntityNotPayableException,
+      );
+      expect(extensionReservationService.claimPaymentSession).not.toHaveBeenCalled();
     });
 
     it("throws PaymentEntityNotPayableException when the parent booking is cancelled", async () => {

@@ -140,8 +140,9 @@ describe("Dashboard E2E Tests", () => {
       .set("Cookie", ownerCookie);
 
     expect(response.status).toBe(HttpStatus.OK);
-    expect(response.body.totalBookings).toBeGreaterThanOrEqual(3);
-    expect(response.body.completedBookings).toBeGreaterThanOrEqual(2);
+    expect(response.body.totalBookings).toBe(2);
+    expect(response.body.activeBookings).toBe(0);
+    expect(response.body.completedBookings).toBe(2);
     expect(response.body.ownerDriverTrips).toBe(1);
     expect(response.body.chauffeurTrips).toBeGreaterThanOrEqual(1);
   });

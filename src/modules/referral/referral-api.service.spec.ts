@@ -1,6 +1,8 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import {
   BookingReferralStatus,
+  BookingStatus,
+  PaymentStatus,
   ReferralIncentiveType,
   ReferralProgramStatus,
 } from "@prisma/client";
@@ -191,6 +193,15 @@ describe("ReferralApiService", () => {
     expect(result.stats.totalEarned).toBe(2500);
     expect(result.stats.totalUsed).toBe(500);
     expect(result.stats.availableCredits).toBe(1700);
+    expect(mockDatabaseService.booking.aggregate).toHaveBeenNthCalledWith(2, {
+      where: {
+        paymentStatus: PaymentStatus.UNPAID,
+        status: { notIn: [BookingStatus.EXPIRED, BookingStatus.CANCELLED] },
+        userId: "user-1",
+        referralCreditsReserved: { gt: 0 },
+      },
+      _sum: { referralCreditsReserved: true },
+    });
     expect(result.rewards[0]?.amount).toBe(1500);
     expect(result.rewards[0]?.refereeName).toBe("Referee Name");
   });
