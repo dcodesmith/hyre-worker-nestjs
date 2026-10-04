@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { DatabaseService } from "../database/database.service";
 import { isAssignableBookingPaymentStatus } from "./booking.const";
 import {
@@ -170,14 +171,7 @@ export class FleetOwnerBookingReadService {
     if (error instanceof BookingException) {
       throw error;
     }
-    this.logger.error(
-      {
-        ...context,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      },
-      message,
-    );
+    this.logger.error({ ...context, err: toLogError(error) }, message);
     throw new BookingFetchFailedException();
   }
 }

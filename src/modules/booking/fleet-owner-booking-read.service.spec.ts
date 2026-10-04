@@ -236,7 +236,10 @@ describe("FleetOwnerBookingReadService", () => {
         BookingFetchFailedException,
       );
       expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ ownerId: "owner-1", error: "db down" }),
+        expect.objectContaining({
+          ownerId: "owner-1",
+          err: expect.objectContaining({ message: "db down" }),
+        }),
         "Failed to fetch fleet-owner bookings",
       );
     });
@@ -356,7 +359,11 @@ describe("FleetOwnerBookingReadService", () => {
         BookingFetchFailedException,
       );
       expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: "booking-1", ownerId: "owner-1", error: "db down" }),
+        expect.objectContaining({
+          bookingId: "booking-1",
+          ownerId: "owner-1",
+          err: expect.objectContaining({ message: "db down" }),
+        }),
         "Failed to fetch fleet-owner booking",
       );
     });
