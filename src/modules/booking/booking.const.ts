@@ -1,4 +1,4 @@
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 
 /**
@@ -34,6 +34,13 @@ export const BLOCKING_BOOKING_STATUSES = [
   BookingStatus.CONFIRMED,
   BookingStatus.ACTIVE,
 ] as const;
+export const ASSIGNABLE_BOOKING_PAYMENT_STATUSES = [
+  PaymentStatus.PAID,
+  PaymentStatus.PARTIALLY_REFUNDED,
+  PaymentStatus.REFUND_FAILED,
+] as const;
+export const isAssignableBookingPaymentStatus = (paymentStatus: PaymentStatus) =>
+  ASSIGNABLE_BOOKING_PAYMENT_STATUSES.some((status) => status === paymentStatus);
 
 /**
  * Constants for leg generation

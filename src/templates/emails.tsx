@@ -611,10 +611,7 @@ export function FleetOwnerNewBookingEmail({
   const previewText = "New Booking Alert - Action Required";
   const { websiteUrl } = getEmailPublicEnv();
   const firstName = firstNameFrom(booking.ownerName);
-  const bookingLink = makeWebsiteUrl(
-    websiteUrl,
-    `/fleet-owner/bookings/${booking.id}?startDate=${encodeURIComponent(booking.startDate)}`,
-  );
+  const bookingLink = makeWebsiteUrl(websiteUrl, `/fleet-owner/bookings/${booking.id}`);
 
   return (
     <EmailTemplate previewText={previewText} pageTitle="New Booking Notification">

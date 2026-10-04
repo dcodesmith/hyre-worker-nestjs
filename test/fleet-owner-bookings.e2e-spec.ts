@@ -18,6 +18,8 @@ describe("Fleet Owner Booking E2E Tests", () => {
   let nonOwnerCookie: string;
   let ownerCarId: string;
   let customerId: string;
+  let customerEmail: string;
+  let customerPhone: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -57,7 +59,15 @@ describe("Fleet Owner Booking E2E Tests", () => {
 
     const ownerCar = await factory.createCar(ownerId, { registrationNumber: "E2E-BOOK-001" });
     ownerCarId = ownerCar.id;
-    customerId = (await factory.createUser({ email: uniqueEmail("fleet-booking-customer") })).id;
+    customerEmail = uniqueEmail("fleet-booking-customer");
+    customerPhone = `+23480${String(Date.now()).slice(-8)}`;
+    customerId = (
+      await factory.createUser({
+        email: customerEmail,
+        name: "Fleet Booking Customer",
+        phoneNumber: customerPhone,
+      })
+    ).id;
   });
 
   beforeEach(async () => {
@@ -88,6 +98,82 @@ describe("Fleet Owner Booking E2E Tests", () => {
       .send({ chauffeurId: "any-chauffeur-id" });
 
     expect(response.status).toBe(HttpStatus.FORBIDDEN);
+  });
+
+  it("lists only the owner's paid bookings without customer contacts", async () => {
+    const visibleBooking = await factory.createBooking(customerId, ownerCarId, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+    const unpaidBooking = await factory.createBooking(customerId, ownerCarId, {
+      status: "PENDING",
+      paymentStatus: "UNPAID",
+    });
+    const otherOwner = await factory.createFleetOwner({
+      email: uniqueEmail("fleet-booking-list-other-owner"),
+    });
+    const otherOwnerCar = await factory.createCar(otherOwner.id);
+    const otherOwnerBooking = await factory.createBooking(customerId, otherOwnerCar.id, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+
+    const response = await request(app.getHttpServer())
+      .get("/api/fleet-owner/bookings?page=1&limit=100")
+      .set("Cookie", ownerCookie);
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.body.meta).toEqual(
+      expect.objectContaining({ page: 1, limit: 100, total: expect.any(Number) }),
+    );
+    const ids = response.body.items.map((item: { id: string }) => item.id);
+    expect(ids).toContain(visibleBooking.id);
+    expect(ids).not.toContain(unpaidBooking.id);
+    expect(ids).not.toContain(otherOwnerBooking.id);
+    expect(JSON.stringify(response.body)).not.toContain(customerEmail);
+    expect(JSON.stringify(response.body)).not.toContain(customerPhone);
+  });
+
+  it("returns an owner-scoped paid booking detail without customer contacts", async () => {
+    const visibleBooking = await factory.createBooking(customerId, ownerCarId, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+    const unpaidBooking = await factory.createBooking(customerId, ownerCarId, {
+      status: "PENDING",
+      paymentStatus: "UNPAID",
+    });
+    const otherOwner = await factory.createFleetOwner({
+      email: uniqueEmail("fleet-booking-detail-other-owner"),
+    });
+    const otherOwnerCar = await factory.createCar(otherOwner.id);
+    const otherOwnerBooking = await factory.createBooking(customerId, otherOwnerCar.id, {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/api/fleet-owner/bookings/${visibleBooking.id}`)
+      .set("Cookie", ownerCookie);
+
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(response.body.booking).toEqual(
+      expect.objectContaining({
+        id: visibleBooking.id,
+        customerName: "Fleet Booking Customer",
+      }),
+    );
+    expect(JSON.stringify(response.body)).not.toContain(customerEmail);
+    expect(JSON.stringify(response.body)).not.toContain(customerPhone);
+
+    await request(app.getHttpServer())
+      .get(`/api/fleet-owner/bookings/${unpaidBooking.id}`)
+      .set("Cookie", ownerCookie)
+      .expect(HttpStatus.NOT_FOUND);
+    await request(app.getHttpServer())
+      .get(`/api/fleet-owner/bookings/${otherOwnerBooking.id}`)
+      .set("Cookie", ownerCookie)
+      .expect(HttpStatus.NOT_FOUND);
   });
 
   it("assigns an approved owner chauffeur to a confirmed booking", async () => {
