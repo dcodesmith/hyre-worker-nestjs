@@ -14,9 +14,11 @@ import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
 import {
+  ASSIGNABLE_BOOKING_PAYMENT_STATUSES,
   BLOCKING_BOOKING_STATUSES,
   DAY_BOOKING_DURATION_HOURS,
   FULL_DAY_DURATION_HOURS,
+  isAssignableBookingPaymentStatus,
 } from "./booking.const";
 import {
   BookingChauffeurNotFoundException,
@@ -30,6 +32,7 @@ import {
   ExtensionPaymentPendingException,
 } from "./booking.error";
 import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
+import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
 import { redactBookingCustomerContacts } from "./booking-contact-privacy.helper";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
@@ -126,6 +129,7 @@ export class BookingUpdateService {
             chauffeurId: true,
             flightId: true,
             status: true,
+            paymentStatus: true,
             startDate: true,
             endDate: true,
           },
@@ -140,25 +144,21 @@ export class BookingUpdateService {
             "Only confirmed bookings can be assigned a chauffeur",
           );
         }
+        if (!isAssignableBookingPaymentStatus(booking.paymentStatus)) {
+          throw new BookingUpdateNotAllowedException(
+            "This booking cannot be assigned a chauffeur in its current payment state",
+          );
+        }
 
-        const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
-          startDate: booking.startDate,
-          endDate: booking.endDate,
-        });
         const chauffeur = await tx.user.findFirst({
           where: {
-            id: chauffeurId,
-            OR: [{ fleetOwnerId: ownerId }, { id: ownerId, isOwnerDriver: true }],
-            chauffeurDisabledAt: null,
-            bookingsAsChauffeur: {
-              none: {
-                id: { not: booking.id },
-                deletedAt: null,
-                status: { in: [...BLOCKING_BOOKING_STATUSES] },
-                startDate: { lt: bufferedEnd },
-                endDate: { gt: bufferedStart },
-              },
-            },
+            ...availableFleetChauffeurWhere({
+              bookingId: booking.id,
+              chauffeurId,
+              endDate: booking.endDate,
+              ownerId,
+              startDate: booking.startDate,
+            }),
           },
           select: {
             id: true,
@@ -189,6 +189,7 @@ export class BookingUpdateService {
             id: booking.id,
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: { in: [...ASSIGNABLE_BOOKING_PAYMENT_STATUSES] },
             chauffeurId: booking.chauffeurId,
             car: { ownerId },
           },

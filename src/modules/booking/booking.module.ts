@@ -34,6 +34,7 @@ import { ExtensionConfirmationService } from "./extension-confirmation.service";
 import { ExtensionCreationIdempotencyService } from "./extension-creation-idempotency.service";
 import { ExtensionReservationService } from "./extension-reservation.service";
 import { FleetOwnerBookingController } from "./fleet-owner-booking.controller";
+import { FleetOwnerBookingReadService } from "./fleet-owner-booking-read.service";
 import { GuestBookingAccessService } from "./guest-booking-access.service";
 
 @Module({
@@ -74,6 +75,7 @@ import { GuestBookingAccessService } from "./guest-booking-access.service";
     BookingCancellationService,
     ExtensionConfirmationService,
     ExtensionReservationService,
+    FleetOwnerBookingReadService,
     GuestBookingAccessService,
   ],
   exports: [

@@ -6,6 +6,7 @@ import { DatabaseService } from "../database/database.service";
 import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
+import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
 import {
   BookingChauffeurNotFoundException,
   BookingNotFoundException,
@@ -571,8 +572,12 @@ describe("BookingUpdateService", () => {
 
   describe("assignChauffeur", () => {
     const bookingWindow = {
+      paymentStatus: PaymentStatus.PAID,
       startDate: new Date("2026-09-20T08:00:00.000Z"),
       endDate: new Date("2026-09-20T20:00:00.000Z"),
+    };
+    const assignablePaymentStatuses = {
+      in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUND_FAILED],
     };
 
     it("assigns approved chauffeur belonging to fleet owner", async () => {
@@ -625,6 +630,7 @@ describe("BookingUpdateService", () => {
           chauffeurId: true,
           flightId: true,
           status: true,
+          paymentStatus: true,
           startDate: true,
           endDate: true,
         },
@@ -635,10 +641,13 @@ describe("BookingUpdateService", () => {
           OR: [{ fleetOwnerId: "owner-1" }, { id: "owner-1", isOwnerDriver: true }],
           chauffeurDisabledAt: null,
           bookingsAsChauffeur: {
-            none: expect.objectContaining({
+            none: {
               id: { not: "booking-1" },
               deletedAt: null,
-            }),
+              status: { in: [...BLOCKING_BOOKING_STATUSES] },
+              startDate: { lt: new Date("2026-09-20T22:00:00.000Z") },
+              endDate: { gt: new Date("2026-09-20T06:00:00.000Z") },
+            },
           },
         },
         select: {
@@ -652,6 +661,7 @@ describe("BookingUpdateService", () => {
             id: "booking-1",
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: assignablePaymentStatuses,
             chauffeurId: null,
             car: { ownerId: "owner-1" },
           },
@@ -812,6 +822,7 @@ describe("BookingUpdateService", () => {
             chauffeurId: "chauffeur-1",
             flightId: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: PaymentStatus.PAID,
             startDate: new Date("2026-09-20T08:00:00.000Z"),
             endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
@@ -842,6 +853,7 @@ describe("BookingUpdateService", () => {
             id: "booking-1",
             deletedAt: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: assignablePaymentStatuses,
             chauffeurId: "chauffeur-1",
             car: { ownerId: "owner-1" },
           },
@@ -864,6 +876,7 @@ describe("BookingUpdateService", () => {
             chauffeurId: null,
             flightId: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: PaymentStatus.PAID,
             startDate: new Date("2026-09-20T08:00:00.000Z"),
             endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
@@ -906,6 +919,86 @@ describe("BookingUpdateService", () => {
       ).rejects.toBeInstanceOf(BookingNotFoundException);
     });
 
+    it.each([PaymentStatus.UNPAID, PaymentStatus.REFUNDED, PaymentStatus.REFUND_PROCESSING])(
+      "blocks chauffeur assignment when payment status is %s",
+      async (paymentStatus) => {
+        const tx = {
+          booking: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "booking-1",
+              chauffeurId: null,
+              flightId: null,
+              status: BookingStatus.CONFIRMED,
+              ...bookingWindow,
+              paymentStatus,
+            }),
+            updateMany: vi.fn(),
+            findUniqueOrThrow: vi.fn(),
+          },
+          user: { findFirst: vi.fn(), findUnique: vi.fn() },
+        };
+        databaseServiceMock.$transaction.mockImplementationOnce(
+          (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+        );
+
+        await expect(
+          service.assignChauffeur("booking-1", "owner-1", "chauffeur-1"),
+        ).rejects.toThrow(
+          "This booking cannot be assigned a chauffeur in its current payment state",
+        );
+        expect(tx.user.findFirst).not.toHaveBeenCalled();
+        expect(tx.booking.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUND_FAILED])(
+      "assigns a chauffeur when payment status is %s",
+      async (paymentStatus) => {
+        const tx = {
+          booking: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "booking-1",
+              chauffeurId: null,
+              flightId: null,
+              status: BookingStatus.CONFIRMED,
+              ...bookingWindow,
+              paymentStatus,
+            }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            findUniqueOrThrow: vi.fn().mockResolvedValue({
+              id: "booking-1",
+              chauffeurId: "chauffeur-1",
+            }),
+          },
+          user: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "chauffeur-1",
+              chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+            }),
+            findUnique: vi.fn(),
+          },
+        };
+        databaseServiceMock.$transaction.mockImplementationOnce(
+          (callback: (trx: typeof tx) => Promise<unknown>) => callback(tx),
+        );
+
+        await expect(
+          service.assignChauffeur("booking-1", "owner-1", "chauffeur-1"),
+        ).resolves.toEqual({
+          id: "booking-1",
+          chauffeurId: "chauffeur-1",
+        });
+        expect(tx.booking.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              status: BookingStatus.CONFIRMED,
+              paymentStatus: assignablePaymentStatuses,
+            }),
+          }),
+        );
+      },
+    );
+
     it("throws when booking is not in confirmed status", async () => {
       const tx = {
         booking: {
@@ -938,6 +1031,7 @@ describe("BookingUpdateService", () => {
             chauffeurId: null,
             flightId: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: PaymentStatus.PAID,
             startDate: new Date("2026-09-20T08:00:00.000Z"),
             endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
@@ -964,6 +1058,7 @@ describe("BookingUpdateService", () => {
             chauffeurId: null,
             flightId: null,
             status: BookingStatus.CONFIRMED,
+            paymentStatus: PaymentStatus.PAID,
             startDate: new Date("2026-09-20T08:00:00.000Z"),
             endDate: new Date("2026-09-20T20:00:00.000Z"),
           }),
