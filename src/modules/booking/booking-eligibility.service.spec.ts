@@ -350,6 +350,7 @@ describe("BookingEligibilityService", () => {
       expect(sql).toContain("REFUND_FAILED");
       expect(sql).toContain('"referralCreditsUsed"');
       expect(sql).toContain('"referralCreditsReserved"');
+      expect(sql).toContain("NOT IN ('EXPIRED', 'CANCELLED')");
       expect(sql).not.toContain("'REFUNDED'");
     });
 

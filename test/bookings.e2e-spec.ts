@@ -198,7 +198,7 @@ describe("Bookings E2E Tests", () => {
         expect(response.body).toEqual(
           expect.objectContaining({
             bookingId: booking.id,
-            bookingStatus: "CANCELLED",
+            bookingStatus: "EXPIRED",
             paymentStatus: "UNPAID",
             lifecycleState: "EXPIRED",
           }),

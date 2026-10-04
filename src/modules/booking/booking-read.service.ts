@@ -304,9 +304,10 @@ export class BookingReadService {
         bookingStatus === BookingStatus.ACTIVE ||
         bookingStatus === BookingStatus.COMPLETED);
     if (isConfirmed) return "CONFIRMED";
-    if (bookingStatus === BookingStatus.CANCELLED) {
+    if (bookingStatus === BookingStatus.EXPIRED) {
       return "EXPIRED";
     }
+    if (bookingStatus === BookingStatus.CANCELLED) return "CANCELLED";
     if (
       bookingStatus === BookingStatus.PENDING &&
       paymentStatus === PaymentStatus.UNPAID &&

@@ -36,7 +36,7 @@ describe("BookingReservationService", () => {
     service = module.get(BookingReservationService);
   });
 
-  it("cancels an expired unpaid reservation after confirming no successful payment", async () => {
+  it("expires an unpaid reservation after confirming no successful payment", async () => {
     databaseService.booking.findUnique.mockResolvedValue({ carId: "car-1" });
     tx.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([
       {
@@ -50,7 +50,7 @@ describe("BookingReservationService", () => {
     bookingEligibilityService.releaseReferralReservation.mockResolvedValue({ released: true });
     tx.booking.updateMany.mockResolvedValue({ count: 1 });
 
-    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(true);
+    await expect(service.expireReservation("booking-1")).resolves.toBe(true);
 
     expect(bookingEligibilityService.releaseReferralReservation).toHaveBeenCalledWith(
       tx,
@@ -58,10 +58,11 @@ describe("BookingReservationService", () => {
     );
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          status: BookingStatus.CANCELLED,
-          cancellationReason: "Payment session expired",
-        }),
+        data: {
+          status: BookingStatus.EXPIRED,
+          referralCreditsReserved: 0,
+          referralCreditsUsed: 0,
+        },
       }),
     );
   });
@@ -78,7 +79,7 @@ describe("BookingReservationService", () => {
     ]);
     tx.payment.count.mockResolvedValue(1);
 
-    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(false);
+    await expect(service.expireReservation("booking-1")).resolves.toBe(false);
 
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
@@ -110,14 +111,14 @@ describe("BookingReservationService", () => {
       },
     ]);
 
-    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(false);
+    await expect(service.expireReservation("booking-1")).resolves.toBe(false);
 
     expect(tx.payment.count).not.toHaveBeenCalled();
     expect(bookingEligibilityService.releaseReferralReservation).not.toHaveBeenCalled();
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 
-  it("cancels a stale reservation that never received a payment-session expiry", async () => {
+  it("expires a stale reservation that never received a payment-session expiry", async () => {
     databaseService.booking.findUnique.mockResolvedValue({ carId: "car-1" });
     tx.$queryRaw.mockResolvedValueOnce([{ id: "car-1" }]).mockResolvedValueOnce([
       {
@@ -132,7 +133,7 @@ describe("BookingReservationService", () => {
     bookingEligibilityService.releaseReferralReservation.mockResolvedValue({ released: true });
     tx.booking.updateMany.mockResolvedValue({ count: 1 });
 
-    await expect(service.cancelExpiredReservation("booking-1")).resolves.toBe(true);
+    await expect(service.expireReservation("booking-1")).resolves.toBe(true);
 
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -144,6 +145,11 @@ describe("BookingReservationService", () => {
             }),
           ]),
         }),
+        data: {
+          status: BookingStatus.EXPIRED,
+          referralCreditsReserved: 0,
+          referralCreditsUsed: 0,
+        },
       }),
     );
   });

@@ -76,6 +76,7 @@ export type BookingPaymentLifecycleState =
   | "VERIFYING"
   | "CONFIRMED"
   | "FAILED"
+  | "CANCELLED"
   | "EXPIRED";
 
 export interface BookingPaymentStatusResponse {

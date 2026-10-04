@@ -508,7 +508,7 @@ describe("BookingReadService", () => {
     ).rejects.toBeInstanceOf(BookingNotFoundException);
   });
 
-  it("returns terminal failed and expired payment lifecycle states", async () => {
+  it("returns terminal failed, cancelled, and expired payment lifecycle states", async () => {
     const baseBooking = {
       id: "booking-123",
       bookingReference: "BK-123",
@@ -531,6 +531,11 @@ describe("BookingReadService", () => {
         ...baseBooking,
         status: "CANCELLED",
         customerPayments: [],
+      })
+      .mockResolvedValueOnce({
+        ...baseBooking,
+        status: "EXPIRED",
+        customerPayments: [],
       });
 
     await expect(
@@ -544,7 +549,13 @@ describe("BookingReadService", () => {
         { bookingId: "booking-123", txRef: "tx-ref-123" },
         customerSessionUser,
       ),
-    ).resolves.toMatchObject({ lifecycleState: "EXPIRED" });
+    ).resolves.toMatchObject({ bookingStatus: "CANCELLED", lifecycleState: "CANCELLED" });
+    await expect(
+      service.getBookingPaymentStatus(
+        { bookingId: "booking-123", txRef: "tx-ref-123" },
+        customerSessionUser,
+      ),
+    ).resolves.toMatchObject({ bookingStatus: "EXPIRED", lifecycleState: "EXPIRED" });
   });
 
   it("throws BookingNotFoundException when user has no supported booking access role", async () => {

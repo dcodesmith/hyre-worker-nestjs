@@ -347,7 +347,12 @@ describe("BookingCreationIdempotencyService", () => {
         booking: {
           is: {
             status: {
-              in: [BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.REJECTED],
+              in: [
+                BookingStatus.COMPLETED,
+                BookingStatus.EXPIRED,
+                BookingStatus.CANCELLED,
+                BookingStatus.REJECTED,
+              ],
             },
           },
         },

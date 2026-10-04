@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BookingStatus, PayoutTransactionStatus } from "@prisma/client";
+import { BookingStatus, PaymentStatus, PayoutTransactionStatus } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { DatabaseService } from "../database/database.service";
 import { DASHBOARD_RANGE_DAYS } from "./dashboard.const";
@@ -88,6 +88,7 @@ export class DashboardService {
         this.databaseService.booking.findMany({
           where: {
             deletedAt: null,
+            paymentStatus: { not: PaymentStatus.UNPAID },
             car: { ownerId },
           },
           select: {

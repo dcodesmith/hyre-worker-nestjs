@@ -5,7 +5,6 @@ import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BOOKING_PAYMENT_SESSION_DURATION_MS } from "./booking.const";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 
-const EXPIRED_RESERVATION_REASON = "Payment session expired";
 const BOOKING_CAR_OVERLAP_CONSTRAINT = "Booking_car_active_window_excl";
 const BOOKING_CHAUFFEUR_OVERLAP_CONSTRAINT = "Booking_chauffeur_active_window_excl";
 
@@ -19,7 +18,7 @@ export class BookingReservationService {
     this.logger.setContext(BookingReservationService.name);
   }
 
-  async cancelExpiredReservation(bookingId: string): Promise<boolean> {
+  async expireReservation(bookingId: string): Promise<boolean> {
     const bookingIdentity = await this.databaseService.booking.findUnique({
       where: { id: bookingId },
       select: { carId: true },
@@ -78,7 +77,7 @@ export class BookingReservationService {
 
       await this.bookingEligibilityService.releaseReferralReservation(tx, bookingId);
 
-      const cancelled = await tx.booking.updateMany({
+      const expired = await tx.booking.updateMany({
         where: {
           id: bookingId,
           status: BookingStatus.PENDING,
@@ -92,16 +91,14 @@ export class BookingReservationService {
           ],
         },
         data: {
-          status: BookingStatus.CANCELLED,
-          cancelledAt: now,
-          cancellationReason: EXPIRED_RESERVATION_REASON,
+          status: BookingStatus.EXPIRED,
           referralCreditsReserved: 0,
           referralCreditsUsed: 0,
         },
       });
 
-      if (cancelled.count === 1) {
-        this.logger.info({ bookingId }, "Cancelled expired booking reservation");
+      if (expired.count === 1) {
+        this.logger.info({ bookingId }, "Expired unpaid booking reservation");
         return true;
       }
       return false;

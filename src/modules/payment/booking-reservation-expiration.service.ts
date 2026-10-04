@@ -30,7 +30,7 @@ interface ExpiredReservation {
   kind: "booking" | "extension";
 }
 
-export type ExpiredReservationReconciliationOutcome = "confirmed" | "cancelled" | "retained";
+export type ExpiredReservationReconciliationOutcome = "confirmed" | "expired" | "retained";
 
 @Injectable()
 export class BookingReservationExpirationService {
@@ -257,7 +257,7 @@ export class BookingReservationExpirationService {
         FINAL_UNPAID_STATUSES.has(transaction.status.trim().toLowerCase())
       ) {
         if (reservation.kind === "booking") {
-          await this.bookingReservationService.cancelExpiredReservation(reservation.id);
+          await this.bookingReservationService.expireReservation(reservation.id);
         } else {
           await this.extensionReservationService.cancelExpiredReservation(reservation.id);
         }
@@ -301,9 +301,9 @@ export class BookingReservationExpirationService {
       }
       if (
         booking.paymentStatus === PaymentStatus.UNPAID &&
-        booking.status === BookingStatus.CANCELLED
+        booking.status === BookingStatus.EXPIRED
       ) {
-        return "cancelled";
+        return "expired";
       }
       return "retained";
     }
@@ -320,7 +320,7 @@ export class BookingReservationExpirationService {
       return "confirmed";
     }
     if (extension.paymentStatus === PaymentStatus.UNPAID && extension.status === "CANCELLED") {
-      return "cancelled";
+      return "expired";
     }
     return "retained";
   }

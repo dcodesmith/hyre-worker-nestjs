@@ -104,7 +104,11 @@ export class PaymentApiService {
       sessionUser,
       paymentStatusToken,
     );
-    if (current.lifecycleState === "CONFIRMED" || current.lifecycleState === "EXPIRED") {
+    if (
+      current.lifecycleState === "CONFIRMED" ||
+      current.lifecycleState === "CANCELLED" ||
+      current.lifecycleState === "EXPIRED"
+    ) {
       return current;
     }
 
@@ -203,7 +207,9 @@ export class PaymentApiService {
     const { count } = await this.databaseService.booking.updateMany({
       where: {
         id: bookingId,
-        status: { notIn: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+        status: {
+          notIn: [BookingStatus.EXPIRED, BookingStatus.CANCELLED, BookingStatus.REJECTED],
+        },
         paymentStatus: PaymentStatus.UNPAID,
         paymentIntent: null,
         paymentSessionExpiresAt: null,
@@ -580,9 +586,13 @@ export class PaymentApiService {
 
   /**
    * Booking statuses that should block payment initialization.
-   * CANCELLED and REJECTED bookings cannot be paid for.
+   * EXPIRED, CANCELLED, and REJECTED bookings cannot be paid for.
    */
-  private static readonly UNPAYABLE_BOOKING_STATUSES = ["CANCELLED", "REJECTED"] as const;
+  private static readonly UNPAYABLE_BOOKING_STATUSES = [
+    "EXPIRED",
+    "CANCELLED",
+    "REJECTED",
+  ] as const;
 
   /**
    * Extension statuses that should block payment initialization.
