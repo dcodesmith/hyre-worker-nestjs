@@ -6,7 +6,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { minimumVehicleYear } from "../src/modules/car/car.const";
+import { isVehicleAgeAllowed, minimumVehicleYear } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { NhtsaError, NhtsaService } from "../src/modules/nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
@@ -397,7 +397,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
   });
 
-  it("returns 410 for an expired verification and 422 for a vehicle older than 15 years", async () => {
+  it("returns 410 for an expired verification and applies the current vehicle age rule", async () => {
     const expired = await databaseService.vehicleVerification.create({
       data: {
         ownerId,
@@ -420,26 +420,33 @@ describe("Vehicle verification E2E Tests", () => {
     expect(expiredResponse.status).toBe(HttpStatus.GONE);
     expect(expiredResponse.body.errorCode).toBe("VEHICLE_VERIFICATION_EXPIRED");
 
+    const oldYear = minimumVehicleYear() - 1;
     const oldPlate = uniquePlate();
     const oldChassis = uniqueChassis();
-    mockSuccessfulProviders(oldPlate, minimumVehicleYear() - 1, oldChassis);
-    const ineligible = await withOwner(
+    mockSuccessfulProviders(oldPlate, oldYear, oldChassis);
+    const verified = await withOwner(
       request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
     )
       .set("Idempotency-Key", randomUUID())
       .send(verificationBody(oldPlate, oldChassis));
-    const ineligibleCar = await request(app.getHttpServer())
-      .post(`/api/fleet-owner/vehicle-verifications/${ineligible.body.id}/car`)
+    const draft = await request(app.getHttpServer())
+      .post(`/api/fleet-owner/vehicle-verifications/${verified.body.id}/car`)
       .set("Cookie", ownerCookie);
+    const ageAllowed = isVehicleAgeAllowed(oldYear);
 
-    expect(ineligible.status).toBe(HttpStatus.CREATED);
-    expect(ineligible.body.eligibility).toEqual({
-      isEligible: false,
-      reasons: ["VEHICLE_YEAR_BELOW_MINIMUM"],
+    expect(verified.status).toBe(HttpStatus.CREATED);
+    expect(verified.body.eligibility).toEqual({
+      isEligible: ageAllowed,
+      reasons: ageAllowed ? [] : ["VEHICLE_YEAR_BELOW_MINIMUM"],
       minimumYear: minimumVehicleYear(),
     });
-    expect(ineligibleCar.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-    expect(ineligibleCar.body.errorCode).toBe("VEHICLE_NOT_ELIGIBLE");
+    if (ageAllowed) {
+      expect(draft.status).toBe(HttpStatus.CREATED);
+      return;
+    }
+
+    expect(draft.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect(draft.body.errorCode).toBe("VEHICLE_NOT_ELIGIBLE");
   });
 
   it("POST /api/fleet-owner/cars returns 410 and directs clients to vehicle-verifications", async () => {
