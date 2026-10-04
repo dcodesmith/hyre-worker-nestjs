@@ -3,10 +3,10 @@ import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ProviderVerificationStatus } from "@prisma/client";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
-import { isVehicleAgeAllowed, minimumVehicleYear } from "../src/modules/car/car.const";
+import { minimumVehicleYear } from "../src/modules/car/car.const";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { NhtsaError, NhtsaService } from "../src/modules/nhtsa/nhtsa.service";
 import { PremblyError, PremblyService } from "../src/modules/prembly/prembly.service";
@@ -157,6 +157,10 @@ describe("Vehicle verification E2E Tests", () => {
     vi.clearAllMocks();
     ipSequence += 1;
     clientIp = `198.51.100.${(ipSequence % 200) + 1}`;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   afterAll(async () => {
@@ -397,7 +401,7 @@ describe("Vehicle verification E2E Tests", () => {
     expect(premblyService.verifyInsurance).not.toHaveBeenCalled();
   });
 
-  it("returns 410 for an expired verification and applies the current vehicle age rule", async () => {
+  it("returns 410 for an expired verification", async () => {
     const expired = await databaseService.vehicleVerification.create({
       data: {
         ownerId,
@@ -419,7 +423,14 @@ describe("Vehicle verification E2E Tests", () => {
 
     expect(expiredResponse.status).toBe(HttpStatus.GONE);
     expect(expiredResponse.body.errorCode).toBe("VEHICLE_VERIFICATION_EXPIRED");
+  });
 
+  it.each([
+    ["development", true],
+    ["preview", true],
+    ["production", false],
+  ] as const)("applies the vehicle age rule in %s", async (appEnv, isEligible) => {
+    vi.stubEnv("APP_ENV", appEnv);
     const oldYear = minimumVehicleYear() - 1;
     const oldPlate = uniquePlate();
     const oldChassis = uniqueChassis();
@@ -432,15 +443,14 @@ describe("Vehicle verification E2E Tests", () => {
     const draft = await request(app.getHttpServer())
       .post(`/api/fleet-owner/vehicle-verifications/${verified.body.id}/car`)
       .set("Cookie", ownerCookie);
-    const ageAllowed = isVehicleAgeAllowed(oldYear);
 
     expect(verified.status).toBe(HttpStatus.CREATED);
     expect(verified.body.eligibility).toEqual({
-      isEligible: ageAllowed,
-      reasons: ageAllowed ? [] : ["VEHICLE_YEAR_BELOW_MINIMUM"],
+      isEligible,
+      reasons: isEligible ? [] : ["VEHICLE_YEAR_BELOW_MINIMUM"],
       minimumYear: minimumVehicleYear(),
     });
-    if (ageAllowed) {
+    if (isEligible) {
       expect(draft.status).toBe(HttpStatus.CREATED);
       return;
     }
