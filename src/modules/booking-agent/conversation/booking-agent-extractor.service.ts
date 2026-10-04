@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
+import { getMissingRequiredFields } from "../booking-agent.helper";
 import { getDurationUnitClarification } from "./booking-rules";
 import {
   isAgentRequestControl,
@@ -61,6 +62,13 @@ const extractionSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
+const VEHICLE_TYPE_REPLIES = {
+  sedan: "SEDAN",
+  suv: "SUV",
+  van: "VAN",
+  crossover: "CROSSOVER",
+} as const;
+
 @Injectable()
 export class BookingAgentExtractorService {
   constructor(
@@ -85,7 +93,7 @@ export class BookingAgentExtractorService {
       return this.handleInteractiveReply(inboundInteractive, lastShownOptions);
     }
 
-    const deterministicResult = this.getDeterministicTextResult(inboundMessage, stage);
+    const deterministicResult = this.getDeterministicTextResult(inboundMessage, stage, draft);
     if (deterministicResult) {
       return deterministicResult;
     }
@@ -288,6 +296,7 @@ export class BookingAgentExtractorService {
   private getDeterministicTextResult(
     inboundMessage: string,
     stage: BookingAgentState["stage"],
+    draft: BookingAgentState["draft"],
   ): ExtractionResult | null {
     const normalized = normalizeControlText(inboundMessage);
     if (!normalized) {
@@ -304,6 +313,17 @@ export class BookingAgentExtractorService {
 
     if (isCancelIntentControl(normalized)) {
       return { intent: "cancel", draftPatch: {}, confidence: 1 };
+    }
+
+    const vehicleType = VEHICLE_TYPE_REPLIES[normalized as keyof typeof VEHICLE_TYPE_REPLIES];
+    const missingFields = getMissingRequiredFields(draft);
+    if (
+      stage === "collecting" &&
+      vehicleType &&
+      missingFields.length === 1 &&
+      missingFields[0] === "vehicleType"
+    ) {
+      return { intent: "provide_info", draftPatch: { vehicleType }, confidence: 1 };
     }
 
     if (

@@ -123,7 +123,8 @@ INTENT DETECTION:
 NEW BOOKING vs PROVIDE INFO:
 - Use "new_booking" when user is STARTING a fresh request (no dates/times given): "I need a sedan", "book a car for me", "looking for an SUV", "I want a car"
 - Use "provide_info" when user is ADDING details to an existing request: "tomorrow at 9am", "from Victoria Island"
-- If the message is just a vehicle preference WITHOUT specific booking details (no date, time, location), it's likely "new_booking"
+- If the current draft is empty, a vehicle-only request is likely "new_booking"
+- If the current draft is waiting for vehicleType, a vehicle-only reply is "provide_info"
 - IMPORTANT: After a reset or cancellation, the next request like "I need a sedan" MUST be "new_booking"
 - Messages like "Hi" or "Hello" followed by vehicle interest = "greeting" first, then the vehicle request = "new_booking"
 

@@ -745,6 +745,100 @@ describe("BookingAgentExtractorService", () => {
     });
   });
 
+  describe("extract - vehicle type continuation", () => {
+    const airportPickupAwaitingVehicle = {
+      bookingType: "AIRPORT_PICKUP" as const,
+      pickupDate: "2026-03-01",
+      flightNumber: "BA74",
+      dropoffLocation: "Victoria Island",
+    };
+
+    it.each([
+      { reply: "SUV", vehicleType: "SUV" },
+      { reply: "sedan", vehicleType: "SEDAN" },
+      { reply: "van", vehicleType: "VAN" },
+      { reply: "crossover", vehicleType: "CROSSOVER" },
+    ] as const)(
+      "maps exact $reply to provide_info when vehicleType is the only missing field",
+      async ({ reply, vehicleType }) => {
+        const result = await service.extract(
+          buildState({
+            inboundMessage: reply,
+            stage: "collecting",
+            draft: airportPickupAwaitingVehicle,
+          }),
+        );
+
+        expect(result.intent).toBe("provide_info");
+        expect(result.draftPatch).toEqual({ vehicleType });
+        expect(result.confidence).toBe(1);
+        expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("uses the OpenAI result for SUV when the draft is empty", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "new_booking",
+                draftPatch: { vehicleType: "SUV" },
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "SUV",
+          stage: "collecting",
+          draft: {},
+        }),
+      );
+
+      expect(result.intent).toBe("new_booking");
+      expect(result.draftPatch).toEqual({ vehicleType: "SUV" });
+      expect(result.confidence).toBe(0.9);
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the OpenAI result for SUV when another required field is also missing", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "new_booking",
+                draftPatch: { vehicleType: "SUV" },
+                confidence: 0.4,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "SUV",
+          stage: "collecting",
+          draft: {
+            bookingType: "AIRPORT_PICKUP",
+            pickupDate: "2026-03-01",
+            flightNumber: "BA74",
+          },
+        }),
+      );
+
+      expect(result.intent).toBe("new_booking");
+      expect(result.draftPatch).toEqual({ vehicleType: "SUV" });
+      expect(result.confidence).toBe(0.4);
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("extract - with existing options", () => {
     it("includes options in system prompt context", async () => {
       const options = [
