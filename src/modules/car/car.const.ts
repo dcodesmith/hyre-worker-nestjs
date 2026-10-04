@@ -15,6 +15,11 @@ export function minimumVehicleYear(now = new Date()) {
   return year - MAX_VEHICLE_AGE_YEARS;
 }
 
+export function isVehicleAgeAllowed(year: number, now = new Date(), appEnv = process.env.APP_ENV) {
+  if (appEnv === "development" || appEnv === "preview") return true;
+  return year >= minimumVehicleYear(now);
+}
+
 /**
  * Car documents that must exist and be APPROVED before a car can be listed.
  * Owner-level docs (NIN, licence) live on the user, not the car.

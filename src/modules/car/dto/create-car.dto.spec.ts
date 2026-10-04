@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { minimumVehicleYear } from "../car.const";
 import { carBaseBodySchema, registrationNumberSchema } from "./create-car.dto";
 
@@ -23,14 +23,32 @@ describe("minimumVehicleYear", () => {
 describe("year", () => {
   const year = carBaseBodySchema.shape.year;
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("accepts the 15-year floor and next model year", () => {
     expect(year.parse(minimumVehicleYear())).toBe(minimumVehicleYear());
     expect(year.parse(new Date().getFullYear() + 1)).toBe(new Date().getFullYear() + 1);
   });
 
-  it("rejects a vehicle older than 15 years", () => {
+  it("rejects a vehicle older than 15 years in production", () => {
+    vi.stubEnv("APP_ENV", "production");
     expect(year.safeParse(minimumVehicleYear() - 1).success).toBe(false);
   });
+
+  it.each(["development", "preview"])("accepts an older vehicle in %s", (appEnv) => {
+    vi.stubEnv("APP_ENV", appEnv);
+    expect(year.safeParse(minimumVehicleYear() - 1).success).toBe(true);
+  });
+
+  it.each(["development", "preview", "production"])(
+    "rejects a model year beyond next year in %s",
+    (appEnv) => {
+      vi.stubEnv("APP_ENV", appEnv);
+      expect(year.safeParse(new Date().getFullYear() + 2).success).toBe(false);
+    },
+  );
 });
 
 describe("passengerCapacity", () => {
