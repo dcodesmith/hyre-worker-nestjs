@@ -1,9 +1,9 @@
 import { ServiceTier, Status, VehicleType } from "@prisma/client";
 import { z } from "zod";
-import { MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY, minimumVehicleYear } from "../car.const";
+import { isVehicleAgeAllowed, MAX_PASSENGER_CAPACITY, MIN_PASSENGER_CAPACITY } from "../car.const";
 
 function isAllowedVehicleYear(year: number) {
-  return year >= minimumVehicleYear() && year <= new Date().getFullYear() + 1;
+  return isVehicleAgeAllowed(year) && year <= new Date().getFullYear() + 1;
 }
 
 export const registrationNumberSchema = z

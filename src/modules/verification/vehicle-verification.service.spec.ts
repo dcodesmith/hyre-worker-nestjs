@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { Prisma, ProviderVerificationStatus } from "@prisma/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { minimumVehicleYear } from "../car/car.const";
 import { CarNotFoundException } from "../car/car.error";
@@ -208,6 +208,7 @@ describe("VehicleVerificationService", () => {
   };
 
   beforeEach(async () => {
+    vi.stubEnv("APP_ENV", "production");
     databaseService = {
       vehicleVerification: {
         create: vi.fn(),
@@ -247,6 +248,10 @@ describe("VehicleVerificationService", () => {
       .compile();
 
     service = module.get(VehicleVerificationService);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("createVehicleVerification", () => {
@@ -736,7 +741,8 @@ describe("VehicleVerificationService", () => {
       expect(carService.createDraftCarFromVerification).not.toHaveBeenCalled();
     });
 
-    it("blocks draft creation for a vehicle older than 15 years", async () => {
+    it("blocks draft creation for a vehicle older than 15 years in production", async () => {
+      vi.stubEnv("APP_ENV", "production");
       databaseService.vehicleVerification.findFirst.mockResolvedValueOnce(
         succeededRecord({ year: minimumVehicleYear() - 1 }),
       );
@@ -746,6 +752,21 @@ describe("VehicleVerificationService", () => {
       );
       expect(carService.createDraftCarFromVerification).not.toHaveBeenCalled();
     });
+
+    it.each(["development", "preview"])(
+      "creates a draft for an older vehicle in %s",
+      async (appEnv) => {
+        vi.stubEnv("APP_ENV", appEnv);
+        databaseService.vehicleVerification.findFirst.mockResolvedValueOnce(
+          succeededRecord({ year: minimumVehicleYear() - 1 }),
+        );
+        carService.createDraftCarFromVerification.mockResolvedValueOnce({ id: "car-1" });
+
+        await expect(service.createDraftCar(OWNER_ID, VERIFICATION_ID)).resolves.toEqual({
+          id: "car-1",
+        });
+      },
+    );
 
     it("creates a draft car from an owned, eligible, unused verification", async () => {
       databaseService.vehicleVerification.findFirst.mockResolvedValueOnce(succeededRecord());

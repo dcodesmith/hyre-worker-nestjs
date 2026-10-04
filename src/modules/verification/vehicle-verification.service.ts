@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import {
+  isVehicleAgeAllowed,
   MAX_PASSENGER_CAPACITY,
   MIN_PASSENGER_CAPACITY,
   minimumVehicleYear,
@@ -289,7 +290,8 @@ export class VehicleVerificationService {
 
   private getEligibility(year: number | null) {
     const minimumYear = minimumVehicleYear();
-    const reasons = year !== null && year < minimumYear ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
+    const reasons =
+      year !== null && !isVehicleAgeAllowed(year) ? ["VEHICLE_YEAR_BELOW_MINIMUM"] : [];
     return {
       isEligible: year !== null && reasons.length === 0,
       reasons,
