@@ -40,9 +40,6 @@ describe("Booking Flow E2E", () => {
   let factory: TestDataFactory;
   let webhookSecret: string;
 
-  // Shared test car — each test creates a fresh one to avoid status conflicts
-  let fleetOwnerId: string;
-
   beforeAll(async () => {
     const mockSendOTPEmail = vi.fn().mockResolvedValue(undefined);
 
@@ -69,14 +66,16 @@ describe("Booking Flow E2E", () => {
 
     await factory.createPlatformRates();
     await factory.enableReferralProgram();
+  });
 
-    // Create a fleet owner (shared; each test creates its own car)
-    const fleetOwner = await factory.createFleetOwner({
+  async function createStaffedCar(): Promise<{ carId: string; ownerId: string }> {
+    const owner = await factory.createFleetOwner({
       isOwnerDriver: true,
       chauffeurApprovalStatus: "APPROVED",
     });
-    fleetOwnerId = fleetOwner.id;
-  });
+    const car = await factory.createCar(owner.id);
+    return { carId: car.id, ownerId: owner.id };
+  }
 
   beforeEach(async () => {
     await factory.clearRateLimits();
@@ -373,8 +372,7 @@ describe("Booking Flow E2E", () => {
     { clientType: "web", label: "Web client" },
   ])("$label - full booking flow", ({ clientType }) => {
     it("should authenticate referrer and referee, apply referral discount, process payment webhook, and confirm booking", async () => {
-      // Create a fresh car for this test (avoids status conflicts between tests)
-      const car = await factory.createCar(fleetOwnerId);
+      const { carId, ownerId } = await createStaffedCar();
 
       // User A signs up first and is auto-assigned a referral code
       const { user: userA } = await factory.authenticateAndGetUser(
@@ -393,7 +391,7 @@ describe("Booking Flow E2E", () => {
       expect(userB.referredByUserId).toBe(userA.id);
 
       // 20% car-specific promotion covering the booking window
-      await factory.createPromotion(fleetOwnerId, { carId: car.id, discountValue: 20 });
+      await factory.createPromotion(ownerId, { carId, discountValue: 20 });
 
       // Pin start to 9 AM local so the 12-hour DAY booking falls within a single
       // calendar day (1 leg) regardless of when the test runs. DAY bookings
@@ -413,7 +411,7 @@ describe("Booking Flow E2E", () => {
         .post("/api/bookings/pricing-preview")
         .set("Cookie", cookie)
         .send({
-          carId: car.id,
+          carId,
           bookingType: "DAY",
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
@@ -451,7 +449,7 @@ describe("Booking Flow E2E", () => {
       // Booking creation + payment webhook must persist the same discount and total
       await runBookingFlow(
         cookie,
-        car.id,
+        carId,
         {
           startDate,
           endDate,
@@ -466,16 +464,16 @@ describe("Booking Flow E2E", () => {
     });
 
     it("should initialize extension payment, process webhook, and activate extension", async () => {
-      const car = await factory.createCar(fleetOwnerId);
+      const { carId } = await createStaffedCar();
 
       const email = uniqueEmail(`extension-flow-${clientType}`);
       const { cookie } = await factory.authenticateAndGetUser(email, "user", clientType);
-      await runExtensionFlow(cookie, car.id);
+      await runExtensionFlow(cookie, carId);
     });
   });
 
   it("re-applies the referral discount after a failed payment hold expires", async () => {
-    const car = await factory.createCar(fleetOwnerId);
+    const { carId } = await createStaffedCar();
 
     const { user: referrer } = await factory.authenticateAndGetUser(
       uniqueEmail("ref-release-referrer"),
@@ -500,7 +498,7 @@ describe("Booking Flow E2E", () => {
     const endDate = new Date(startDate.getTime() + TWELVE_HOURS_MS);
 
     const bookingPayload = {
-      carId: car.id,
+      carId,
       startDate,
       endDate,
       pickupAddress: "123 Main St, Lagos",
@@ -616,7 +614,7 @@ describe("Booking Flow E2E", () => {
       .post("/api/bookings/pricing-preview")
       .set("Cookie", cookie)
       .send({
-        carId: car.id,
+        carId,
         bookingType: "DAY",
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
