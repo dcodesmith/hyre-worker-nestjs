@@ -54,7 +54,12 @@ describe("Add-ons E2E", () => {
     adminUserId = admin.user.id;
     staffCookie = (await factory.createAuthenticatedStaff(uniqueEmail("addons-staff"))).cookie;
     userCookie = (await factory.authenticateAndGetUser(uniqueEmail("addons-user"), "user")).cookie;
-    fleetOwnerId = (await factory.createFleetOwner()).id;
+    fleetOwnerId = (
+      await factory.createFleetOwner({
+        isOwnerDriver: true,
+        chauffeurApprovalStatus: "APPROVED",
+      })
+    ).id;
     await factory.createPlatformRates();
   });
 

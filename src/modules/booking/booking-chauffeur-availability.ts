@@ -3,7 +3,7 @@ import { buildBookingConflictQueryInterval } from "../../shared/availability-buf
 import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
 
 type AvailableFleetChauffeurInput = {
-  bookingId: string;
+  bookingId?: string;
   chauffeurId?: string;
   endDate: Date;
   ownerId: string;
@@ -28,7 +28,7 @@ export function availableFleetChauffeurWhere({
     chauffeurDisabledAt: null,
     bookingsAsChauffeur: {
       none: {
-        id: { not: bookingId },
+        ...(bookingId ? { id: { not: bookingId } } : {}),
         deletedAt: null,
         status: { in: [...BLOCKING_BOOKING_STATUSES] },
         startDate: { lt: bufferedEnd },

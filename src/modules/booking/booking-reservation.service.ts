@@ -92,6 +92,7 @@ export class BookingReservationService {
         },
         data: {
           status: BookingStatus.EXPIRED,
+          chauffeurId: null,
           referralCreditsReserved: 0,
           referralCreditsUsed: 0,
         },

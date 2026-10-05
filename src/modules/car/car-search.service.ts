@@ -240,29 +240,25 @@ export class CarSearchService {
     const unavailableOwners = await this.databaseService.user.findMany({
       where: {
         cars: { some: {} },
-        OR: [
-          {
-            isOwnerDriver: true,
-            OR: [
-              { chauffeurApprovalStatus: null },
-              { chauffeurApprovalStatus: { not: ChauffeurApprovalStatus.APPROVED } },
-              { chauffeurDisabledAt: { not: null } },
-              { bookingsAsChauffeur: { some: bookingConflict } },
-            ],
-          },
-          {
-            isOwnerDriver: false,
-            chauffeurs: {
-              none: {
-                chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-                chauffeurDisabledAt: null,
-                bookingsAsChauffeur: {
-                  none: bookingConflict,
+        NOT: {
+          OR: [
+            {
+              isOwnerDriver: true,
+              chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+              chauffeurDisabledAt: null,
+              bookingsAsChauffeur: { none: bookingConflict },
+            },
+            {
+              chauffeurs: {
+                some: {
+                  chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                  chauffeurDisabledAt: null,
+                  bookingsAsChauffeur: { none: bookingConflict },
                 },
               },
             },
-          },
-        ],
+          ],
+        },
       },
       select: { id: true },
       distinct: ["id"],

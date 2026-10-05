@@ -1,9 +1,10 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
+import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import {
   createBooking,
   createBookingFinancials,
@@ -38,6 +39,7 @@ import {
   ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
 import { BookingCreationService, type CreateBookingRequest } from "./booking-creation.service";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
@@ -86,6 +88,13 @@ const verifiedBookingUser = (overrides: Parameters<typeof createUser>[0] = {}) =
     phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   });
+
+function mockTransactionUser(update: ReturnType<typeof vi.fn> = vi.fn()) {
+  return {
+    findFirst: vi.fn().mockResolvedValue({ id: "chauffeur-hold" }),
+    update,
+  };
+}
 
 const createSessionUser = (overrides: Partial<AuthSession["user"]> = {}): AuthSession["user"] => ({
   id: "user-123",
@@ -318,7 +327,7 @@ describe("BookingCreationService", () => {
             aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
           },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
           $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
         };
 
@@ -613,6 +622,90 @@ describe("BookingCreationService", () => {
       expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
+    it("stores the selected conflict-free chauffeur on the pending booking", async () => {
+      setupSuccessfulMocks();
+      const booking = createBookingInput();
+      const window = normalizeBookingTimeWindow({
+        bookingType: booking.bookingType,
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+        pickupTime: booking.pickupTime,
+      });
+      const findFirst = vi.fn().mockResolvedValue({ id: "chauffeur-selected" });
+      const createBooking = vi.fn().mockResolvedValue({
+        id: "booking-123",
+        bookingReference: "BK-123456-ABC",
+        totalAmount: new Decimal(56437.5),
+        status: BookingStatus.PENDING,
+      });
+      mockTransaction.mockImplementation(async (callback) =>
+        callback({
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
+          booking: { create: createBooking, update: vi.fn() },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: {
+            create: vi.fn(),
+            aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
+          },
+          userReferralStats: { upsert: vi.fn() },
+          user: { findFirst, update: vi.fn() },
+        }),
+      );
+
+      await service.createBooking({ input: booking, sessionUser: createSessionUser() });
+
+      expect(findFirst).toHaveBeenCalledWith({
+        where: {
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          ...availableFleetChauffeurWhere({
+            ownerId: "owner-123",
+            startDate: window.startDate,
+            endDate: window.endDate,
+          }),
+        },
+        select: { id: true },
+        orderBy: [{ isOwnerDriver: "desc" }, { id: "asc" }],
+      });
+      expect(createBooking).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          chauffeurId: "chauffeur-selected",
+        }),
+      });
+    });
+
+    it("rejects with CAR_NOT_AVAILABLE when no chauffeur is free for the window", async () => {
+      setupSuccessfulMocks();
+      const createBooking = vi.fn();
+      mockTransaction.mockImplementation(async (callback) =>
+        callback({
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          flight: { upsert: vi.fn(), updateMany: vi.fn() },
+          booking: { create: createBooking, update: vi.fn() },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: { findFirst: vi.fn().mockResolvedValue(null), update: vi.fn() },
+        }),
+      );
+
+      const error = await service
+        .createBooking({ input: createBookingInput(), sessionUser: createSessionUser() })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CarNotAvailableException);
+      expect((error as CarNotAvailableException).getErrorCode()).toBe("CAR_NOT_AVAILABLE");
+      expect(createBooking).not.toHaveBeenCalled();
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
     it("should throw BookingValidationException when guest email is registered", async () => {
       vi.mocked(validationService.validateDates).mockReturnValue(undefined);
       vi.mocked(validationService.checkCarAvailability).mockResolvedValue(undefined);
@@ -804,7 +897,7 @@ describe("BookingCreationService", () => {
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1001,7 +1094,7 @@ describe("BookingCreationService", () => {
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1223,7 +1316,7 @@ describe("BookingCreationService", () => {
             updateManyAndReturn: vi.fn().mockResolvedValue([]),
           },
           userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1321,7 +1414,7 @@ describe("BookingCreationService", () => {
             updateManyAndReturn: vi.fn().mockResolvedValue([]),
           },
           userReferralStats: { upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-          user: { update: mockUserUpdate },
+          user: mockTransactionUser(mockUserUpdate),
         };
 
         return callback(mockTx);
@@ -1397,7 +1490,7 @@ describe("BookingCreationService", () => {
           },
           referralReward: { create: createReward },
           userReferralStats: { upsert: upsertStats },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1470,7 +1563,7 @@ describe("BookingCreationService", () => {
           booking: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1531,7 +1624,7 @@ describe("BookingCreationService", () => {
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);
@@ -1608,7 +1701,7 @@ describe("BookingCreationService", () => {
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { update: vi.fn() },
+          user: mockTransactionUser(),
         };
 
         return callback(mockTx);

@@ -71,7 +71,10 @@ describe("Booking Flow E2E", () => {
     await factory.enableReferralProgram();
 
     // Create a fleet owner (shared; each test creates its own car)
-    const fleetOwner = await factory.createFleetOwner();
+    const fleetOwner = await factory.createFleetOwner({
+      isOwnerDriver: true,
+      chauffeurApprovalStatus: "APPROVED",
+    });
     fleetOwnerId = fleetOwner.id;
   });
 
