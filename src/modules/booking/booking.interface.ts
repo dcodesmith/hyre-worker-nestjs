@@ -10,7 +10,6 @@ import type { CarPricing } from "./booking-calculation.interface";
 export interface CarWithPricing extends CarPricing {
   id: string;
   ownerId: string;
-  ownerDriverId?: string | null;
 }
 
 /**

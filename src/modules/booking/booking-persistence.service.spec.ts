@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import { createBookingFinancials, createCar } from "../../shared/helper.fixtures";
@@ -44,12 +44,6 @@ describe("BookingPersistenceService", () => {
       airportPickupRate: 30000,
       fuelUpgradeRate: 5000,
       pricingIncludesFuel: false,
-      owner: {
-        id: "owner-123",
-        isOwnerDriver: false,
-        chauffeurApprovalStatus: null,
-        chauffeurDisabledAt: null,
-      },
     };
     const databaseService = {
       car: { findUnique: vi.fn().mockResolvedValue(car) },
@@ -64,17 +58,7 @@ describe("BookingPersistenceService", () => {
     }).compile();
 
     const service = module.get<BookingPersistenceService>(BookingPersistenceService);
-    await expect(service.fetchCarWithPricing("car-1")).resolves.toEqual({
-      id: "car-1",
-      ownerId: "owner-123",
-      dayRate: 15000,
-      nightRate: 20000,
-      fullDayRate: 25000,
-      airportPickupRate: 30000,
-      fuelUpgradeRate: 5000,
-      pricingIncludesFuel: false,
-      ownerDriverId: null,
-    });
+    await expect(service.fetchCarWithPricing("car-1")).resolves.toEqual(car);
     expect(databaseService.car.findUnique).toHaveBeenCalledWith({
       where: { id: "car-1" },
       select: {
@@ -86,72 +70,8 @@ describe("BookingPersistenceService", () => {
         airportPickupRate: true,
         fuelUpgradeRate: true,
         pricingIncludesFuel: true,
-        owner: {
-          select: {
-            id: true,
-            isOwnerDriver: true,
-            chauffeurApprovalStatus: true,
-            chauffeurDisabledAt: true,
-          },
-        },
       },
     });
-  });
-
-  it.each([
-    [
-      "an approved active owner-driver",
-      {
-        isOwnerDriver: true,
-        chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-        chauffeurDisabledAt: null,
-      },
-      "owner-123",
-    ],
-    [
-      "a disabled owner-driver",
-      {
-        isOwnerDriver: true,
-        chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-        chauffeurDisabledAt: new Date("2026-09-01T00:00:00Z"),
-      },
-      null,
-    ],
-    [
-      "an unapproved owner-driver",
-      {
-        isOwnerDriver: true,
-        chauffeurApprovalStatus: ChauffeurApprovalStatus.PENDING,
-        chauffeurDisabledAt: null,
-      },
-      null,
-    ],
-  ] as const)("derives ownerDriverId for %s", async (_label, owner, ownerDriverId) => {
-    const databaseService = {
-      car: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "car-1",
-          ownerId: "owner-123",
-          dayRate: 15000,
-          nightRate: 20000,
-          fullDayRate: 25000,
-          airportPickupRate: 30000,
-          fuelUpgradeRate: 5000,
-          pricingIncludesFuel: false,
-          owner: { id: "owner-123", ...owner },
-        }),
-      },
-    };
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        BookingPersistenceService,
-        { provide: DatabaseService, useValue: databaseService },
-        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue("DNMM") } },
-      ],
-    }).compile();
-
-    const service = module.get<BookingPersistenceService>(BookingPersistenceService);
-    await expect(service.fetchCarWithPricing("car-1")).resolves.toMatchObject({ ownerDriverId });
   });
 
   it("throws CarNotFoundException when car is missing", async () => {
@@ -282,6 +202,7 @@ describe("BookingPersistenceService", () => {
         {
           bookingReference: "BK-123",
           car: createCar(),
+          chauffeurId: "chauffeur-hold",
           userId: "user-1",
           guestUser: null,
           booking: bookingInput,
@@ -368,6 +289,7 @@ describe("BookingPersistenceService", () => {
       service.createBookingRecord(tx, {
         bookingReference: "BK-123",
         car: createCar(),
+        chauffeurId: "chauffeur-hold",
         userId: "user-1",
         guestUser: null,
         booking: bookingInput,
@@ -390,7 +312,7 @@ describe("BookingPersistenceService", () => {
         status: BookingStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
         paymentSessionExpiresAt: expect.any(Date),
-        chauffeurId: null,
+        chauffeurId: "chauffeur-hold",
         addons: {
           create: [
             {
@@ -469,6 +391,7 @@ describe("BookingPersistenceService", () => {
     await service.createBookingRecord(tx, {
       bookingReference: "BK-123",
       car: createCar(),
+      chauffeurId: "chauffeur-hold",
       userId: "user-1",
       guestUser: null,
       booking: {
@@ -525,7 +448,7 @@ describe("BookingPersistenceService", () => {
     }
   });
 
-  it("assigns an eligible owner-driver on the pending booking record", async () => {
+  it("stores the selected chauffeur on the pending booking record", async () => {
     const databaseService = {
       car: { findUnique: vi.fn() },
     };
@@ -566,7 +489,8 @@ describe("BookingPersistenceService", () => {
 
     await service.createBookingRecord(tx, {
       bookingReference: "BK-123",
-      car: { ...createCar(), ownerDriverId: "owner-123" },
+      car: createCar(),
+      chauffeurId: "chauffeur-selected",
       userId: "user-1",
       guestUser: null,
       booking: bookingInput,
@@ -589,7 +513,10 @@ describe("BookingPersistenceService", () => {
     });
 
     expect(createBooking).toHaveBeenCalledWith({
-      data: expect.objectContaining({ chauffeurId: "owner-123" }),
+      data: expect.objectContaining({
+        status: BookingStatus.PENDING,
+        chauffeurId: "chauffeur-selected",
+      }),
     });
   });
 
@@ -627,6 +554,7 @@ describe("BookingPersistenceService", () => {
         {
           bookingReference: "BK-123",
           car: createCar(),
+          chauffeurId: "chauffeur-hold",
           userId: "user-1",
           guestUser: null,
           booking: bookingInput,

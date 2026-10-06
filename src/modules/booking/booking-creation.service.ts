@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { Booking, Prisma } from "@prisma/client";
+import { type Booking, ChauffeurApprovalStatus, type Prisma } from "@prisma/client";
 import { subMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
@@ -15,7 +15,7 @@ import { AddonsException } from "../addons/addons.error";
 import type { ResolvedBookingAddon } from "../addons/addons.interface";
 import { AddonsService } from "../addons/addons.service";
 import type { AuthSession } from "../auth/guards/session.guard";
-import { DatabaseService, lockCarRow } from "../database/database.service";
+import { DatabaseService, lockCarRow, lockUserRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
 import { FlightAwareService } from "../flightaware/flightaware.service";
 import { MapsService } from "../maps/maps.service";
@@ -45,6 +45,7 @@ import type {
 } from "./booking.interface";
 import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
+import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { validateCreditsRequireAuthentication } from "./booking-credits.auth";
 import { BookingEligibilityService } from "./booking-eligibility.service";
@@ -529,6 +530,25 @@ export class BookingCreationService {
           tx,
         );
         const freshCar = await this.persistenceService.fetchCarWithPricing(booking.carId, tx);
+        await lockUserRow(tx, freshCar.ownerId);
+        const chauffeur = await tx.user.findFirst({
+          where: {
+            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+            ...availableFleetChauffeurWhere({
+              ownerId: freshCar.ownerId,
+              startDate: booking.startDate,
+              endDate: booking.endDate,
+            }),
+          },
+          select: { id: true },
+          orderBy: [{ isOwnerDriver: "desc" }, { id: "asc" }],
+        });
+        if (!chauffeur) {
+          throw new CarNotAvailableException(
+            booking.carId,
+            "No chauffeur is available for the selected time. Please choose another vehicle or time.",
+          );
+        }
         const verifiedAddons = await this.addonsService.resolveBookingAddons(
           booking.addonIds,
           booking.bookingType,
@@ -625,6 +645,7 @@ export class BookingCreationService {
         const bookingRecord = await this.persistenceService.createBookingRecord(tx, {
           bookingReference,
           car: freshCar,
+          chauffeurId: chauffeur.id,
           userId: sessionUser?.id ?? null,
           guestUser,
           booking,

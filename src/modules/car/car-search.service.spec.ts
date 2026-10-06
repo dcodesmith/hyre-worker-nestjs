@@ -245,7 +245,7 @@ describe("CarSearchService", () => {
       expect(result.pagination.hasPreviousPage).toBe(true);
     });
 
-    it("excludes unavailable fleet owners when date provided", async () => {
+    it("excludes a fleet only when neither an owner-driver nor a fleet chauffeur is free", async () => {
       const unavailableOwners = [{ id: "owner-busy" }];
       databaseServiceMock.user.findMany.mockResolvedValueOnce(unavailableOwners);
       databaseServiceMock.car.count.mockResolvedValueOnce(5);
@@ -257,39 +257,38 @@ describe("CarSearchService", () => {
         limit: 12,
       });
 
-      expect(databaseServiceMock.user.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            cars: { some: {} },
+      const bookingConflict = {
+        deletedAt: null,
+        status: { in: [...BLOCKING_BOOKING_STATUSES] },
+        startDate: { lt: new Date("2024-03-02T02:00:00.000Z") },
+        endDate: { gt: new Date("2024-02-29T22:00:00.000Z") },
+      };
+      expect(databaseServiceMock.user.findMany).toHaveBeenCalledWith({
+        where: {
+          cars: { some: {} },
+          NOT: {
             OR: [
               {
                 isOwnerDriver: true,
-                OR: [
-                  { chauffeurApprovalStatus: null },
-                  { chauffeurApprovalStatus: { not: ChauffeurApprovalStatus.APPROVED } },
-                  { chauffeurDisabledAt: { not: null } },
-                  { bookingsAsChauffeur: { some: expect.any(Object) } },
-                ],
+                chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                chauffeurDisabledAt: null,
+                bookingsAsChauffeur: { none: bookingConflict },
               },
               {
-                isOwnerDriver: false,
                 chauffeurs: {
-                  none: {
+                  some: {
                     chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
                     chauffeurDisabledAt: null,
-                    bookingsAsChauffeur: {
-                      none: expect.objectContaining({
-                        deletedAt: null,
-                        status: { in: [...BLOCKING_BOOKING_STATUSES] },
-                      }),
-                    },
+                    bookingsAsChauffeur: { none: bookingConflict },
                   },
                 },
               },
             ],
           },
-        }),
-      );
+        },
+        select: { id: true },
+        distinct: ["id"],
+      });
       expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({

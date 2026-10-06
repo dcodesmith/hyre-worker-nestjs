@@ -60,6 +60,7 @@ describe("BookingReservationService", () => {
       expect.objectContaining({
         data: {
           status: BookingStatus.EXPIRED,
+          chauffeurId: null,
           referralCreditsReserved: 0,
           referralCreditsUsed: 0,
         },
@@ -147,6 +148,7 @@ describe("BookingReservationService", () => {
         }),
         data: {
           status: BookingStatus.EXPIRED,
+          chauffeurId: null,
           referralCreditsReserved: 0,
           referralCreditsUsed: 0,
         },

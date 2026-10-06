@@ -5,7 +5,6 @@ import {
   Booking,
   BookingReferralStatus,
   BookingStatus,
-  ChauffeurApprovalStatus,
   FlightStatus,
   PaymentStatus,
   Prisma,
@@ -56,14 +55,6 @@ export class BookingPersistenceService {
         airportPickupRate: true,
         fuelUpgradeRate: true,
         pricingIncludesFuel: true,
-        owner: {
-          select: {
-            id: true,
-            isOwnerDriver: true,
-            chauffeurApprovalStatus: true,
-            chauffeurDisabledAt: true,
-          },
-        },
       },
     });
 
@@ -71,16 +62,7 @@ export class BookingPersistenceService {
       throw new CarNotFoundException(carId);
     }
 
-    const { owner, ...pricing } = car;
-    return {
-      ...pricing,
-      ownerDriverId:
-        owner.isOwnerDriver &&
-        owner.chauffeurApprovalStatus === ChauffeurApprovalStatus.APPROVED &&
-        !owner.chauffeurDisabledAt
-          ? owner.id
-          : null,
-    };
+    return car;
   }
 
   async markBookingUnpaid(bookingId: string): Promise<void> {
@@ -145,6 +127,7 @@ export class BookingPersistenceService {
     params: {
       bookingReference: string;
       car: CarWithPricing;
+      chauffeurId: string;
       userId: string | null;
       guestUser: {
         email: string;
@@ -168,6 +151,7 @@ export class BookingPersistenceService {
   private buildBookingData(params: {
     bookingReference: string;
     car: CarWithPricing;
+    chauffeurId: string;
     userId: string | null;
     guestUser: {
       email: string;
@@ -186,6 +170,7 @@ export class BookingPersistenceService {
     const {
       bookingReference,
       car,
+      chauffeurId,
       userId,
       guestUser,
       booking,
@@ -211,7 +196,7 @@ export class BookingPersistenceService {
       status: BookingStatus.PENDING,
       paymentStatus: PaymentStatus.UNPAID,
       paymentSessionExpiresAt: new Date(Date.now() + BOOKING_PAYMENT_SESSION_DURATION_MS),
-      chauffeurId: car.ownerDriverId ?? null,
+      chauffeurId,
       startDate: booking.startDate,
       endDate: booking.endDate,
       pickupLocation: booking.pickupAddress,

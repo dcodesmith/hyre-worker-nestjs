@@ -61,7 +61,10 @@ describe("Bookings E2E Tests", () => {
     testUserId = testResult.user.id;
 
     // Create fleet owner and car
-    const fleetOwner = await factory.createFleetOwner();
+    const fleetOwner = await factory.createFleetOwner({
+      isOwnerDriver: true,
+      chauffeurApprovalStatus: "APPROVED",
+    });
     fleetOwnerId = fleetOwner.id;
   });
 

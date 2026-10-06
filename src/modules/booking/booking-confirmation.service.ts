@@ -4,7 +4,6 @@ import { EventEmitter2, EventEmitterReadinessWatcher } from "@nestjs/event-emitt
 import {
   BookingReferralStatus,
   BookingStatus,
-  ChauffeurApprovalStatus,
   type Payment,
   PaymentStatus,
   Prisma,
@@ -13,7 +12,6 @@ import {
 import type { Queue } from "bullmq";
 import { PinoLogger } from "nestjs-pino";
 import { CREATE_FLIGHT_ALERT_JOB, FLIGHT_ALERTS_QUEUE } from "../../config/constants";
-import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { BOOKING_CONFIRMED_EVENT } from "../../shared/events/airport-activation.events";
 import type { BookingWithRelations } from "../../types";
 import { DatabaseService, lockCarRow } from "../database/database.service";
@@ -21,7 +19,6 @@ import type { FlightAlertJobData } from "../flightaware/flightaware-alert.interf
 import { BookingConfirmedHandler } from "../notification/handlers/booking-confirmed.handler";
 import { ChauffeurAssignedHandler } from "../notification/handlers/chauffeur-assigned.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
-import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
 
 /**
  * Service for confirming bookings after successful payment.
@@ -85,13 +82,12 @@ export class BookingConfirmationService {
         Array<{
           id: string;
           carId: string;
+          chauffeurId: string | null;
           status: BookingStatus;
-          startDate: Date;
-          endDate: Date;
         }>
       >(
         Prisma.sql`
-          SELECT id, "carId", status, "startDate", "endDate"
+          SELECT id, "carId", "chauffeurId", status
           FROM "Booking"
           WHERE id = ${bookingId}
           FOR UPDATE
@@ -104,41 +100,6 @@ export class BookingConfirmationService {
         return null;
       }
 
-      const car = await tx.car.findUnique({
-        where: { id: pendingBooking.carId },
-        select: {
-          owner: {
-            select: {
-              id: true,
-              isOwnerDriver: true,
-              chauffeurApprovalStatus: true,
-              chauffeurDisabledAt: true,
-            },
-          },
-        },
-      });
-      const eligibleOwnerDriverId =
-        car?.owner.isOwnerDriver &&
-        car.owner.chauffeurApprovalStatus === ChauffeurApprovalStatus.APPROVED &&
-        !car.owner.chauffeurDisabledAt
-          ? car.owner.id
-          : undefined;
-      const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval(pendingBooking);
-      const ownerDriverConflict = eligibleOwnerDriverId
-        ? await tx.booking.findFirst({
-            where: {
-              id: { not: pendingBooking.id },
-              chauffeurId: eligibleOwnerDriverId,
-              deletedAt: null,
-              status: { in: [...BLOCKING_BOOKING_STATUSES] },
-              startDate: { lt: bufferedEnd },
-              endDate: { gt: bufferedStart },
-            },
-            select: { id: true },
-          })
-        : null;
-      const ownerDriverId = ownerDriverConflict ? undefined : eligibleOwnerDriverId;
-
       // Atomic conditional update - only updates if booking exists and is still PENDING.
       // This prevents TOCTOU race conditions where status could change between read and update.
       const updateResult = await tx.booking.updateMany({
@@ -147,7 +108,6 @@ export class BookingConfirmationService {
           status: BookingStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           paymentId: payment.id,
-          chauffeurId: ownerDriverId ?? null,
         },
       });
 
@@ -192,12 +152,12 @@ export class BookingConfirmationService {
           { booking: confirmedBooking },
           tx,
         );
-        if (ownerDriverId) {
+        if (pendingBooking.chauffeurId) {
           await this.notificationOutboxService.create(
             this.chauffeurAssignedHandler,
             {
               booking: confirmedBooking,
-              chauffeurId: ownerDriverId,
+              chauffeurId: pendingBooking.chauffeurId,
               previousChauffeur: null,
             },
             tx,
