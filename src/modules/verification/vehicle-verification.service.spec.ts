@@ -181,6 +181,8 @@ describe("VehicleVerificationService", () => {
   const mockPlate = {
     plateNumber: PLATE,
     vehicleName: "Toyota Camry",
+    make: "Toyota",
+    model: "Camry",
     chassisNumber: null,
     color: "Black",
     reference: "plate-ref",
@@ -195,8 +197,10 @@ describe("VehicleVerificationService", () => {
   const mockNhtsaVin = {
     year: 2020,
     make: "Toyota",
+    manufacturer: "TOYOTA MOTOR CORPORATION",
     model: "Camry",
     passengerCapacity: 5,
+    warningCodes: [] as string[],
   };
 
   const mockSuccessfulProviders = () => {
@@ -289,6 +293,7 @@ describe("VehicleVerificationService", () => {
           passengerCapacity: 5,
           plateProviderRef: null,
           vinProviderRef: "vin-ref",
+          providerWarnings: [],
         },
       });
       expect(result).toMatchObject(succeededResponse);
@@ -441,9 +446,10 @@ describe("VehicleVerificationService", () => {
       ).rejects.toBeInstanceOf(VehicleMismatchException);
     });
 
-    it("rejects a plate lookup that returns a different registry chassis", async () => {
+    it("rejects a Prembly plate lookup that returns a different registry chassis", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-      regCheckService.verifyPlate.mockResolvedValueOnce({
+      regCheckService.verifyPlate.mockRejectedValueOnce(new RegCheckError("UNAVAILABLE"));
+      premblyService.verifyPlate.mockResolvedValueOnce({
         ...mockPlate,
         chassisNumber: "1HGCM82633A999999",
       });
@@ -683,6 +689,115 @@ describe("VehicleVerificationService", () => {
           chassisNumber: CHASSIS,
         }),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
+    });
+
+    it("rejects unstructured plate text that only shares generic manufacturer words", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        make: null,
+        model: null,
+        vehicleName: "Honda Motor Accord",
+        reference: null,
+      });
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      nhtsaService.verifyVin.mockResolvedValueOnce({
+        year: 2020,
+        make: null,
+        manufacturer: "Toyota Motor Corporation",
+        model: null,
+        passengerCapacity: 5,
+        warningCodes: ["1"],
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
+
+      expect(databaseService.vehicleVerification.updateMany).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID, status: ProviderVerificationStatus.PROCESSING },
+        data: {
+          status: ProviderVerificationStatus.FAILED,
+          failureReason: VerificationErrorCode.VEHICLE_MISMATCH,
+        },
+      });
+    });
+
+    it("persists NHTSA partial-decode warnings without exposing them on the owner response", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({ ...mockPlate, reference: null });
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      nhtsaService.verifyVin.mockResolvedValueOnce({
+        year: 2020,
+        make: null,
+        manufacturer: "TOYOTA MOTOR CORPORATION",
+        model: null,
+        passengerCapacity: null,
+        warningCodes: ["1", "400"],
+      });
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(
+        succeededRecord({
+          make: "Toyota",
+          model: "Camry",
+          passengerCapacity: null,
+          plateProviderRef: null,
+          vinProviderRef: null,
+        }),
+      );
+
+      const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
+      });
+
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({
+          status: ProviderVerificationStatus.SUCCEEDED,
+          make: "Toyota",
+          model: "Camry",
+          providerWarnings: [
+            "NHTSA returned a partial VIN decode (codes: 1, 400).",
+            "The VIN could not be fully matched to the plate by automated providers; compare the plate, VIN, make, model, and year with the vehicle registration before approval.",
+            "The verification providers did not return passenger capacity; compare the submitted capacity with the vehicle documents.",
+          ],
+        }),
+      });
+      expect(result).toMatchObject({
+        ...succeededResponse,
+        vehicle: { ...succeededResponse.vehicle, passengerCapacity: null },
+      });
+      expect(result).not.toHaveProperty("providerWarnings");
+    });
+
+    it("rejects structured plate make that is not supported by the NHTSA manufacturer", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        make: "Honda",
+        model: "Accord",
+        vehicleName: "Honda Accord",
+        reference: null,
+      });
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      nhtsaService.verifyVin.mockResolvedValueOnce({
+        year: 2020,
+        make: null,
+        manufacturer: "TOYOTA MOTOR CORPORATION",
+        model: null,
+        passengerCapacity: 5,
+        warningCodes: ["1"],
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
     });
   });
 

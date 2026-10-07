@@ -65,6 +65,7 @@ model VehicleVerification {
   passengerCapacity        Int?
   plateProviderRef         String?
   vinProviderRef           String?
+  providerWarnings         String[]                   @default([])
   insurancePolicyNumber    String?
   insurancePolicyStatus    String?
   insurancePolicyExpiresAt DateTime?

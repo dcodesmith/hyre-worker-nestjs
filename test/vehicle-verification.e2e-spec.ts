@@ -64,6 +64,8 @@ describe("Vehicle verification E2E Tests", () => {
     regCheckService.verifyPlate.mockResolvedValue({
       plateNumber: normalizedPlate,
       vehicleName: "Toyota Camry",
+      make: "Toyota",
+      model: "Camry",
       chassisNumber: null,
       color: "Black",
       reference: null,
@@ -313,12 +315,76 @@ describe("Vehicle verification E2E Tests", () => {
     expect(initialInsurance).toBeNull();
   });
 
+  it("stores provider warnings for a partial NHTSA decode and keeps draft review gates unchanged", async () => {
+    const plateNumber = uniquePlate();
+    const chassisNumber = uniqueChassis();
+    regCheckService.verifyPlate.mockResolvedValueOnce({
+      plateNumber: plateNumber.replace("-", ""),
+      vehicleName: "Toyota Camry",
+      make: "Toyota",
+      model: "Camry",
+      chassisNumber: null,
+      color: "Black",
+      reference: null,
+    });
+    premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+    nhtsaService.verifyVin.mockResolvedValueOnce({
+      year: 2020,
+      make: null,
+      manufacturer: "TOYOTA MOTOR CORPORATION",
+      model: null,
+      passengerCapacity: null,
+      warningCodes: ["1", "400"],
+    });
+
+    const created = await withOwner(
+      request(app.getHttpServer()).post("/api/fleet-owner/vehicle-verifications"),
+    )
+      .set("Idempotency-Key", randomUUID())
+      .send(verificationBody(plateNumber, chassisNumber));
+
+    expect(created.status).toBe(HttpStatus.CREATED);
+    expect(created.body).not.toHaveProperty("providerWarnings");
+
+    const stored = await databaseService.vehicleVerification.findUnique({
+      where: { id: created.body.id },
+    });
+    expect(stored?.providerWarnings).toEqual([
+      "NHTSA returned a partial VIN decode (codes: 1, 400).",
+      "The VIN could not be fully matched to the plate by automated providers; compare the plate, VIN, make, model, and year with the vehicle registration before approval.",
+      "The verification providers did not return passenger capacity; compare the submitted capacity with the vehicle documents.",
+    ]);
+
+    const draft = await request(app.getHttpServer())
+      .post(`/api/fleet-owner/vehicle-verifications/${created.body.id}/car`)
+      .set("Cookie", ownerCookie);
+
+    expect(draft.status).toBe(HttpStatus.CREATED);
+    expect(draft.body).toMatchObject({
+      status: "HOLD",
+      approvalStatus: "PENDING",
+      make: "Toyota",
+      model: "Camry",
+      passengerCapacity: null,
+    });
+
+    const adminReview = await request(app.getHttpServer())
+      .get(`/api/admin/cars/${draft.body.id}`)
+      .set("Cookie", adminCookie);
+    expect(adminReview.status).toBe(HttpStatus.OK);
+    expect(adminReview.body.vehicleVerification?.providerWarnings).toEqual(
+      stored?.providerWarnings,
+    );
+  });
+
   it("returns VEHICLE_MISMATCH when the plate vehicle name does not match the VIN", async () => {
     const plateNumber = uniquePlate();
     const chassisNumber = uniqueChassis();
     regCheckService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Honda Accord",
+      make: "Honda",
+      model: "Accord",
       chassisNumber: null,
       color: "Black",
       reference: null,
@@ -347,6 +413,8 @@ describe("Vehicle verification E2E Tests", () => {
     regCheckService.verifyPlate.mockResolvedValueOnce({
       plateNumber: plateNumber.replace("-", ""),
       vehicleName: "Toyota Camry",
+      make: "Toyota",
+      model: "Camry",
       chassisNumber: null,
       color: "Black",
       reference: null,

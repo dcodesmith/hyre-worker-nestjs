@@ -51,6 +51,8 @@ describe("RegCheckService", () => {
     await expect(service.verifyPlate(`  ${PLATE.toLowerCase()}  `)).resolves.toEqual({
       plateNumber: PLATE,
       vehicleName: "Toyota Highlander",
+      make: "Toyota",
+      model: "Highlander",
       color: "Black",
     });
     expect(mockAxiosInstance.post).toHaveBeenCalledWith(
