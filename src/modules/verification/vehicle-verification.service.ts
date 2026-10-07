@@ -345,6 +345,14 @@ export class VehicleVerificationService {
     }
 
     const plateWords = this.vehicleWords(plate.vehicleName);
+    if (
+      vin.make &&
+      plate.make &&
+      this.vehicleWords(vin.make).join("") !== this.vehicleWords(plate.make).join("")
+    ) {
+      throw new VehicleMismatchException();
+    }
+
     const make = vin.make ?? plate.make;
     const makeWords = this.vehicleWords(make ?? "");
     const makeIndex = plateWords.findIndex((_, start) =>
@@ -366,7 +374,9 @@ export class VehicleVerificationService {
       vin.model ?? plate.model ?? plateWords.slice(makeIndex + makeWords.length).join(" ");
     const modelWords = this.vehicleWords(model);
     const normalizedModel = modelWords.join("");
-    const plateModelWords = plateWords.slice(makeIndex + makeWords.length);
+    const plateModelWords = plate.model
+      ? this.vehicleWords(plate.model)
+      : plateWords.slice(makeIndex + makeWords.length);
     const modelMatches = plateModelWords.some((_, start) => {
       let candidate = "";
       for (const word of plateModelWords.slice(start)) {

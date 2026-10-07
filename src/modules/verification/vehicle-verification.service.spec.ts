@@ -369,6 +369,7 @@ describe("VehicleVerificationService", () => {
       regCheckService.verifyPlate.mockResolvedValueOnce({
         ...mockPlate,
         vehicleName: "2020 TOYOTA CAMRY XLE",
+        model: "Camry XLE",
       });
       premblyService.verifyVin.mockResolvedValueOnce(mockVin);
       databaseService.vehicleVerification.update.mockResolvedValueOnce(succeededRecord());
@@ -404,6 +405,41 @@ describe("VehicleVerificationService", () => {
           failureReason: VerificationErrorCode.VEHICLE_MISMATCH,
         },
       });
+    });
+
+    it("rejects conflicting structured plate and VIN makes", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        make: "Honda",
+        model: "Toyota Camry",
+        vehicleName: "Honda Toyota Camry",
+      });
+      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
+    });
+
+    it("rejects conflicting structured plate and VIN models", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        model: "Corolla",
+        vehicleName: "Toyota Corolla",
+      });
+      premblyService.verifyVin.mockResolvedValueOnce(mockVin);
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
     });
 
     it("does not match a make embedded inside another vehicle-name word", async () => {
