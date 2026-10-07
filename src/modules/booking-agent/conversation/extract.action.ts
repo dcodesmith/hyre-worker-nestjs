@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { PinoLogger } from "nestjs-pino";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
 import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
-import { normalizeActionError } from "./conversation-log-utils";
+import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
 import type { BookingAgentState } from "./conversation.interface";
+import { normalizeActionError } from "./conversation-log-utils";
 
 @Injectable()
 export class ExtractAction {
@@ -44,7 +44,7 @@ export class ExtractAction {
           draftPatch: {},
           confidence: 0,
         },
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         statusMessage: null,
       };
     }

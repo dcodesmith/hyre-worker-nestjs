@@ -21,6 +21,7 @@ env:
   NODE_ENV: production
   APP_ENV: preview
   APP_NAME: Tripdly API Preview
+  WEBSITE_URL: https://hyre-web-development.tripdly.workers.dev
   SENDER_NAME: Yomide
   R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
   R2_IMAGES_BUCKET_NAME: hyre-assets-images-development

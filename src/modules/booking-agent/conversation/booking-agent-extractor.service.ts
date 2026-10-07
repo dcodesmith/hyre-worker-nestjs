@@ -10,6 +10,7 @@ import {
   isCancelIntentControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
+  isNoVehiclePreferenceControl,
   normalizeControlText,
 } from "./control-intent.policy";
 import {
@@ -49,7 +50,7 @@ const extractionSchema = z.object({
     durationDays: z.number().optional(),
     pickupLocation: z.string().optional(),
     dropoffLocation: z.string().optional(),
-    vehicleType: z.enum(["SEDAN", "SUV", "VAN", "CROSSOVER"]).optional(),
+    vehicleType: z.enum(["SEDAN", "SUV", "VAN", "CROSSOVER", "ANY"]).optional(),
     color: z.string().optional(),
     make: z.string().optional(),
     model: z.string().optional(),
@@ -319,6 +320,15 @@ export class BookingAgentExtractorService {
       ? VEHICLE_TYPE_REPLIES[normalized as keyof typeof VEHICLE_TYPE_REPLIES]
       : undefined;
     const missingFields = getMissingRequiredFields(draft);
+    if (
+      stage === "collecting" &&
+      missingFields.length === 1 &&
+      missingFields[0] === "vehicleType" &&
+      isNoVehiclePreferenceControl(normalized)
+    ) {
+      return { intent: "provide_info", draftPatch: { vehicleType: "ANY" }, confidence: 1 };
+    }
+
     if (
       stage === "collecting" &&
       vehicleType &&

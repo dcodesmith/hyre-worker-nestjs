@@ -7,6 +7,7 @@ const productionEnv = {
   REDIS_URL: "redis://localhost:6379",
   EMAIL_PROVIDER: "smtp",
   APP_NAME: "Hyre",
+  WEBSITE_URL: "https://tripdly.com",
   TWILIO_ACCOUNT_SID: "AC123",
   TWILIO_AUTH_TOKEN: "token",
   TWILIO_VERIFY_SERVICE_SID: "VA123",
@@ -258,6 +259,31 @@ describe("envSchema MONO_BASE_URL", () => {
 
     expect(result.MONO_BASE_URL).toBe("https://api.withmono.com");
   });
+});
+
+describe("envSchema WEBSITE_URL", () => {
+  it.each(["not-a-url", "javascript:alert(1)", "data:text/html,test"])(
+    "rejects non-HTTP website URL %s",
+    (websiteUrl) => {
+      const result = envSchema.safeParse({
+        ...productionEnv,
+        OPERATIONS_EMAIL: "operations@example.com",
+        WEBSITE_URL: websiteUrl,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: ["WEBSITE_URL"],
+              message: "WEBSITE_URL must use http:// or https://",
+            }),
+          ]),
+        );
+      }
+    },
+  );
 });
 
 describe("envSchema APP_ENV", () => {

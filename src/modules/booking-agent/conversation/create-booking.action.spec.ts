@@ -17,7 +17,10 @@ import { DatabaseService } from "../../database/database.service";
 import { FlightNotFoundException } from "../../flightaware/flightaware.error";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import {
+  getBookingAgentServiceUnavailableMessage,
+  isBookingAgentServiceUnavailableMessage,
+} from "./conversation.const";
 import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
 import type { BookingAgentState } from "./conversation.interface";
 import { createDefaultLocationValidationState } from "./conversation.interface";
@@ -78,6 +81,7 @@ describe("CreateBookingAction", () => {
   };
 
   beforeEach(async () => {
+    vi.stubEnv("WEBSITE_URL", "https://tripdly.com");
     databaseServiceMock.whatsAppConversation.findUnique.mockImplementation(() => {
       return Promise.resolve({
         phoneE164: "+2348012345678",
@@ -113,6 +117,7 @@ describe("CreateBookingAction", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("returns confirming error when selected option is missing", async () => {
@@ -325,7 +330,7 @@ describe("CreateBookingAction", () => {
         statusMessage: expect.stringContaining("still being processed"),
       }),
     );
-    expect(result.error).not.toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(result.error)).toBe(false);
   });
 
   it("returns an explicit conflict response when the message key has different input", async () => {
@@ -352,7 +357,7 @@ describe("CreateBookingAction", () => {
         statusMessage: expect.stringContaining("details changed"),
       }),
     );
-    expect(result.error).not.toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(result.error)).toBe(false);
   });
 
   it("creates booking as linked user when conversation is verified-linked", async () => {
@@ -436,7 +441,7 @@ describe("CreateBookingAction", () => {
 
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_1");
-    expect(result.error).not.toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(result.error)).toBe(false);
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
       expect.any(Object),
       "",
@@ -478,7 +483,7 @@ describe("CreateBookingAction", () => {
 
     expect(result.stage).toBe("presenting_options");
     expect(result.availableOptions?.[0]?.id).toBe("vehicle_alt_2");
-    expect(result.error).not.toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(result.error)).toBe(false);
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
       expect.any(Object),
       "",
@@ -516,7 +521,7 @@ describe("CreateBookingAction", () => {
     expect(result.stage).toBe("confirming");
     expect(result.availableOptions).toBeUndefined();
     expect(result.lastShownOptions).toBeUndefined();
-    expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(result.error).toBe(getBookingAgentServiceUnavailableMessage());
   });
 
   it("asks for confirmation when refreshed flight times change", async () => {

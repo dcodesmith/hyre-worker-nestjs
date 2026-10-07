@@ -9,6 +9,7 @@ primary_region = 'lhr'
 [env]
   TZ = 'Africa/Lagos'
   APP_ENV = 'development'
+  WEBSITE_URL = 'https://hyre-web-development.tripdly.workers.dev'
   GRAFANA_TRACES_BASE_URL = 'https://gallantcricket1373.grafana.net'
   MONO_BASE_URL = 'https://api.withmono.com'
 

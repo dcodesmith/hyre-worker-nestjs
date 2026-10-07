@@ -13,12 +13,20 @@ function githubExpression(value: string): string {
 describe("deployment environment configuration", () => {
   it("keeps development and production on separate Fly apps", () => {
     const developmentConfig = readRepositoryFile("fly.toml");
+    const previewConfig = readRepositoryFile("fly.preview.toml");
     const productionConfig = readRepositoryFile("fly.production.toml");
 
     expect(developmentConfig).toContain("app = 'hyre-worker-nestjs'");
     expect(developmentConfig).toContain("APP_ENV = 'development'");
+    expect(developmentConfig).toContain(
+      "WEBSITE_URL = 'https://hyre-web-development.tripdly.workers.dev'",
+    );
+    expect(previewConfig).toContain(
+      'WEBSITE_URL = "https://hyre-web-development.tripdly.workers.dev"',
+    );
     expect(productionConfig).toContain('app = "hyre-worker-nestjs-production"');
     expect(productionConfig).toContain('APP_ENV = "production"');
+    expect(productionConfig).toContain('WEBSITE_URL = "https://tripdly.com"');
     expect(productionConfig).toContain(
       'release_command = "/bin/sh scripts/run-prisma-migrations.sh"',
     );

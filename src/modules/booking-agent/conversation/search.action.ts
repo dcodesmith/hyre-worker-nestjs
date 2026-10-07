@@ -11,7 +11,7 @@ import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { clearDerivedAirportFields } from "./booking-rules";
 import {
   BOOKING_AGENT_OUTBOUND_MODE,
-  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+  getBookingAgentServiceUnavailableMessage,
 } from "./conversation.const";
 import {
   type BookingAgentLocationValidationState,
@@ -226,7 +226,7 @@ export class SearchAction {
       );
       return {
         stage: "collecting",
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         availableOptions: [],
         lastShownOptions: [],
         statusMessage:
@@ -320,7 +320,7 @@ export class SearchAction {
   private hasStrictVehicleFilters(draft: BookingDraft): boolean {
     return Boolean(
       draft.color?.trim() ||
-        draft.vehicleType ||
+        (draft.vehicleType && !isAnyVehiclePreference(draft.vehicleType)) ||
         draft.serviceTier ||
         (draft.make?.trim() && !isAnyVehiclePreference(draft.make)) ||
         (draft.model?.trim() && !isAnyVehiclePreference(draft.model)),

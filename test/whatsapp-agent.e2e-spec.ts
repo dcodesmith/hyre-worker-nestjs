@@ -7,7 +7,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { BookingAgentOrchestratorService } from "../src/modules/booking-agent/booking-agent-orchestrator.service";
 import { BookingAgentExtractorService } from "../src/modules/booking-agent/conversation/booking-agent-extractor.service";
 import { BookingAgentStateService } from "../src/modules/booking-agent/conversation/booking-agent-state.service";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "../src/modules/booking-agent/conversation/conversation.const";
+import { isBookingAgentServiceUnavailableMessage } from "../src/modules/booking-agent/conversation/conversation.const";
 import type { BookingAgentState } from "../src/modules/booking-agent/conversation/conversation.interface";
 import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "../src/modules/booking-agent/conversation/conversation.tokens";
 import { DatabaseService } from "../src/modules/database/database.service";
@@ -207,7 +207,7 @@ describe("Booking Agent", () => {
     });
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
-    expect(text).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(text)).toBe(true);
     expect(text).not.toContain("Here are your options");
     expect(extractorService.extract).toHaveBeenCalled();
     expect(claudeService.messages.create).not.toHaveBeenCalled();
@@ -670,7 +670,7 @@ describe("Booking Agent", () => {
     });
 
     const outageText = outageTurn.enqueueOutbox.map((item) => item.textBody ?? "").join("\n");
-    expect(outageText).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(isBookingAgentServiceUnavailableMessage(outageText)).toBe(true);
     expect(outageText).not.toContain("Here are your options");
     expect(claudeService.messages.create).toHaveBeenCalledTimes(claudeCallsBeforeOutage);
 

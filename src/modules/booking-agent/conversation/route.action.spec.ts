@@ -1,7 +1,7 @@
 import { Test, type TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { BOOKING_AGENT_ACTIONS, BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { BOOKING_AGENT_ACTIONS } from "./conversation.const";
 import { createDefaultLocationValidationState } from "./conversation.interface";
 import { RouteAction } from "./route.action";
 
@@ -40,7 +40,8 @@ describe("RouteAction", () => {
       outboxItems: [],
       extraction: null,
       nextAction: null,
-      error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+      error:
+        "This service is temporarily unavailable. Please try again in a moment or type booking online at https://legacy.example.com.",
       statusMessage: null,
       locationValidation: createDefaultLocationValidationState(),
     });

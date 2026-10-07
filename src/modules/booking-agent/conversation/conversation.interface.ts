@@ -17,7 +17,7 @@ export interface BookingDraft {
   durationDays?: number;
   pickupLocation?: string;
   dropoffLocation?: string;
-  vehicleType?: "SEDAN" | "SUV" | "VAN" | "CROSSOVER";
+  vehicleType?: "SEDAN" | "SUV" | "VAN" | "CROSSOVER" | "ANY";
   serviceTier?: "STANDARD" | "EXECUTIVE" | "LUXURY" | "ULTRA_LUXURY";
   color?: string;
   make?: string;
@@ -262,7 +262,7 @@ export function convertToExtractedParams(draft: BookingDraft): ExtractedAiSearch
     color: draft.color,
     make: toOptionalVehicleFilter(draft.make),
     model: toOptionalVehicleFilter(draft.model),
-    vehicleType: draft.vehicleType,
+    vehicleType: toOptionalVehicleType(draft.vehicleType),
     serviceTier: draft.serviceTier,
     from: useDerivedAirportWindow && draft.pickupDateTime ? draft.pickupDateTime : draft.pickupDate,
     to:
@@ -281,6 +281,12 @@ export function isAnyVehiclePreference(value: string | undefined): boolean {
 
 function toOptionalVehicleFilter(value: string | undefined): string | undefined {
   return isAnyVehiclePreference(value) ? undefined : value;
+}
+
+function toOptionalVehicleType(
+  value: BookingDraft["vehicleType"],
+): ExtractedAiSearchParams["vehicleType"] {
+  return value === BOOKING_AGENT_ANY_VEHICLE_PREFERENCE ? undefined : value;
 }
 
 export function convertFromExtractedParams(params: ExtractedAiSearchParams): Partial<BookingDraft> {

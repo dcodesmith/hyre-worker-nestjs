@@ -109,6 +109,64 @@ describe("SearchAction", () => {
     expect(result.stage).toBe("collecting");
   });
 
+  it("searches without a vehicleType filter when the draft uses ANY", async () => {
+    googlePlacesServiceMock.validateAddress.mockResolvedValue({
+      isValid: true,
+      normalizedAddress: "Victoria Island, Lagos, Nigeria",
+    });
+    bookingAgentSearchServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+      exactMatches: [
+        buildVehicleOption({ id: "sedan_1", vehicleType: "SEDAN" }),
+        buildVehicleOption({ id: "suv_1", vehicleType: "SUV" }),
+      ],
+      alternatives: [],
+    });
+
+    const result = await searchAction.run({
+      conversationId: "conv_1",
+      inboundMessage: "search",
+      inboundMessageId: "msg_1",
+      customerId: null,
+      stage: "collecting",
+      turnCount: 1,
+      messages: [],
+      draft: {
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+        pickupTime: "09:00",
+        dropoffDate: "2026-03-01",
+        vehicleType: "ANY",
+        pickupLocation: "Victoria Island",
+        dropoffLocation: "Victoria Island",
+      },
+      availableOptions: [],
+      lastShownOptions: [],
+      selectedOption: null,
+      holdId: null,
+      holdExpiresAt: null,
+      bookingId: null,
+      paymentLink: null,
+      preferences: {},
+      response: null,
+      outboxItems: [],
+      extraction: {
+        intent: "provide_info",
+        draftPatch: { vehicleType: "ANY" },
+        confidence: 1,
+      },
+      nextAction: null,
+      error: null,
+      statusMessage: null,
+      locationValidation: createDefaultLocationValidationState(),
+    });
+
+    const [searchParams] = bookingAgentSearchServiceMock.searchVehiclesFromExtracted.mock.calls[0];
+    expect(searchParams.vehicleType).toBeUndefined();
+    expect(result.stage).toBe("presenting_options");
+    expect(result.availableOptions).toHaveLength(2);
+    expect(result.statusMessage).toBeNull();
+  });
+
   it("returns presenting_options when search has exact matches", async () => {
     googlePlacesServiceMock.validateAddress.mockResolvedValue({
       isValid: true,
