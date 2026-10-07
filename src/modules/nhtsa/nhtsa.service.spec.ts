@@ -6,7 +6,7 @@ import {
   createMockHttpClientService,
 } from "../http-client/http-client.fixtures";
 import { HttpClientService } from "../http-client/http-client.service";
-import { NhtsaError, NhtsaService } from "./nhtsa.service";
+import { isCleanVpicErrorCode, NhtsaError, NhtsaService } from "./nhtsa.service";
 
 const VALID_VIN = "1HGCM82633A004352";
 
@@ -16,12 +16,23 @@ const decodeSuccess = (overrides: Record<string, unknown> = {}) => ({
       VIN: VALID_VIN,
       ErrorCode: "0",
       Make: "Honda",
+      Manufacturer: "HONDA MOTOR CO., LTD",
       Model: "Accord",
       ModelYear: "2020",
       Seats: "5",
       ...overrides,
     },
   ],
+});
+
+describe("isCleanVpicErrorCode", () => {
+  it.each(["0", "0,10", "1,10", "1,400", "1,10,400"])("returns true for %s", (errorCode) => {
+    expect(isCleanVpicErrorCode(errorCode)).toBe(true);
+  });
+
+  it.each(["1", "7", "10", "400", "1,7,400", ""])("returns false for %s", (errorCode) => {
+    expect(isCleanVpicErrorCode(errorCode)).toBe(false);
+  });
 });
 
 describe("NhtsaService", () => {
@@ -39,14 +50,16 @@ describe("NhtsaService", () => {
     service = module.get(NhtsaService);
   });
 
-  it("decodes an exact VIN including passenger seats", async () => {
+  it("decodes an exact VIN including passenger seats, manufacturer, and warning codes", async () => {
     mockAxiosInstance.get.mockResolvedValueOnce({ data: decodeSuccess() });
 
     await expect(service.verifyVin(`  ${VALID_VIN.toLowerCase()}  `)).resolves.toEqual({
       year: 2020,
       make: "Honda",
+      manufacturer: "HONDA MOTOR CO., LTD",
       model: "Accord",
       passengerCapacity: 5,
+      warningCodes: [],
     });
     expect(mockAxiosInstance.get).toHaveBeenCalledWith(`/vehicles/DecodeVinValues/${VALID_VIN}`, {
       params: { format: "json" },
@@ -60,7 +73,7 @@ describe("NhtsaService", () => {
     expect(mockAxiosInstance.get).not.toHaveBeenCalled();
   });
 
-  it.each(["0", "0,10", "1,10", "1, 400", "1,10,400"])(
+  it.each(["0", "0,10", "1,10", "1,400", "1,10,400"])(
     "accepts documented clean vPIC ErrorCode %s",
     async (errorCode) => {
       mockAxiosInstance.get.mockResolvedValueOnce({
@@ -74,7 +87,33 @@ describe("NhtsaService", () => {
     },
   );
 
-  it.each(["7", "1", "10", "400", "1,7,400", ""])(
+  it.each(["1", "3", "5", "14", "400", "1,3", "1,400"])(
+    "accepts partial vPIC ErrorCode %s when make/model rules are satisfied",
+    async (errorCode) => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: decodeSuccess({ ErrorCode: errorCode }),
+      });
+
+      await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({
+        make: "Honda",
+        model: "Accord",
+      });
+    },
+  );
+
+  it.each([
+    ["1,400", ["1", "400"]],
+    ["1,10,400", ["1", "400"]],
+    ["1,3,5", ["1", "3", "5"]],
+  ])("returns warningCodes %j for ErrorCode %s", async (errorCode, warningCodes) => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({ ErrorCode: errorCode }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({ warningCodes });
+  });
+
+  it.each(["7", "10", "1,7,400", ""])(
     "rejects a provider row whose ErrorCode is %s",
     async (errorCode) => {
       mockAxiosInstance.get.mockResolvedValueOnce({
@@ -84,6 +123,26 @@ describe("NhtsaService", () => {
       await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("REJECTED"));
     },
   );
+
+  it("accepts a partial decode with manufacturer when make and model are missing", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({
+        ErrorCode: "1",
+        Make: "  ",
+        Model: "",
+        Manufacturer: "TOYOTA MOTOR CORPORATION",
+      }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toEqual({
+      year: 2020,
+      make: null,
+      manufacturer: "TOYOTA MOTOR CORPORATION",
+      model: null,
+      passengerCapacity: 5,
+      warningCodes: ["1"],
+    });
+  });
 
   it("rejects an empty Results array", async () => {
     mockAxiosInstance.get.mockResolvedValueOnce({ data: { Results: [] } });
@@ -105,9 +164,22 @@ describe("NhtsaService", () => {
     await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("INVALID_RESPONSE"));
   });
 
-  it("rejects a decode that cannot produce a valid year, make, and model", async () => {
+  it("rejects a clean decode that cannot produce a valid year, make, and model", async () => {
     mockAxiosInstance.get.mockResolvedValueOnce({
       data: decodeSuccess({ ModelYear: "1800", Make: "  ", Model: "" }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("INVALID_RESPONSE"));
+  });
+
+  it("rejects a partial decode without make, manufacturer, or model", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({
+        ErrorCode: "1",
+        Make: "",
+        Model: "",
+        Manufacturer: "",
+      }),
     });
 
     await expect(service.verifyVin(VALID_VIN)).rejects.toEqual(new NhtsaError("INVALID_RESPONSE"));
@@ -136,8 +208,10 @@ describe("NhtsaService", () => {
     await expect(service.verifyVin(VALID_VIN)).resolves.toEqual({
       year: 2020,
       make: "Honda",
+      manufacturer: "HONDA MOTOR CO., LTD",
       model: "Accord",
       passengerCapacity: null,
+      warningCodes: [],
     });
   });
 });

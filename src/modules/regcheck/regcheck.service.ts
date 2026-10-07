@@ -58,6 +58,8 @@ export class RegCheckService {
       return {
         plateNumber: normalizedPlate,
         vehicleName: `${make} ${model}`,
+        make,
+        model,
         color,
       };
     } catch (error) {

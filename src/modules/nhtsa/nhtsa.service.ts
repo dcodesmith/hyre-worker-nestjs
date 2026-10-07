@@ -10,6 +10,7 @@ const nhtsaResponseSchema = z.looseObject({
       VIN: z.string(),
       ErrorCode: z.string(),
       Make: z.string(),
+      Manufacturer: z.string().optional().default(""),
       Model: z.string(),
       ModelYear: z.string(),
       Seats: z.string().optional().default(""),
@@ -27,9 +28,11 @@ export class NhtsaError extends Error {
 
 export type NhtsaVinResult = {
   year: number;
-  make: string;
-  model: string;
+  make: string | null;
+  manufacturer: string | null;
+  model: string | null;
   passengerCapacity: number | null;
+  warningCodes: string[];
 };
 
 const CLEAN_VPIC_ERROR_CODE_SETS: ReadonlyArray<ReadonlySet<string>> = [
@@ -40,8 +43,10 @@ const CLEAN_VPIC_ERROR_CODE_SETS: ReadonlyArray<ReadonlySet<string>> = [
   new Set(["1", "10", "400"]),
 ];
 
-export function isCleanVpicErrorCode(errorCode: string): boolean {
-  const codes = [
+const PARTIAL_VPIC_ERROR_CODES = new Set(["1", "3", "5", "14", "400"]);
+
+function parseVpicErrorCodes(errorCode: string): string[] {
+  return [
     ...new Set(
       errorCode
         .split(",")
@@ -49,6 +54,10 @@ export function isCleanVpicErrorCode(errorCode: string): boolean {
         .filter(Boolean),
     ),
   ];
+}
+
+export function isCleanVpicErrorCode(errorCode: string): boolean {
+  const codes = parseVpicErrorCodes(errorCode);
   return CLEAN_VPIC_ERROR_CODE_SETS.some(
     (allowed) => codes.length === allowed.size && codes.every((code) => allowed.has(code)),
   );
@@ -90,19 +99,26 @@ export class NhtsaService {
       if (vehicle.VIN.trim().toUpperCase() !== normalizedVin) {
         throw new NhtsaError("INVALID_RESPONSE");
       }
-      if (!isCleanVpicErrorCode(vehicle.ErrorCode)) {
+      const errorCodes = parseVpicErrorCodes(vehicle.ErrorCode);
+      const cleanDecode = isCleanVpicErrorCode(vehicle.ErrorCode);
+      if (
+        !cleanDecode &&
+        (errorCodes.length === 0 || !errorCodes.every((code) => PARTIAL_VPIC_ERROR_CODES.has(code)))
+      ) {
         throw new NhtsaError("REJECTED");
       }
+      const warningCodes = errorCodes.filter((code) => PARTIAL_VPIC_ERROR_CODES.has(code));
 
       const year = Number(vehicle.ModelYear);
-      const make = vehicle.Make.trim();
-      const model = vehicle.Model.trim();
+      const make = vehicle.Make.trim() || null;
+      const manufacturer = vehicle.Manufacturer.trim() || null;
+      const model = vehicle.Model.trim() || null;
       if (
         !Number.isInteger(year) ||
         year < 1886 ||
         year > new Date().getFullYear() + 1 ||
-        !make ||
-        !model
+        (!make && !manufacturer) ||
+        (cleanDecode && (!make || !model))
       ) {
         throw new NhtsaError("INVALID_RESPONSE");
       }
@@ -113,7 +129,7 @@ export class NhtsaService {
           ? decodedSeats
           : null;
 
-      return { year, make, model, passengerCapacity };
+      return { year, make, manufacturer, model, passengerCapacity, warningCodes };
     } catch (error) {
       if (error instanceof NhtsaError) throw error;
       throw new NhtsaError("UNAVAILABLE");

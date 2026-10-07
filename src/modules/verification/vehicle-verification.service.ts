@@ -46,6 +46,26 @@ function usablePassengerCapacity(value: number | null) {
     : null;
 }
 
+type PlateVerificationResult = {
+  chassisNumber: string | null;
+  color: string | null;
+  make: string | null;
+  model: string | null;
+  plateNumber: string;
+  reference: string | null;
+  vehicleName: string;
+};
+
+type VinVerificationResult = {
+  make: string | null;
+  manufacturer: string | null;
+  model: string | null;
+  passengerCapacity: number | null;
+  reference: string | null;
+  warningCodes: string[];
+  year: number;
+};
+
 @Injectable()
 export class VehicleVerificationService {
   constructor(
@@ -122,19 +142,20 @@ export class VehicleVerificationService {
         this.verifyPlate(plateNumber),
         this.verifyVin(chassisNumber),
       ]);
-      this.assertVehicleDetailsMatch(plateNumber, chassisNumber, plate, vin);
+      const details = this.resolveVehicleDetails(plateNumber, chassisNumber, plate, vin);
 
       const completed = await this.databaseService.vehicleVerification.update({
         where: { id: verification.id },
         data: {
           status: ProviderVerificationStatus.SUCCEEDED,
-          make: vin.make,
-          model: vin.model,
+          make: details.make,
+          model: details.model,
           year: vin.year,
           color: plate.color,
           passengerCapacity: usablePassengerCapacity(vin.passengerCapacity),
-          plateProviderRef: "reference" in plate ? plate.reference : null,
+          plateProviderRef: plate.reference,
           vinProviderRef: vin.reference,
+          providerWarnings: details.providerWarnings,
         },
       });
       return this.toVehicleResponse(completed);
@@ -310,12 +331,12 @@ export class VehicleVerificationService {
       .filter(Boolean);
   }
 
-  private assertVehicleDetailsMatch(
+  private resolveVehicleDetails(
     requestedPlate: string,
     requestedChassis: string,
-    plate: { plateNumber: string; vehicleName: string; chassisNumber?: string | null },
-    vin: { make: string; model: string },
-  ): void {
+    plate: PlateVerificationResult,
+    vin: VinVerificationResult,
+  ): { make: string; model: string; providerWarnings: string[] } {
     if (this.normalizePlate(plate.plateNumber) !== requestedPlate) {
       throw new VehicleMismatchException();
     }
@@ -323,16 +344,39 @@ export class VehicleVerificationService {
       throw new VehicleMismatchException();
     }
 
-    const plateVehicleName = plate.vehicleName;
+    const plateWords = this.vehicleWords(plate.vehicleName);
+    if (
+      vin.make &&
+      plate.make &&
+      this.vehicleWords(vin.make).join("") !== this.vehicleWords(plate.make).join("")
+    ) {
+      throw new VehicleMismatchException();
+    }
 
-    const plateWords = this.vehicleWords(plateVehicleName);
-    const makeWords = this.vehicleWords(vin.make);
-    const modelWords = this.vehicleWords(vin.model);
-    const normalizedModel = modelWords.join("");
+    const make = vin.make ?? plate.make;
+    const makeWords = this.vehicleWords(make ?? "");
     const makeIndex = plateWords.findIndex((_, start) =>
       makeWords.every((word, offset) => plateWords[start + offset] === word),
     );
-    const plateModelWords = plateWords.slice(makeIndex + makeWords.length);
+    if (!make || makeWords.length === 0 || makeIndex < 0) {
+      throw new VehicleMismatchException();
+    }
+
+    if (
+      !vin.make &&
+      vin.manufacturer &&
+      !makeWords.every((word) => this.vehicleWords(vin.manufacturer ?? "").includes(word))
+    ) {
+      throw new VehicleMismatchException();
+    }
+
+    const model =
+      vin.model ?? plate.model ?? plateWords.slice(makeIndex + makeWords.length).join(" ");
+    const modelWords = this.vehicleWords(model);
+    const normalizedModel = modelWords.join("");
+    const plateModelWords = plate.model
+      ? this.vehicleWords(plate.model)
+      : plateWords.slice(makeIndex + makeWords.length);
     const modelMatches = plateModelWords.some((_, start) => {
       let candidate = "";
       for (const word of plateModelWords.slice(start)) {
@@ -342,23 +386,45 @@ export class VehicleVerificationService {
       }
       return false;
     });
-    if (makeWords.length === 0 || modelWords.length === 0 || makeIndex < 0 || !modelMatches) {
+    if (!model || modelWords.length === 0 || !modelMatches) {
       throw new VehicleMismatchException();
     }
+
+    const providerWarnings: string[] = [];
+    if (vin.warningCodes.length > 0) {
+      providerWarnings.push(
+        `NHTSA returned a partial VIN decode (codes: ${vin.warningCodes.join(", ")}).`,
+      );
+    }
+    if (!vin.make || !vin.model) {
+      providerWarnings.push(
+        "The VIN could not be fully matched to the plate by automated providers; compare the plate, VIN, make, model, and year with the vehicle registration before approval.",
+      );
+    }
+    if (usablePassengerCapacity(vin.passengerCapacity) === null) {
+      providerWarnings.push(
+        "The verification providers did not return passenger capacity; compare the submitted capacity with the vehicle documents.",
+      );
+    }
+
+    return { make, model, providerWarnings };
   }
 
-  private async verifyPlate(plateNumber: string) {
+  private async verifyPlate(plateNumber: string): Promise<PlateVerificationResult> {
     try {
-      return await this.regCheckService.verifyPlate(plateNumber);
+      const plate = await this.regCheckService.verifyPlate(plateNumber);
+      return { ...plate, chassisNumber: null, reference: null };
     } catch (error) {
       if (!(error instanceof RegCheckError)) throw error;
-      return this.premblyService.verifyPlate(plateNumber);
+      const plate = await this.premblyService.verifyPlate(plateNumber);
+      return { ...plate, make: null, model: null };
     }
   }
 
-  private async verifyVin(chassisNumber: string) {
+  private async verifyVin(chassisNumber: string): Promise<VinVerificationResult> {
     try {
-      return await this.premblyService.verifyVin(chassisNumber);
+      const vin = await this.premblyService.verifyVin(chassisNumber);
+      return { ...vin, manufacturer: null, warningCodes: [] };
     } catch (error) {
       if (
         !(error instanceof PremblyError) ||
