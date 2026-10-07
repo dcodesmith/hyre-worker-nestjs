@@ -138,7 +138,10 @@ export const envSchema = z
     SMTP_PASS: z.string().min(1).optional(),
 
     APP_NAME: z.string().min(1, "APP_NAME is required"),
-    WEBSITE_URL: z.url("WEBSITE_URL must be a valid URL"),
+    WEBSITE_URL: z.url({
+      protocol: /^https?$/,
+      error: "WEBSITE_URL must use http:// or https://",
+    }),
     APP_ENV: z.enum(["preview", "development", "production"]).default("development"),
     DEPLOYMENT_COMMIT: z
       .union([

@@ -262,25 +262,28 @@ describe("envSchema MONO_BASE_URL", () => {
 });
 
 describe("envSchema WEBSITE_URL", () => {
-  it("rejects an invalid website URL", () => {
-    const result = envSchema.safeParse({
-      ...productionEnv,
-      OPERATIONS_EMAIL: "operations@example.com",
-      WEBSITE_URL: "not-a-url",
-    });
+  it.each(["not-a-url", "javascript:alert(1)", "data:text/html,test"])(
+    "rejects non-HTTP website URL %s",
+    (websiteUrl) => {
+      const result = envSchema.safeParse({
+        ...productionEnv,
+        OPERATIONS_EMAIL: "operations@example.com",
+        WEBSITE_URL: websiteUrl,
+      });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: ["WEBSITE_URL"],
-            message: "WEBSITE_URL must be a valid URL",
-          }),
-        ]),
-      );
-    }
-  });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: ["WEBSITE_URL"],
+              message: "WEBSITE_URL must use http:// or https://",
+            }),
+          ]),
+        );
+      }
+    },
+  );
 });
 
 describe("envSchema APP_ENV", () => {
