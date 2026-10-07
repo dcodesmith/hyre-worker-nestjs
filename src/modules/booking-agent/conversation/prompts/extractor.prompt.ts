@@ -154,6 +154,7 @@ RULES:
    - "Toyota Highlander SUV" -> make: "Toyota", model: "Highlander"
 11. If user does NOT explicitly mention make/model/color, do NOT invent them
 12. Record explicit no-preference answers using "ANY":
+   - "any vehicle type", "no preference", "I don't mind", or "whatever is available" -> vehicleType: "ANY"
    - "any make" or "no make preference" -> make: "ANY"
    - "any model" or "no model preference" -> model: "ANY"
    - "any make or model" -> make: "ANY", model: "ANY"

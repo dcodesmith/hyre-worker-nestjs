@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { convertToExtractedParams } from "./conversation.interface";
 
 describe("conversation interface helpers", () => {
+  it("strips vehicleType ANY so search is not filtered by category", () => {
+    expect(
+      convertToExtractedParams({
+        vehicleType: "ANY",
+        bookingType: "DAY",
+        pickupDate: "2026-03-01",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        vehicleType: undefined,
+      }),
+    );
+  });
+
   it("keeps explicit any make and model choices out of search filters", () => {
     expect(
       convertToExtractedParams({

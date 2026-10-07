@@ -5,6 +5,7 @@ import {
   isCancelIntentControl,
   isLikelyAffirmativeControl,
   isLikelyNegativeControl,
+  isNoVehiclePreferenceControl,
   normalizeControlText,
 } from "./control-intent.policy";
 
@@ -29,6 +30,16 @@ describe("booking-agent-control-intent.policy", () => {
     expect(isCancelIntentControl("cancel booking")).toBe(true);
     expect(isBareCancelControl("cancel")).toBe(true);
     expect(isAgentRequestControl("talk to agent")).toBe(true);
+  });
+
+  it("detects no vehicle preference phrases without requiring the word any", () => {
+    expect(isNoVehiclePreferenceControl(normalizeControlText("Any vehicle type would do"))).toBe(
+      true,
+    );
+    expect(isNoVehiclePreferenceControl(normalizeControlText("I don't have a preference"))).toBe(
+      true,
+    );
+    expect(isNoVehiclePreferenceControl(normalizeControlText("I want a sedan"))).toBe(false);
   });
 
   it("ignores long free-form text for control parsing", () => {

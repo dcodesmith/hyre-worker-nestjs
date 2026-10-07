@@ -1,3 +1,4 @@
+import { getEmailPublicEnv } from "../../../email-public-env";
 import type { BookingDraft } from "./conversation.interface";
 
 export const BOOKING_AGENT_DEFAULT_HISTORY_LIMIT = 10;
@@ -10,13 +11,19 @@ export const BOOKING_AGENT_RESPONSE_MAX_TOKENS = 4096;
 export const BOOKING_AGENT_MODEL_TIMEOUT_MS = 10_000;
 export const BOOKING_AGENT_MODEL_MAX_RETRIES = 1;
 export const BOOKING_AGENT_ANY_VEHICLE_PREFERENCE = "ANY";
+const BOOKING_AGENT_SERVICE_UNAVAILABLE_PREFIX = "This service is temporarily unavailable.";
 
 /**
  * User-friendly message shown when an external service (OpenAI, Anthropic, etc.) is unavailable.
  * This replaces raw technical errors like "429 quota exceeded" or "500 internal server error".
  */
-export const BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE =
-  "This service is temporarily unavailable. Please try again in a moment or type booking online at https://www.tripdly.com.";
+export function getBookingAgentServiceUnavailableMessage(): string {
+  return `${BOOKING_AGENT_SERVICE_UNAVAILABLE_PREFIX} Please try again in a moment or type booking online at ${getEmailPublicEnv().websiteUrl}.`;
+}
+
+export function isBookingAgentServiceUnavailableMessage(value: string | null): boolean {
+  return value?.startsWith(BOOKING_AGENT_SERVICE_UNAVAILABLE_PREFIX) ?? false;
+}
 
 // Twilio Content Template for vehicle selection cards
 // Template variables: {{1}}=WhatsApp-visible title with price, {{2}}=RCS-only body,

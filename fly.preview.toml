@@ -7,6 +7,7 @@ primary_region = "lhr"
   # Intentional: app/business logic uses Lagos local time while Fly region uses nearest suitable region.
   TZ = "Africa/Lagos"
   APP_ENV = "preview"
+  WEBSITE_URL = "https://hyre-web-development.tripdly.workers.dev"
   GRAFANA_TRACES_BASE_URL = "https://gallantcricket1373.grafana.net"
   MONO_BASE_URL = "https://api.withmono.com"
 

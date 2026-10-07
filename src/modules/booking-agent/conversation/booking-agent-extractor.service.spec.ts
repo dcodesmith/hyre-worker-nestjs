@@ -754,6 +754,71 @@ describe("BookingAgentExtractorService", () => {
     };
 
     it.each([
+      { reply: "Any vehicle type would do", vehicleType: "ANY" as const },
+      { reply: "I don't have a preference", vehicleType: "ANY" as const },
+    ] as const)(
+      "maps no-preference reply $reply to ANY when vehicleType is the only missing field",
+      async ({ reply, vehicleType }) => {
+        const result = await service.extract(
+          buildState({
+            inboundMessage: reply,
+            stage: "collecting",
+            draft: airportPickupAwaitingVehicle,
+          }),
+        );
+
+        expect(result.intent).toBe("provide_info");
+        expect(result.draftPatch).toEqual({ vehicleType });
+        expect(result.confidence).toBe(1);
+        expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not map an explicit sedan reply to ANY", async () => {
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "sedan",
+          stage: "collecting",
+          draft: airportPickupAwaitingVehicle,
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({ vehicleType: "SEDAN" });
+      expect(result.draftPatch.vehicleType).not.toBe("ANY");
+      expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts vehicleType ANY from the OpenAI extraction path", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: { vehicleType: "ANY" },
+                confidence: 0.82,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "honestly anything works for me on this trip",
+          stage: "collecting",
+          draft: airportPickupAwaitingVehicle,
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({ vehicleType: "ANY" });
+      expect(result.confidence).toBe(0.82);
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
       { reply: "SUV", vehicleType: "SUV" },
       { reply: "sedan", vehicleType: "SEDAN" },
       { reply: "van", vehicleType: "VAN" },

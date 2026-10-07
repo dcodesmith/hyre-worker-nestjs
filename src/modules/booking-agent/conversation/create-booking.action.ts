@@ -25,7 +25,7 @@ import { BookingAgentSearchService } from "../booking-agent-search.service";
 import { WhatsAppPersistenceService } from "../whatsapp/whatsapp-persistence.service";
 import { buildBookingInputFromDraft, buildGuestIdentity } from "./booking-orchestrator";
 import { clearDerivedAirportFields } from "./booking-rules";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
 import {
   type BookingAgentState,
   type BookingDraft,
@@ -246,7 +246,7 @@ export class CreateBookingAction {
       if (idempotencyResult) return idempotencyResult;
 
       return {
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         statusMessage: null,
         stage: "confirming",
       };

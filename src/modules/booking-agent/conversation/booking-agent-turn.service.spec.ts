@@ -18,7 +18,7 @@ import { BookingAgentExtractorService } from "./booking-agent-extractor.service"
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
 import { BookingAgentStateService } from "./booking-agent-state.service";
 import { BookingAgentTurnService } from "./booking-agent-turn.service";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
+import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
 import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
 import type { BookingAgentState } from "./conversation.interface";
 import { createDefaultLocationValidationState } from "./conversation.interface";
@@ -101,6 +101,7 @@ describe("BookingAgentTurnService", () => {
   });
 
   beforeEach(async () => {
+    vi.stubEnv("WEBSITE_URL", "https://tripdly.com");
     stateServiceMock = {
       loadState: vi.fn().mockResolvedValue(null),
       saveState: vi.fn().mockResolvedValue(undefined),
@@ -219,6 +220,7 @@ describe("BookingAgentTurnService", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("invoke", () => {
@@ -1214,7 +1216,7 @@ describe("BookingAgentTurnService", () => {
       });
 
       expect(result.stage).toBe("confirming");
-      expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(result.error).toBe(getBookingAgentServiceUnavailableMessage());
       expect(result.error).not.toContain("postgres timeout");
     });
 

@@ -4,7 +4,7 @@ import { getMissingRequiredFields } from "../booking-agent.helper";
 import { resolveRouteDecision } from "./booking-agent-router.policy";
 import {
   BOOKING_AGENT_ACTIONS,
-  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+  isBookingAgentServiceUnavailableMessage,
 } from "./conversation.const";
 import {
   type BookingAgentRouteDecision,
@@ -22,7 +22,7 @@ export class RouteAction {
   run(state: BookingAgentState): BookingAgentRouteDecision {
     const { extraction, draft, stage, availableOptions, selectedOption } = state;
 
-    if (state.error === BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE) {
+    if (isBookingAgentServiceUnavailableMessage(state.error)) {
       return {
         nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
         stage: "greeting",

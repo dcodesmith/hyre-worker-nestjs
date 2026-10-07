@@ -4,7 +4,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
 import {
   BOOKING_AGENT_BUTTON_ID,
-  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+  getBookingAgentServiceUnavailableMessage,
 } from "./conversation.const";
 import { buildPricingPreview, buildState, buildVehicleOption } from "./conversation.factory";
 import { BOOKING_AGENT_ANTHROPIC_CLIENT } from "./conversation.tokens";
@@ -17,6 +17,7 @@ describe("BookingAgentResponderService", () => {
   };
 
   beforeEach(async () => {
+    vi.stubEnv("WEBSITE_URL", "https://tripdly.com");
     claudeMock = {
       messages: { create: vi.fn() },
     };
@@ -39,6 +40,7 @@ describe("BookingAgentResponderService", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("generateResponse", () => {
@@ -632,26 +634,26 @@ describe("BookingAgentResponderService", () => {
     it("returns greeting error deterministically without LLM call", async () => {
       const state = buildState({
         stage: "greeting",
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         availableOptions: [],
       });
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toBe(getBookingAgentServiceUnavailableMessage());
       expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
     it("returns greeting outage text even when options are still present", async () => {
       const state = buildState({
         stage: "greeting",
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         availableOptions: [buildVehicleOption()],
       });
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toBe(getBookingAgentServiceUnavailableMessage());
       expect(response.text).not.toContain("Here are your options");
       expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
@@ -660,14 +662,14 @@ describe("BookingAgentResponderService", () => {
       // generateResponse should prioritize the state's system error over statusMessage.
       const state = buildState({
         stage: "greeting",
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         statusMessage: "What type of vehicle would you prefer?",
         availableOptions: [],
       });
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toBe(getBookingAgentServiceUnavailableMessage());
       expect(response.text).not.toBe("What type of vehicle would you prefer?");
       expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
@@ -675,7 +677,7 @@ describe("BookingAgentResponderService", () => {
     it("keeps confirming retry/agent actions for service-unavailable booking error", async () => {
       const state = buildState({
         stage: "confirming",
-        error: BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+        error: getBookingAgentServiceUnavailableMessage(),
         selectedOption: buildVehicleOption(),
         availableOptions: [],
         draft: {
@@ -689,7 +691,7 @@ describe("BookingAgentResponderService", () => {
 
       const response = await service.generateResponse(state);
 
-      expect(response.text).toContain(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+      expect(response.text).toContain(getBookingAgentServiceUnavailableMessage());
       expect(response.text).toContain("Would you like me to try again or connect you to an agent?");
       expect(response.interactive?.type).toBe("buttons");
       expect(response.interactive?.buttons?.[0].id).toBe("retry_booking");

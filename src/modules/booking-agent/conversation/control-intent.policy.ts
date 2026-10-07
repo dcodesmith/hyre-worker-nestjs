@@ -91,3 +91,20 @@ export function isAgentRequestControl(normalizedText: string): boolean {
   const agentSet = new Set(["agent", "talk to agent", "speak to agent", "human", "talk to human"]);
   return agentSet.has(normalizedText);
 }
+
+export function isNoVehiclePreferenceControl(normalizedText: string): boolean {
+  if (!isShortControlMessage(normalizedText)) {
+    return false;
+  }
+
+  return [
+    /^(any|anything)( vehicle| car| vehicle type| car type)?( available)?( would do| is fine| works)?$/,
+    /^(whatever|whichever)( is)? available( is fine| works)?$/,
+    /^(i )?(have )?no (vehicle |car )?preference$/,
+    /^i (do not|dont|don t) have (a )?(vehicle |car )?preference$/,
+    /^i (do not|dont|don t) (mind|care)( what| which)?( vehicle| car| type)?$/,
+    /^show me what( s| is) available$/,
+    /^all (vehicle|car) types$/,
+    /^surprise me$/,
+  ].some((pattern) => pattern.test(normalizedText));
+}

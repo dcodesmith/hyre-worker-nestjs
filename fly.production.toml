@@ -6,6 +6,7 @@ primary_region = "lhr"
 [env]
   APP_ENV = "production"
   APP_NAME = "Tripdly API"
+  WEBSITE_URL = "https://tripdly.com"
   TZ = "Africa/Lagos"
   DOMAIN = "https://hyre-worker-nestjs-production.fly.dev"
   AUTH_BASE_URL = "https://hyre-worker-nestjs-production.fly.dev"

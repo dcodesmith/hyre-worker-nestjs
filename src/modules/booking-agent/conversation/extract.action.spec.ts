@@ -1,10 +1,10 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { ExtractAction } from "./extract.action";
-import { BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE } from "./conversation.const";
-import { createDefaultLocationValidationState } from "./conversation.interface";
 import { BookingAgentExtractorService } from "./booking-agent-extractor.service";
+import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
+import { createDefaultLocationValidationState } from "./conversation.interface";
+import { ExtractAction } from "./extract.action";
 
 describe("ExtractAction", () => {
   let moduleRef: TestingModule;
@@ -14,6 +14,7 @@ describe("ExtractAction", () => {
   };
 
   beforeEach(async () => {
+    vi.stubEnv("WEBSITE_URL", "https://tripdly.com");
     moduleRef = await Test.createTestingModule({
       providers: [
         ExtractAction,
@@ -29,6 +30,7 @@ describe("ExtractAction", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("returns an unknown extraction and leaves draft state untouched on failure", async () => {
@@ -60,7 +62,7 @@ describe("ExtractAction", () => {
       locationValidation: createDefaultLocationValidationState(),
     });
 
-    expect(result.error).toBe(BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE);
+    expect(result.error).toBe(getBookingAgentServiceUnavailableMessage());
     expect(result.extraction).toEqual({
       intent: "unknown",
       draftPatch: {},

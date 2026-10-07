@@ -17,7 +17,7 @@ import {
   BOOKING_AGENT_MODEL_TIMEOUT_MS,
   BOOKING_AGENT_RESPONSE_MAX_TOKENS,
   BOOKING_AGENT_RESPONSE_MODEL,
-  BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE,
+  isBookingAgentServiceUnavailableMessage,
 } from "./conversation.const";
 import { BookingAgentResponseFailedException } from "./conversation.error";
 import type {
@@ -181,7 +181,7 @@ export class BookingAgentResponderService {
     // Surface user-safe outage messages deterministically in greeting.
     // Keep confirming-stage errors on the confirming path so retry/agent actions are preserved.
     // Do not require empty options — extract failures preserve draft/options by design.
-    if (error === BOOKING_AGENT_SERVICE_UNAVAILABLE_MESSAGE && stage === "greeting") {
+    if (isBookingAgentServiceUnavailableMessage(error) && stage === "greeting") {
       return { text: error };
     }
     return null;

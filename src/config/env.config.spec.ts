@@ -7,6 +7,7 @@ const productionEnv = {
   REDIS_URL: "redis://localhost:6379",
   EMAIL_PROVIDER: "smtp",
   APP_NAME: "Hyre",
+  WEBSITE_URL: "https://tripdly.com",
   TWILIO_ACCOUNT_SID: "AC123",
   TWILIO_AUTH_TOKEN: "token",
   TWILIO_VERIFY_SERVICE_SID: "VA123",
@@ -257,6 +258,28 @@ describe("envSchema MONO_BASE_URL", () => {
     });
 
     expect(result.MONO_BASE_URL).toBe("https://api.withmono.com");
+  });
+});
+
+describe("envSchema WEBSITE_URL", () => {
+  it("rejects an invalid website URL", () => {
+    const result = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "operations@example.com",
+      WEBSITE_URL: "not-a-url",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["WEBSITE_URL"],
+            message: "WEBSITE_URL must be a valid URL",
+          }),
+        ]),
+      );
+    }
   });
 });
 
