@@ -4,6 +4,10 @@ import { BookingStatus, PaymentStatus } from "@prisma/client";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
+import {
+  AnalyticsChannel,
+  AnalyticsEventType,
+} from "../src/modules/analytics/analytics-event.schema";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory } from "./helpers";
@@ -114,5 +118,45 @@ describe("Car Search Availability E2E Flow", () => {
     expect(fullDayIds).toContain(carA.id);
     expect(fullDayIds).toContain(carB.id);
     expect(fullDayIds).toContain(carC.id);
+  });
+
+  it("returns X-Search-Id and stores the web or mobile channel for a full-intent search", async () => {
+    const path =
+      "/api/cars/search?page=1&limit=1&from=2031-04-10T00:00:00.000Z&to=2031-04-11T00:00:00.000Z&bookingType=DAY&pickupTime=9:00%20AM";
+
+    const webResponse = await request(app.getHttpServer()).get(path);
+    expect(webResponse.status).toBe(HttpStatus.OK);
+    const webSearchId = webResponse.headers["x-search-id"];
+    expect(webSearchId).toEqual(expect.any(String));
+
+    const webEvent = await databaseService.analyticsEvent.findFirst({
+      where: { searchId: webSearchId },
+    });
+    expect(webEvent).toEqual(
+      expect.objectContaining({
+        searchId: webSearchId,
+        source: AnalyticsChannel.WEB,
+        eventType: AnalyticsEventType.AVAILABILITY_SEARCH_COMPLETED,
+      }),
+    );
+
+    const mobileResponse = await request(app.getHttpServer())
+      .get(path)
+      .set("X-Client-Type", "mobile");
+    expect(mobileResponse.status).toBe(HttpStatus.OK);
+    const mobileSearchId = mobileResponse.headers["x-search-id"];
+    expect(mobileSearchId).toEqual(expect.any(String));
+    expect(mobileSearchId).not.toBe(webSearchId);
+
+    const mobileEvent = await databaseService.analyticsEvent.findFirst({
+      where: { searchId: mobileSearchId },
+    });
+    expect(mobileEvent).toEqual(
+      expect.objectContaining({
+        searchId: mobileSearchId,
+        source: AnalyticsChannel.MOBILE_APP,
+        eventType: AnalyticsEventType.AVAILABILITY_SEARCH_COMPLETED,
+      }),
+    );
   });
 });

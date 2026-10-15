@@ -1,6 +1,20 @@
-import type { BookingStatus, BookingType, PaymentStatus } from "@prisma/client";
+import type { IncomingHttpHeaders } from "node:http";
+import type {
+  Booking,
+  BookingStatus,
+  BookingType,
+  PaymentStatus,
+  Prisma,
+  ServiceTier,
+  VehicleType,
+} from "@prisma/client";
 import type Decimal from "decimal.js";
-import type { CarPricing } from "./booking-calculation.interface";
+import type { ClientRequestContext } from "../../common/client-request";
+import type { ResolvedBookingAddon } from "../addons/addons.interface";
+import type { AnalyticsChannelValue } from "../analytics/analytics.interface";
+import type { AuthSession } from "../auth/guards/session.guard";
+import type { BookingFinancials, CarPricing } from "./booking-calculation.interface";
+import type { CreateBookingInput } from "./dto/create-booking.dto";
 
 /**
  * Car data with pricing for booking creation.
@@ -10,6 +24,83 @@ import type { CarPricing } from "./booking-calculation.interface";
 export interface CarWithPricing extends CarPricing {
   id: string;
   ownerId: string;
+}
+
+export interface BookingCar extends CarWithPricing {
+  serviceTier: ServiceTier;
+  vehicleType: VehicleType;
+}
+
+export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
+
+export interface BookingCreationContext {
+  analyticsChannel?: AnalyticsChannelValue;
+  guestContactSource?: GuestContactSource;
+  requireFlightWindowConfirmation?: boolean;
+}
+
+export interface CreateBookingRequest {
+  input: CreateBookingInput;
+  sessionUser: AuthSession["user"] | null;
+  idempotencyKey: string;
+  context?: BookingCreationContext;
+  requestHeaders?: IncomingHttpHeaders;
+}
+
+export interface CalculateBookingFinancialsParams {
+  booking: CreateBookingInput;
+  car: CarWithPricing;
+  legs: GeneratedLeg[];
+  addons: ResolvedBookingAddon[];
+  referralDiscountAmount: Decimal;
+  userCreditsBalance: Decimal;
+  tx?: Prisma.TransactionClient;
+}
+
+export interface ResumeBookingPaymentParams {
+  idempotencyId: string;
+  bookingId: string;
+  bookingInput: CreateBookingInput;
+  sessionUser: AuthSession["user"] | null;
+}
+
+export interface ValidateAndGetFlightDataParams {
+  flightNumber: string;
+  pickupDate: Date;
+  dropOffAddress: string;
+  flightDate?: string;
+}
+
+export interface CreateBookingWithPaymentParams {
+  idempotencyId: string;
+  booking: CreateBookingInput;
+  sessionUser: AuthSession["user"] | null;
+  context?: BookingCreationContext;
+  legs: GeneratedLeg[];
+  financials: BookingFinancials;
+  customerDetails: CustomerDetails;
+  flightData: FlightDataForBooking | null;
+  preliminaryReferralEligibility: ReferralEligibility;
+  client: ClientRequestContext;
+  analyticsChannel: AnalyticsChannelValue;
+}
+
+export interface CreatePaymentAndSyncParams {
+  idempotencyId: string;
+  createdBooking: Booking;
+  totalAmount: Decimal;
+  customerDetails: CustomerDetails;
+  callbackUrl?: string;
+  isGuest?: boolean;
+}
+
+export interface SyncPaymentIntentWithBookingParams {
+  idempotencyId: string;
+  bookingId: string;
+  paymentIntentId: string;
+  reservationExpiresAt: Date;
+  paymentStatusTokenHash: string | null;
+  response: CreateBookingResponse;
 }
 
 /**

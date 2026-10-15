@@ -1,7 +1,12 @@
+import { createHash } from "node:crypto";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { BookingType, ChauffeurApprovalStatus, ServiceTier, VehicleType } from "@prisma/client";
+import { validate as isUuid } from "uuid";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import type { AvailabilitySearchFilters } from "../analytics/analytics.interface";
+import { AnalyticsChannel, AvailabilitySearchOutcome } from "../analytics/analytics-event.schema";
+import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { PromotionService } from "../promotion/promotion.service";
@@ -39,6 +44,57 @@ describe("CarSearchService", () => {
   const reviewsReadServiceMock = {
     getBatchCarRatings: vi.fn(),
   };
+  const analyticsIngestionServiceMock = {
+    recordAvailabilitySearchCompleted: vi.fn().mockResolvedValue(undefined),
+    recordAvailabilitySearchFailed: vi.fn().mockResolvedValue(undefined),
+  };
+  const clientSearchId = "01994a1d-4263-7000-8000-0000000000aa";
+  const analyticsMarket = {
+    countryCode: "NG",
+    marketCode: "LAGOS",
+    timezone: "Africa/Lagos",
+  } as const;
+  const availabilityQuery = {
+    from: new Date("2024-03-01T00:00:00.000Z"),
+    to: new Date("2024-03-02T00:00:00.000Z"),
+    bookingType: BookingType.DAY,
+    page: 1,
+    limit: 12,
+  };
+  const dayFilters: AvailabilitySearchFilters = {
+    bookingType: BookingType.DAY,
+    vehicleTypes: [],
+    serviceTiers: [],
+    from: "2024-03-01T07:00:00.000Z",
+    to: "2024-03-02T19:00:00.000Z",
+    pickupTime: null,
+    minPrice: null,
+    maxPrice: null,
+    minCapacity: null,
+    fuelIncluded: null,
+    dealsOnly: null,
+  };
+
+  function filterFingerprint(filters: AvailabilitySearchFilters): string {
+    return createHash("sha256").update(JSON.stringify(filters)).digest("hex");
+  }
+
+  function webContext(searchId?: string) {
+    return {
+      channel: AnalyticsChannel.WEB,
+      searchId,
+      anonymousSessionId: "01994a1d-4263-7000-8000-0000000000bb",
+      requestId: "req-web-1",
+    };
+  }
+
+  function stubAvailabilitySearch(total: number) {
+    databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+    databaseServiceMock.car.count.mockResolvedValueOnce(total);
+    databaseServiceMock.car.findMany.mockResolvedValueOnce(
+      total > 0 ? [createMockCar({ id: "car-match" })] : [],
+    );
+  }
 
   const createMockCar = (
     overrides: Partial<SearchCarDto & { ownerId: string }> = {},
@@ -80,6 +136,7 @@ describe("CarSearchService", () => {
       providers: [
         CarSearchService,
         { provide: DatabaseService, useValue: databaseServiceMock },
+        { provide: AnalyticsIngestionService, useValue: analyticsIngestionServiceMock },
         { provide: PromotionService, useValue: promotionServiceMock },
         { provide: ReviewsReadService, useValue: reviewsReadServiceMock },
         CarPromotionEnrichmentService,
@@ -664,6 +721,244 @@ describe("CarSearchService", () => {
       ]);
       // Default booking type uses dayRate bounds.
       expect(result.facets?.price).toEqual({ min: 30000, max: 90000 });
+    });
+  });
+
+  describe("availability search analytics", () => {
+    it("does not record an event or run a supplemental count for countOnly", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+
+      const result = await service.searchCars(
+        { ...availabilityQuery, countOnly: true },
+        webContext(clientSearchId),
+      );
+
+      expect(result.cars).toEqual([]);
+      expect(result.pagination.total).toBe(0);
+      expect(result.searchId).toBeUndefined();
+      expect(databaseServiceMock.car.count).toHaveBeenCalledTimes(1);
+      expect(databaseServiceMock.car.findMany).not.toHaveBeenCalled();
+      expect(
+        analyticsIngestionServiceMock.recordAvailabilitySearchCompleted,
+      ).not.toHaveBeenCalled();
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).not.toHaveBeenCalled();
+    });
+
+    it("does not record an event for browsing that lacks a full availability window", async () => {
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.searchCars(
+        { page: 1, limit: 12, q: "camry", make: ["Toyota"], model: "Camry", color: "Black" },
+        webContext(clientSearchId),
+      );
+
+      expect(result.searchId).toBeUndefined();
+      expect(databaseServiceMock.car.count).toHaveBeenCalledTimes(1);
+      expect(
+        analyticsIngestionServiceMock.recordAvailabilitySearchCompleted,
+      ).not.toHaveBeenCalled();
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).not.toHaveBeenCalled();
+    });
+
+    it("records matches and returns the client search id without a supplemental count", async () => {
+      stubAvailabilitySearch(1);
+
+      const result = await service.searchCars(availabilityQuery, webContext(clientSearchId));
+
+      expect(result.searchId).toBe(clientSearchId);
+      expect(result.cars).toHaveLength(1);
+      expect(result.pagination.total).toBe(1);
+      expect(databaseServiceMock.car.count).toHaveBeenCalledTimes(1);
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledWith({
+        context: webContext(clientSearchId),
+        occurredAt: expect.any(Date),
+        payload: {
+          filters: dayFilters,
+          filterFingerprint: filterFingerprint(dayFilters),
+          resultCount: 1,
+          filterMatchCount: null,
+          outcome: AvailabilitySearchOutcome.MATCHES_FOUND,
+          market: analyticsMarket,
+        },
+      });
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).not.toHaveBeenCalled();
+    });
+
+    it("keeps a successful search result when analytics recording resolves", async () => {
+      stubAvailabilitySearch(1);
+      analyticsIngestionServiceMock.recordAvailabilitySearchCompleted.mockResolvedValueOnce(
+        undefined,
+      );
+
+      const result = await service.searchCars(availabilityQuery, webContext(clientSearchId));
+
+      expect(result.cars.map((car) => car.id)).toEqual(["car-match"]);
+      expect(result.pagination).toEqual(expect.objectContaining({ total: 1, page: 1, limit: 12 }));
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledTimes(
+        1,
+      );
+    });
+
+    it("classifies zero results and zero filter matches as NO_MATCH_FILTERS", async () => {
+      stubAvailabilitySearch(0);
+      databaseServiceMock.car.count.mockResolvedValueOnce(0);
+
+      const result = await service.searchCars(availabilityQuery, webContext(clientSearchId));
+
+      expect(result.cars).toEqual([]);
+      expect(result.pagination.total).toBe(0);
+      expect(databaseServiceMock.car.count).toHaveBeenCalledTimes(2);
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            resultCount: 0,
+            filterMatchCount: 0,
+            outcome: AvailabilitySearchOutcome.NO_MATCH_FILTERS,
+          }),
+        }),
+      );
+    });
+
+    it("classifies zero results with filter matches as NO_MATCH_AVAILABILITY", async () => {
+      stubAvailabilitySearch(0);
+      databaseServiceMock.car.count.mockResolvedValueOnce(4);
+
+      await service.searchCars(availabilityQuery, webContext(clientSearchId));
+
+      const searchWhere = databaseServiceMock.car.count.mock.calls[0][0].where;
+      const filterWhere = databaseServiceMock.car.count.mock.calls[1][0].where;
+      expect(filterWhere).not.toEqual(searchWhere);
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            resultCount: 0,
+            filterMatchCount: 4,
+            outcome: AvailabilitySearchOutcome.NO_MATCH_AVAILABILITY,
+          }),
+        }),
+      );
+    });
+
+    it("returns the empty search when supplemental classification fails", async () => {
+      stubAvailabilitySearch(0);
+      databaseServiceMock.car.count.mockRejectedValueOnce(new Error("count failed"));
+
+      const result = await service.searchCars(availabilityQuery, webContext(clientSearchId));
+
+      expect(result.cars).toEqual([]);
+      expect(result.pagination.total).toBe(0);
+      expect(result.searchId).toBe(clientSearchId);
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            resultCount: 0,
+            filterMatchCount: null,
+            outcome: AvailabilitySearchOutcome.NO_MATCH_UNCLASSIFIED,
+          }),
+        }),
+      );
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).not.toHaveBeenCalled();
+    });
+
+    it("records a failed search and preserves the original exception", async () => {
+      const notFound = new CarNotFoundException();
+      databaseServiceMock.user.findMany.mockRejectedValueOnce(notFound);
+
+      await expect(service.searchCars(availabilityQuery, webContext(clientSearchId))).rejects.toBe(
+        notFound,
+      );
+
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).toHaveBeenCalledWith({
+        context: webContext(clientSearchId),
+        occurredAt: expect.any(Date),
+        payload: {
+          filters: dayFilters,
+          filterFingerprint: filterFingerprint(dayFilters),
+          errorCode: "SEARCH_EXECUTION_FAILED",
+          market: analyticsMarket,
+        },
+      });
+      expect(
+        analyticsIngestionServiceMock.recordAvailabilitySearchCompleted,
+      ).not.toHaveBeenCalled();
+
+      analyticsIngestionServiceMock.recordAvailabilitySearchFailed.mockClear();
+      databaseServiceMock.user.findMany.mockRejectedValueOnce(new Error("owners down"));
+
+      await expect(
+        service.searchCars(availabilityQuery, webContext(clientSearchId)),
+      ).rejects.toThrow(CarFetchFailedException);
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses a client search id and replaces an invalid or missing one", async () => {
+      stubAvailabilitySearch(1);
+      const reused = await service.searchCars(availabilityQuery, webContext(clientSearchId));
+      expect(reused.searchId).toBe(clientSearchId);
+
+      stubAvailabilitySearch(1);
+      const replaced = await service.searchCars(availabilityQuery, webContext("not-a-uuid"));
+      expect(replaced.searchId).not.toBe("not-a-uuid");
+      expect(isUuid(replaced.searchId ?? "")).toBe(true);
+      expect(
+        analyticsIngestionServiceMock.recordAvailabilitySearchCompleted,
+      ).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({ searchId: replaced.searchId }),
+        }),
+      );
+
+      stubAvailabilitySearch(1);
+      const generated = await service.searchCars(availabilityQuery, webContext());
+      expect(isUuid(generated.searchId ?? "")).toBe(true);
+      expect(generated.searchId).not.toBe(replaced.searchId);
+    });
+
+    it("omits free-text query fields from the availability payload", async () => {
+      stubAvailabilitySearch(1);
+      const filters: AvailabilitySearchFilters = {
+        bookingType: BookingType.DAY,
+        vehicleTypes: [VehicleType.SUV],
+        serviceTiers: [ServiceTier.EXECUTIVE],
+        from: "2024-03-01T09:00:00.000Z",
+        to: "2024-03-02T21:00:00.000Z",
+        pickupTime: "9:00 AM",
+        minPrice: 1000,
+        maxPrice: 9000,
+        minCapacity: 4,
+        fuelIncluded: true,
+        dealsOnly: false,
+      };
+
+      await service.searchCars(
+        {
+          ...availabilityQuery,
+          vehicleType: [VehicleType.SUV],
+          serviceTier: [ServiceTier.EXECUTIVE],
+          pickupTime: "9:00 AM",
+          minPrice: 1000,
+          maxPrice: 9000,
+          minCapacity: 4,
+          fuelIncluded: true,
+          dealsOnly: false,
+          q: "black toyota camry",
+          make: ["Toyota"],
+          model: "Camry",
+          color: "Black",
+        },
+        webContext(clientSearchId),
+      );
+
+      expect(analyticsIngestionServiceMock.recordAvailabilitySearchCompleted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            filters,
+            filterFingerprint: filterFingerprint(filters),
+          }),
+        }),
+      );
     });
   });
 

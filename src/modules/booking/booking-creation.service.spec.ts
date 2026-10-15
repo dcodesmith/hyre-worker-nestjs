@@ -1,6 +1,13 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BookingStatus, ChauffeurApprovalStatus, PaymentStatus, Prisma } from "@prisma/client";
+import {
+  BookingStatus,
+  ChauffeurApprovalStatus,
+  PaymentStatus,
+  Prisma,
+  ServiceTier,
+  VehicleType,
+} from "@prisma/client";
 import Decimal from "decimal.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -14,6 +21,8 @@ import {
 } from "../../shared/helper.fixtures";
 import { InvalidBookingAddonsException } from "../addons/addons.error";
 import { AddonsService } from "../addons/addons.service";
+import { AnalyticsChannel } from "../analytics/analytics-event.schema";
+import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -38,9 +47,10 @@ import {
   PaymentIntentFailedException,
   ReferralDiscountNoLongerAvailableException,
 } from "./booking.error";
+import type { CreateBookingRequest } from "./booking.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
-import { BookingCreationService, type CreateBookingRequest } from "./booking-creation.service";
+import { BookingCreationService } from "./booking-creation.service";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { BookingLegService } from "./booking-leg.service";
@@ -123,6 +133,7 @@ describe("BookingCreationService", () => {
   let flightAwareService: FlightAwareService;
   let mapsService: MapsService;
   let addonsService: AddonsService;
+  let analyticsIngestionService: { createBookingRequested: ReturnType<typeof vi.fn> };
   let referralProgramService: {
     getActiveProgram: ReturnType<typeof vi.fn>;
     getProgram: ReturnType<typeof vi.fn>;
@@ -149,6 +160,9 @@ describe("BookingCreationService", () => {
       calculateReferrerReward: vi.fn().mockReturnValue(new Decimal(0)),
       calculateCreditsCap: vi.fn().mockReturnValue(new Decimal(30000)),
     };
+    analyticsIngestionService = {
+      createBookingRequested: vi.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -160,6 +174,7 @@ describe("BookingCreationService", () => {
             resolveBookingAddons: vi.fn().mockResolvedValue([]),
           },
         },
+        { provide: AnalyticsIngestionService, useValue: analyticsIngestionService },
         {
           provide: DatabaseService,
           useValue: {
@@ -379,14 +394,14 @@ describe("BookingCreationService", () => {
         expect.anything(),
       );
       expect(flutterwaveService.createPaymentIntent).toHaveBeenCalled();
-      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith(
-        "idempotency-123",
-        "booking-123",
-        "pi-123",
-        expect.any(Date),
-        null,
-        result,
-      );
+      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith({
+        idempotencyId: "idempotency-123",
+        bookingId: "booking-123",
+        paymentIntentId: "pi-123",
+        reservationExpiresAt: expect.any(Date),
+        paymentStatusTokenHash: null,
+        response: result,
+      });
     });
 
     it("sorts addonIds before hashing the idempotency request", async () => {
@@ -401,6 +416,152 @@ describe("BookingCreationService", () => {
         expect.objectContaining({ addonIds: ["addon-a", "addon-b"] }),
         undefined,
       );
+    });
+
+    it("records BOOKING_REQUESTED inside the booking transaction", async () => {
+      setupSuccessfulMocks();
+      const searchId = "01994a1d-4263-7000-8000-000000000010";
+      let transactionClient: unknown;
+      mockTransaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
+          booking: {
+            create: vi.fn().mockResolvedValue({
+              id: "booking-123",
+              bookingReference: "BK-123456-ABC",
+              totalAmount: new Decimal(56437.5),
+              status: BookingStatus.PENDING,
+              createdAt: new Date("2026-02-01T12:00:00.000Z"),
+            }),
+            update: vi.fn(),
+          },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: {
+            create: vi.fn(),
+            aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
+          },
+          userReferralStats: { upsert: vi.fn() },
+          user: mockTransactionUser(),
+          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+        };
+        transactionClient = mockTx;
+        return callback(mockTx);
+      });
+
+      await service.createBooking({
+        input: createBookingInput({ searchId }),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledTimes(1);
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledWith(
+        {
+          actorUserId: "user-123",
+          bookingId: "booking-123",
+          channel: AnalyticsChannel.WEB,
+          occurredAt: new Date("2026-02-01T12:00:00.000Z"),
+          searchId,
+          payload: {
+            bookingType: "DAY",
+            startDate: "2025-02-01T09:00:00.000Z",
+            endDate: "2025-02-01T21:00:00.000Z",
+            carId: "car-123",
+            vehicleType: VehicleType.SEDAN,
+            serviceTier: ServiceTier.STANDARD,
+            amount: "56437.50",
+            currency: "NGN",
+            market: {
+              countryCode: "NG",
+              marketCode: "LAGOS",
+              timezone: "Africa/Lagos",
+            },
+          },
+        },
+        transactionClient,
+      );
+      expect(analyticsIngestionService.createBookingRequested.mock.calls[0]?.[1]).toBe(
+        transactionClient,
+      );
+    });
+
+    it("records MOBILE_APP when the client type header is mobile", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+        requestHeaders: { "x-client-type": "mobile" },
+      });
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: AnalyticsChannel.MOBILE_APP }),
+        expect.anything(),
+      );
+    });
+
+    it("uses an explicit WhatsApp channel instead of the request header", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+        requestHeaders: { "x-client-type": "mobile" },
+        context: { analyticsChannel: AnalyticsChannel.WHATSAPP },
+      });
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: AnalyticsChannel.WHATSAPP }),
+        expect.anything(),
+      );
+    });
+
+    it("fails the booking when the booking-requested event fails", async () => {
+      setupSuccessfulMocks();
+      analyticsIngestionService.createBookingRequested.mockRejectedValueOnce(
+        new Error("analytics insert failed"),
+      );
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput(),
+          sessionUser: createSessionUser(),
+        }),
+      ).rejects.toBeInstanceOf(BookingCreationFailedException);
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledTimes(1);
+      expect(idempotencyService.attachBooking).not.toHaveBeenCalled();
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+      expect(idempotencyService.checkpointPaymentResult).not.toHaveBeenCalled();
+    });
+
+    it("does not record another BOOKING_REQUESTED when an idempotent request is replayed", async () => {
+      setupSuccessfulMocks();
+      const replay = {
+        bookingId: "booking-existing",
+        txRef: "pi-existing",
+        checkoutUrl: "https://checkout.example/existing",
+        totalAmount: 100,
+        currency: "NGN" as const,
+        bookingStatus: BookingStatus.PENDING,
+        reservationExpiresAt: "2026-08-02T20:10:00.000Z",
+      };
+      vi.mocked(idempotencyService.claim).mockResolvedValue({ kind: "replay", response: replay });
+
+      await expect(
+        service.createBooking({
+          input: createBookingInput({
+            searchId: "01994a1d-4263-7000-8000-000000000010",
+          }),
+          sessionUser: createSessionUser(),
+        }),
+      ).resolves.toEqual(replay);
+
+      expect(analyticsIngestionService.createBookingRequested).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
     });
 
     it("passes resolved add-ons into financial calculation", async () => {
@@ -533,14 +694,14 @@ describe("BookingCreationService", () => {
       });
 
       expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
-      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith(
-        "idempotency-123",
-        "booking-123",
-        "pi-123",
-        expect.any(Date),
-        expect.any(String),
-        result,
-      );
+      expect(idempotencyService.checkpointPaymentResult).toHaveBeenCalledWith({
+        idempotencyId: "idempotency-123",
+        bookingId: "booking-123",
+        paymentIntentId: "pi-123",
+        reservationExpiresAt: expect.any(Date),
+        paymentStatusTokenHash: expect.any(String),
+        response: result,
+      });
     });
 
     it("normalizes DAY booking window before validation", async () => {

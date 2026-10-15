@@ -110,6 +110,23 @@ describe("BookingCreationIdempotencyService", () => {
     expect(service.createRequestHash(withAddonA)).not.toBe(service.createRequestHash(input()));
   });
 
+  it("does not change the request hash when searchId changes", () => {
+    const searchA = {
+      ...input(),
+      searchId: "01994a1d-4263-7000-8000-000000000001",
+    };
+    const searchB = {
+      ...input(),
+      searchId: "01994a1d-4263-7000-8000-000000000002",
+    };
+
+    expect(service.createRequestHash(searchA)).toBe(service.createRequestHash(input()));
+    expect(service.createRequestHash(searchA)).toBe(service.createRequestHash(searchB));
+    expect(service.createRequestHash({ ...input(), pickupAddress: "Abuja" })).not.toBe(
+      service.createRequestHash(input()),
+    );
+  });
+
   it("claims a new customer-scoped key", async () => {
     databaseService.bookingCreationIdempotency.create.mockResolvedValue({ id: "idem-1" });
 
@@ -394,14 +411,14 @@ describe("BookingCreationIdempotencyService", () => {
       paymentStatusToken: "guest-status-token",
     };
 
-    await service.checkpointPaymentResult(
-      "idem-1",
-      "booking-1",
-      "pi-1",
-      new Date(reservationExpiresAt),
-      "status-token-hash",
+    await service.checkpointPaymentResult({
+      idempotencyId: "idem-1",
+      bookingId: "booking-1",
+      paymentIntentId: "pi-1",
+      reservationExpiresAt: new Date(reservationExpiresAt),
+      paymentStatusTokenHash: "status-token-hash",
       response,
-    );
+    });
 
     expect(databaseService.booking.update).toHaveBeenCalledWith({
       where: { id: "booking-1" },

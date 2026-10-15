@@ -220,6 +220,20 @@ export interface WhatsAppGuestIdentity {
   guestPhone: string;
 }
 
+export interface BookingInputSelections {
+  addonIds: string[];
+  requiresFullTank: boolean;
+  useCredits: number;
+  expectedTotalAmount: string;
+}
+
+export interface BuildBookingInputFromDraftParams {
+  draft: BookingDraft;
+  selectedOption: VehicleSearchOption;
+  guestIdentity: WhatsAppGuestIdentity;
+  selections?: BookingInputSelections;
+}
+
 export interface BuildExtractorPromptInput {
   currentDraft: BookingDraft;
   lastShownOptions: BookingAgentState["lastShownOptions"];

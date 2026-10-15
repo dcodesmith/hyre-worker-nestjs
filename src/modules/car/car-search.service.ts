@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   BookingType,
@@ -9,11 +10,25 @@ import {
   type VehicleType,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
+import { validate as isUuid } from "uuid";
+import { toLogError } from "../../common/logging/error-logging.helper";
 import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
+import type {
+  AvailabilitySearchFilters,
+  SearchAnalyticsContext,
+} from "../analytics/analytics.interface";
+import { ANALYTICS_MARKET, AvailabilitySearchOutcome } from "../analytics/analytics-event.schema";
+import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
+import type {
+  AvailabilityInterval,
+  CarRateField,
+  PreparedSearchAnalytics,
+  PrepareSearchAnalyticsParams,
+} from "./car.interface";
 import { CarPromotionEnrichmentService } from "./car-promotion.enrichment";
 import { CarRatingsEnrichmentService } from "./car-ratings.enrichment";
 import type {
@@ -25,17 +40,11 @@ import type {
 } from "./dto/car-search.dto";
 import { mapQueryToFilters } from "./dto/car-search.dto";
 
-interface AvailabilityInterval {
-  startDate: Date;
-  endDate: Date;
-}
-
-type RateField = "dayRate" | "nightRate" | "fullDayRate" | "airportPickupRate";
-
 @Injectable()
 export class CarSearchService {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly analyticsIngestionService: AnalyticsIngestionService,
     private readonly carPromotionEnrichmentService: CarPromotionEnrichmentService,
     private readonly carRatingsEnrichmentService: CarRatingsEnrichmentService,
     private readonly logger: PinoLogger,
@@ -74,7 +83,7 @@ export class CarSearchService {
     return { serviceTiers, vehicleTypes, makes, makeModelQuery };
   }
 
-  private static readonly RATE_FIELD_BY_BOOKING_TYPE: Record<BookingType, RateField> = {
+  private static readonly RATE_FIELD_BY_BOOKING_TYPE: Record<BookingType, CarRateField> = {
     [BookingType.DAY]: "dayRate",
     [BookingType.NIGHT]: "nightRate",
     [BookingType.FULL_DAY]: "fullDayRate",
@@ -126,7 +135,7 @@ export class CarSearchService {
       color: string | undefined;
       model: string | undefined;
       makeModelQuery: string | null;
-      rateField: RateField;
+      rateField: CarRateField;
       referenceDate: Date;
     },
     fleetOwnersToExclude: string[],
@@ -185,7 +194,7 @@ export class CarSearchService {
    */
   private async getSearchFacets(
     baseWhere: Prisma.CarWhereInput,
-    rateField: RateField,
+    rateField: CarRateField,
   ): Promise<SearchFacetsDto> {
     const [makeGroups, priceAggregate] = await Promise.all([
       this.databaseService.car.groupBy({
@@ -330,11 +339,53 @@ export class CarSearchService {
     };
   }
 
+  private prepareSearchAnalytics({
+    query,
+    context,
+    interval,
+    vehicleTypes,
+    serviceTiers,
+    occurredAt,
+  }: PrepareSearchAnalyticsParams): PreparedSearchAnalytics | null {
+    if (!context || query.countOnly || !query.bookingType || !interval) {
+      return null;
+    }
+
+    const filters: AvailabilitySearchFilters = {
+      bookingType: query.bookingType,
+      vehicleTypes,
+      serviceTiers,
+      from: interval.startDate.toISOString(),
+      to: interval.endDate.toISOString(),
+      pickupTime: query.pickupTime ?? null,
+      minPrice: query.minPrice ?? null,
+      maxPrice: query.maxPrice ?? null,
+      minCapacity: query.minCapacity ?? null,
+      fuelIncluded: query.fuelIncluded ?? null,
+      dealsOnly: query.dealsOnly ?? null,
+    };
+
+    return {
+      context: {
+        ...context,
+        searchId: context.searchId && isUuid(context.searchId) ? context.searchId : randomUUID(),
+      },
+      occurredAt,
+      filters,
+      filterFingerprint: createHash("sha256").update(JSON.stringify(filters)).digest("hex"),
+    };
+  }
+
   /**
    * Main search method - fetches cars matching the query and filters by availability.
    */
-  async searchCars(query: CarSearchQueryDto): Promise<CarSearchResponseDto> {
+  async searchCars(
+    query: CarSearchQueryDto,
+    analyticsContext?: SearchAnalyticsContext,
+  ): Promise<CarSearchResponseDto> {
     const startTime = Date.now();
+    const occurredAt = new Date();
+    let preparedAnalytics: PreparedSearchAnalytics | null = null;
 
     try {
       // Parse filters from query
@@ -352,6 +403,14 @@ export class CarSearchService {
       const availabilityInterval = canFilterByAvailability
         ? this.buildRequestedAvailabilityInterval(query)
         : null;
+      preparedAnalytics = this.prepareSearchAnalytics({
+        query,
+        context: analyticsContext,
+        interval: availabilityInterval,
+        vehicleTypes,
+        serviceTiers,
+        occurredAt,
+      });
       const dayInterval = query.from
         ? {
             startDate: new Date(
@@ -376,24 +435,22 @@ export class CarSearchService {
         : [];
 
       // Build where clause
-      const whereClause = this.buildWhereClause(
-        {
-          serviceTiers,
-          vehicleTypes,
-          makes,
-          minPrice: query.minPrice,
-          maxPrice: query.maxPrice,
-          minCapacity: query.minCapacity,
-          fuelIncluded: query.fuelIncluded,
-          dealsOnly: query.dealsOnly,
-          color: query.color,
-          model: query.model,
-          makeModelQuery,
-          rateField,
-          referenceDate,
-        },
-        fleetOwnersToExclude,
-      );
+      const whereParams = {
+        serviceTiers,
+        vehicleTypes,
+        makes,
+        minPrice: query.minPrice,
+        maxPrice: query.maxPrice,
+        minCapacity: query.minCapacity,
+        fuelIncluded: query.fuelIncluded,
+        dealsOnly: query.dealsOnly,
+        color: query.color,
+        model: query.model,
+        makeModelQuery,
+        rateField,
+        referenceDate,
+      };
+      const whereClause = this.buildWhereClause(whereParams, fleetOwnersToExclude);
       const searchWhereClause = this.applyAvailabilityExclusionToWhere(
         whereClause,
         availabilityInterval,
@@ -491,6 +548,42 @@ export class CarSearchService {
         "Search completed",
       );
 
+      let filterMatchCount: number | null = null;
+      let analyticsOutcome: (typeof AvailabilitySearchOutcome)[keyof typeof AvailabilitySearchOutcome] =
+        AvailabilitySearchOutcome.MATCHES_FOUND;
+      if (preparedAnalytics && totalCount === 0) {
+        try {
+          filterMatchCount = await this.databaseService.car.count({
+            where: this.buildWhereClause(whereParams, []),
+          });
+          analyticsOutcome =
+            filterMatchCount === 0
+              ? AvailabilitySearchOutcome.NO_MATCH_FILTERS
+              : AvailabilitySearchOutcome.NO_MATCH_AVAILABILITY;
+        } catch (error) {
+          analyticsOutcome = AvailabilitySearchOutcome.NO_MATCH_UNCLASSIFIED;
+          this.logger.warn(
+            { err: toLogError(error) },
+            "Failed to classify empty availability search",
+          );
+        }
+      }
+
+      if (preparedAnalytics) {
+        await this.analyticsIngestionService.recordAvailabilitySearchCompleted({
+          context: preparedAnalytics.context,
+          occurredAt: preparedAnalytics.occurredAt,
+          payload: {
+            filters: preparedAnalytics.filters,
+            filterFingerprint: preparedAnalytics.filterFingerprint,
+            resultCount: totalCount,
+            filterMatchCount,
+            outcome: analyticsOutcome,
+            market: ANALYTICS_MARKET,
+          },
+        });
+      }
+
       return {
         cars: enrichedCars,
         filters,
@@ -503,15 +596,27 @@ export class CarSearchService {
           hasNextPage,
           hasPreviousPage,
         },
+        ...(preparedAnalytics ? { searchId: preparedAnalytics.context.searchId } : {}),
       };
     } catch (error) {
+      if (preparedAnalytics) {
+        await this.analyticsIngestionService.recordAvailabilitySearchFailed({
+          context: preparedAnalytics.context,
+          occurredAt: preparedAnalytics.occurredAt,
+          payload: {
+            filters: preparedAnalytics.filters,
+            filterFingerprint: preparedAnalytics.filterFingerprint,
+            errorCode: "SEARCH_EXECUTION_FAILED",
+            market: ANALYTICS_MARKET,
+          },
+        });
+      }
       if (error instanceof CarException) {
         throw error;
       }
       this.logger.error(
         {
-          error: error instanceof Error ? error.message : String(error),
-          query,
+          err: toLogError(error),
         },
         "Search failed",
       );
@@ -596,7 +701,7 @@ export class CarSearchService {
       this.logger.error(
         {
           ...logContext,
-          error: error instanceof Error ? error.message : String(error),
+          err: toLogError(error),
         },
         "Failed to fetch public car",
       );

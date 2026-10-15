@@ -198,6 +198,7 @@ export interface CarSearchResponseDto {
   filters: SearchFiltersDto;
   facets: SearchFacetsDto | null;
   pagination: SearchPaginationDto;
+  searchId?: string;
 }
 
 /**

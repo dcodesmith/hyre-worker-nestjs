@@ -80,6 +80,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,
@@ -201,6 +203,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,
@@ -281,6 +285,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,
@@ -403,6 +409,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,
@@ -499,6 +507,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,
@@ -587,6 +597,8 @@ describe("BookingPricingPreviewService", () => {
     vi.mocked(bookingPersistenceService.fetchCarWithPricing).mockResolvedValue({
       id: "car-1",
       ownerId: "owner-1",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 50000,
       nightRate: 45000,
       fullDayRate: 80000,

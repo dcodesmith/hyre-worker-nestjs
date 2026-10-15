@@ -20,14 +20,14 @@ import {
   IdempotencyKeyReusedException,
 } from "./booking.error";
 import type { CreateBookingResponse } from "./booking.interface";
+import type {
+  BookingIdempotencyClaim,
+  CheckpointPaymentResultParams,
+  ClaimBookingIdempotencyParams,
+} from "./booking-creation-idempotency.interface";
 import { createBookingPaymentStatusToken } from "./booking-payment-status-token.helper";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
-
-export type BookingIdempotencyClaim =
-  | { kind: "claimed"; id: string }
-  | { kind: "replay"; response: CreateBookingResponse }
-  | { kind: "resume"; id: string; bookingId: string };
 
 @Injectable()
 export class BookingCreationIdempotencyService {
@@ -60,6 +60,7 @@ export class BookingCreationIdempotencyService {
   createRequestHash(input: CreateBookingInput, context?: Record<string, unknown>): string {
     const normalized = {
       ...input,
+      searchId: undefined,
       expectedTotalAmount: new Decimal(input.expectedTotalAmount).toString(),
       ...(isGuestBooking(input) && { guestEmail: input.guestEmail.trim().toLowerCase() }),
       context: context ?? null,
@@ -75,15 +76,15 @@ export class BookingCreationIdempotencyService {
     idempotencyKey: string,
     requestHash: string,
   ): Promise<BookingIdempotencyClaim> {
-    return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, 1);
+    return this.claimWithAttempt({ customerScope, idempotencyKey, requestHash, attempt: 1 });
   }
 
-  private async claimWithAttempt(
-    customerScope: string,
-    idempotencyKey: string,
-    requestHash: string,
-    attempt: number,
-  ): Promise<BookingIdempotencyClaim> {
+  private async claimWithAttempt({
+    customerScope,
+    idempotencyKey,
+    requestHash,
+    attempt,
+  }: ClaimBookingIdempotencyParams): Promise<BookingIdempotencyClaim> {
     if (attempt > BookingCreationIdempotencyService.maxClaimAttempts) {
       throw new BookingRequestInProgressException(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS);
     }
@@ -102,7 +103,12 @@ export class BookingCreationIdempotencyService {
       where: { customerScope_idempotencyKey: { customerScope, idempotencyKey } },
     });
     if (!existing) {
-      return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, attempt + 1);
+      return this.claimWithAttempt({
+        customerScope,
+        idempotencyKey,
+        requestHash,
+        attempt: attempt + 1,
+      });
     }
     if (existing.requestHash !== requestHash) {
       throw new IdempotencyKeyReusedException();
@@ -142,7 +148,12 @@ export class BookingCreationIdempotencyService {
         },
       });
       if (released.count === 1) {
-        return this.claimWithAttempt(customerScope, idempotencyKey, requestHash, attempt + 1);
+        return this.claimWithAttempt({
+          customerScope,
+          idempotencyKey,
+          requestHash,
+          attempt: attempt + 1,
+        });
       }
     }
 
@@ -185,14 +196,14 @@ export class BookingCreationIdempotencyService {
     }
   }
 
-  async checkpointPaymentResult(
-    idempotencyId: string,
-    bookingId: string,
-    paymentIntentId: string,
-    reservationExpiresAt: Date,
-    paymentStatusTokenHash: string | null,
-    response: CreateBookingResponse,
-  ): Promise<void> {
+  async checkpointPaymentResult({
+    idempotencyId,
+    bookingId,
+    paymentIntentId,
+    reservationExpiresAt,
+    paymentStatusTokenHash,
+    response,
+  }: CheckpointPaymentResultParams): Promise<void> {
     const { paymentStatusToken, ...publicResponse } = response;
     const persistedResponse = {
       ...publicResponse,

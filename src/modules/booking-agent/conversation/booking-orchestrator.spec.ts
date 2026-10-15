@@ -32,8 +32,8 @@ const selections = {
 describe("buildBookingInputFromDraft", () => {
   it("requires explicit quote selections", () => {
     expect(() =>
-      buildBookingInputFromDraft(
-        {
+      buildBookingInputFromDraft({
+        draft: {
           pickupDate: "2026-03-03",
           dropoffDate: "2026-03-03",
           bookingType: "DAY",
@@ -42,13 +42,13 @@ describe("buildBookingInputFromDraft", () => {
         },
         selectedOption,
         guestIdentity,
-      ),
+      }),
     ).toThrow("Booking selections are required");
   });
 
   it("passes explicit pickupTime through to both normalized window and input payload", () => {
-    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft(
-      {
+    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft({
+      draft: {
         pickupDate: "2026-03-03",
         dropoffDate: "2026-03-03",
         bookingType: "DAY",
@@ -60,7 +60,7 @@ describe("buildBookingInputFromDraft", () => {
       selectedOption,
       guestIdentity,
       selections,
-    );
+    });
 
     expect(input.bookingType).toBe("DAY");
     expect(input.pickupTime).toBe("10 AM");
@@ -74,8 +74,8 @@ describe("buildBookingInputFromDraft", () => {
   });
 
   it("uses shared DAY default pickup time when draft pickupTime is missing", () => {
-    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft(
-      {
+    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft({
+      draft: {
         pickupDate: "2026-03-03",
         dropoffDate: "2026-03-03",
         bookingType: "DAY",
@@ -84,8 +84,8 @@ describe("buildBookingInputFromDraft", () => {
       },
       selectedOption,
       guestIdentity,
-      { ...selections, addonIds: [], requiresFullTank: false, useCredits: 0 },
-    );
+      selections: { ...selections, addonIds: [], requiresFullTank: false, useCredits: 0 },
+    });
 
     expect(input.pickupTime).toBe("7:00 AM");
     expect(input.addonIds).toEqual([]);
@@ -99,8 +99,8 @@ describe("buildBookingInputFromDraft", () => {
   it("uses the exact derived airport pickup and dropoff datetimes", () => {
     const pickupDateTime = "2026-03-01T14:40:00.000Z";
     const dropoffDateTime = "2026-03-01T15:54:00.000Z";
-    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft(
-      {
+    const { input, normalizedStartDate, normalizedEndDate } = buildBookingInputFromDraft({
+      draft: {
         bookingType: "AIRPORT_PICKUP",
         pickupDate: "2026-03-01",
         pickupDateTime,
@@ -114,12 +114,40 @@ describe("buildBookingInputFromDraft", () => {
       selectedOption,
       guestIdentity,
       selections,
-    );
+    });
 
     expect(input.startDate.toISOString()).toBe(pickupDateTime);
     expect(input.endDate.toISOString()).toBe(dropoffDateTime);
     expect(input.flightDate).toBe("2026-03-01");
     expect(normalizedStartDate.toISOString()).toBe(pickupDateTime);
     expect(normalizedEndDate.toISOString()).toBe(dropoffDateTime);
+  });
+
+  it("copies selectedOption.searchId and omits it when absent", () => {
+    const draft = {
+      pickupDate: "2026-03-03",
+      dropoffDate: "2026-03-03",
+      bookingType: "DAY" as const,
+      pickupTime: "10:00",
+      pickupLocation: "Wheat Baker Hotel, Ikoyi",
+      dropoffLocation: "Wheat Baker Hotel, Ikoyi",
+    };
+    const searchId = "01994a1d-4263-7000-8000-000000000010";
+
+    const copied = buildBookingInputFromDraft({
+      draft,
+      selectedOption: { ...selectedOption, searchId },
+      guestIdentity,
+      selections,
+    });
+    expect(copied.input.searchId).toBe(searchId);
+
+    const omitted = buildBookingInputFromDraft({
+      draft,
+      selectedOption,
+      guestIdentity,
+      selections,
+    });
+    expect(omitted.input).not.toHaveProperty("searchId");
   });
 });

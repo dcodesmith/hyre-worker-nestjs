@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { AnalyticsChannel } from "../../analytics/analytics-event.schema";
 import {
   BookingFlightWindowChangedException,
   BookingPhoneVerificationRequiredException,
@@ -169,6 +170,7 @@ describe("CreateBookingAction", () => {
         }),
         sessionUser: null,
         context: {
+          analyticsChannel: AnalyticsChannel.WHATSAPP,
           guestContactSource: "WHATSAPP_AGENT",
           requireFlightWindowConfirmation: true,
         },
@@ -400,6 +402,10 @@ describe("CreateBookingAction", () => {
       expect.objectContaining({
         input: expect.any(Object),
         sessionUser: expect.objectContaining({ id: "user_linked_123" }),
+        context: {
+          analyticsChannel: AnalyticsChannel.WHATSAPP,
+          requireFlightWindowConfirmation: true,
+        },
       }),
     );
     expect(bookingCreationServiceMock.createBooking.mock.calls[0]?.[0]?.input).not.toHaveProperty(
