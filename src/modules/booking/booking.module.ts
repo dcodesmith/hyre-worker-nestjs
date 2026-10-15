@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AddonsModule } from "../addons/addons.module";
+import { AnalyticsModule } from "../analytics/analytics.module";
 import { AuthModule } from "../auth/auth.module";
 import { EmailModule } from "../email/email.module";
 import { FlightAwareModule } from "../flightaware/flightaware.module";
@@ -40,6 +41,7 @@ import { GuestBookingAccessService } from "./guest-booking-access.service";
 @Module({
   imports: [
     AddonsModule,
+    AnalyticsModule,
     AuthModule,
     EmailModule,
     NotificationModule,

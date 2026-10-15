@@ -29,6 +29,7 @@ export type BookingType = (typeof BOOKING_TYPES)[number];
 const coreBookingFields = z
   .object({
     carId: z.uuid("Car ID must be a valid UUID"),
+    searchId: z.uuid("Search ID must be a valid UUID").optional(),
     startDate: z.coerce.date("Invalid start date format"),
     endDate: z.coerce.date("Invalid end date format"),
     pickupAddress: z.string().min(1, "Pickup address is required"),

@@ -1,19 +1,19 @@
-import type { IncomingHttpHeaders } from "node:http";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { type Booking, ChauffeurApprovalStatus, type Prisma } from "@prisma/client";
+import { type Booking, ChauffeurApprovalStatus } from "@prisma/client";
 import { subMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
-import { type ClientRequestContext, readClientRequest } from "../../common/client-request";
+import { readClientRequest } from "../../common/client-request";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { EnvConfig } from "../../config/env.config";
 import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.helper";
 import { generateBookingReference } from "../../shared/helper";
 import { AddonsException } from "../addons/addons.error";
-import type { ResolvedBookingAddon } from "../addons/addons.interface";
 import { AddonsService } from "../addons/addons.service";
+import { ANALYTICS_MARKET } from "../analytics/analytics-event.schema";
+import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService, lockCarRow, lockUserRow } from "../database/database.service";
 import { FlightAwareApiException, FlightAwareException } from "../flightaware/flightaware.error";
@@ -36,14 +36,18 @@ import {
   PaymentIntentFailedException,
 } from "./booking.error";
 import type {
-  CarWithPricing,
+  BookingCreationContext,
+  CalculateBookingFinancialsParams,
+  CreateBookingRequest,
   CreateBookingResponse,
+  CreateBookingWithPaymentParams,
+  CreatePaymentAndSyncParams,
   CustomerDetails,
   FlightDataForBooking,
-  GeneratedLeg,
-  ReferralEligibility,
+  ResumeBookingPaymentParams,
+  SyncPaymentIntentWithBookingParams,
+  ValidateAndGetFlightDataParams,
 } from "./booking.interface";
-import type { BookingFinancials } from "./booking-calculation.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
@@ -58,19 +62,6 @@ import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
-
-export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
-export type BookingCreationContext = {
-  guestContactSource?: GuestContactSource;
-  requireFlightWindowConfirmation?: boolean;
-};
-export type CreateBookingRequest = {
-  input: CreateBookingInput;
-  sessionUser: AuthSession["user"] | null;
-  idempotencyKey: string;
-  context?: BookingCreationContext;
-  requestHeaders?: IncomingHttpHeaders;
-};
 
 /**
  * Service for orchestrating the complete booking creation flow.
@@ -89,6 +80,7 @@ export class BookingCreationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly addonsService: AddonsService,
+    private readonly analyticsIngestionService: AnalyticsIngestionService,
     private readonly validationService: BookingValidationService,
     private readonly legService: BookingLegService,
     private readonly calculationService: BookingCalculationService,
@@ -137,7 +129,12 @@ export class BookingCreationService {
       return claim.response;
     }
     if (claim.kind === "resume") {
-      return this.resumeBookingPayment(claim.id, claim.bookingId, normalizedBooking, sessionUser);
+      return this.resumeBookingPayment({
+        idempotencyId: claim.id,
+        bookingId: claim.bookingId,
+        bookingInput: normalizedBooking,
+        sessionUser,
+      });
     }
 
     try {
@@ -169,12 +166,12 @@ export class BookingCreationService {
             },
           ]);
         }
-        flightData = await this.validateAndGetFlightData(
-          normalizedBooking.flightNumber,
-          normalizedBooking.startDate,
-          normalizedBooking.dropOffAddress,
-          normalizedBooking.flightDate,
-        );
+        flightData = await this.validateAndGetFlightData({
+          flightNumber: normalizedBooking.flightNumber,
+          pickupDate: normalizedBooking.startDate,
+          dropOffAddress: normalizedBooking.dropOffAddress,
+          flightDate: normalizedBooking.flightDate,
+        });
       }
 
       const legs = this.legService.generateLegs(
@@ -217,14 +214,14 @@ export class BookingCreationService {
         normalizedBooking.bookingType,
         legs.length,
       );
-      const baseFinancials = await this.calculateFinancials(
-        normalizedBooking,
+      const baseFinancials = await this.calculateFinancials({
+        booking: normalizedBooking,
         car,
         legs,
         addons,
-        new Decimal(0),
-        new Decimal(0),
-      );
+        referralDiscountAmount: new Decimal(0),
+        userCreditsBalance: new Decimal(0),
+      });
       const [preliminaryReferralEligibility, preliminaryReferralCreditBalance] = await Promise.all([
         this.eligibilityService.checkReferralEligibilityForPricing(
           sessionUser,
@@ -242,14 +239,14 @@ export class BookingCreationService {
       const financials =
         preliminaryReferralEligibility.discountAmount.gt(0) ||
         preliminaryReferralCreditBalance.gt(0)
-          ? await this.calculateFinancials(
-              normalizedBooking,
+          ? await this.calculateFinancials({
+              booking: normalizedBooking,
               car,
               legs,
               addons,
-              preliminaryReferralEligibility.discountAmount,
-              preliminaryReferralCreditBalance,
-            )
+              referralDiscountAmount: preliminaryReferralEligibility.discountAmount,
+              userCreditsBalance: preliminaryReferralCreditBalance,
+            })
           : baseFinancials;
 
       this.validationService.validateExpectedPrice(
@@ -310,15 +307,15 @@ export class BookingCreationService {
     }
   }
 
-  private calculateFinancials(
-    booking: CreateBookingInput,
-    car: CarWithPricing,
-    legs: GeneratedLeg[],
-    addons: ResolvedBookingAddon[],
-    referralDiscountAmount: Decimal,
-    userCreditsBalance: Decimal,
-    tx?: Prisma.TransactionClient,
-  ): Promise<BookingFinancials> {
+  private calculateFinancials({
+    booking,
+    car,
+    legs,
+    addons,
+    referralDiscountAmount,
+    userCreditsBalance,
+    tx,
+  }: CalculateBookingFinancialsParams) {
     return this.calculationService.calculateBookingCost(
       {
         bookingType: booking.bookingType,
@@ -334,12 +331,12 @@ export class BookingCreationService {
     );
   }
 
-  private async resumeBookingPayment(
-    idempotencyId: string,
-    bookingId: string,
-    bookingInput: CreateBookingInput,
-    sessionUser: AuthSession["user"] | null,
-  ): Promise<CreateBookingResponse> {
+  private async resumeBookingPayment({
+    idempotencyId,
+    bookingId,
+    bookingInput,
+    sessionUser,
+  }: ResumeBookingPaymentParams): Promise<CreateBookingResponse> {
     const booking = await this.databaseService.booking.findUnique({ where: { id: bookingId } });
     if (!booking) {
       throw new BookingCreationFailedException("Idempotent booking could not be recovered.");
@@ -351,14 +348,14 @@ export class BookingCreationService {
       throw new BookingRequestInProgressException(BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS);
     }
     const customerDetails = await this.getCustomerDetails(bookingInput, sessionUser);
-    return this.createPaymentAndSync(
+    return this.createPaymentAndSync({
       idempotencyId,
-      booking,
-      booking.totalAmount,
+      createdBooking: booking,
+      totalAmount: booking.totalAmount,
       customerDetails,
-      bookingInput.callbackUrl,
-      sessionUser === null,
-    );
+      callbackUrl: bookingInput.callbackUrl,
+      isGuest: sessionUser === null,
+    });
   }
 
   private async releaseIdempotencyClaim(idempotencyId: string): Promise<void> {
@@ -379,12 +376,12 @@ export class BookingCreationService {
    * Validate flight and get flight data for airport pickup bookings.
    * FlightAwareService throws FlightAwareException if validation fails.
    */
-  private async validateAndGetFlightData(
-    flightNumber: string,
-    pickupDate: Date,
-    dropOffAddress: string,
-    flightDate?: string,
-  ): Promise<FlightDataForBooking> {
+  private async validateAndGetFlightData({
+    flightNumber,
+    pickupDate,
+    dropOffAddress,
+    flightDate,
+  }: ValidateAndGetFlightDataParams): Promise<FlightDataForBooking> {
     const derivedFlightDate = subMinutes(pickupDate, AIRPORT_PICKUP_BUFFER_MINUTES);
     const pickupDateStr =
       flightDate ?? formatInTimeZone(derivedFlightDate, "Africa/Lagos", "yyyy-MM-dd");
@@ -469,18 +466,9 @@ export class BookingCreationService {
    * and pessimistic locking to prevent race conditions where concurrent requests could
    * all receive the one-time discount.
    */
-  private async createBookingWithPayment(params: {
-    idempotencyId: string;
-    booking: CreateBookingInput;
-    sessionUser: AuthSession["user"] | null;
-    context?: BookingCreationContext;
-    legs: GeneratedLeg[];
-    financials: BookingFinancials;
-    customerDetails: CustomerDetails;
-    flightData: FlightDataForBooking | null;
-    preliminaryReferralEligibility: ReferralEligibility;
-    client: ClientRequestContext;
-  }): Promise<CreateBookingResponse> {
+  private async createBookingWithPayment(
+    params: CreateBookingWithPaymentParams,
+  ): Promise<CreateBookingResponse> {
     const {
       idempotencyId,
       booking,
@@ -555,15 +543,15 @@ export class BookingCreationService {
           legs.length,
           tx,
         );
-        const transactionBaseFinancials = await this.calculateFinancials(
+        const transactionBaseFinancials = await this.calculateFinancials({
           booking,
-          freshCar,
+          car: freshCar,
           legs,
-          verifiedAddons,
-          new Decimal(0),
-          new Decimal(0),
+          addons: verifiedAddons,
+          referralDiscountAmount: new Decimal(0),
+          userCreditsBalance: new Decimal(0),
           tx,
-        );
+        });
 
         const verifiedReferralEligibility = sessionUser
           ? await this.eligibilityService.verifyAndReserveReferralDiscountInTransaction(
@@ -584,15 +572,15 @@ export class BookingCreationService {
             )
           : new Decimal(0);
 
-        const recalculatedFinancials = await this.calculateFinancials(
+        const recalculatedFinancials = await this.calculateFinancials({
           booking,
-          freshCar,
+          car: freshCar,
           legs,
-          verifiedAddons,
-          verifiedReferralEligibility.discountAmount,
-          verifiedReferralCreditBalance,
+          addons: verifiedAddons,
+          referralDiscountAmount: verifiedReferralEligibility.discountAmount,
+          userCreditsBalance: verifiedReferralCreditBalance,
           tx,
-        );
+        });
         const appliedReferralEligibility =
           verifiedReferralEligibility.eligible &&
           recalculatedFinancials.referralDiscountAmount.gt(0)
@@ -656,6 +644,27 @@ export class BookingCreationService {
           client,
         });
 
+        await this.analyticsIngestionService.createBookingRequested(
+          {
+            actorUserId: sessionUser?.id ?? null,
+            bookingId: bookingRecord.id,
+            occurredAt: bookingRecord.createdAt,
+            searchId: booking.searchId ?? null,
+            payload: {
+              bookingType: booking.bookingType,
+              startDate: booking.startDate.toISOString(),
+              endDate: booking.endDate.toISOString(),
+              carId: freshCar.id,
+              vehicleType: freshCar.vehicleType,
+              serviceTier: freshCar.serviceTier,
+              amount: finalizedFinancials.totalAmount.toFixed(2),
+              currency: "NGN",
+              market: ANALYTICS_MARKET,
+            },
+          },
+          tx,
+        );
+
         // Create pending referral reward record for the reserved discount.
         await this.eligibilityService.createReferralRewardIfEligible(
           tx,
@@ -695,14 +704,14 @@ export class BookingCreationService {
       throw new BookingCreationFailedException();
     }
 
-    return this.createPaymentAndSync(
+    return this.createPaymentAndSync({
       idempotencyId,
       createdBooking,
-      finalizedFinancials.totalAmount,
+      totalAmount: finalizedFinancials.totalAmount,
       customerDetails,
-      booking.callbackUrl,
-      sessionUser === null,
-    );
+      callbackUrl: booking.callbackUrl,
+      isGuest: sessionUser === null,
+    });
   }
 
   private resolvePreferredNotificationChannel(
@@ -718,14 +727,14 @@ export class BookingCreationService {
     return "EMAIL_ONLY";
   }
 
-  private async createPaymentAndSync(
-    idempotencyId: string,
-    createdBooking: Booking,
-    totalAmount: Decimal,
-    customerDetails: CustomerDetails,
-    callbackUrl?: string,
+  private async createPaymentAndSync({
+    idempotencyId,
+    createdBooking,
+    totalAmount,
+    customerDetails,
+    callbackUrl,
     isGuest = false,
-  ): Promise<CreateBookingResponse> {
+  }: CreatePaymentAndSyncParams): Promise<CreateBookingResponse> {
     try {
       const paymentResult = await this.paymentService.createPaymentIntent(
         createdBooking,
@@ -750,14 +759,14 @@ export class BookingCreationService {
         reservationExpiresAt: reservationExpiresAt.toISOString(),
         ...(paymentStatusCredential ? { paymentStatusToken: paymentStatusCredential.token } : {}),
       };
-      await this.syncPaymentIntentWithBooking(
+      await this.syncPaymentIntentWithBooking({
         idempotencyId,
-        createdBooking.id,
-        paymentResult.paymentIntentId,
+        bookingId: createdBooking.id,
+        paymentIntentId: paymentResult.paymentIntentId,
         reservationExpiresAt,
-        paymentStatusCredential?.tokenHash ?? null,
+        paymentStatusTokenHash: paymentStatusCredential?.tokenHash ?? null,
         response,
-      );
+      });
       return response;
     } catch (error) {
       if (
@@ -805,23 +814,23 @@ export class BookingCreationService {
     }
   }
 
-  private async syncPaymentIntentWithBooking(
-    idempotencyId: string,
-    bookingId: string,
-    paymentIntentId: string,
-    reservationExpiresAt: Date,
-    paymentStatusTokenHash: string | null,
-    response: CreateBookingResponse,
-  ): Promise<void> {
+  private async syncPaymentIntentWithBooking({
+    idempotencyId,
+    bookingId,
+    paymentIntentId,
+    reservationExpiresAt,
+    paymentStatusTokenHash,
+    response,
+  }: SyncPaymentIntentWithBookingParams): Promise<void> {
     try {
-      await this.idempotencyService.checkpointPaymentResult(
+      await this.idempotencyService.checkpointPaymentResult({
         idempotencyId,
         bookingId,
         paymentIntentId,
         reservationExpiresAt,
         paymentStatusTokenHash,
         response,
-      );
+      });
       await this.idempotencyService.complete(idempotencyId);
     } catch (updateError) {
       this.logger.error(

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AnalyticsModule } from "../analytics/analytics.module";
 import { AuthModule } from "../auth/auth.module";
 import { PromotionModule } from "../promotion/promotion.module";
 import { ReviewsModule } from "../reviews/reviews.module";
@@ -14,7 +15,7 @@ import { CarSearchService } from "./car-search.service";
 import { FleetOwnerCarController } from "./fleet-owner-car.controller";
 
 @Module({
-  imports: [AuthModule, StorageModule, PromotionModule, ReviewsModule],
+  imports: [AnalyticsModule, AuthModule, StorageModule, PromotionModule, ReviewsModule],
   controllers: [CarController, FleetOwnerCarController, AdminCarController],
   providers: [
     CarService,

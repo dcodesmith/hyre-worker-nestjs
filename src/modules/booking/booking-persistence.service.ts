@@ -20,6 +20,7 @@ import {
 } from "./booking.const";
 import { BookingCreationFailedException, CarNotFoundException } from "./booking.error";
 import type {
+  BookingCar,
   CarWithPricing,
   FlightDataForBooking,
   GeneratedLeg,
@@ -42,13 +43,15 @@ export class BookingPersistenceService {
     private readonly configService: ConfigService<EnvConfig>,
   ) {}
 
-  async fetchCarWithPricing(carId: string, tx?: Prisma.TransactionClient): Promise<CarWithPricing> {
+  async fetchCarWithPricing(carId: string, tx?: Prisma.TransactionClient): Promise<BookingCar> {
     const reader = tx ?? this.databaseService;
     const car = await reader.car.findUnique({
       where: { id: carId },
       select: {
         id: true,
         ownerId: true,
+        serviceTier: true,
+        vehicleType: true,
         dayRate: true,
         nightRate: true,
         fullDayRate: true,

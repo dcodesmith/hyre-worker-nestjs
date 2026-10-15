@@ -331,6 +331,27 @@ model DomainOutboxEvent {
   @@index([aggregateId])
 }
 
+model AnalyticsEvent {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  eventKey           String   @unique @db.VarChar(200)
+  eventType          String   @db.VarChar(64)
+  schemaVersion      Int
+  source             String   @db.VarChar(32)
+  occurredAt         DateTime
+  recordedAt         DateTime @default(now())
+  actorUserId        String?  @db.Uuid
+  anonymousSessionId String?  @db.Uuid
+  requestId          String?  @db.VarChar(128)
+  searchId           String?  @db.Uuid
+  bookingId          String?  @db.Uuid
+  payload            Json
+
+  @@index([eventType, occurredAt])
+  @@index([searchId])
+  @@index([bookingId])
+  @@index([actorUserId, occurredAt])
+}
+
 model Role {
   id          String   @id @default(uuid(7)) @db.Uuid
   name        String   @unique

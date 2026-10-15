@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
+import { AnalyticsSource } from "../analytics/analytics-event.schema";
 import { CarSearchService } from "../car/car-search.service";
 import type { CarSearchResponseDto, SearchCarDto } from "../car/dto/car-search.dto";
 import { RatesService } from "../rates/rates.service";
@@ -184,6 +185,11 @@ describe("BookingAgentSearchService", () => {
     );
 
     expect(result.precondition).toBeNull();
+    expect(carSearchService.searchCars).toHaveBeenCalledTimes(1);
+    expect(carSearchService.searchCars).toHaveBeenCalledWith(
+      expect.objectContaining({ make: ["Toyota"], model: "Prado", color: "Black" }),
+      { source: AnalyticsSource.WHATSAPP_AGENT },
+    );
     expect(result.exactMatches.map((option) => option.id)).toEqual(["car_exact_prado_black"]);
     expect(result.exactMatches[0]?.estimatedTotalInclVat).toBeGreaterThan(0);
     expect(result.alternatives).toHaveLength(0);
@@ -269,6 +275,10 @@ describe("BookingAgentSearchService", () => {
     );
 
     expect(result.exactMatches).toHaveLength(0);
+    const searchCalls = carSearchService.searchCars.mock.calls;
+    expect(searchCalls.length).toBeGreaterThan(1);
+    expect(searchCalls[0]?.[1]).toEqual({ source: AnalyticsSource.WHATSAPP_AGENT });
+    expect(searchCalls.slice(1).every((call) => call[1] === undefined)).toBe(true);
     expect(result.alternatives[0]?.id).toBe("car_prado_white");
     expect(result.alternatives[0]?.reason).toBe("SAME_MODEL_DIFFERENT_COLOR");
     expect(result.alternatives[1]?.id).toBe("car_land_cruiser_black");

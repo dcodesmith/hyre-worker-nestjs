@@ -38,6 +38,8 @@ describe("BookingPersistenceService", () => {
     const car = {
       id: "car-1",
       ownerId: "owner-123",
+      serviceTier: "STANDARD",
+      vehicleType: "SEDAN",
       dayRate: 15000,
       nightRate: 20000,
       fullDayRate: 25000,
@@ -64,6 +66,8 @@ describe("BookingPersistenceService", () => {
       select: {
         id: true,
         ownerId: true,
+        serviceTier: true,
+        vehicleType: true,
         dayRate: true,
         nightRate: true,
         fullDayRate: true,

@@ -1,5 +1,7 @@
-import { Controller, Get, Header } from "@nestjs/common";
+import { Controller, Get, Header, Req, Res } from "@nestjs/common";
+import type { Request, Response } from "express";
 import { ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
+import { AnalyticsSource } from "../analytics/analytics-event.schema";
 import { CarCategoriesService } from "./car-categories.service";
 import { CarSearchService } from "./car-search.service";
 import { type CarCategoriesQueryDto, carCategoriesQuerySchema } from "./dto/car-categories.dto";
@@ -26,9 +28,26 @@ export class CarController {
   }
 
   @Get("search")
-  @Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
-  async searchCars(@ZodQuery(carSearchQuerySchema) query: CarSearchQueryDto) {
-    return this.carSearchService.searchCars(query);
+  @Header("Cache-Control", "no-store")
+  async searchCars(
+    @ZodQuery(carSearchQuerySchema) query: CarSearchQueryDto,
+    @Req() request?: Request,
+    @Res({ passthrough: true }) response?: Response,
+  ) {
+    const header = (name: string) => {
+      const value = request?.headers[name];
+      return typeof value === "string" ? value : undefined;
+    };
+    const result = await this.carSearchService.searchCars(query, {
+      source: AnalyticsSource.WEB_CAR_SEARCH,
+      searchId: header("x-search-id"),
+      anonymousSessionId: header("x-anonymous-session-id"),
+      requestId: header("x-request-id"),
+    });
+    if (result.searchId) {
+      response?.setHeader("X-Search-Id", result.searchId);
+    }
+    return result;
   }
 
   @Get("by-ref/:publicRef")

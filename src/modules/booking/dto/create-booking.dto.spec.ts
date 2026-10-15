@@ -165,6 +165,43 @@ describe("CreateBookingSchema", () => {
     });
   });
 
+  describe("searchId validation", () => {
+    const searchId = "01994a1d-4263-7000-8000-000000000010";
+
+    it("accepts an omitted or valid searchId", () => {
+      expect(createBookingSchema.safeParse(validBaseBooking).success).toBe(true);
+      const parsed = createBookingSchema.safeParse({ ...validBaseBooking, searchId });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.searchId).toBe(searchId);
+      }
+
+      const guest = createGuestBookingSchema.safeParse({
+        ...validBaseBooking,
+        searchId,
+        guestEmail: "guest@example.com",
+        guestName: "Guest User",
+        guestPhone: "08012345678",
+      });
+      expect(guest.success).toBe(true);
+      if (guest.success) {
+        expect(guest.data.searchId).toBe(searchId);
+      }
+    });
+
+    it("rejects an invalid searchId", () => {
+      const result = createBookingSchema.safeParse({
+        ...validBaseBooking,
+        searchId: "not-a-uuid",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes("searchId"))).toBe(true);
+      }
+    });
+  });
+
   describe("callbackUrl validation", () => {
     it("rejects unsafe callback URL protocols", () => {
       const booking = {
