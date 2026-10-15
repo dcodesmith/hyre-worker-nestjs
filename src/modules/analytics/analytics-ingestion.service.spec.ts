@@ -12,8 +12,8 @@ import type {
 } from "./analytics.interface";
 import {
   ANALYTICS_SCHEMA_VERSION,
+  AnalyticsChannel,
   AnalyticsEventType,
-  AnalyticsSource,
 } from "./analytics-event.schema";
 import { AnalyticsIngestionService } from "./analytics-ingestion.service";
 
@@ -117,7 +117,7 @@ describe("AnalyticsIngestionService", () => {
     const requestId = "r".repeat(128);
     await service.recordAvailabilitySearchCompleted({
       context: {
-        source: AnalyticsSource.WEB_CAR_SEARCH,
+        channel: AnalyticsChannel.WEB,
         searchId: SEARCH_ID,
         anonymousSessionId: SESSION_ID,
         requestId,
@@ -131,7 +131,7 @@ describe("AnalyticsIngestionService", () => {
         {
           eventKey: `${AnalyticsEventType.AVAILABILITY_SEARCH_COMPLETED}:${SEARCH_ID}:${FINGERPRINT}`,
           eventType: AnalyticsEventType.AVAILABILITY_SEARCH_COMPLETED,
-          source: AnalyticsSource.WEB_CAR_SEARCH,
+          source: AnalyticsChannel.WEB,
           occurredAt: OCCURRED_AT,
           anonymousSessionId: SESSION_ID,
           requestId,
@@ -146,7 +146,7 @@ describe("AnalyticsIngestionService", () => {
 
   it("reuses the event key for the same search and fingerprint and changes it when the fingerprint changes", async () => {
     const input = {
-      context: { source: AnalyticsSource.WHATSAPP_AGENT, searchId: SEARCH_ID },
+      context: { channel: AnalyticsChannel.WHATSAPP, searchId: SEARCH_ID },
       occurredAt: OCCURRED_AT,
       payload: completedPayload(),
     };
@@ -158,6 +158,7 @@ describe("AnalyticsIngestionService", () => {
       payload: completedPayload({ filterFingerprint: OTHER_FINGERPRINT }),
     });
 
+    expect(insertedRow(0).source).toBe(AnalyticsChannel.WHATSAPP);
     expect(insertedRow(0).eventKey).toBe(
       `${AnalyticsEventType.AVAILABILITY_SEARCH_COMPLETED}:${SEARCH_ID}:${FINGERPRINT}`,
     );
@@ -170,7 +171,7 @@ describe("AnalyticsIngestionService", () => {
 
   it("inserts a validated failed search", async () => {
     await service.recordAvailabilitySearchFailed({
-      context: { source: AnalyticsSource.WEB_CAR_SEARCH, searchId: OTHER_SEARCH_ID },
+      context: { channel: AnalyticsChannel.WEB, searchId: OTHER_SEARCH_ID },
       occurredAt: OCCURRED_AT,
       payload: failedPayload(),
     });
@@ -178,7 +179,7 @@ describe("AnalyticsIngestionService", () => {
     expect(insertedRow()).toMatchObject({
       eventKey: `${AnalyticsEventType.AVAILABILITY_SEARCH_FAILED}:${OTHER_SEARCH_ID}:${FINGERPRINT}`,
       eventType: AnalyticsEventType.AVAILABILITY_SEARCH_FAILED,
-      source: AnalyticsSource.WEB_CAR_SEARCH,
+      source: AnalyticsChannel.WEB,
       searchId: OTHER_SEARCH_ID,
       payload: failedPayload(),
       schemaVersion: ANALYTICS_SCHEMA_VERSION,
@@ -189,7 +190,7 @@ describe("AnalyticsIngestionService", () => {
   it("omits invalid optional session, request, and search ids", async () => {
     await service.recordAvailabilitySearchCompleted({
       context: {
-        source: AnalyticsSource.WEB_CAR_SEARCH,
+        channel: AnalyticsChannel.WEB,
         searchId: "not-a-uuid",
         anonymousSessionId: "not-a-uuid",
         requestId: "",
@@ -199,7 +200,7 @@ describe("AnalyticsIngestionService", () => {
     });
     await service.recordAvailabilitySearchCompleted({
       context: {
-        source: AnalyticsSource.WEB_CAR_SEARCH,
+        channel: AnalyticsChannel.WEB,
         searchId: SEARCH_ID,
         anonymousSessionId: SESSION_ID,
         requestId: "r".repeat(129),
@@ -219,7 +220,7 @@ describe("AnalyticsIngestionService", () => {
   it("logs and swallows search schema and insert failures", async () => {
     await expect(
       service.recordAvailabilitySearchCompleted({
-        context: { source: AnalyticsSource.WEB_CAR_SEARCH, searchId: SEARCH_ID },
+        context: { channel: AnalyticsChannel.WEB, searchId: SEARCH_ID },
         occurredAt: OCCURRED_AT,
         payload: completedPayload({ resultCount: -1 }),
       }),
@@ -238,7 +239,7 @@ describe("AnalyticsIngestionService", () => {
     createMany.mockRejectedValueOnce(new Error("insert failed"));
     await expect(
       service.recordAvailabilitySearchFailed({
-        context: { source: AnalyticsSource.WHATSAPP_AGENT, searchId: SEARCH_ID },
+        context: { channel: AnalyticsChannel.WHATSAPP, searchId: SEARCH_ID },
         occurredAt: OCCURRED_AT,
         payload: failedPayload(),
       }),
@@ -262,6 +263,7 @@ describe("AnalyticsIngestionService", () => {
       {
         actorUserId: ACTOR_ID,
         bookingId: BOOKING_ID,
+        channel: AnalyticsChannel.WEB,
         occurredAt: OCCURRED_AT,
         searchId: SEARCH_ID,
         payload: bookingPayload(),
@@ -275,7 +277,7 @@ describe("AnalyticsIngestionService", () => {
         {
           eventKey: `${AnalyticsEventType.BOOKING_REQUESTED}:${BOOKING_ID}`,
           eventType: AnalyticsEventType.BOOKING_REQUESTED,
-          source: AnalyticsSource.BOOKING_API,
+          source: AnalyticsChannel.WEB,
           occurredAt: OCCURRED_AT,
           actorUserId: ACTOR_ID,
           searchId: SEARCH_ID,
@@ -298,6 +300,7 @@ describe("AnalyticsIngestionService", () => {
       {
         actorUserId: null,
         bookingId: BOOKING_ID,
+        channel: AnalyticsChannel.WHATSAPP,
         occurredAt: OCCURRED_AT,
         searchId: null,
         payload: bookingPayload(),
@@ -308,6 +311,7 @@ describe("AnalyticsIngestionService", () => {
       {
         actorUserId: "not-a-uuid",
         bookingId: BOOKING_ID,
+        channel: AnalyticsChannel.WHATSAPP,
         occurredAt: OCCURRED_AT,
         searchId: "not-a-uuid",
         payload: bookingPayload(),
@@ -315,6 +319,9 @@ describe("AnalyticsIngestionService", () => {
       client,
     );
 
+    expect(tx.analyticsEvent.createMany.mock.calls[0][0].data[0].source).toBe(
+      AnalyticsChannel.WHATSAPP,
+    );
     expect(tx.analyticsEvent.createMany.mock.calls[0][0].data[0].actorUserId).toBeUndefined();
     expect(tx.analyticsEvent.createMany.mock.calls[0][0].data[0].searchId).toBeUndefined();
     expect(tx.analyticsEvent.createMany.mock.calls[1][0].data[0].actorUserId).toBeUndefined();
@@ -336,6 +343,7 @@ describe("AnalyticsIngestionService", () => {
         {
           actorUserId: ACTOR_ID,
           bookingId: BOOKING_ID,
+          channel: AnalyticsChannel.WEB,
           occurredAt: OCCURRED_AT,
           searchId: SEARCH_ID,
           payload: invalidPayload as BookingRequestedPayload,
@@ -352,6 +360,7 @@ describe("AnalyticsIngestionService", () => {
         {
           actorUserId: ACTOR_ID,
           bookingId: BOOKING_ID,
+          channel: AnalyticsChannel.WEB,
           occurredAt: OCCURRED_AT,
           searchId: SEARCH_ID,
           payload: bookingPayload(),

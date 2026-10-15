@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { AnalyticsSource } from "../analytics/analytics-event.schema";
+import { AnalyticsChannel } from "../analytics/analytics-event.schema";
 import { CarSearchService } from "../car/car-search.service";
 import type { CarSearchResponseDto, SearchCarDto } from "../car/dto/car-search.dto";
 import { RatesService } from "../rates/rates.service";
@@ -17,7 +17,9 @@ describe("BookingAgentSearchService", () => {
   let ratesService: { getRates: ReturnType<typeof vi.fn> };
   let storageService: { ensurePublicJpeg: ReturnType<typeof vi.fn> };
 
-  const buildSearchResponse = (cars: SearchCarDto[]): CarSearchResponseDto => ({
+  const exactSearchId = "01994a1d-4263-7000-8000-0000000000aa";
+
+  const buildSearchResponse = (cars: SearchCarDto[], searchId?: string): CarSearchResponseDto => ({
     cars,
     filters: {
       bookingType: null,
@@ -33,6 +35,7 @@ describe("BookingAgentSearchService", () => {
       hasNextPage: false,
       hasPreviousPage: false,
     },
+    ...(searchId ? { searchId } : {}),
   });
 
   const buildCar = (id: string, overrides?: Partial<SearchCarDto>): SearchCarDto => ({
@@ -168,10 +171,10 @@ describe("BookingAgentSearchService", () => {
     const fromDate = makeIsoDate(2);
 
     carSearchService.searchCars.mockResolvedValue(
-      buildSearchResponse([
-        buildCar("car_exact_prado_black"),
-        buildCar("car_other", { model: "Land Cruiser" }),
-      ]),
+      buildSearchResponse(
+        [buildCar("car_exact_prado_black"), buildCar("car_other", { model: "Land Cruiser" })],
+        exactSearchId,
+      ),
     );
 
     const result = await service.searchVehiclesFromExtracted(
@@ -188,9 +191,10 @@ describe("BookingAgentSearchService", () => {
     expect(carSearchService.searchCars).toHaveBeenCalledTimes(1);
     expect(carSearchService.searchCars).toHaveBeenCalledWith(
       expect.objectContaining({ make: ["Toyota"], model: "Prado", color: "Black" }),
-      { source: AnalyticsSource.WHATSAPP_AGENT },
+      { channel: AnalyticsChannel.WHATSAPP },
     );
     expect(result.exactMatches.map((option) => option.id)).toEqual(["car_exact_prado_black"]);
+    expect(result.exactMatches[0]?.searchId).toBe(exactSearchId);
     expect(result.exactMatches[0]?.estimatedTotalInclVat).toBeGreaterThan(0);
     expect(result.alternatives).toHaveLength(0);
     expect(result.shouldClarifyBookingType).toBe(false);
@@ -243,23 +247,26 @@ describe("BookingAgentSearchService", () => {
       dayRate: 70000,
     });
 
-    carSearchService.searchCars.mockImplementation(async (query) => {
-      if (query.make === "Toyota" && query.model === "Prado" && query.color === "Black") {
+    carSearchService.searchCars.mockImplementation(async (query, analyticsContext) => {
+      const response = (() => {
+        if (query.make === "Toyota" && query.model === "Prado" && query.color === "Black") {
+          return buildSearchResponse([]);
+        }
+        if (query.model === "Prado" && !query.color) {
+          return buildSearchResponse([pradoWhite]);
+        }
+        if (query.color === "Black" && !query.model) {
+          return buildSearchResponse([landCruiserBlack, lexusBlack]);
+        }
+        if (query.vehicleType === "SUV" && !query.color && !query.model) {
+          return buildSearchResponse([landCruiserBlack, lexusBlack]);
+        }
+        if (query.make === "Toyota" && !query.model && !query.color) {
+          return buildSearchResponse([landCruiserBlack]);
+        }
         return buildSearchResponse([]);
-      }
-      if (query.model === "Prado" && !query.color) {
-        return buildSearchResponse([pradoWhite]);
-      }
-      if (query.color === "Black" && !query.model) {
-        return buildSearchResponse([landCruiserBlack, lexusBlack]);
-      }
-      if (query.vehicleType === "SUV" && !query.color && !query.model) {
-        return buildSearchResponse([landCruiserBlack, lexusBlack]);
-      }
-      if (query.make === "Toyota" && !query.model && !query.color) {
-        return buildSearchResponse([landCruiserBlack]);
-      }
-      return buildSearchResponse([]);
+      })();
+      return analyticsContext ? { ...response, searchId: exactSearchId } : response;
     });
 
     const result = await service.searchVehiclesFromExtracted(
@@ -277,8 +284,9 @@ describe("BookingAgentSearchService", () => {
     expect(result.exactMatches).toHaveLength(0);
     const searchCalls = carSearchService.searchCars.mock.calls;
     expect(searchCalls.length).toBeGreaterThan(1);
-    expect(searchCalls[0]?.[1]).toEqual({ source: AnalyticsSource.WHATSAPP_AGENT });
+    expect(searchCalls[0]?.[1]).toEqual({ channel: AnalyticsChannel.WHATSAPP });
     expect(searchCalls.slice(1).every((call) => call[1] === undefined)).toBe(true);
+    expect(result.alternatives.every((option) => option.searchId === exactSearchId)).toBe(true);
     expect(result.alternatives[0]?.id).toBe("car_prado_white");
     expect(result.alternatives[0]?.reason).toBe("SAME_MODEL_DIFFERENT_COLOR");
     expect(result.alternatives[1]?.id).toBe("car_land_cruiser_black");
@@ -359,6 +367,49 @@ describe("BookingAgentSearchService", () => {
     expect(result.alternatives.some((option) => option.reason === "SIMILAR_PRICE_RANGE")).toBe(
       false,
     );
+  });
+
+  it("omits searchId on displayed options when the exact search has none", async () => {
+    const fromDate = makeIsoDate(2);
+    carSearchService.searchCars.mockImplementation(async (query) => {
+      if (query.color === "Black" && query.model === "Prado") {
+        return buildSearchResponse([]);
+      }
+      if (query.model === "Prado" && !query.color) {
+        return buildSearchResponse([buildCar("car_prado_white", { color: "White" })]);
+      }
+      return buildSearchResponse([]);
+    });
+
+    const alternatives = await service.searchVehiclesFromExtracted(
+      {
+        make: "Toyota",
+        model: "Prado",
+        color: "Black",
+        from: fromDate,
+      },
+      "Looking for: black toyota prado",
+    );
+
+    expect(alternatives.exactMatches).toHaveLength(0);
+    expect(alternatives.alternatives.length).toBeGreaterThan(0);
+    expect(alternatives.alternatives.every((option) => !("searchId" in option))).toBe(true);
+
+    carSearchService.searchCars.mockResolvedValue(
+      buildSearchResponse([buildCar("car_exact_prado_black")]),
+    );
+    const exact = await service.searchVehiclesFromExtracted(
+      {
+        make: "Toyota",
+        model: "Prado",
+        color: "Black",
+        from: fromDate,
+      },
+      "Looking for: black toyota prado",
+    );
+
+    expect(exact.exactMatches[0]?.id).toBe("car_exact_prado_black");
+    expect(exact.exactMatches[0]).not.toHaveProperty("searchId");
   });
 
   it("uses a prepared jpeg and clears the image when preparation fails", async () => {

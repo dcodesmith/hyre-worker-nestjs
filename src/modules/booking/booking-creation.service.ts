@@ -12,6 +12,7 @@ import { normalizeBookingTimeWindow } from "../../shared/booking-time-window.hel
 import { generateBookingReference } from "../../shared/helper";
 import { AddonsException } from "../addons/addons.error";
 import { AddonsService } from "../addons/addons.service";
+import { resolveHttpAnalyticsChannel } from "../analytics/analytics-channel.helper";
 import { ANALYTICS_MARKET } from "../analytics/analytics-event.schema";
 import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import type { AuthSession } from "../auth/guards/session.guard";
@@ -115,6 +116,8 @@ export class BookingCreationService {
       request.requestHeaders,
       this.configService.get("EDGE_CLIENT_SECRET", { infer: true }),
     );
+    const analyticsChannel =
+      context?.analyticsChannel ?? resolveHttpAnalyticsChannel(request.requestHeaders);
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
     validateCreditsRequireAuthentication(normalizedBooking.useCredits, sessionUser);
@@ -265,6 +268,7 @@ export class BookingCreationService {
         flightData,
         preliminaryReferralEligibility,
         client,
+        analyticsChannel,
       });
 
       this.logger.info({ bookingId: result.bookingId }, "Booking created successfully");
@@ -480,6 +484,7 @@ export class BookingCreationService {
       flightData,
       preliminaryReferralEligibility,
       client,
+      analyticsChannel,
     } = params;
 
     const preferredNotificationChannel = this.resolvePreferredNotificationChannel(
@@ -648,6 +653,7 @@ export class BookingCreationService {
           {
             actorUserId: sessionUser?.id ?? null,
             bookingId: bookingRecord.id,
+            channel: analyticsChannel,
             occurredAt: bookingRecord.createdAt,
             searchId: booking.searchId ?? null,
             payload: {

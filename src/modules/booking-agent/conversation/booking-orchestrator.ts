@@ -4,8 +4,7 @@ import {
 } from "../../../shared/booking-time-window.helper";
 import type { CreateBookingInput } from "../../booking/dto/create-booking.dto";
 import type {
-  BookingDraft,
-  VehicleSearchOption,
+  BuildBookingInputFromDraftParams,
   WhatsAppGuestIdentity,
 } from "./conversation.interface";
 
@@ -21,19 +20,12 @@ export function buildGuestIdentity(
   };
 }
 
-export function buildBookingInputFromDraft(
-  draft: BookingDraft,
-  selectedOption: VehicleSearchOption,
-  guestIdentity: WhatsAppGuestIdentity,
-  selections:
-    | {
-        addonIds: string[];
-        requiresFullTank: boolean;
-        useCredits: number;
-        expectedTotalAmount: string;
-      }
-    | undefined = undefined,
-): {
+export function buildBookingInputFromDraft({
+  draft,
+  selectedOption,
+  guestIdentity,
+  selections,
+}: BuildBookingInputFromDraftParams): {
   input: CreateBookingInput;
   normalizedStartDate: Date;
   normalizedEndDate: Date;
@@ -62,6 +54,7 @@ export function buildBookingInputFromDraft(
   return {
     input: {
       carId: selectedOption.id,
+      ...(selectedOption.searchId && { searchId: selectedOption.searchId }),
       startDate,
       endDate,
       pickupAddress: draft.pickupLocation ?? "",

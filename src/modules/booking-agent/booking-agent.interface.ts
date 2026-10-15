@@ -85,6 +85,7 @@ export interface InboundMessageContext {
 
 export interface VehicleSearchOption {
   id: string;
+  searchId?: string;
   make: string;
   model: string;
   name: string;

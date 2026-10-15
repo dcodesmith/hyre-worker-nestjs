@@ -19,6 +19,7 @@ export const WEB = "web" as const;
 
 /** Mobile app client (uses X-Client-Type header) */
 export const MOBILE = "mobile" as const;
+export const CLIENT_TYPE_HEADER = "x-client-type";
 
 /** All valid client types */
 export const CLIENT_TYPES = [WEB, MOBILE] as const;

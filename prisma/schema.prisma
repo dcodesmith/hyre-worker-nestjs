@@ -336,6 +336,7 @@ model AnalyticsEvent {
   eventKey           String   @unique @db.VarChar(200)
   eventType          String   @db.VarChar(64)
   schemaVersion      Int
+  /// Product channel: WEB, MOBILE_APP, or WHATSAPP.
   source             String   @db.VarChar(32)
   occurredAt         DateTime
   recordedAt         DateTime @default(now())

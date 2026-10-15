@@ -10,7 +10,7 @@ import {
   type StoredClientContext,
   withoutSessionClientContext,
 } from "../../common/client-request";
-import { isValidRole, MOBILE, USER } from "./auth.const";
+import { CLIENT_TYPE_HEADER, isValidRole, MOBILE, USER } from "./auth.const";
 import type { ClientType, RoleName, ValidateRoleForClientParams } from "./auth.interface";
 
 export const generateAuthId = (): string => uuidv7();
@@ -247,7 +247,7 @@ function extractRoleParams(ctx: { request?: Request; body?: unknown }): {
   const role: RoleName = isValidRole(bodyRole) ? bodyRole : USER;
 
   // Determine client type from headers
-  const clientTypeHeader = request?.headers.get("x-client-type");
+  const clientTypeHeader = request?.headers.get(CLIENT_TYPE_HEADER);
   const clientType: ClientType | null = clientTypeHeader === MOBILE ? MOBILE : null;
 
   // Get origin and referer for web client validation

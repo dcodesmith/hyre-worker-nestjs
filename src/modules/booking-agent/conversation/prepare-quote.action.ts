@@ -120,21 +120,21 @@ export class PrepareQuoteAction {
       throw new Error("Selected vehicle is missing");
     }
 
-    const { input } = buildBookingInputFromDraft(
-      state.draft,
+    const { input } = buildBookingInputFromDraft({
+      draft: state.draft,
       selectedOption,
-      {
+      guestIdentity: {
         guestEmail: "whatsapp-preview@tripdly.com",
         guestName: "WhatsApp Customer",
         guestPhone: "+10000000000",
       },
-      {
+      selections: {
         addonIds: state.selectedAddonIds ?? [],
         requiresFullTank,
         useCredits,
         expectedTotalAmount: "0",
       },
-    );
+    });
     const linkState = await this.whatsAppPersistenceService.getConversationLinkState(
       state.conversationId,
     );

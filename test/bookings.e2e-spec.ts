@@ -4,6 +4,10 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
+import {
+  AnalyticsChannel,
+  AnalyticsEventType,
+} from "../src/modules/analytics/analytics-event.schema";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import {
   BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
@@ -171,6 +175,61 @@ describe("Bookings E2E Tests", () => {
           }),
         );
         expect(response.body.checkoutUrl).toContain("checkout.flutterwave.com");
+      });
+
+      it("persists BOOKING_REQUESTED with the full-intent search id and web channel", async () => {
+        const payload = await createValidBookingPayload(testCarId, testUserCookie);
+        const searchQuery = new URLSearchParams({
+          page: "1",
+          limit: "1",
+          from: payload.startDate,
+          to: payload.endDate,
+          bookingType: "DAY",
+          pickupTime: "9:00 AM",
+        });
+        const search = await request(app.getHttpServer()).get(
+          `/api/cars/search?${searchQuery.toString()}`,
+        );
+
+        expect(search.status).toBe(HttpStatus.OK);
+        const searchIdHeader: unknown = search.headers["x-search-id"];
+        expect(searchIdHeader).toEqual(expect.any(String));
+        if (typeof searchIdHeader !== "string") {
+          throw new Error("X-Search-Id was not a string");
+        }
+
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", testUserCookie)
+          .set("Idempotency-Key", randomUUID())
+          .send({ ...payload, searchId: searchIdHeader });
+
+        expect(response.status).toBe(HttpStatus.CREATED);
+        const createdBody: unknown = response.body;
+        if (
+          typeof createdBody !== "object" ||
+          createdBody === null ||
+          !("bookingId" in createdBody) ||
+          typeof createdBody.bookingId !== "string"
+        ) {
+          throw new Error("Booking response did not include bookingId");
+        }
+
+        const event = await databaseService.analyticsEvent.findFirst({
+          where: {
+            searchId: searchIdHeader,
+            eventType: AnalyticsEventType.BOOKING_REQUESTED,
+            bookingId: createdBody.bookingId,
+          },
+        });
+        expect(event).toEqual(
+          expect.objectContaining({
+            searchId: searchIdHeader,
+            bookingId: createdBody.bookingId,
+            source: AnalyticsChannel.WEB,
+            eventType: AnalyticsEventType.BOOKING_REQUESTED,
+          }),
+        );
       });
 
       it("reconciles an expired unpaid booking before returning payment status", async () => {

@@ -16,10 +16,10 @@ export const AvailabilitySearchOutcome = {
   NO_MATCH_UNCLASSIFIED: "NO_MATCH_UNCLASSIFIED",
 } as const;
 
-export const AnalyticsSource = {
-  WEB_CAR_SEARCH: "WEB_CAR_SEARCH",
-  WHATSAPP_AGENT: "WHATSAPP_AGENT",
-  BOOKING_API: "BOOKING_API",
+export const AnalyticsChannel = {
+  WEB: "WEB",
+  MOBILE_APP: "MOBILE_APP",
+  WHATSAPP: "WHATSAPP",
 } as const;
 
 export const ANALYTICS_MARKET = {

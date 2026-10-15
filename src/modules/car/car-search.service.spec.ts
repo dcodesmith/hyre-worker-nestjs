@@ -5,7 +5,7 @@ import { validate as isUuid } from "uuid";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import type { AvailabilitySearchFilters } from "../analytics/analytics.interface";
-import { AnalyticsSource, AvailabilitySearchOutcome } from "../analytics/analytics-event.schema";
+import { AnalyticsChannel, AvailabilitySearchOutcome } from "../analytics/analytics-event.schema";
 import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
 import { DatabaseService } from "../database/database.service";
@@ -81,7 +81,7 @@ describe("CarSearchService", () => {
 
   function webContext(searchId?: string) {
     return {
-      source: AnalyticsSource.WEB_CAR_SEARCH,
+      channel: AnalyticsChannel.WEB,
       searchId,
       anonymousSessionId: "01994a1d-4263-7000-8000-0000000000bb",
       requestId: "req-web-1",

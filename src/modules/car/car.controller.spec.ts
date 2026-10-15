@@ -1,49 +1,103 @@
 import { HEADERS_METADATA } from "@nestjs/common/constants";
-import { describe, expect, it, vi } from "vitest";
-import { AnalyticsSource } from "../analytics/analytics-event.schema";
+import { Test, type TestingModule } from "@nestjs/testing";
+import type { Request, Response } from "express";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AnalyticsChannel } from "../analytics/analytics-event.schema";
 import { CarController } from "./car.controller";
+import { CarCategoriesService } from "./car-categories.service";
+import { CarSearchService } from "./car-search.service";
 import type { CarSearchQueryDto } from "./dto/car-search.dto";
 import { publicCarRefParamSchema } from "./dto/car-search.dto";
 
 describe("CarController", () => {
   describe("searchCars", () => {
-    const query = { page: 1, limit: 12 } as CarSearchQueryDto;
+    const query: CarSearchQueryDto = { page: 1, limit: 12 };
     const searchId = "01994a1d-4263-7000-8000-0000000000aa";
+    const sessionId = "01994a1d-4263-7000-8000-0000000000bb";
 
-    it("passes header context and sets X-Search-Id when the search returns one", async () => {
-      const searchCars = vi.fn().mockResolvedValue({ searchId, cars: [] });
-      const controller = new CarController({} as never, { searchCars } as never);
-      const response = { setHeader: vi.fn() };
+    let controller: CarController;
+    let searchCars: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      searchCars = vi.fn();
+      const module: TestingModule = await Test.createTestingModule({
+        controllers: [CarController],
+        providers: [
+          { provide: CarCategoriesService, useValue: {} },
+          { provide: CarSearchService, useValue: { searchCars } },
+        ],
+      }).compile();
+
+      controller = module.get(CarController);
+    });
+
+    function requestStub(headers: Request["headers"]): Pick<Request, "headers"> {
+      return { headers };
+    }
+
+    function responseStub(): Pick<Response, "setHeader"> & {
+      setHeader: ReturnType<typeof vi.fn>;
+    } {
+      return { setHeader: vi.fn() };
+    }
+
+    it("forwards a web channel and echoes X-Search-Id", async () => {
+      searchCars.mockResolvedValue({ searchId, cars: [] });
+      const response = responseStub();
 
       const result = await controller.searchCars(
         query,
-        {
-          headers: {
-            "x-search-id": searchId,
-            "x-anonymous-session-id": "01994a1d-4263-7000-8000-0000000000bb",
-            "x-request-id": "req-web-1",
-          },
-        } as never,
-        response as never,
+        requestStub({
+          "x-search-id": searchId,
+          "x-anonymous-session-id": sessionId,
+          "x-request-id": "req-web-1",
+          "x-client-type": "MOBILE",
+        }),
+        response,
       );
 
       expect(searchCars).toHaveBeenCalledWith(query, {
-        source: AnalyticsSource.WEB_CAR_SEARCH,
+        channel: AnalyticsChannel.WEB,
         searchId,
-        anonymousSessionId: "01994a1d-4263-7000-8000-0000000000bb",
+        anonymousSessionId: sessionId,
         requestId: "req-web-1",
       });
       expect(response.setHeader).toHaveBeenCalledWith("X-Search-Id", searchId);
       expect(result).toEqual({ searchId, cars: [] });
     });
 
+    it("forwards MOBILE_APP when X-Client-Type is exactly mobile", async () => {
+      searchCars.mockResolvedValue({ searchId, cars: [] });
+      const response = responseStub();
+
+      await controller.searchCars(
+        query,
+        requestStub({
+          "x-client-type": "mobile",
+          "x-search-id": ["not-a-single-header"],
+        }),
+        response,
+      );
+
+      expect(searchCars).toHaveBeenCalledWith(query, {
+        channel: AnalyticsChannel.MOBILE_APP,
+        searchId: undefined,
+        anonymousSessionId: undefined,
+        requestId: undefined,
+      });
+      expect(response.setHeader).toHaveBeenCalledWith("X-Search-Id", searchId);
+    });
+
     it("does not set X-Search-Id when the search result has none", async () => {
-      const searchCars = vi.fn().mockResolvedValue({ cars: [] });
-      const controller = new CarController({} as never, { searchCars } as never);
-      const response = { setHeader: vi.fn() };
+      searchCars.mockResolvedValue({ cars: [] });
+      const response = responseStub();
 
-      await controller.searchCars(query, { headers: {} } as never, response as never);
+      await controller.searchCars(query, requestStub({}), response);
 
+      expect(searchCars).toHaveBeenCalledWith(
+        query,
+        expect.objectContaining({ channel: AnalyticsChannel.WEB }),
+      );
       expect(response.setHeader).not.toHaveBeenCalled();
     });
 

@@ -1,7 +1,7 @@
 import { Controller, Get, Header, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
-import { AnalyticsSource } from "../analytics/analytics-event.schema";
+import { resolveHttpAnalyticsChannel } from "../analytics/analytics-channel.helper";
 import { CarCategoriesService } from "./car-categories.service";
 import { CarSearchService } from "./car-search.service";
 import { type CarCategoriesQueryDto, carCategoriesQuerySchema } from "./dto/car-categories.dto";
@@ -31,21 +31,21 @@ export class CarController {
   @Header("Cache-Control", "no-store")
   async searchCars(
     @ZodQuery(carSearchQuerySchema) query: CarSearchQueryDto,
-    @Req() request?: Request,
-    @Res({ passthrough: true }) response?: Response,
+    @Req() request: Pick<Request, "headers">,
+    @Res({ passthrough: true }) response: Pick<Response, "setHeader">,
   ) {
     const header = (name: string) => {
-      const value = request?.headers[name];
+      const value = request.headers[name];
       return typeof value === "string" ? value : undefined;
     };
     const result = await this.carSearchService.searchCars(query, {
-      source: AnalyticsSource.WEB_CAR_SEARCH,
+      channel: resolveHttpAnalyticsChannel(request.headers),
       searchId: header("x-search-id"),
       anonymousSessionId: header("x-anonymous-session-id"),
       requestId: header("x-request-id"),
     });
     if (result.searchId) {
-      response?.setHeader("X-Search-Id", result.searchId);
+      response.setHeader("X-Search-Id", result.searchId);
     }
     return result;
   }

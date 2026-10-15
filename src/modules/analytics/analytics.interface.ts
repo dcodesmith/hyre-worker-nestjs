@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod";
 import type {
-  AnalyticsSource,
+  AnalyticsChannel,
   availabilitySearchCompletedPayloadSchema,
   availabilitySearchFailedPayloadSchema,
   availabilitySearchFiltersSchema,
@@ -14,9 +14,10 @@ export type AvailabilitySearchCompletedPayload = z.infer<
 >;
 export type AvailabilitySearchFailedPayload = z.infer<typeof availabilitySearchFailedPayloadSchema>;
 export type BookingRequestedPayload = z.infer<typeof bookingRequestedPayloadSchema>;
+export type AnalyticsChannelValue = (typeof AnalyticsChannel)[keyof typeof AnalyticsChannel];
 
 export interface SearchAnalyticsContext {
-  source: typeof AnalyticsSource.WEB_CAR_SEARCH | typeof AnalyticsSource.WHATSAPP_AGENT;
+  channel: AnalyticsChannelValue;
   searchId?: string;
   anonymousSessionId?: string;
   requestId?: string;
@@ -33,6 +34,7 @@ export interface SearchEventInput<TPayload> {
 export interface BookingRequestedInput {
   actorUserId: string | null;
   bookingId: string;
+  channel: AnalyticsChannelValue;
   occurredAt: Date;
   payload: BookingRequestedPayload;
   searchId: string | null;

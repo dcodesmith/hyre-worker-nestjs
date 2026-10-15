@@ -21,6 +21,7 @@ import {
 } from "../../shared/helper.fixtures";
 import { InvalidBookingAddonsException } from "../addons/addons.error";
 import { AddonsService } from "../addons/addons.service";
+import { AnalyticsChannel } from "../analytics/analytics-event.schema";
 import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -461,6 +462,7 @@ describe("BookingCreationService", () => {
         {
           actorUserId: "user-123",
           bookingId: "booking-123",
+          channel: AnalyticsChannel.WEB,
           occurredAt: new Date("2026-02-01T12:00:00.000Z"),
           searchId,
           payload: {
@@ -483,6 +485,37 @@ describe("BookingCreationService", () => {
       );
       expect(analyticsIngestionService.createBookingRequested.mock.calls[0]?.[1]).toBe(
         transactionClient,
+      );
+    });
+
+    it("records MOBILE_APP when the client type header is mobile", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+        requestHeaders: { "x-client-type": "mobile" },
+      });
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: AnalyticsChannel.MOBILE_APP }),
+        expect.anything(),
+      );
+    });
+
+    it("uses an explicit WhatsApp channel instead of the request header", async () => {
+      setupSuccessfulMocks();
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+        requestHeaders: { "x-client-type": "mobile" },
+        context: { analyticsChannel: AnalyticsChannel.WHATSAPP },
+      });
+
+      expect(analyticsIngestionService.createBookingRequested).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: AnalyticsChannel.WHATSAPP }),
+        expect.anything(),
       );
     });
 

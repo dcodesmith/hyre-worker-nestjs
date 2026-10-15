@@ -11,6 +11,7 @@ import type {
 import type Decimal from "decimal.js";
 import type { ClientRequestContext } from "../../common/client-request";
 import type { ResolvedBookingAddon } from "../addons/addons.interface";
+import type { AnalyticsChannelValue } from "../analytics/analytics.interface";
 import type { AuthSession } from "../auth/guards/session.guard";
 import type { BookingFinancials, CarPricing } from "./booking-calculation.interface";
 import type { CreateBookingInput } from "./dto/create-booking.dto";
@@ -33,6 +34,7 @@ export interface BookingCar extends CarWithPricing {
 export type GuestContactSource = "WEB_GUEST_FORM" | "WHATSAPP_AGENT";
 
 export interface BookingCreationContext {
+  analyticsChannel?: AnalyticsChannelValue;
   guestContactSource?: GuestContactSource;
   requireFlightWindowConfirmation?: boolean;
 }
@@ -80,6 +82,7 @@ export interface CreateBookingWithPaymentParams {
   flightData: FlightDataForBooking | null;
   preliminaryReferralEligibility: ReferralEligibility;
   client: ClientRequestContext;
+  analyticsChannel: AnalyticsChannelValue;
 }
 
 export interface CreatePaymentAndSyncParams {

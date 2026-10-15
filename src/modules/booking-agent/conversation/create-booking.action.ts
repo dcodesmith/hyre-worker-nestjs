@@ -3,6 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
 import { PinoLogger } from "nestjs-pino";
 import { maskEmail } from "../../../shared/helper";
+import { AnalyticsChannel } from "../../analytics/analytics-event.schema";
 import type { AuthSession } from "../../auth/guards/session.guard";
 import { PRICE_TOLERANCE } from "../../booking/booking.const";
 import {
@@ -102,11 +103,16 @@ export class CreateBookingAction {
         input: bookingInput,
         normalizedStartDate,
         normalizedEndDate,
-      } = buildBookingInputFromDraft(draft, selectedOption, guestIdentity, {
-        addonIds: state.selectedAddonIds ?? [],
-        requiresFullTank: state.requiresFullTank ?? false,
-        useCredits: state.useCredits ?? 0,
-        expectedTotalAmount: new Decimal(confirmedPricing.totalAmount).toString(),
+      } = buildBookingInputFromDraft({
+        draft,
+        selectedOption,
+        guestIdentity,
+        selections: {
+          addonIds: state.selectedAddonIds ?? [],
+          requiresFullTank: state.requiresFullTank ?? false,
+          useCredits: state.useCredits ?? 0,
+          expectedTotalAmount: new Decimal(confirmedPricing.totalAmount).toString(),
+        },
       });
 
       const conversationLinkState = await this.whatsAppPersistenceService.getConversationLinkState(
@@ -159,6 +165,7 @@ export class CreateBookingAction {
             sessionUser,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
+              analyticsChannel: AnalyticsChannel.WHATSAPP,
               requireFlightWindowConfirmation: true,
             },
           })
@@ -167,6 +174,7 @@ export class CreateBookingAction {
             sessionUser: null,
             idempotencyKey: `whatsapp:${state.inboundMessageId}`,
             context: {
+              analyticsChannel: AnalyticsChannel.WHATSAPP,
               guestContactSource: "WHATSAPP_AGENT",
               requireFlightWindowConfirmation: true,
             },

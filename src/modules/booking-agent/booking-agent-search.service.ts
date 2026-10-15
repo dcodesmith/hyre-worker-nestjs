@@ -3,7 +3,7 @@ import type { BookingType } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
 import { toLogError } from "../../common/logging/error-logging.helper";
 import type { ExtractedAiSearchParams } from "../ai-search/ai-search.interface";
-import { AnalyticsSource } from "../analytics/analytics-event.schema";
+import { AnalyticsChannel } from "../analytics/analytics-event.schema";
 import { calculateLegCount } from "../booking/booking.helper";
 import { CarSearchService } from "../car/car-search.service";
 import { RatesService } from "../rates/rates.service";
@@ -70,7 +70,7 @@ export class BookingAgentSearchService {
     const exactQuery = this.queryBuilder.buildExactQuery(extracted);
     const exactResults = await this.withTimeout(
       this.carSearchService.searchCars(exactQuery, {
-        source: AnalyticsSource.WHATSAPP_AGENT,
+        channel: AnalyticsChannel.WHATSAPP,
       }),
       "car-search:exact",
       WHATSAPP_CAR_SEARCH_TIMEOUT_MS,
@@ -101,7 +101,7 @@ export class BookingAgentSearchService {
         this.logger.warn(
           {
             operation,
-            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+            err: toLogError(result.reason),
           },
           "Alternative car search query failed",
         );
@@ -134,8 +134,14 @@ export class BookingAgentSearchService {
     return {
       interpretation,
       extracted,
-      exactMatches: exactMatchesWithImages,
-      alternatives: alternativesWithImages,
+      exactMatches: exactMatchesWithImages.map((option) => ({
+        ...option,
+        ...(exactResults.searchId && { searchId: exactResults.searchId }),
+      })),
+      alternatives: alternativesWithImages.map((option) => ({
+        ...option,
+        ...(exactResults.searchId && { searchId: exactResults.searchId }),
+      })),
       precondition: null,
       shouldClarifyBookingType: false,
     };

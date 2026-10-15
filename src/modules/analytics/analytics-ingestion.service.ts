@@ -15,7 +15,6 @@ import type {
 import {
   ANALYTICS_SCHEMA_VERSION,
   AnalyticsEventType,
-  AnalyticsSource,
   availabilitySearchCompletedPayloadSchema,
   availabilitySearchFailedPayloadSchema,
   bookingRequestedPayloadSchema,
@@ -62,7 +61,7 @@ export class AnalyticsIngestionService {
       {
         eventKey: `${AnalyticsEventType.BOOKING_REQUESTED}:${input.bookingId}`,
         eventType: AnalyticsEventType.BOOKING_REQUESTED,
-        source: AnalyticsSource.BOOKING_API,
+        source: input.channel,
         occurredAt: input.occurredAt,
         actorUserId: this.validUuid(input.actorUserId ?? undefined),
         searchId: this.validUuid(input.searchId ?? undefined),
@@ -87,7 +86,7 @@ export class AnalyticsIngestionService {
       await this.insert({
         eventKey: `${eventType}:${input.context.searchId}:${payload.filterFingerprint}`,
         eventType,
-        source: input.context.source,
+        source: input.context.channel,
         occurredAt: input.occurredAt,
         anonymousSessionId: this.validUuid(input.context.anonymousSessionId),
         requestId: optionalRequestIdSchema.safeParse(input.context.requestId).data,

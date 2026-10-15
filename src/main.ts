@@ -66,6 +66,7 @@ async function bootstrap() {
           "Authorization",
           "Cookie",
           "X-Guest-Booking-Token",
+          "X-Client-Type",
           "X-Search-Id",
           "X-Anonymous-Session-Id",
           "X-Request-Id",
