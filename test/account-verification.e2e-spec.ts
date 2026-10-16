@@ -6,8 +6,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { AppModule } from "../src/app.module";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
-import { FlutterwaveError } from "../src/modules/flutterwave/flutterwave.interface";
-import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MonoError, MonoService } from "../src/modules/mono/mono.service";
 import { PremblyService } from "../src/modules/prembly/prembly.service";
 import { StorageService } from "../src/modules/storage/storage.service";
@@ -17,6 +15,10 @@ import {
   createAccountVerificationSchema,
   type PayoutVerificationDto,
 } from "../src/modules/verification/account-verification.dto";
+import {
+  BANK_ACCOUNT_LOOKUP,
+  BankAccountLookupError,
+} from "../src/modules/verification/bank-account-lookup.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 const twilioMocks = vi.hoisted(() => ({
@@ -118,7 +120,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
   let premblyService: {
     verifyCac: ReturnType<typeof vi.fn>;
   };
-  let flutterwaveService: {
+  let bankAccountLookupService: {
     resolveBankAccount: ReturnType<typeof vi.fn>;
     listNigerianBanks: ReturnType<typeof vi.fn>;
   };
@@ -296,7 +298,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     premblyService = {
       verifyCac: vi.fn(),
     };
-    flutterwaveService = {
+    bankAccountLookupService = {
       resolveBankAccount: vi.fn(),
       listNigerianBanks: vi.fn(),
     };
@@ -331,8 +333,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
       .useValue(monoService)
       .overrideProvider(PremblyService)
       .useValue(premblyService)
-      .overrideProvider(FlutterwaveService)
-      .useValue(flutterwaveService)
+      .overrideProvider(BANK_ACCOUNT_LOOKUP)
+      .useValue(bankAccountLookupService)
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
@@ -381,8 +383,8 @@ describe("Fleet-owner account verification E2E Tests", () => {
     monoService.verifyNin.mockReset();
     premblyService.verifyCac.mockReset();
     monoService.verifyDriversLicense.mockReset();
-    flutterwaveService.resolveBankAccount.mockReset();
-    flutterwaveService.listNigerianBanks.mockReset();
+    bankAccountLookupService.resolveBankAccount.mockReset();
+    bankAccountLookupService.listNigerianBanks.mockReset();
 
     twilioMocks.createVerification.mockResolvedValue({ status: "pending" });
     twilioMocks.createVerificationCheck.mockResolvedValue({ status: "approved" });
@@ -395,7 +397,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       reference: "nin-ref",
     });
     monoService.verifyDriversLicense.mockResolvedValue({ ...VERIFIED_DRIVERS_LICENSE });
-    flutterwaveService.resolveBankAccount.mockResolvedValue({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValue({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN DOE",
       bankCode: "058",
@@ -453,13 +455,13 @@ describe("Fleet-owner account verification E2E Tests", () => {
       { code: "044", name: "Access Bank" },
       { code: "058", name: "GTBank" },
     ];
-    flutterwaveService.listNigerianBanks.mockResolvedValueOnce(banks);
+    bankAccountLookupService.listNigerianBanks.mockResolvedValueOnce(banks);
 
     const response = await http("get", "/api/fleet-owner/banks").set("Cookie", ownerCookie);
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(response.body).toEqual(banks);
-    expect(flutterwaveService.listNigerianBanks).toHaveBeenCalledOnce();
+    expect(bankAccountLookupService.listNigerianBanks).toHaveBeenCalledOnce();
   });
 
   it("POST /api/fleet-owner/phone-verifications requires a fleet-owner session", async () => {
@@ -642,7 +644,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       directors: [{ firstName: "JOHN", middleName: null, lastName: "DOE" }],
       reference: "cac-ref",
     });
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "HYRE MOBILITY LIMITED",
       bankCode: "058",
@@ -954,7 +956,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("rejects a different idempotency key while a review is pending", async () => {
     const owner = await readyOwner("acct-review-lock");
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN SMITH",
       bankCode: "058",
@@ -1097,7 +1099,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("requires an approved owner-driver licence before admin approval, then applies it atomically", async () => {
     const owner = await readyOwner("acct-admin-approve");
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN SMITH",
       bankCode: "058",
@@ -1172,7 +1174,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
 
   it("lets an admin reject a pending review and holds the fleet owner", async () => {
     const owner = await readyOwner("acct-admin-reject");
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN SMITH",
       bankCode: "058",
@@ -1391,7 +1393,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       directors: [{ firstName: "JOHN", middleName: null, lastName: "DOE" }],
       reference: "cac-ref",
     });
-    flutterwaveService.resolveBankAccount.mockResolvedValue({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValue({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "HYRE MOBILITY LIMITED",
       bankCode: "058",
@@ -1461,14 +1463,14 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const identity = await identityVerificationRequest(owner.cookie, "stage-fail-identity-2");
     expect(identity.status).toBe(HttpStatus.CREATED);
 
-    flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
-      new FlutterwaveError("Account not found", "ACCOUNT_NOT_FOUND", 404),
+    bankAccountLookupService.resolveBankAccount.mockRejectedValueOnce(
+      new BankAccountLookupError("REJECTED"),
     );
     const unresolved = await payoutVerificationRequest(owner.cookie, "stage-fail-payout-1");
     expect(unresolved.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(unresolved.body.errorCode).toBe("BANK_ACCOUNT_UNRESOLVED");
 
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JANE SMITH",
       bankCode: "058",
@@ -1485,7 +1487,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     expect(draft?.identityVerifiedAt).toBeInstanceOf(Date);
     expect(draft?.payoutVerifiedAt).toBeNull();
 
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "JOHN DOE",
       bankCode: "058",
@@ -1668,7 +1670,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const replayPayout = await payoutVerificationRequest(owner.cookie, "stage-idem-payout-1");
     expect(firstPayout.status).toBe(HttpStatus.CREATED);
     expect(replayPayout.body).toEqual(firstPayout.body);
-    expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+    expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledTimes(1);
 
     const changedPayout = await payoutVerificationRequest(owner.cookie, "stage-idem-payout-1", {
       ...PAYOUT_FIELDS,
@@ -1771,7 +1773,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
       steps: { identity: "REVIEW_REQUIRED", driving: "SKIPPED" },
     });
 
-    flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+    bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
       accountNumber: ACCOUNT_NUMBER,
       accountName: "HYRE MOBILITY SERVICES LIMITED",
       bankCode: "058",
@@ -1821,7 +1823,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const payout = await payoutVerificationRequest(owner.cookie, "stage-phone-revoked-payout-1");
     expect(payout.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(payout.body.errorCode).toBe("ACCOUNT_PHONE_NOT_VERIFIED");
-    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
   });
 
   it("rejects a different payout key while another payout is processing", async () => {
@@ -1850,7 +1852,7 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const payout = await payoutVerificationRequest(owner.cookie, "stage-collision-payout-b");
     expect(payout.status).toBe(HttpStatus.CONFLICT);
     expect(payout.body.errorCode).toBe("VERIFICATION_REQUEST_IN_PROGRESS");
-    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
   });
 
   it("fails an expired same-key PROCESSING payout as ACCOUNT_VERIFICATION_CHANGED", async () => {
@@ -1879,6 +1881,6 @@ describe("Fleet-owner account verification E2E Tests", () => {
     const payout = await payoutVerificationRequest(owner.cookie, "stage-expired-payout-1");
     expect(payout.status).toBe(HttpStatus.CONFLICT);
     expect(payout.body.errorCode).toBe("ACCOUNT_VERIFICATION_CHANGED");
-    expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+    expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
   });
 });

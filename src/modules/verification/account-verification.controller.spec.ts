@@ -13,7 +13,6 @@ import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { AccountVerificationController } from "./account-verification.controller";
 import type {
   AccountIdentityVerificationDto,
@@ -23,6 +22,7 @@ import type {
   UploadedAccountDocument,
 } from "./account-verification.dto";
 import { AccountVerificationService } from "./account-verification.service";
+import { BANK_ACCOUNT_LOOKUP } from "./bank-account-lookup.service";
 import { PhoneVerificationService } from "./phone-verification.service";
 import { VerificationRequestInProgressException } from "./verification.error";
 import {
@@ -40,6 +40,7 @@ describe("AccountVerificationController", () => {
     saveDrivingCredentialsStage: ReturnType<typeof vi.fn>;
     submitStage: ReturnType<typeof vi.fn>;
   };
+  let bankAccountLookupService: { listNigerianBanks: ReturnType<typeof vi.fn> };
 
   const mockUser = {
     id: "owner-1",
@@ -97,6 +98,9 @@ describe("AccountVerificationController", () => {
       saveDrivingCredentialsStage: vi.fn(),
       submitStage: vi.fn(),
     };
+    bankAccountLookupService = {
+      listNigerianBanks: vi.fn().mockResolvedValue([{ code: "000013", name: "GTBANK PLC" }]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       imports: [
@@ -117,8 +121,8 @@ describe("AccountVerificationController", () => {
           useValue: { send: vi.fn(), check: vi.fn() },
         },
         {
-          provide: FlutterwaveService,
-          useValue: { listNigerianBanks: vi.fn() },
+          provide: BANK_ACCOUNT_LOOKUP,
+          useValue: bankAccountLookupService,
         },
         {
           provide: AuthService,
@@ -139,6 +143,11 @@ describe("AccountVerificationController", () => {
       .compile();
 
     controller = module.get(AccountVerificationController);
+  });
+
+  it("lists banks through the environment-selected account lookup provider", async () => {
+    await expect(controller.getBanks()).resolves.toEqual([{ code: "000013", name: "GTBANK PLC" }]);
+    expect(bankAccountLookupService.listNigerianBanks).toHaveBeenCalledOnce();
   });
 
   const replaceRejectedDriversLicense = (user: typeof mockUser, file: UploadedAccountDocument) =>

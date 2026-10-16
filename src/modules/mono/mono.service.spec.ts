@@ -14,6 +14,7 @@ import { MonoError, MonoService } from "./mono.service";
 const NIN = "12345678901";
 const LICENSE_NUMBER = "AAD23208212298";
 const DATE_OF_BIRTH = new Date(Date.UTC(1990, 0, 1));
+const ACCOUNT_NUMBER = "0123456789";
 
 const ninSuccess = (data: Record<string, unknown> = {}) => ({
   status: "successful",
@@ -45,6 +46,23 @@ const licenseSuccess = (data: Record<string, unknown> = {}) => ({
     expiry_date: "2099-12-31",
     state_ofIssue: "OYO",
     birth_date: "1990-01-01",
+    ...data,
+  },
+});
+
+const banksSuccess = (banks: unknown[] = []) => ({
+  status: "successful",
+  message: "Lookup Successful",
+  data: { banks },
+});
+
+const accountSuccess = (data: Record<string, unknown> = {}) => ({
+  status: "successful",
+  message: "Lookup Successful",
+  data: {
+    name: "JOHN DOE",
+    account_number: ACCOUNT_NUMBER,
+    bank: { name: "GTBANK PLC", code: "000013" },
     ...data,
   },
 });
@@ -232,6 +250,144 @@ describe("MonoService", () => {
       await expect(
         service.verifyDriversLicense(LICENSE_NUMBER, "JOHN", "DOE", DATE_OF_BIRTH),
       ).rejects.toEqual(new MonoError("UNAVAILABLE"));
+    });
+  });
+
+  describe("listNigerianBanks", () => {
+    it("returns sorted NIP bank codes and caches the result", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([
+          { name: "ZENITH BANK PLC", bank_code: null, nip_code: "000015" },
+          { name: "GTBANK PLC", bank_code: null, nip_code: "000013" },
+        ]),
+      });
+
+      await expect(service.listNigerianBanks()).resolves.toEqual([
+        { code: "000013", name: "GTBANK PLC", bankCode: null },
+        { code: "000015", name: "ZENITH BANK PLC", bankCode: null },
+      ]);
+      await service.listNigerianBanks();
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith("/v3/lookup/banks");
+    });
+
+    it("rejects malformed bank-list responses", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "GTBANK PLC", nip_code: "13" }]),
+      });
+
+      await expect(service.listNigerianBanks()).rejects.toEqual(new MonoError("INVALID_RESPONSE"));
+    });
+  });
+
+  describe("resolveBankAccount", () => {
+    it("resolves with a submitted Mono NIP code", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "GTBANK PLC", nip_code: "000013" }]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: accountSuccess() });
+
+      await expect(
+        service.resolveBankAccount("GTBANK PLC", "000013", ACCOUNT_NUMBER),
+      ).resolves.toEqual({
+        accountNumber: ACCOUNT_NUMBER,
+        accountName: "JOHN DOE",
+        bankCode: "000013",
+      });
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000013",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("maps a legacy provider code to Mono by normalized bank name", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "GTBANK PLC", nip_code: "000013" }]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: accountSuccess() });
+
+      await service.resolveBankAccount("GTBank Plc", "058", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000013",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("maps a Flutterwave code through Mono bank metadata when provider names differ", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([
+          { name: "PROVIDER-SPECIFIC NAME", bank_code: "058", nip_code: "000013" },
+        ]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: accountSuccess() });
+
+      await service.resolveBankAccount("GTBank Plc", "058", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000013",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("maps known provider aliases when Mono omits the Flutterwave code", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "OPAY", bank_code: null, nip_code: "100004" }]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: accountSuccess({ bank: { name: "OPAY", code: "100004" } }),
+      });
+
+      await service.resolveBankAccount("Paycom", "305", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "100004",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("does not let an exact NIP code override a different canonical bank name", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([
+          { name: "GTBANK PLC", nip_code: "000013" },
+          { name: "ACCESS BANK", nip_code: "000014" },
+        ]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: accountSuccess({ bank: { name: "ACCESS BANK", code: "000014" } }),
+      });
+
+      await service.resolveBankAccount("Access Bank", "000013", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000014",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("rejects an unsupported bank without requesting account details", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "GTBANK PLC", nip_code: "000013" }]),
+      });
+
+      await expect(
+        service.resolveBankAccount("UNKNOWN BANK", "999", ACCOUNT_NUMBER),
+      ).rejects.toEqual(new MonoError("REJECTED"));
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it("rejects account details that do not match the request", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "GTBANK PLC", nip_code: "000013" }]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: accountSuccess({ account_number: "9999999999" }),
+      });
+
+      await expect(
+        service.resolveBankAccount("GTBANK PLC", "000013", ACCOUNT_NUMBER),
+      ).rejects.toEqual(new MonoError("REJECTED"));
     });
   });
 });

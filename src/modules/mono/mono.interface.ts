@@ -17,3 +17,15 @@ export type MonoDriversLicenseResult = {
   officialPhoto: string | null;
   reference: string;
 };
+
+export type MonoBank = {
+  code: string;
+  name: string;
+  bankCode: string | null;
+};
+
+export type MonoBankAccountResult = {
+  accountNumber: string;
+  accountName: string;
+  bankCode: string;
+};

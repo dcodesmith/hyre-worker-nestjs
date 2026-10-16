@@ -40,3 +40,32 @@ export const monoDriversLicenseResponseSchema = z.looseObject({
     photo: optionalText,
   }),
 });
+
+export const monoBankListResponseSchema = z.looseObject({
+  status: z.literal("successful"),
+  data: z.looseObject({
+    banks: z.array(
+      z.looseObject({
+        name: z.string().trim().min(1),
+        bank_code: z
+          .string()
+          .trim()
+          .regex(/^\d{2,6}$/)
+          .nullish(),
+        nip_code: z.string().regex(/^\d{6}$/),
+      }),
+    ),
+  }),
+});
+
+export const monoBankAccountResponseSchema = z.looseObject({
+  status: z.literal("successful"),
+  data: z.looseObject({
+    name: z.string().trim().min(1),
+    account_number: z.string().min(1),
+    bank: z.looseObject({
+      name: z.string().trim().min(1),
+      code: z.string().regex(/^\d{6}$/),
+    }),
+  }),
+});

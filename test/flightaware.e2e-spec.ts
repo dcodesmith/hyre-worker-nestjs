@@ -3,7 +3,13 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { BookingStatus, BookingType, FlightStatus, PaymentStatus } from "@prisma/client";
+import {
+  BookingStatus,
+  BookingType,
+  FlightStatus,
+  NotificationOutboxStatus,
+  PaymentStatus,
+} from "@prisma/client";
 import type { Queue } from "bullmq";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +35,21 @@ describe("FlightAware E2E Tests", () => {
   let webhookSecret: string;
 
   const upcomingDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  async function dispatchOutboxEvents(ids: string[]): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await notificationOutboxService.processPendingEvents();
+      const pendingCount = await databaseService.notificationOutboxEvent.count({
+        where: {
+          id: { in: ids },
+          status: { not: NotificationOutboxStatus.DISPATCHED },
+        },
+      });
+      if (pendingCount === 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Outbox events were not dispatched: ${ids.join(", ")}`);
+  }
   const buildWebhookPath = (flightId: string) =>
     `/api/webhooks/flightaware?flightId=${encodeURIComponent(flightId)}&signature=${createHmacSignature(flightId, webhookSecret)}`;
 
@@ -336,7 +357,10 @@ describe("FlightAware E2E Tests", () => {
       }),
     ).resolves.toBe(0);
 
-    await notificationOutboxService.processPendingEvents();
+    if (!ownerOutboxRow || !chauffeurOutboxRow) {
+      throw new Error("Flight notification outbox rows were not written");
+    }
+    await dispatchOutboxEvents([ownerOutboxRow.id, chauffeurOutboxRow.id]);
     const ownerNotificationJob = await notificationsQueue.getJob(
       `notification-outbox-${ownerOutboxRow?.id}`,
     );

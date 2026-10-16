@@ -19,8 +19,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
-import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { InterventionService } from "../intervention/intervention.service";
 import type { MonoDriversLicenseResult } from "../mono/mono.interface";
 import { MonoError, MonoService } from "../mono/mono.service";
@@ -63,6 +61,7 @@ import {
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
 import { AccountVerificationService } from "./account-verification.service";
+import { BANK_ACCOUNT_LOOKUP, BankAccountLookupError } from "./bank-account-lookup.service";
 import { SelfieImageService } from "./selfie-image.service";
 import {
   VerificationIdempotencyKeyReusedException,
@@ -425,7 +424,7 @@ describe("AccountVerificationService", () => {
     verifyDriversLicense: ReturnType<typeof vi.fn>;
     verifyNin: ReturnType<typeof vi.fn>;
   };
-  let flutterwaveService: { resolveBankAccount: ReturnType<typeof vi.fn> };
+  let bankAccountLookupService: { resolveBankAccount: ReturnType<typeof vi.fn> };
   let storageService: {
     uploadBuffer: ReturnType<typeof vi.fn>;
     deleteObjectByKey: ReturnType<typeof vi.fn>;
@@ -488,7 +487,7 @@ describe("AccountVerificationService", () => {
     selfieImageService = {
       process: vi.fn().mockResolvedValue(Buffer.from("processed-selfie")),
     };
-    flutterwaveService = {
+    bankAccountLookupService = {
       resolveBankAccount: vi.fn().mockResolvedValue(resolvedAccount),
     };
     storageService = {
@@ -527,7 +526,7 @@ describe("AccountVerificationService", () => {
         { provide: PremblyService, useValue: premblyService },
         NinLookupService,
         DriversLicenseLookupService,
-        { provide: FlutterwaveService, useValue: flutterwaveService },
+        { provide: BANK_ACCOUNT_LOOKUP, useValue: bankAccountLookupService },
         { provide: StorageService, useValue: storageService },
         { provide: InterventionService, useValue: interventionService },
         { provide: SelfieImageService, useValue: selfieImageService },
@@ -602,7 +601,11 @@ describe("AccountVerificationService", () => {
 
       expect(monoService.verifyNin).toHaveBeenCalledWith("12345678901");
       expect(premblyService.verifyCac).not.toHaveBeenCalled();
-      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith("058", "0123456789");
+      expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledWith(
+        "GTBank",
+        "058",
+        "0123456789",
+      );
       expect(result).toMatchObject({
         id: VERIFICATION_ID,
         status: AccountVerificationStatus.SUCCEEDED,
@@ -647,7 +650,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("verifies a business account against CAC and the company bank name", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY LIMITED",
       });
@@ -1058,7 +1061,7 @@ describe("AccountVerificationService", () => {
         lastName: "Doe",
         reference: "nin-ref",
       });
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "JOSE DOE",
       });
@@ -1074,7 +1077,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("treats titled person names as an exact match", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "Mr. John Doe",
       });
@@ -1090,7 +1093,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("sends a partial person-name match to review instead of failing", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "JOHN SMITH",
       });
@@ -1127,7 +1130,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("rejects a fully mismatched person bank name", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "JANE SMITH",
       });
@@ -1151,7 +1154,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("matches business names after dropping corporate suffixes", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY LIMITED",
       });
@@ -1171,7 +1174,7 @@ describe("AccountVerificationService", () => {
         ...cac,
         businessName: "HYRE MOBILITY SERVICES LTD",
       });
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY SERVICES LIMITED",
       });
@@ -1233,7 +1236,7 @@ describe("AccountVerificationService", () => {
 
     it("sends a missing CAC status to review", async () => {
       premblyService.verifyCac.mockResolvedValueOnce({ ...cac, status: null });
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY LIMITED",
       });
@@ -1268,7 +1271,7 @@ describe("AccountVerificationService", () => {
         ...cac,
         directors: [{ firstName: "JANE", middleName: null, lastName: "SMITH" }],
       });
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY LIMITED",
       });
@@ -1496,41 +1499,35 @@ describe("AccountVerificationService", () => {
       });
     });
 
-    it.each([400, 404, 422])(
-      "maps a Flutterwave %s response to an unresolved bank account",
-      async (statusCode) => {
-        flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
-          new FlutterwaveError("Account not found", "ACCOUNT_NOT_FOUND", statusCode),
-        );
+    it("maps a rejected account lookup to an unresolved bank account", async () => {
+      bankAccountLookupService.resolveBankAccount.mockRejectedValueOnce(
+        new BankAccountLookupError("REJECTED"),
+      );
 
-        await expect(
-          service.create({
-            userId: USER_ID,
-            idempotencyKey: IDEMPOTENCY_KEY,
-            input: individualInput(),
-            documents: {},
-          }),
-        ).rejects.toBeInstanceOf(BankAccountUnresolvedException);
-      },
-    );
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
+      ).rejects.toBeInstanceOf(BankAccountUnresolvedException);
+    });
 
-    it.each([401, 408, 429, 502])(
-      "maps a Flutterwave %s response to bank provider unavailable",
-      async (statusCode) => {
-        flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
-          new FlutterwaveError("Provider error", "PROVIDER_ERROR", statusCode),
-        );
+    it("maps an unavailable account lookup to bank provider unavailable", async () => {
+      bankAccountLookupService.resolveBankAccount.mockRejectedValueOnce(
+        new BankAccountLookupError("UNAVAILABLE"),
+      );
 
-        await expect(
-          service.create({
-            userId: USER_ID,
-            idempotencyKey: IDEMPOTENCY_KEY,
-            input: individualInput(),
-            documents: {},
-          }),
-        ).rejects.toBeInstanceOf(BankAccountProviderUnavailableException);
-      },
-    );
+      await expect(
+        service.create({
+          userId: USER_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+          input: individualInput(),
+          documents: {},
+        }),
+      ).rejects.toBeInstanceOf(BankAccountProviderUnavailableException);
+    });
 
     it("deletes uploaded documents when verification fails after storage", async () => {
       const licence = licenseFile();
@@ -1701,7 +1698,11 @@ describe("AccountVerificationService", () => {
         status: "VERIFIED",
         bank: { nameMatch: NameMatchStatus.MATCHED, accountNumber: "******6789" },
       });
-      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith("058", "0123456789");
+      expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledWith(
+        "GTBank",
+        "058",
+        "0123456789",
+      );
       expect(databaseService.fleetOwnerAccountVerification.updateMany).toHaveBeenCalledWith({
         where: { id: VERIFICATION_ID, status: AccountVerificationStatus.DRAFT },
         data: expect.objectContaining({
@@ -1755,7 +1756,7 @@ describe("AccountVerificationService", () => {
         }),
       });
       expect(monoService.verifyNin).toHaveBeenCalledTimes(1);
-      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+      expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1775,7 +1776,7 @@ describe("AccountVerificationService", () => {
       });
       expect(monoService.verifyNin).toHaveBeenCalledWith("12345678901");
       expect(premblyService.verifyCac).not.toHaveBeenCalled();
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
       expect(databaseService.fleetOwnerAccountVerification.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           userId: USER_ID,
@@ -1974,7 +1975,11 @@ describe("AccountVerificationService", () => {
           nameMatch: NameMatchStatus.MATCHED,
         },
       });
-      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith("058", "0123456789");
+      expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledWith(
+        "GTBank",
+        "058",
+        "0123456789",
+      );
       expect(databaseService.bankDetails.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           create: expect.objectContaining({
@@ -2039,7 +2044,7 @@ describe("AccountVerificationService", () => {
           businessName: "HYRE MOBILITY LTD",
         }),
       );
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "HYRE MOBILITY LIMITED",
       });
@@ -2058,7 +2063,7 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).rejects.toBeInstanceOf(AccountVerificationNotFoundException);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("rejects payout when the draft has not completed identity", async () => {
@@ -2069,12 +2074,12 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).rejects.toBeInstanceOf(AccountVerificationStepIncompleteException);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("keeps an unresolved bank account on the payout stage", async () => {
-      flutterwaveService.resolveBankAccount.mockRejectedValueOnce(
-        new FlutterwaveError("Account not found", "ACCOUNT_NOT_FOUND", 404),
+      bankAccountLookupService.resolveBankAccount.mockRejectedValueOnce(
+        new BankAccountLookupError("REJECTED"),
       );
 
       await expect(
@@ -2097,7 +2102,7 @@ describe("AccountVerificationService", () => {
     });
 
     it("keeps a mismatched bank name on the payout stage", async () => {
-      flutterwaveService.resolveBankAccount.mockResolvedValueOnce({
+      bankAccountLookupService.resolveBankAccount.mockResolvedValueOnce({
         ...resolvedAccount,
         accountName: "JANE SMITH",
       });
@@ -2130,7 +2135,7 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).resolves.toEqual(replay.response);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
       expect(databaseService.fleetOwnerAccountVerification.findFirst).toHaveBeenCalledWith({
         where: { userId: USER_ID },
         orderBy: { createdAt: "desc" },
@@ -2197,7 +2202,7 @@ describe("AccountVerificationService", () => {
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.findUnique,
       ).not.toHaveBeenCalled();
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("rejects a stale draft that is no longer DRAFT during payout", async () => {
@@ -2252,7 +2257,7 @@ describe("AccountVerificationService", () => {
           failureReason: AccountVerificationErrorCode.VERIFICATION_CHANGED,
         },
       });
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("scopes a payout key to the latest verification attempt", async () => {
@@ -2290,7 +2295,7 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).rejects.toBeInstanceOf(VerificationIdempotencyKeyReusedException);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("maps a processing-per-stage collision to an in-progress payout", async () => {
@@ -2304,7 +2309,7 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).rejects.toBeInstanceOf(VerificationRequestInProgressException);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
 
     it("retries once when a processing-per-stage collision disappears before lookup", async () => {
@@ -2318,7 +2323,7 @@ describe("AccountVerificationService", () => {
       expect(
         databaseService.fleetOwnerAccountVerificationStageRequest.create,
       ).toHaveBeenCalledTimes(2);
-      expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledTimes(1);
+      expect(bankAccountLookupService.resolveBankAccount).toHaveBeenCalledTimes(1);
     });
 
     it("replays a changed-workflow payout failure as ACCOUNT_VERIFICATION_CHANGED", async () => {
@@ -2332,7 +2337,7 @@ describe("AccountVerificationService", () => {
       await expect(
         service.verifyPayoutStage(USER_ID, IDEMPOTENCY_KEY, payoutInput()),
       ).rejects.toBeInstanceOf(AccountVerificationChangedException);
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
     });
   });
 
@@ -4279,7 +4284,7 @@ describe("AccountVerificationService", () => {
 
       expect(monoService.verifyNin).not.toHaveBeenCalled();
       expect(premblyService.verifyCac).not.toHaveBeenCalled();
-      expect(flutterwaveService.resolveBankAccount).not.toHaveBeenCalled();
+      expect(bankAccountLookupService.resolveBankAccount).not.toHaveBeenCalled();
       expect(storageService.uploadBuffer).toHaveBeenCalledWith(
         licence.buffer,
         expect.stringMatching(
