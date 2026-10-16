@@ -101,10 +101,10 @@ export class MonoService {
     accountNumber: string,
   ): Promise<MonoBankAccountResult> {
     const banks = await this.listNigerianBanks();
-    const submittedName = this.normalizeBankName(bankName);
+    const submittedName = this.normalizeIdentifier(bankName);
     const bank =
       banks.find(({ code }) => code === bankCode) ??
-      banks.find(({ name }) => this.normalizeBankName(name) === submittedName);
+      banks.find(({ name }) => this.normalizeIdentifier(name) === submittedName);
     if (!bank) {
       throw new MonoError("REJECTED");
     }
@@ -173,10 +173,6 @@ export class MonoService {
   }
 
   private normalizeIdentifier(value: string): string {
-    return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
-  }
-
-  private normalizeBankName(value: string): string {
     return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
   }
 

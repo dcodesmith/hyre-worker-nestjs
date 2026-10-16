@@ -132,17 +132,42 @@ describe("MonoBankAccountLookup", () => {
   );
 });
 
-describe.each([
-  ["production", "flutterwave"],
-  ["development", "mono"],
-  ["preview", "mono"],
-] as const)("selectBankAccountLookup in %s", (appEnv, expected) => {
-  it(`selects ${expected}`, () => {
-    const flutterwaveLookup = {} as FlutterwaveBankAccountLookup;
-    const monoLookup = {} as MonoBankAccountLookup;
+describe("selectBankAccountLookup", () => {
+  const flutterwaveBanks = [{ code: BANK_CODE, name: BANK_NAME }];
 
-    expect(selectBankAccountLookup(appEnv, flutterwaveLookup, monoLookup)).toBe(
-      expected === "flutterwave" ? flutterwaveLookup : monoLookup,
+  it("uses Flutterwave for production listing and resolution", () => {
+    const flutterwaveLookup = { marker: "flutterwave" } as unknown as FlutterwaveBankAccountLookup;
+    const monoLookup = { marker: "mono" } as unknown as MonoBankAccountLookup;
+
+    expect(selectBankAccountLookup("production", flutterwaveLookup, monoLookup)).toBe(
+      flutterwaveLookup,
     );
   });
+
+  it.each(["development", "preview"] as const)(
+    "lists Flutterwave bank codes and resolves through Mono in %s",
+    async (appEnv) => {
+      const flutterwaveLookup = {
+        listNigerianBanks: vi.fn().mockResolvedValue(flutterwaveBanks),
+        resolveBankAccount: vi.fn(),
+      } as unknown as FlutterwaveBankAccountLookup;
+      const monoLookup = {
+        listNigerianBanks: vi.fn().mockResolvedValue([{ code: "000013", name: "GTBANK PLC" }]),
+        resolveBankAccount: vi.fn().mockResolvedValue({ ...resolvedAccount, bankCode: "000013" }),
+      } as unknown as MonoBankAccountLookup;
+
+      const lookup = selectBankAccountLookup(appEnv, flutterwaveLookup, monoLookup);
+
+      await expect(lookup.listNigerianBanks()).resolves.toEqual(flutterwaveBanks);
+      await lookup.resolveBankAccount(BANK_NAME, BANK_CODE, ACCOUNT_NUMBER);
+
+      expect(monoLookup.resolveBankAccount).toHaveBeenCalledWith(
+        BANK_NAME,
+        BANK_CODE,
+        ACCOUNT_NUMBER,
+      );
+      expect(flutterwaveLookup.resolveBankAccount).not.toHaveBeenCalled();
+      expect(monoLookup.listNigerianBanks).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -91,5 +91,12 @@ export function selectBankAccountLookup(
   flutterwaveLookup: FlutterwaveBankAccountLookup,
   monoLookup: MonoBankAccountLookup,
 ): BankAccountLookup {
-  return appEnv === "production" ? flutterwaveLookup : monoLookup;
+  if (appEnv === "production") return flutterwaveLookup;
+
+  // Payouts submit the stored bank code to Flutterwave, so the public list keeps those codes.
+  return {
+    listNigerianBanks: () => flutterwaveLookup.listNigerianBanks(),
+    resolveBankAccount: (bankName, bankCode, accountNumber) =>
+      monoLookup.resolveBankAccount(bankName, bankCode, accountNumber),
+  };
 }
