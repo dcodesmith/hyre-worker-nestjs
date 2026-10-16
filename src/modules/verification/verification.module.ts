@@ -3,7 +3,6 @@ import { AuthModule } from "../auth/auth.module";
 import { CarModule } from "../car/car.module";
 import { DriversLicenseModule } from "../drivers-license/drivers-license.module";
 import { InterventionModule } from "../intervention/intervention.module";
-import { MonoModule } from "../mono/mono.module";
 import { NhtsaModule } from "../nhtsa/nhtsa.module";
 import { NinModule } from "../nin/nin.module";
 import { PremblyModule } from "../prembly/prembly.module";
@@ -14,6 +13,7 @@ import {
   AdminAccountVerificationController,
 } from "./account-verification.controller";
 import { AccountVerificationService } from "./account-verification.service";
+import { BankAccountLookupModule } from "./bank-account-lookup.module";
 import { PhoneVerificationService } from "./phone-verification.service";
 import { SelfieImageService } from "./selfie-image.service";
 import {
@@ -26,10 +26,10 @@ import { VerificationThrottlerGuard } from "./verification-throttler.guard";
 @Module({
   imports: [
     AuthModule,
+    BankAccountLookupModule,
     CarModule,
     DriversLicenseModule,
     InterventionModule,
-    MonoModule,
     NinModule,
     NhtsaModule,
     PremblyModule,

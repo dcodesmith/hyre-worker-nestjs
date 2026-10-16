@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   AccountVerificationStage,
@@ -23,8 +23,6 @@ import type { EnvConfig } from "../../config/env.config";
 import { normalizeDriversLicenseNumber } from "../../shared/drivers-license-number";
 import { DatabaseService, isUniqueConstraintError } from "../database/database.service";
 import { DriversLicenseLookupService } from "../drivers-license/drivers-license-lookup.service";
-import { FlutterwaveError } from "../flutterwave/flutterwave.interface";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import { InterventionService } from "../intervention/intervention.service";
 import type { MonoDriversLicenseResult, MonoNinResult } from "../mono/mono.interface";
 import { MonoError } from "../mono/mono.service";
@@ -69,6 +67,11 @@ import {
   OwnerDriverLicenseNotVerifiedException,
   OwnerDriverLicenseRequiredException,
 } from "./account-verification.error";
+import {
+  BANK_ACCOUNT_LOOKUP,
+  type BankAccountLookup,
+  BankAccountLookupError,
+} from "./bank-account-lookup.service";
 import { InvalidSelfieImageError, SelfieImageService } from "./selfie-image.service";
 import {
   ProviderVerificationException,
@@ -270,7 +273,8 @@ export class AccountVerificationService {
     private readonly ninLookupService: NinLookupService,
     private readonly premblyService: PremblyService,
     private readonly driversLicenseLookupService: DriversLicenseLookupService,
-    private readonly flutterwaveService: FlutterwaveService,
+    @Inject(BANK_ACCOUNT_LOOKUP)
+    private readonly bankAccountLookupService: BankAccountLookup,
     private readonly storageService: StorageService,
     private readonly interventionService: InterventionService,
     private readonly selfieImageService: SelfieImageService,
@@ -315,7 +319,8 @@ export class AccountVerificationService {
         await this.verifyIdentity(input);
       const driversLicense = await this.verifyOwnerDriverLicense(input, identity);
 
-      const resolvedAccount = await this.flutterwaveService.resolveBankAccount(
+      const resolvedAccount = await this.bankAccountLookupService.resolveBankAccount(
+        input.bankName,
         input.bankCode,
         input.accountNumber,
       );
@@ -601,7 +606,8 @@ export class AccountVerificationService {
     if (claim.kind === "REPLAYED") return claim.response;
 
     try {
-      const resolvedAccount = await this.flutterwaveService.resolveBankAccount(
+      const resolvedAccount = await this.bankAccountLookupService.resolveBankAccount(
+        input.bankName,
         input.bankCode,
         input.accountNumber,
       );
@@ -2258,8 +2264,8 @@ export class AccountVerificationService {
     if (error instanceof PremblyError || error instanceof MonoError) {
       return new ProviderVerificationException(error.kind);
     }
-    if (error instanceof FlutterwaveError) {
-      return error.statusCode !== undefined && [400, 404, 422].includes(error.statusCode)
+    if (error instanceof BankAccountLookupError) {
+      return error.kind === "REJECTED"
         ? new BankAccountUnresolvedException()
         : new BankAccountProviderUnavailableException();
     }

@@ -4,8 +4,15 @@ import axios, { type AxiosInstance } from "axios";
 import type { z } from "zod";
 import type { EnvConfig } from "../../config/env.config";
 import { HttpClientService } from "../http-client/http-client.service";
-import type { MonoDriversLicenseResult, MonoNinResult } from "./mono.interface";
+import type {
+  MonoBank,
+  MonoBankAccountResult,
+  MonoDriversLicenseResult,
+  MonoNinResult,
+} from "./mono.interface";
 import {
+  monoBankAccountResponseSchema,
+  monoBankListResponseSchema,
   monoDriversLicenseResponseSchema,
   monoEnvelopeSchema,
   monoNinResponseSchema,
@@ -20,10 +27,12 @@ export class MonoError extends Error {
 }
 
 const REJECTED_HTTP_STATUSES = new Set([400, 404, 422]);
+const BANK_LIST_TTL_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class MonoService {
   private readonly client: AxiosInstance;
+  private bankListCache: { data: MonoBank[]; expiresAt: number } | null = null;
 
   constructor(configService: ConfigService<EnvConfig, true>, httpClientService: HttpClientService) {
     this.client = httpClientService.createClient({
@@ -86,6 +95,52 @@ export class MonoService {
     };
   }
 
+  async resolveBankAccount(
+    bankName: string,
+    bankCode: string,
+    accountNumber: string,
+  ): Promise<MonoBankAccountResult> {
+    const banks = await this.listNigerianBanks();
+    const submittedName = this.normalizeBankName(bankName);
+    const bank =
+      banks.find(({ code }) => code === bankCode) ??
+      banks.find(({ name }) => this.normalizeBankName(name) === submittedName);
+    if (!bank) {
+      throw new MonoError("REJECTED");
+    }
+
+    const response = await this.post(
+      "/v3/lookup/account-number",
+      {
+        nip_code: bank.code,
+        account_number: accountNumber,
+      },
+      monoBankAccountResponseSchema,
+    );
+    if (response.data.account_number !== accountNumber || response.data.bank.code !== bank.code) {
+      throw new MonoError("REJECTED");
+    }
+
+    return {
+      accountNumber: response.data.account_number,
+      accountName: response.data.name.trim(),
+      bankCode: response.data.bank.code,
+    };
+  }
+
+  async listNigerianBanks(): Promise<MonoBank[]> {
+    if (this.bankListCache && this.bankListCache.expiresAt > Date.now()) {
+      return this.bankListCache.data;
+    }
+
+    const response = await this.get("/v3/lookup/banks", monoBankListResponseSchema);
+    const banks = response.data.banks
+      .map(({ name, nip_code }) => ({ code: nip_code, name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    this.bankListCache = { data: banks, expiresAt: Date.now() + BANK_LIST_TTL_MS };
+    return banks;
+  }
+
   private formatDate(value: Date): string {
     if (Number.isNaN(value.getTime())) {
       throw new MonoError("INVALID_RESPONSE");
@@ -121,6 +176,10 @@ export class MonoService {
     return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
   }
 
+  private normalizeBankName(value: string): string {
+    return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
+  }
+
   private reference(timestamp: string | undefined, lookup: "nin" | "driver-license"): string {
     return timestamp?.trim() || `mono:${lookup}`;
   }
@@ -130,8 +189,19 @@ export class MonoService {
     body: Record<string, string>,
     schema: z.ZodType<T>,
   ): Promise<T> {
+    return this.request(() => this.client.post<unknown>(path, body), schema);
+  }
+
+  private async get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+    return this.request(() => this.client.get<unknown>(path), schema);
+  }
+
+  private async request<T>(
+    request: () => Promise<{ data: unknown }>,
+    schema: z.ZodType<T>,
+  ): Promise<T> {
     try {
-      const { data } = await this.client.post<unknown>(path, body);
+      const { data } = await request();
       const envelope = monoEnvelopeSchema.safeParse(data);
 
       if (!envelope.success) {

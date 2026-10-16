@@ -3,6 +3,7 @@ import {
   Get,
   Header,
   Headers,
+  Inject,
   Post,
   Put,
   Res,
@@ -23,7 +24,6 @@ import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { idempotencyKeySchema } from "../booking/dto/idempotency-key.dto";
 import { type RejectBodyDto, rejectBodySchema, uuidParamSchema } from "../car/dto/car-approval.dto";
-import { FlutterwaveService } from "../flutterwave/flutterwave.service";
 import {
   type AccountDocuments,
   AccountDocumentsPipe,
@@ -47,6 +47,7 @@ import {
   type UploadedAccountDocument,
 } from "./account-verification.dto";
 import { AccountVerificationService } from "./account-verification.service";
+import { BANK_ACCOUNT_LOOKUP, type BankAccountLookup } from "./bank-account-lookup.service";
 import { PhoneVerificationService } from "./phone-verification.service";
 import { VerificationRequestInProgressException } from "./verification.error";
 import { VerificationThrottlerGuard } from "./verification-throttler.guard";
@@ -65,13 +66,14 @@ export class AccountVerificationController {
   constructor(
     private readonly accountVerificationService: AccountVerificationService,
     private readonly phoneVerificationService: PhoneVerificationService,
-    private readonly flutterwaveService: FlutterwaveService,
+    @Inject(BANK_ACCOUNT_LOOKUP)
+    private readonly bankAccountLookupService: BankAccountLookup,
   ) {}
 
   @Get("banks")
   @Header("Cache-Control", "private, max-age=3600")
   getBanks() {
-    return this.flutterwaveService.listNigerianBanks();
+    return this.bankAccountLookupService.listNigerianBanks();
   }
 
   @Get("onboarding")
