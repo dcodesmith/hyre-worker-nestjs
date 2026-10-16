@@ -315,6 +315,25 @@ describe("MonoService", () => {
       });
     });
 
+    it("does not let an exact NIP code override a different canonical bank name", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([
+          { name: "GTBANK PLC", nip_code: "000013" },
+          { name: "ACCESS BANK", nip_code: "000014" },
+        ]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: accountSuccess({ bank: { name: "ACCESS BANK", code: "000014" } }),
+      });
+
+      await service.resolveBankAccount("Access Bank", "000013", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000014",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
     it("rejects an unsupported bank without requesting account details", async () => {
       mockAxiosInstance.get.mockResolvedValueOnce({
         data: banksSuccess([{ name: "GTBANK PLC", nip_code: "000013" }]),

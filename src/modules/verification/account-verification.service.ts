@@ -388,7 +388,7 @@ export class AccountVerificationService {
           create: {
             userId,
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumber: resolvedAccount.accountNumber,
             accountName: resolvedAccount.accountName,
             isVerified: status === AccountVerificationStatus.SUCCEEDED,
@@ -396,7 +396,7 @@ export class AccountVerificationService {
           },
           update: {
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumber: resolvedAccount.accountNumber,
             accountName: resolvedAccount.accountName,
             isVerified: status === AccountVerificationStatus.SUCCEEDED,
@@ -463,7 +463,7 @@ export class AccountVerificationService {
               business?.status === null,
             identityVerifiedAt: verifiedAt,
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumberLast4: resolvedAccount.accountNumber.slice(-4),
             accountName: resolvedAccount.accountName,
             bankNameMatch,
@@ -644,7 +644,7 @@ export class AccountVerificationService {
           where: { id: verification.id, status: AccountVerificationStatus.DRAFT },
           data: {
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumberLast4: resolvedAccount.accountNumber.slice(-4),
             accountName: resolvedAccount.accountName,
             bankNameMatch,
@@ -658,7 +658,7 @@ export class AccountVerificationService {
           create: {
             userId,
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumber: resolvedAccount.accountNumber,
             accountName: resolvedAccount.accountName,
             isVerified: false,
@@ -666,7 +666,7 @@ export class AccountVerificationService {
           },
           update: {
             bankName: input.bankName,
-            bankCode: input.bankCode,
+            bankCode: resolvedAccount.bankCode,
             accountNumber: resolvedAccount.accountNumber,
             accountName: resolvedAccount.accountName,
             isVerified: false,

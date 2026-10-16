@@ -145,7 +145,7 @@ describe("selectBankAccountLookup", () => {
   });
 
   it.each(["development", "preview"] as const)(
-    "lists Flutterwave bank codes and resolves through Mono in %s",
+    "binds the Flutterwave bank identity before resolving through Mono in %s",
     async (appEnv) => {
       const flutterwaveLookup = {
         listNigerianBanks: vi.fn().mockResolvedValue(flutterwaveBanks),
@@ -159,7 +159,9 @@ describe("selectBankAccountLookup", () => {
       const lookup = selectBankAccountLookup(appEnv, flutterwaveLookup, monoLookup);
 
       await expect(lookup.listNigerianBanks()).resolves.toEqual(flutterwaveBanks);
-      await lookup.resolveBankAccount(BANK_NAME, BANK_CODE, ACCOUNT_NUMBER);
+      await expect(
+        lookup.resolveBankAccount("gtbank-plc", BANK_CODE, ACCOUNT_NUMBER),
+      ).resolves.toEqual(resolvedAccount);
 
       expect(monoLookup.resolveBankAccount).toHaveBeenCalledWith(
         BANK_NAME,
@@ -170,4 +172,37 @@ describe("selectBankAccountLookup", () => {
       expect(monoLookup.listNigerianBanks).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["a mismatched name and code", "Access Bank", BANK_CODE],
+    ["an unknown Flutterwave code", BANK_NAME, "999"],
+  ])("rejects %s before calling Mono", async (_case, bankName, bankCode) => {
+    const flutterwaveLookup = {
+      listNigerianBanks: vi.fn().mockResolvedValue(flutterwaveBanks),
+    } as unknown as FlutterwaveBankAccountLookup;
+    const monoLookup = {
+      resolveBankAccount: vi.fn(),
+    } as unknown as MonoBankAccountLookup;
+    const lookup = selectBankAccountLookup("development", flutterwaveLookup, monoLookup);
+
+    await expect(lookup.resolveBankAccount(bankName, bankCode, ACCOUNT_NUMBER)).rejects.toEqual(
+      new BankAccountLookupError("REJECTED"),
+    );
+    expect(monoLookup.resolveBankAccount).not.toHaveBeenCalled();
+  });
+
+  it("maps a Flutterwave bank-list failure to unavailable", async () => {
+    const flutterwaveLookup = {
+      listNigerianBanks: vi.fn().mockRejectedValue(new Error("network error")),
+    } as unknown as FlutterwaveBankAccountLookup;
+    const monoLookup = {
+      resolveBankAccount: vi.fn(),
+    } as unknown as MonoBankAccountLookup;
+    const lookup = selectBankAccountLookup("development", flutterwaveLookup, monoLookup);
+
+    await expect(lookup.resolveBankAccount(BANK_NAME, BANK_CODE, ACCOUNT_NUMBER)).rejects.toEqual(
+      new BankAccountLookupError("UNAVAILABLE"),
+    );
+    expect(monoLookup.resolveBankAccount).not.toHaveBeenCalled();
+  });
 });

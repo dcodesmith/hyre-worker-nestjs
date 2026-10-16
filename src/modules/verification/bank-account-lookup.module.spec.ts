@@ -46,16 +46,19 @@ describe.each([
 
     const lookup = module.get<BankAccountLookup>(BANK_ACCOUNT_LOOKUP);
     await expect(lookup.listNigerianBanks()).resolves.toEqual(flutterwaveBanks);
-    await lookup.resolveBankAccount(BANK_NAME, BANK_CODE, ACCOUNT_NUMBER);
+    await expect(
+      lookup.resolveBankAccount(BANK_NAME, BANK_CODE, ACCOUNT_NUMBER),
+    ).resolves.toMatchObject({ bankCode: BANK_CODE });
 
-    expect(flutterwaveService.listNigerianBanks).toHaveBeenCalledOnce();
     expect(monoService.listNigerianBanks).not.toHaveBeenCalled();
     if (accountProvider === "flutterwave") {
+      expect(flutterwaveService.listNigerianBanks).toHaveBeenCalledOnce();
       expect(flutterwaveService.resolveBankAccount).toHaveBeenCalledWith(BANK_CODE, ACCOUNT_NUMBER);
       expect(monoService.resolveBankAccount).not.toHaveBeenCalled();
       return;
     }
 
+    expect(flutterwaveService.listNigerianBanks).toHaveBeenCalledTimes(2);
     expect(monoService.resolveBankAccount).toHaveBeenCalledWith(
       BANK_NAME,
       BANK_CODE,

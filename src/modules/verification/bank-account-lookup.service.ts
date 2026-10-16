@@ -34,6 +34,10 @@ export class BankAccountLookupError extends Error {
   }
 }
 
+function normalizeBankName(value: string): string {
+  return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
+}
+
 @Injectable()
 export class FlutterwaveBankAccountLookup implements BankAccountLookup {
   constructor(private readonly flutterwaveService: FlutterwaveService) {}
@@ -96,7 +100,20 @@ export function selectBankAccountLookup(
   // Payouts submit the stored bank code to Flutterwave, so the public list keeps those codes.
   return {
     listNigerianBanks: () => flutterwaveLookup.listNigerianBanks(),
-    resolveBankAccount: (bankName, bankCode, accountNumber) =>
-      monoLookup.resolveBankAccount(bankName, bankCode, accountNumber),
+    resolveBankAccount: async (bankName, bankCode, accountNumber) => {
+      try {
+        const banks = await flutterwaveLookup.listNigerianBanks();
+        const bank = banks.find(({ code }) => code === bankCode);
+        if (!bank || normalizeBankName(bank.name) !== normalizeBankName(bankName)) {
+          throw new BankAccountLookupError("REJECTED");
+        }
+
+        const resolved = await monoLookup.resolveBankAccount(bank.name, bank.code, accountNumber);
+        return { ...resolved, bankCode: bank.code };
+      } catch (error) {
+        if (error instanceof BankAccountLookupError) throw error;
+        throw new BankAccountLookupError("UNAVAILABLE");
+      }
+    },
   };
 }

@@ -103,8 +103,9 @@ export class MonoService {
     const banks = await this.listNigerianBanks();
     const submittedName = this.normalizeIdentifier(bankName);
     const bank =
-      banks.find(({ code }) => code === bankCode) ??
-      banks.find(({ name }) => this.normalizeIdentifier(name) === submittedName);
+      banks.find(
+        ({ code, name }) => code === bankCode && this.normalizeIdentifier(name) === submittedName,
+      ) ?? banks.find(({ name }) => this.normalizeIdentifier(name) === submittedName);
     if (!bank) {
       throw new MonoError("REJECTED");
     }
