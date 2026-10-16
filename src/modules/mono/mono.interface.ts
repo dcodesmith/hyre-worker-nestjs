@@ -21,6 +21,7 @@ export type MonoDriversLicenseResult = {
 export type MonoBank = {
   code: string;
   name: string;
+  bankCode: string | null;
 };
 
 export type MonoBankAccountResult = {

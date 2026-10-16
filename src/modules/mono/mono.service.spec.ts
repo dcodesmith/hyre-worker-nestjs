@@ -263,8 +263,8 @@ describe("MonoService", () => {
       });
 
       await expect(service.listNigerianBanks()).resolves.toEqual([
-        { code: "000013", name: "GTBANK PLC" },
-        { code: "000015", name: "ZENITH BANK PLC" },
+        { code: "000013", name: "GTBANK PLC", bankCode: null },
+        { code: "000015", name: "ZENITH BANK PLC", bankCode: null },
       ]);
       await service.listNigerianBanks();
 
@@ -311,6 +311,38 @@ describe("MonoService", () => {
 
       expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
         nip_code: "000013",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("maps a Flutterwave code through Mono bank metadata when provider names differ", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([
+          { name: "PROVIDER-SPECIFIC NAME", bank_code: "058", nip_code: "000013" },
+        ]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: accountSuccess() });
+
+      await service.resolveBankAccount("GTBank Plc", "058", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "000013",
+        account_number: ACCOUNT_NUMBER,
+      });
+    });
+
+    it("maps known provider aliases when Mono omits the Flutterwave code", async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: banksSuccess([{ name: "OPAY", bank_code: null, nip_code: "100004" }]),
+      });
+      mockAxiosInstance.post.mockResolvedValueOnce({
+        data: accountSuccess({ bank: { name: "OPAY", code: "100004" } }),
+      });
+
+      await service.resolveBankAccount("Paycom", "305", ACCOUNT_NUMBER);
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith("/v3/lookup/account-number", {
+        nip_code: "100004",
         account_number: ACCOUNT_NUMBER,
       });
     });

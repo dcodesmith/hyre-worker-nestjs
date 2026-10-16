@@ -47,6 +47,11 @@ export const monoBankListResponseSchema = z.looseObject({
     banks: z.array(
       z.looseObject({
         name: z.string().trim().min(1),
+        bank_code: z
+          .string()
+          .trim()
+          .regex(/^\d{2,6}$/)
+          .nullish(),
         nip_code: z.string().regex(/^\d{6}$/),
       }),
     ),

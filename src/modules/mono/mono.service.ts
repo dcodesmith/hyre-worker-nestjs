@@ -28,6 +28,16 @@ export class MonoError extends Error {
 
 const REJECTED_HTTP_STATUSES = new Set([400, 404, 422]);
 const BANK_LIST_TTL_MS = 60 * 60 * 1000;
+const BANK_NAME_ALIASES = new Map([
+  ["FIRSTBANKOFNIGERIA", "FIRSTBANK"],
+  ["FIRSTBANKPLC", "FIRSTBANK"],
+  ["FIRSTCITYMONUMENTBANK", "FCMB"],
+  ["GUARANTYTRUSTBANK", "GTBANK"],
+  ["GTBANKPLC", "GTBANK"],
+  ["PAYCOM", "OPAY"],
+  ["SKYEBANK", "POLARISBANK"],
+  ["UNITEDBANKFORAFRICA", "UBA"],
+]);
 
 @Injectable()
 export class MonoService {
@@ -101,11 +111,13 @@ export class MonoService {
     accountNumber: string,
   ): Promise<MonoBankAccountResult> {
     const banks = await this.listNigerianBanks();
-    const submittedName = this.normalizeIdentifier(bankName);
+    const submittedName = this.normalizeBankName(bankName);
     const bank =
+      banks.find(({ bankCode: flutterwaveCode }) => flutterwaveCode === bankCode) ??
       banks.find(
-        ({ code, name }) => code === bankCode && this.normalizeIdentifier(name) === submittedName,
-      ) ?? banks.find(({ name }) => this.normalizeIdentifier(name) === submittedName);
+        ({ code, name }) => code === bankCode && this.normalizeBankName(name) === submittedName,
+      ) ??
+      banks.find(({ name }) => this.normalizeBankName(name) === submittedName);
     if (!bank) {
       throw new MonoError("REJECTED");
     }
@@ -136,7 +148,11 @@ export class MonoService {
 
     const response = await this.get("/v3/lookup/banks", monoBankListResponseSchema);
     const banks = response.data.banks
-      .map(({ name, nip_code }) => ({ code: nip_code, name }))
+      .map(({ name, bank_code, nip_code }) => ({
+        code: nip_code,
+        name,
+        bankCode: bank_code ?? null,
+      }))
       .sort((left, right) => left.name.localeCompare(right.name));
     this.bankListCache = { data: banks, expiresAt: Date.now() + BANK_LIST_TTL_MS };
     return banks;
@@ -175,6 +191,11 @@ export class MonoService {
 
   private normalizeIdentifier(value: string): string {
     return value.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
+  }
+
+  private normalizeBankName(value: string): string {
+    const normalized = this.normalizeIdentifier(value);
+    return BANK_NAME_ALIASES.get(normalized) ?? normalized;
   }
 
   private reference(timestamp: string | undefined, lookup: "nin" | "driver-license"): string {
