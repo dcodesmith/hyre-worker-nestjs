@@ -59,11 +59,20 @@ describe("NhtsaService", () => {
       manufacturer: "HONDA MOTOR CO., LTD",
       model: "Accord",
       passengerCapacity: 5,
+      trim: null,
       warningCodes: [],
     });
     expect(mockAxiosInstance.get).toHaveBeenCalledWith(`/vehicles/DecodeVinValues/${VALID_VIN}`, {
       params: { format: "json" },
     });
+  });
+
+  it("parses a padded NHTSA Trim into trim", async () => {
+    mockAxiosInstance.get.mockResolvedValueOnce({
+      data: decodeSuccess({ Trim: " 350 " }),
+    });
+
+    await expect(service.verifyVin(VALID_VIN)).resolves.toMatchObject({ trim: "350" });
   });
 
   it("rejects a VIN that is not a valid 17-character identifier before calling vPIC", async () => {
@@ -140,6 +149,7 @@ describe("NhtsaService", () => {
       manufacturer: "TOYOTA MOTOR CORPORATION",
       model: null,
       passengerCapacity: 5,
+      trim: null,
       warningCodes: ["1"],
     });
   });
@@ -211,6 +221,7 @@ describe("NhtsaService", () => {
       manufacturer: "HONDA MOTOR CO., LTD",
       model: "Accord",
       passengerCapacity: null,
+      trim: null,
       warningCodes: [],
     });
   });
