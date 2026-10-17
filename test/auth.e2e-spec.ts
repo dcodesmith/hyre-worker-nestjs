@@ -466,6 +466,65 @@ describe("Auth E2E Tests", () => {
         expect(adminResponse.status).toBe(HttpStatus.OK);
         expect(adminResponse.body.success).toBe(true);
       });
+
+      it("should promote an existing unverified staff user from the admin origin", async () => {
+        const testEmail = uniqueEmail("unverified-staff");
+        const existing = await factory.createUser({
+          email: testEmail,
+          emailVerified: false,
+          roles: ["staff"],
+        });
+
+        const sendResponse = await request(app.getHttpServer())
+          .post("/api/auth/email-otp/send-verification-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/admin/login")
+          .send({ email: testEmail, type: "sign-in", role: "staff" });
+
+        expect(sendResponse.status).toBe(HttpStatus.OK);
+
+        const verification = await databaseService.verification.findFirst({
+          where: { identifier: `sign-in-otp-${testEmail}` },
+          orderBy: { createdAt: "desc" },
+        });
+        const otp = verification?.value.split(":")[0];
+
+        const verifyResponse = await request(app.getHttpServer())
+          .post("/api/auth/sign-in/email-otp")
+          .set("Origin", "http://localhost:3000")
+          .set("Referer", "http://localhost:3000/admin/login")
+          .send({ email: testEmail, otp, role: "staff" });
+
+        expect(verifyResponse.status).toBe(HttpStatus.OK);
+        expect(verifyResponse.body.token).toEqual(expect.any(String));
+        expect(verifyResponse.body.user).toMatchObject({
+          id: existing.id,
+          email: testEmail,
+          emailVerified: true,
+          roles: ["staff"],
+        });
+
+        const storedUser = await databaseService.user.findUnique({
+          where: { id: existing.id },
+          include: { roles: { select: { name: true } } },
+        });
+        expect(storedUser?.emailVerified).toBe(true);
+        expect(storedUser?.roles.map(({ name }) => name)).toEqual(["staff"]);
+
+        const cookies = verifyResponse.headers["set-cookie"];
+        const sessionCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies;
+        const sessionResponse = await request(app.getHttpServer())
+          .get("/auth/session")
+          .set("Cookie", sessionCookie);
+
+        expect(sessionResponse.status).toBe(HttpStatus.OK);
+        expect(sessionResponse.body.session.userId).toBe(existing.id);
+        expect(sessionResponse.body.user).toMatchObject({
+          id: existing.id,
+          emailVerified: true,
+          roles: ["staff"],
+        });
+      });
     });
 
     describe("Default role behavior", () => {
