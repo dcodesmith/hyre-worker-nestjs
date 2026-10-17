@@ -14,6 +14,7 @@ const nhtsaResponseSchema = z.looseObject({
       Model: z.string(),
       ModelYear: z.string(),
       Seats: z.string().optional().default(""),
+      Trim: z.string().optional().default(""),
     }),
   ),
 });
@@ -32,6 +33,7 @@ export type NhtsaVinResult = {
   manufacturer: string | null;
   model: string | null;
   passengerCapacity: number | null;
+  trim: string | null;
   warningCodes: string[];
 };
 
@@ -113,6 +115,7 @@ export class NhtsaService {
       const make = vehicle.Make.trim() || null;
       const manufacturer = vehicle.Manufacturer.trim() || null;
       const model = vehicle.Model.trim() || null;
+      const trim = vehicle.Trim.trim() || null;
       if (
         !Number.isInteger(year) ||
         year < 1886 ||
@@ -129,7 +132,7 @@ export class NhtsaService {
           ? decodedSeats
           : null;
 
-      return { year, make, manufacturer, model, passengerCapacity, warningCodes };
+      return { year, make, manufacturer, model, passengerCapacity, trim, warningCodes };
     } catch (error) {
       if (error instanceof NhtsaError) throw error;
       throw new NhtsaError("UNAVAILABLE");

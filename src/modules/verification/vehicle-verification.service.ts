@@ -62,6 +62,7 @@ type VinVerificationResult = {
   model: string | null;
   passengerCapacity: number | null;
   reference: string | null;
+  trim: string | null;
   warningCodes: string[];
   year: number;
 };
@@ -370,22 +371,27 @@ export class VehicleVerificationService {
       throw new VehicleMismatchException();
     }
 
-    const model =
+    const baseModel =
       vin.model ?? plate.model ?? plateWords.slice(makeIndex + makeWords.length).join(" ");
-    const modelWords = this.vehicleWords(model);
+    const modelWords = this.vehicleWords(baseModel);
+    const trimWords = vin.model ? this.vehicleWords(vin.trim ?? "") : [];
     const normalizedModel = modelWords.join("");
+    const normalizedTrim = trimWords.join("");
+    const model = vin.model && normalizedTrim ? `${vin.model} ${vin.trim}` : baseModel;
+    const acceptedModels = new Set([normalizedModel, `${normalizedModel}${normalizedTrim}`]);
     const plateModelWords = plate.model
       ? this.vehicleWords(plate.model)
       : plateWords.slice(makeIndex + makeWords.length);
-    const modelMatches = plateModelWords.some((_, start) => {
-      let candidate = "";
-      for (const word of plateModelWords.slice(start)) {
-        candidate += word;
-        if (candidate === normalizedModel) return true;
-        if (candidate.length >= normalizedModel.length) return false;
-      }
-      return false;
-    });
+    const modelMatches = normalizedTrim
+      ? acceptedModels.has(plateModelWords.join(""))
+      : plateModelWords.some((_, start) => {
+          let candidate = "";
+          for (const word of plateModelWords.slice(start)) {
+            candidate += word;
+            if (acceptedModels.has(candidate)) return true;
+          }
+          return false;
+        });
     if (!model || modelWords.length === 0 || !modelMatches) {
       throw new VehicleMismatchException();
     }
@@ -424,7 +430,7 @@ export class VehicleVerificationService {
   private async verifyVin(chassisNumber: string): Promise<VinVerificationResult> {
     try {
       const vin = await this.premblyService.verifyVin(chassisNumber);
-      return { ...vin, manufacturer: null, warningCodes: [] };
+      return { ...vin, manufacturer: null, trim: null, warningCodes: [] };
     } catch (error) {
       if (
         !(error instanceof PremblyError) ||
