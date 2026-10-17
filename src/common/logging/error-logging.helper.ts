@@ -27,7 +27,10 @@ export function toLogError(value: unknown): Error {
 }
 
 export function serializeErrorForLog(value: unknown): SerializedLogError {
-  const error = toLogError(value);
+  const error =
+    typeof value === "object" && value !== null && "raw" in value && value.raw instanceof Error
+      ? value.raw
+      : toLogError(value);
   const errorWithCode = error as Error & { code?: unknown; errorCode?: unknown };
   const code = errorWithCode.code ?? errorWithCode.errorCode;
 

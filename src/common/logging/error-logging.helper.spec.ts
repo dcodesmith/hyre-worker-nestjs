@@ -41,6 +41,28 @@ describe("error logging helpers", () => {
     ).toBe("APP_FAILED");
   });
 
+  it("unwraps errors pre-serialized by Pino without exposing extra fields", () => {
+    const error = Object.assign(new Error("Verification is temporarily unavailable"), {
+      name: "ProviderVerificationException",
+      errorCode: "PROVIDER_UNAVAILABLE",
+      details: { providerToken: "secret" },
+    });
+
+    expect(
+      serializeErrorForLog({
+        type: error.name,
+        message: error.message,
+        stack: error.stack,
+        raw: error,
+      }),
+    ).toEqual({
+      type: "ProviderVerificationException",
+      message: "Verification is temporarily unavailable",
+      stack: error.stack,
+      code: "PROVIDER_UNAVAILABLE",
+    });
+  });
+
   it("bounds persisted error messages", () => {
     expect(toPersistedErrorMessage(new Error("abcdef"), 4)).toBe("abcd");
     expect(toPersistedErrorMessage({ response: "secret" })).toBe("Unknown error");
