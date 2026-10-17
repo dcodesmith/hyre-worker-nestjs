@@ -27,14 +27,30 @@ export function toLogError(value: unknown): Error {
 }
 
 export function serializeErrorForLog(value: unknown): SerializedLogError {
-  const error = toLogError(value);
+  const wrappedError =
+    !(value instanceof Error) &&
+    typeof value === "object" &&
+    value !== null &&
+    "raw" in value &&
+    value.raw instanceof Error
+      ? (value as { message?: unknown; raw: Error; stack?: unknown })
+      : undefined;
+  const error = wrappedError?.raw ?? toLogError(value);
   const errorWithCode = error as Error & { code?: unknown; errorCode?: unknown };
   const code = errorWithCode.code ?? errorWithCode.errorCode;
+  const message =
+    wrappedError && "message" in wrappedError && typeof wrappedError.message === "string"
+      ? wrappedError.message
+      : error.message;
+  const stack =
+    wrappedError && "stack" in wrappedError && typeof wrappedError.stack === "string"
+      ? wrappedError.stack
+      : error.stack;
 
   return {
     type: error.name || "Error",
-    message: error.message,
-    ...(error.stack && { stack: error.stack }),
+    message,
+    ...(stack && { stack }),
     ...((typeof code === "string" || typeof code === "number") && { code }),
   };
 }

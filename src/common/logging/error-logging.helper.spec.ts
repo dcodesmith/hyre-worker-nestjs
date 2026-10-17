@@ -41,6 +41,41 @@ describe("error logging helpers", () => {
     ).toBe("APP_FAILED");
   });
 
+  it("does not unwrap a raw error nested on a direct Error", () => {
+    const error = Object.assign(new Error("request failed"), {
+      raw: new Error("socket closed"),
+    });
+
+    expect(serializeErrorForLog(error)).toMatchObject({
+      message: "request failed",
+      stack: error.stack,
+    });
+  });
+
+  it("unwraps errors pre-serialized by Pino without exposing extra fields", () => {
+    const error = Object.assign(new Error("Verification is temporarily unavailable"), {
+      name: "ProviderVerificationException",
+      errorCode: "PROVIDER_UNAVAILABLE",
+      details: { providerToken: "secret" },
+    });
+    const message = `${error.message}: caused by socket closed`;
+    const stack = `${error.stack}\ncaused by: Error: socket closed`;
+
+    expect(
+      serializeErrorForLog({
+        type: error.name,
+        message,
+        stack,
+        raw: error,
+      }),
+    ).toEqual({
+      type: "ProviderVerificationException",
+      message,
+      stack,
+      code: "PROVIDER_UNAVAILABLE",
+    });
+  });
+
   it("bounds persisted error messages", () => {
     expect(toPersistedErrorMessage(new Error("abcdef"), 4)).toBe("abcd");
     expect(toPersistedErrorMessage({ response: "secret" })).toBe("Unknown error");
