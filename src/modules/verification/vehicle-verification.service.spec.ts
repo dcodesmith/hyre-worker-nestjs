@@ -388,37 +388,78 @@ describe("VehicleVerificationService", () => {
       expect(result.vehicle.model).toBe("RX 350");
     });
 
-    it.each(["RX450", "RX 450"])(
-      "rejects RegCheck %s against NHTSA RX trim 350",
-      async (plateModel) => {
-        databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
-        regCheckService.verifyPlate.mockResolvedValueOnce({
-          ...mockPlate,
+    it("matches RegCheck RX350 when the NHTSA trim has an extra descriptor", async () => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        make: "Lexus",
+        model: "RX350",
+        vehicleName: "Lexus RX350",
+        reference: null,
+      });
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      nhtsaService.verifyVin.mockResolvedValueOnce({
+        year: 2020,
+        make: "Lexus",
+        manufacturer: "TOYOTA MOTOR CORPORATION",
+        model: "RX",
+        trim: "350 Premium",
+        passengerCapacity: 5,
+        warningCodes: [],
+      });
+      databaseService.vehicleVerification.update.mockResolvedValueOnce(
+        succeededRecord({
           make: "Lexus",
-          model: plateModel,
-          vehicleName: `Lexus ${plateModel}`,
-          reference: null,
-        });
-        premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
-        nhtsaService.verifyVin.mockResolvedValueOnce({
-          year: 2020,
-          make: "Lexus",
-          manufacturer: "TOYOTA MOTOR CORPORATION",
-          model: "RX",
-          trim: "350",
-          passengerCapacity: 5,
-          warningCodes: [],
-        });
+          model: "RX 350 Premium",
+          plateProviderRef: null,
+          vinProviderRef: null,
+        }),
+      );
 
-        await expect(
-          service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
-            plateNumber: PLATE,
-            chassisNumber: CHASSIS,
-          }),
-        ).rejects.toBeInstanceOf(VehicleMismatchException);
-        expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
-      },
-    );
+      const result = await service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+        plateNumber: PLATE,
+        chassisNumber: CHASSIS,
+      });
+
+      expect(databaseService.vehicleVerification.update).toHaveBeenCalledWith({
+        where: { id: VERIFICATION_ID },
+        data: expect.objectContaining({ make: "Lexus", model: "RX 350 Premium" }),
+      });
+      expect(result.vehicle.model).toBe("RX 350 Premium");
+    });
+
+    it.each([
+      ["RX450", "350"],
+      ["RX 450", "350"],
+      ["RX450", "350 Premium"],
+    ])("rejects RegCheck %s against NHTSA trim %s", async (plateModel, trim) => {
+      databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());
+      regCheckService.verifyPlate.mockResolvedValueOnce({
+        ...mockPlate,
+        make: "Lexus",
+        model: plateModel,
+        vehicleName: `Lexus ${plateModel}`,
+        reference: null,
+      });
+      premblyService.verifyVin.mockRejectedValueOnce(new PremblyError("UNAVAILABLE"));
+      nhtsaService.verifyVin.mockResolvedValueOnce({
+        year: 2020,
+        make: "Lexus",
+        manufacturer: "TOYOTA MOTOR CORPORATION",
+        model: "RX",
+        trim,
+        passengerCapacity: 5,
+        warningCodes: [],
+      });
+
+      await expect(
+        service.createVehicleVerification(OWNER_ID, IDEMPOTENCY_KEY, {
+          plateNumber: PLATE,
+          chassisNumber: CHASSIS,
+        }),
+      ).rejects.toBeInstanceOf(VehicleMismatchException);
+      expect(nhtsaService.verifyVin).toHaveBeenCalledWith(CHASSIS);
+    });
 
     it("keeps a null passenger capacity when Prembly fails and NHTSA omits seats", async () => {
       databaseService.vehicleVerification.create.mockResolvedValueOnce(processingRecord());

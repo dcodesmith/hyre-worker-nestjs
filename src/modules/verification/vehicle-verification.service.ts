@@ -376,22 +376,27 @@ export class VehicleVerificationService {
     const modelWords = this.vehicleWords(baseModel);
     const trimWords = vin.model ? this.vehicleWords(vin.trim ?? "") : [];
     const normalizedModel = modelWords.join("");
-    const normalizedTrim = trimWords.join("");
-    const model = vin.model && normalizedTrim ? `${vin.model} ${vin.trim}` : baseModel;
-    const acceptedModels = new Set([normalizedModel, `${normalizedModel}${normalizedTrim}`]);
+    const acceptedModels = new Set([normalizedModel]);
+    let trimmedModel = normalizedModel;
+    for (const word of trimWords) {
+      trimmedModel += word;
+      acceptedModels.add(trimmedModel);
+    }
+    const model = vin.model && trimWords.length > 0 ? `${vin.model} ${vin.trim}` : baseModel;
     const plateModelWords = plate.model
       ? this.vehicleWords(plate.model)
       : plateWords.slice(makeIndex + makeWords.length);
-    const modelMatches = normalizedTrim
-      ? acceptedModels.has(plateModelWords.join(""))
-      : plateModelWords.some((_, start) => {
-          let candidate = "";
-          for (const word of plateModelWords.slice(start)) {
-            candidate += word;
-            if (acceptedModels.has(candidate)) return true;
-          }
-          return false;
-        });
+    const modelMatches =
+      trimWords.length > 0
+        ? acceptedModels.has(plateModelWords.join(""))
+        : plateModelWords.some((_, start) => {
+            let candidate = "";
+            for (const word of plateModelWords.slice(start)) {
+              candidate += word;
+              if (acceptedModels.has(candidate)) return true;
+            }
+            return false;
+          });
     if (!model || modelWords.length === 0 || !modelMatches) {
       throw new VehicleMismatchException();
     }
