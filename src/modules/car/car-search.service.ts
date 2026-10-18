@@ -21,6 +21,7 @@ import type {
 import { ANALYTICS_MARKET, AvailabilitySearchOutcome } from "../analytics/analytics-event.schema";
 import { AnalyticsIngestionService } from "../analytics/analytics-ingestion.service";
 import { BLOCKING_BOOKING_STATUSES } from "../booking/booking.const";
+import { capacityExhaustedFleetOwnersQuery } from "../booking/booking-chauffeur-availability";
 import { DatabaseService } from "../database/database.service";
 import { CarException, CarFetchFailedException, CarNotFoundException } from "./car.error";
 import type {
@@ -246,43 +247,55 @@ export class CarSearchService {
       startDate: { lt: bufferedEnd },
       endDate: { gt: bufferedStart },
     } satisfies Prisma.BookingWhereInput;
-    const unavailableOwners = await this.databaseService.user.findMany({
-      where: {
-        cars: { some: {} },
-        NOT: {
-          OR: [
-            {
-              isOwnerDriver: true,
-              chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-              chauffeurDisabledAt: null,
-              bookingsAsChauffeur: { none: bookingConflict },
-            },
-            {
-              chauffeurs: {
-                some: {
-                  chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-                  chauffeurDisabledAt: null,
-                  bookingsAsChauffeur: { none: bookingConflict },
+    const [unavailableOwners, capacityExhaustedOwners] = await Promise.all([
+      this.databaseService.user.findMany({
+        where: {
+          cars: { some: {} },
+          NOT: {
+            OR: [
+              {
+                isOwnerDriver: true,
+                chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                chauffeurDisabledAt: null,
+                bookingsAsChauffeur: { none: bookingConflict },
+              },
+              {
+                chauffeurs: {
+                  some: {
+                    chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+                    chauffeurDisabledAt: null,
+                    bookingsAsChauffeur: { none: bookingConflict },
+                  },
                 },
               },
-            },
-          ],
+            ],
+          },
         },
-      },
-      select: { id: true },
-      distinct: ["id"],
-    });
+        select: { id: true },
+        distinct: ["id"],
+      }),
+      this.databaseService.$queryRaw<Array<{ id: string }>>(
+        capacityExhaustedFleetOwnersQuery(interval),
+      ),
+    ]);
+
+    const ownerIds = [
+      ...new Set([
+        ...unavailableOwners.map((owner) => owner.id),
+        ...capacityExhaustedOwners.map((owner) => owner.id),
+      ]),
+    ];
 
     this.logger.debug(
       {
-        unavailableOwners: unavailableOwners.length,
+        unavailableOwners: ownerIds.length,
         startDate: interval.startDate.toISOString(),
         endDate: interval.endDate.toISOString(),
       },
       "Computed unavailable fleet owners",
     );
 
-    return unavailableOwners.map((owner) => owner.id);
+    return ownerIds;
   }
 
   private buildRequestedAvailabilityInterval(

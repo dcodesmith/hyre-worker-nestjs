@@ -101,9 +101,20 @@ const verifiedBookingUser = (overrides: Parameters<typeof createUser>[0] = {}) =
 
 function mockTransactionUser(update: ReturnType<typeof vi.fn> = vi.fn()) {
   return {
+    findUnique: vi.fn().mockResolvedValue({ id: "owner-123", isOwnerDriver: false }),
     findFirst: vi.fn().mockResolvedValue({ id: "chauffeur-hold" }),
     update,
   };
+}
+
+function mockQueryRaw(fallback: unknown = [{ id: "car-123" }]) {
+  return vi.fn().mockImplementation((query: { strings?: readonly string[] }) => {
+    const sql = query?.strings?.join(" ") ?? "";
+    if (sql.includes("chauffeurCount")) {
+      return [{ chauffeurCount: 2, occupiedSlotCount: 0 }];
+    }
+    return fallback;
+  });
 }
 
 const createSessionUser = (overrides: Partial<AuthSession["user"]> = {}): AuthSession["user"] => ({
@@ -343,7 +354,7 @@ describe("BookingCreationService", () => {
           },
           userReferralStats: { upsert: vi.fn() },
           user: mockTransactionUser(),
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
         };
 
         return callback(mockTx);
@@ -446,7 +457,7 @@ describe("BookingCreationService", () => {
           },
           userReferralStats: { upsert: vi.fn() },
           user: mockTransactionUser(),
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
         };
         transactionClient = mockTx;
         return callback(mockTx);
@@ -783,26 +794,19 @@ describe("BookingCreationService", () => {
       expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
     });
 
-    it("stores the selected conflict-free chauffeur on the pending booking", async () => {
+    it("leaves the chauffeur unassigned for a fleet owner who is not the driver", async () => {
       setupSuccessfulMocks();
-      const booking = createBookingInput();
-      const window = normalizeBookingTimeWindow({
-        bookingType: booking.bookingType,
-        startDate: booking.startDate,
-        endDate: booking.endDate,
-        pickupTime: booking.pickupTime,
-      });
-      const findFirst = vi.fn().mockResolvedValue({ id: "chauffeur-selected" });
       const createBooking = vi.fn().mockResolvedValue({
         id: "booking-123",
         bookingReference: "BK-123456-ABC",
         totalAmount: new Decimal(56437.5),
         status: BookingStatus.PENDING,
       });
+      const findFirst = vi.fn();
       mockTransaction.mockImplementation(async (callback) =>
         callback({
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -814,7 +818,65 @@ describe("BookingCreationService", () => {
             aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
           },
           userReferralStats: { upsert: vi.fn() },
-          user: { findFirst, update: vi.fn() },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({ id: "owner-123", isOwnerDriver: false }),
+            findFirst,
+            update: vi.fn(),
+          },
+        }),
+      );
+
+      await service.createBooking({
+        input: createBookingInput(),
+        sessionUser: createSessionUser(),
+      });
+
+      expect(findFirst).not.toHaveBeenCalled();
+      expect(createBooking).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          chauffeurId: null,
+        }),
+      });
+    });
+
+    it("assigns the owner-driver when that owner is the only driver", async () => {
+      setupSuccessfulMocks();
+      const booking = createBookingInput();
+      const window = normalizeBookingTimeWindow({
+        bookingType: booking.bookingType,
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+        pickupTime: booking.pickupTime,
+      });
+      const findFirst = vi.fn().mockResolvedValue({ id: "owner-123" });
+      const createBooking = vi.fn().mockResolvedValue({
+        id: "booking-123",
+        bookingReference: "BK-123456-ABC",
+        totalAmount: new Decimal(56437.5),
+        status: BookingStatus.PENDING,
+      });
+      mockTransaction.mockImplementation(async (callback) =>
+        callback({
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: mockQueryRaw(),
+          flight: {
+            upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
+            updateMany: vi.fn(),
+          },
+          booking: { create: createBooking, update: vi.fn() },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: {
+            create: vi.fn(),
+            aggregate: vi.fn().mockResolvedValue({ _sum: { amount: new Decimal(10000) } }),
+          },
+          userReferralStats: { upsert: vi.fn() },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({ id: "owner-123", isOwnerDriver: true }),
+            findFirst,
+            update: vi.fn(),
+          },
         }),
       );
 
@@ -822,6 +884,7 @@ describe("BookingCreationService", () => {
 
       expect(findFirst).toHaveBeenCalledWith({
         where: {
+          id: "owner-123",
           chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
           ...availableFleetChauffeurWhere({
             ownerId: "owner-123",
@@ -830,30 +893,69 @@ describe("BookingCreationService", () => {
           }),
         },
         select: { id: true },
-        orderBy: [{ isOwnerDriver: "desc" }, { id: "asc" }],
       });
       expect(createBooking).toHaveBeenCalledWith({
         data: expect.objectContaining({
           status: BookingStatus.PENDING,
           paymentStatus: PaymentStatus.UNPAID,
-          chauffeurId: "chauffeur-selected",
+          chauffeurId: "owner-123",
         }),
       });
     });
 
-    it("rejects with CAR_NOT_AVAILABLE when no chauffeur is free for the window", async () => {
+    it("rejects a fleet booking when every chauffeur slot is already taken", async () => {
       setupSuccessfulMocks();
       const createBooking = vi.fn();
       mockTransaction.mockImplementation(async (callback) =>
         callback({
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: vi.fn().mockImplementation((query: { strings?: readonly string[] }) => {
+            const sql = query?.strings?.join(" ") ?? "";
+            if (sql.includes("chauffeurCount")) {
+              return [{ chauffeurCount: 1, occupiedSlotCount: 1 }];
+            }
+            return [{ id: "car-123" }];
+          }),
           flight: { upsert: vi.fn(), updateMany: vi.fn() },
           booking: { create: createBooking, update: vi.fn() },
           referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
           referralReward: { create: vi.fn() },
           userReferralStats: { upsert: vi.fn() },
-          user: { findFirst: vi.fn().mockResolvedValue(null), update: vi.fn() },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({ id: "owner-123", isOwnerDriver: false }),
+            findFirst: vi.fn(),
+            update: vi.fn(),
+          },
+        }),
+      );
+
+      const error = await service
+        .createBooking({ input: createBookingInput(), sessionUser: createSessionUser() })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CarNotAvailableException);
+      expect((error as CarNotAvailableException).getErrorCode()).toBe("CAR_NOT_AVAILABLE");
+      expect(createBooking).not.toHaveBeenCalled();
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("rejects an owner-driver booking when that owner is not free", async () => {
+      setupSuccessfulMocks();
+      const createBooking = vi.fn();
+      mockTransaction.mockImplementation(async (callback) =>
+        callback({
+          car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
+          $queryRaw: mockQueryRaw(),
+          flight: { upsert: vi.fn(), updateMany: vi.fn() },
+          booking: { create: createBooking, update: vi.fn() },
+          referralProgram: { findMany: vi.fn().mockResolvedValue([]) },
+          referralReward: { create: vi.fn() },
+          userReferralStats: { upsert: vi.fn() },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({ id: "owner-123", isOwnerDriver: true }),
+            findFirst: vi.fn().mockResolvedValue(null),
+            update: vi.fn(),
+          },
         }),
       );
 
@@ -1041,7 +1143,7 @@ describe("BookingCreationService", () => {
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1243,7 +1345,7 @@ describe("BookingCreationService", () => {
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "BA74-20250201" }),
             updateMany: vi.fn(),
@@ -1449,11 +1551,9 @@ describe("BookingCreationService", () => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Mock for pessimistic locking query - returns fresh user data showing discount not used
-          $queryRaw: vi
-            .fn()
-            .mockResolvedValue([
-              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
-            ]),
+          $queryRaw: mockQueryRaw([
+            { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+          ]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1547,11 +1647,9 @@ describe("BookingCreationService", () => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Mock for pessimistic locking query - returns fresh user data showing discount not used
-          $queryRaw: vi
-            .fn()
-            .mockResolvedValue([
-              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
-            ]),
+          $queryRaw: mockQueryRaw([
+            { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+          ]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1633,11 +1731,9 @@ describe("BookingCreationService", () => {
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi
-            .fn()
-            .mockResolvedValue([
-              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
-            ]),
+          $queryRaw: mockQueryRaw([
+            { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: false },
+          ]),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1715,11 +1811,9 @@ describe("BookingCreationService", () => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
           // Fresh DB query with FOR UPDATE shows discount was already used by concurrent request
-          $queryRaw: vi
-            .fn()
-            .mockResolvedValue([
-              { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: true },
-            ]),
+          $queryRaw: mockQueryRaw([
+            { id: "user-123", referredByUserId: "referrer-123", referralDiscountUsed: true },
+          ]),
           flight: { upsert: vi.fn(), updateMany: vi.fn() },
           booking: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
           referralReward: { create: vi.fn() },
@@ -1768,7 +1862,7 @@ describe("BookingCreationService", () => {
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),
@@ -1845,7 +1939,7 @@ describe("BookingCreationService", () => {
       mockTransaction.mockImplementation(async (callback) => {
         const mockTx = {
           car: { findUnique: vi.fn().mockResolvedValue(createCar()) },
-          $queryRaw: vi.fn().mockResolvedValue([{ id: "car-123" }]),
+          $queryRaw: mockQueryRaw(),
           flight: {
             upsert: vi.fn().mockResolvedValue({ id: "flight-123" }),
             updateMany: vi.fn(),

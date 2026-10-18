@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { type Booking, ChauffeurApprovalStatus } from "@prisma/client";
+import { type Booking, ChauffeurApprovalStatus, Prisma } from "@prisma/client";
 import { subMinutes } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import Decimal from "decimal.js";
@@ -50,7 +50,11 @@ import type {
   ValidateAndGetFlightDataParams,
 } from "./booking.interface";
 import { BookingCalculationService } from "./booking-calculation.service";
-import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
+import {
+  availableFleetChauffeurWhere,
+  fleetChauffeurCapacityQuery,
+  readFleetChauffeurCapacity,
+} from "./booking-chauffeur-availability";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
 import { validateCreditsRequireAuthentication } from "./booking-credits.auth";
 import { BookingEligibilityService } from "./booking-eligibility.service";
@@ -459,6 +463,67 @@ export class BookingCreationService {
   }
 
   /**
+   * Owner-drivers are the only driver, so the trip holds them immediately.
+   * Every other fleet leaves the chauffeur empty. The owner assigns someone
+   * after the booking email, once they have confirmed who is actually free.
+   * Those fleets still cannot sell more overlapping trips than they have
+   * approved chauffeurs.
+   */
+  private async resolveChauffeurForNewBooking(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    booking: CreateBookingInput,
+  ): Promise<string | null> {
+    const owner = await tx.user.findUnique({
+      where: { id: ownerId },
+      select: { id: true, isOwnerDriver: true },
+    });
+    if (!owner) {
+      throw new BookingCreationFailedException("Fleet owner not found during booking creation.");
+    }
+
+    if (owner.isOwnerDriver) {
+      const chauffeur = await tx.user.findFirst({
+        where: {
+          id: owner.id,
+          chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
+          ...availableFleetChauffeurWhere({
+            ownerId: owner.id,
+            startDate: booking.startDate,
+            endDate: booking.endDate,
+          }),
+        },
+        select: { id: true },
+      });
+      if (!chauffeur) {
+        throw new CarNotAvailableException(
+          booking.carId,
+          "No chauffeur is available for the selected time. Please choose another vehicle or time.",
+        );
+      }
+      return chauffeur.id;
+    }
+
+    const capacityRows = await tx.$queryRaw<
+      Array<{ chauffeurCount: number; occupiedSlotCount: number }>
+    >(
+      fleetChauffeurCapacityQuery(ownerId, {
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+      }),
+    );
+    const capacity = readFleetChauffeurCapacity(capacityRows);
+    if (capacity.occupiedSlotCount >= capacity.chauffeurCount) {
+      throw new CarNotAvailableException(
+        booking.carId,
+        "No chauffeur is available for the selected time. Please choose another vehicle or time.",
+      );
+    }
+
+    return null;
+  }
+
+  /**
    * Create the booking record with payment intent.
    *
    * This method separates DB operations from external HTTP calls:
@@ -524,24 +589,7 @@ export class BookingCreationService {
         );
         const freshCar = await this.persistenceService.fetchCarWithPricing(booking.carId, tx);
         await lockUserRow(tx, freshCar.ownerId);
-        const chauffeur = await tx.user.findFirst({
-          where: {
-            chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
-            ...availableFleetChauffeurWhere({
-              ownerId: freshCar.ownerId,
-              startDate: booking.startDate,
-              endDate: booking.endDate,
-            }),
-          },
-          select: { id: true },
-          orderBy: [{ isOwnerDriver: "desc" }, { id: "asc" }],
-        });
-        if (!chauffeur) {
-          throw new CarNotAvailableException(
-            booking.carId,
-            "No chauffeur is available for the selected time. Please choose another vehicle or time.",
-          );
-        }
+        const chauffeurId = await this.resolveChauffeurForNewBooking(tx, freshCar.ownerId, booking);
         const verifiedAddons = await this.addonsService.resolveBookingAddons(
           booking.addonIds,
           booking.bookingType,
@@ -638,7 +686,7 @@ export class BookingCreationService {
         const bookingRecord = await this.persistenceService.createBookingRecord(tx, {
           bookingReference,
           car: freshCar,
-          chauffeurId: chauffeur.id,
+          chauffeurId,
           userId: sessionUser?.id ?? null,
           guestUser,
           booking,
