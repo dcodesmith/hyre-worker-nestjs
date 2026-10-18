@@ -39,14 +39,14 @@ export function availableFleetChauffeurWhere({
 }
 
 type FleetChauffeurCapacity = {
-  bookingCount: number;
   chauffeurCount: number;
+  occupiedSlotCount: number;
 };
 
 /**
  * Chauffeur supply and overlapping trip demand for one fleet that does not
- * drive itself. Demand counts every blocking booking on the owner's cars,
- * including trips that do not yet name a chauffeur.
+ * drive itself. Each unassigned booking holds one anonymous slot, while
+ * multiple bookings assigned to the same chauffeur occupy one slot.
  */
 export function fleetChauffeurCapacityQuery(
   ownerId: string,
@@ -56,7 +56,7 @@ export function fleetChauffeurCapacityQuery(
   return Prisma.sql`
     SELECT
       (${approvedFleetChauffeurCountSql(Prisma.sql`${ownerId}`)}) AS "chauffeurCount",
-      (${overlappingFleetBookingCountSql(Prisma.sql`${ownerId}`, bufferedStart, bufferedEnd)}) AS "bookingCount"
+      (${overlappingFleetOccupiedSlotCountSql(Prisma.sql`${ownerId}`, bufferedStart, bufferedEnd)}) AS "occupiedSlotCount"
   `;
 }
 
@@ -78,7 +78,7 @@ export function capacityExhaustedFleetOwnersQuery(interval: {
         SELECT 1 FROM "Car" car WHERE car."ownerId" = owner.id
       )
       AND (${approvedFleetChauffeurCountSql(ownerId)})
-        <= (${overlappingFleetBookingCountSql(ownerId, bufferedStart, bufferedEnd)})
+        <= (${overlappingFleetOccupiedSlotCountSql(ownerId, bufferedStart, bufferedEnd)})
   `;
 }
 
@@ -87,8 +87,8 @@ export function readFleetChauffeurCapacity(
 ): FleetChauffeurCapacity {
   const row = rows[0];
   return {
-    bookingCount: Number(row?.bookingCount ?? 0),
     chauffeurCount: Number(row?.chauffeurCount ?? 0),
+    occupiedSlotCount: Number(row?.occupiedSlotCount ?? 0),
   };
 }
 
@@ -102,7 +102,7 @@ function approvedFleetChauffeurCountSql(ownerId: Prisma.Sql): Prisma.Sql {
   `;
 }
 
-function overlappingFleetBookingCountSql(
+function overlappingFleetOccupiedSlotCountSql(
   ownerId: Prisma.Sql,
   bufferedStart: Date,
   bufferedEnd: Date,
@@ -111,7 +111,11 @@ function overlappingFleetBookingCountSql(
     BLOCKING_BOOKING_STATUSES.map((status) => `'${status}'::"BookingStatus"`).join(", "),
   );
   return Prisma.sql`
-    SELECT COUNT(*)::int
+    SELECT (
+      COUNT(*) FILTER (WHERE booking."chauffeurId" IS NULL)
+      + COUNT(DISTINCT booking."chauffeurId")
+        FILTER (WHERE booking."chauffeurId" IS NOT NULL)
+    )::int
     FROM "Booking" booking
     INNER JOIN "Car" car ON car.id = booking."carId"
     WHERE car."ownerId" = ${ownerId}

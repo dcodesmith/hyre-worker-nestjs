@@ -89,7 +89,7 @@ describe("availableFleetChauffeurWhere", () => {
     });
   });
 
-  it("counts approved chauffeurs against overlapping trips, assigned or not", () => {
+  it("counts unassigned trips and distinct assigned chauffeurs as occupied slots", () => {
     const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
       startDate,
       endDate,
@@ -99,7 +99,9 @@ describe("availableFleetChauffeurWhere", () => {
     );
 
     expect(text).toContain("chauffeurCount");
-    expect(text).toContain("bookingCount");
+    expect(text).toContain("occupiedSlotCount");
+    expect(text).toContain(`COUNT(*) FILTER (WHERE booking."chauffeurId" IS NULL)`);
+    expect(text).toContain(`COUNT(DISTINCT booking."chauffeurId")`);
     expect(text).toContain(`'APPROVED'::"ChauffeurApprovalStatus"`);
     expect(text).toContain(`'PENDING'::"BookingStatus"`);
     expect(text).toContain(`'CONFIRMED'::"BookingStatus"`);
@@ -118,10 +120,13 @@ describe("availableFleetChauffeurWhere", () => {
   });
 
   it("reads missing capacity counts as zero", () => {
-    expect(readFleetChauffeurCapacity([])).toEqual({ bookingCount: 0, chauffeurCount: 0 });
-    expect(readFleetChauffeurCapacity([{ bookingCount: 2, chauffeurCount: 3 }])).toEqual({
-      bookingCount: 2,
+    expect(readFleetChauffeurCapacity([])).toEqual({
+      chauffeurCount: 0,
+      occupiedSlotCount: 0,
+    });
+    expect(readFleetChauffeurCapacity([{ chauffeurCount: 3, occupiedSlotCount: 2 }])).toEqual({
       chauffeurCount: 3,
+      occupiedSlotCount: 2,
     });
   });
 });

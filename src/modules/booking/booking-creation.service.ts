@@ -505,7 +505,7 @@ export class BookingCreationService {
     }
 
     const capacityRows = await tx.$queryRaw<
-      Array<{ bookingCount: number; chauffeurCount: number }>
+      Array<{ chauffeurCount: number; occupiedSlotCount: number }>
     >(
       fleetChauffeurCapacityQuery(ownerId, {
         startDate: booking.startDate,
@@ -513,7 +513,7 @@ export class BookingCreationService {
       }),
     );
     const capacity = readFleetChauffeurCapacity(capacityRows);
-    if (capacity.bookingCount >= capacity.chauffeurCount) {
+    if (capacity.occupiedSlotCount >= capacity.chauffeurCount) {
       throw new CarNotAvailableException(
         booking.carId,
         "No chauffeur is available for the selected time. Please choose another vehicle or time.",

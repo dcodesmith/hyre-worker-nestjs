@@ -111,7 +111,7 @@ function mockQueryRaw(fallback: unknown = [{ id: "car-123" }]) {
   return vi.fn().mockImplementation((query: { strings?: readonly string[] }) => {
     const sql = query?.strings?.join(" ") ?? "";
     if (sql.includes("chauffeurCount")) {
-      return [{ chauffeurCount: 2, bookingCount: 0 }];
+      return [{ chauffeurCount: 2, occupiedSlotCount: 0 }];
     }
     return fallback;
   });
@@ -912,7 +912,7 @@ describe("BookingCreationService", () => {
           $queryRaw: vi.fn().mockImplementation((query: { strings?: readonly string[] }) => {
             const sql = query?.strings?.join(" ") ?? "";
             if (sql.includes("chauffeurCount")) {
-              return [{ chauffeurCount: 1, bookingCount: 1 }];
+              return [{ chauffeurCount: 1, occupiedSlotCount: 1 }];
             }
             return [{ id: "car-123" }];
           }),
