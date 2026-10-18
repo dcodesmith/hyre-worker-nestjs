@@ -18,10 +18,15 @@ import {
   lockUserRow,
 } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
+import {
+  type ChauffeurDecisionEmail,
+  ChauffeurDecisionEmailService,
+} from "./chauffeur-decision-email.service";
 
 type AccountConflictResult = {
   handled: boolean;
   activated: boolean;
+  decisionEmail: ChauffeurDecisionEmail | null;
   selfieObjectKey: string | null;
 };
 type ChauffeurErrorCodeValue = (typeof ChauffeurErrorCode)[keyof typeof ChauffeurErrorCode];
@@ -31,6 +36,7 @@ export class ChauffeurActivationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly storageService: StorageService,
+    private readonly decisionEmailService: ChauffeurDecisionEmailService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(ChauffeurActivationService.name);
@@ -41,6 +47,7 @@ export class ChauffeurActivationService {
     let profileObjectKey: string | null = null;
     let profileUsed = false;
     let activated: boolean;
+    let decisionEmail: ChauffeurDecisionEmail | null = null;
     try {
       const candidate = await this.databaseService.chauffeurVerification.findUnique({
         where: { id: verificationId },
@@ -81,6 +88,7 @@ export class ChauffeurActivationService {
               ? ChauffeurErrorCode.MINIMUM_AGE_NOT_MET
               : ChauffeurErrorCode.OPERATION_FAILED,
           );
+          decisionEmail = this.toDecisionEmail(verification, "REJECTED");
           return false;
         }
         const openInterventions = await tx.verificationIntervention.count({
@@ -111,6 +119,7 @@ export class ChauffeurActivationService {
             : null;
         if (existing && this.isConflictingUser(existing, verification.fleetOwnerId)) {
           selfieObjectKey = await this.failAccountConflict(tx, verification);
+          decisionEmail = this.toDecisionEmail(verification, "REJECTED");
           return false;
         }
         if (!profile || verification.selfieObjectKey !== candidate?.selfieObjectKey) return false;
@@ -161,6 +170,7 @@ export class ChauffeurActivationService {
           },
           data: { status: ProviderVerificationStatus.SUCCEEDED, failureReason: null },
         });
+        decisionEmail = this.toDecisionEmail(verification, "APPROVED");
         return true;
       });
     } catch (error) {
@@ -174,6 +184,7 @@ export class ChauffeurActivationService {
       const conflict = await this.resolveRolledBackUniqueConflict(verificationId);
       if (!conflict.handled) throw error;
       activated = conflict.activated;
+      decisionEmail = conflict.decisionEmail;
       selfieObjectKey = conflict.selfieObjectKey;
     }
 
@@ -187,7 +198,21 @@ export class ChauffeurActivationService {
         this.logger.warn({ verificationId }, "Failed to purge terminal chauffeur selfie");
       });
     }
+    if (decisionEmail) {
+      await this.decisionEmailService.send(verificationId, decisionEmail);
+    }
     return activated;
+  }
+
+  private toDecisionEmail(
+    verification: { email: string; name: string },
+    decision: ChauffeurDecisionEmail["decision"],
+  ): ChauffeurDecisionEmail {
+    return {
+      decision,
+      email: verification.email,
+      recipientName: verification.name,
+    };
   }
 
   private lockVerification(tx: Prisma.TransactionClient, verificationId: string) {
@@ -291,10 +316,20 @@ export class ChauffeurActivationService {
         where: { id: verificationId },
       });
       if (!verification) {
-        return { handled: false, activated: false, selfieObjectKey: null };
+        return {
+          handled: false,
+          activated: false,
+          decisionEmail: null,
+          selfieObjectKey: null,
+        };
       }
       if (verification.status === ChauffeurVerificationStatus.APPROVED) {
-        return { handled: true, activated: true, selfieObjectKey: null };
+        return {
+          handled: true,
+          activated: true,
+          decisionEmail: null,
+          selfieObjectKey: null,
+        };
       }
 
       const approvedNinConflict = verification.ninHash
@@ -332,18 +367,29 @@ export class ChauffeurActivationService {
       const phoneConflict =
         verifiedPhoneOwner !== null && verifiedPhoneOwner.id !== existingUser?.id;
       if (!approvedNinConflict && !userConflict && !phoneConflict) {
-        return { handled: false, activated: false, selfieObjectKey: null };
+        return {
+          handled: false,
+          activated: false,
+          decisionEmail: null,
+          selfieObjectKey: null,
+        };
       }
       if (
         verification.driversLicenseDecision !== VerificationDecisionStatus.APPROVED ||
         verification.faceDecision !== VerificationDecisionStatus.APPROVED
       ) {
-        return { handled: true, activated: false, selfieObjectKey: null };
+        return {
+          handled: true,
+          activated: false,
+          decisionEmail: null,
+          selfieObjectKey: null,
+        };
       }
 
       return {
         handled: true,
         activated: false,
+        decisionEmail: this.toDecisionEmail(verification, "REJECTED"),
         selfieObjectKey: await this.failAccountConflict(tx, verification),
       };
     });
