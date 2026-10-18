@@ -33,6 +33,7 @@ describe("CarSearchService", () => {
     user: {
       findMany: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     booking: {
       findMany: vi.fn(),
     },
@@ -127,6 +128,7 @@ describe("CarSearchService", () => {
     vi.clearAllMocks();
     mockCarIdCounter = 0;
     databaseServiceMock.booking.findMany.mockResolvedValue([]);
+    databaseServiceMock.$queryRaw.mockResolvedValue([]);
     databaseServiceMock.car.groupBy.mockResolvedValue([]);
     databaseServiceMock.car.aggregate.mockResolvedValue({ _min: {}, _max: {} });
     promotionServiceMock.getActivePromotionsForCars.mockResolvedValue(new Map());
@@ -352,6 +354,31 @@ describe("CarSearchService", () => {
             AND: expect.arrayContaining([
               expect.objectContaining({
                 ownerId: { notIn: ["owner-busy"] },
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it("hides a fleet whose unassigned bookings already use every chauffeur", async () => {
+      databaseServiceMock.user.findMany.mockResolvedValueOnce([{ id: "owner-busy" }]);
+      databaseServiceMock.$queryRaw.mockResolvedValueOnce([{ id: "owner-full" }]);
+      databaseServiceMock.car.count.mockResolvedValueOnce(1);
+      databaseServiceMock.car.findMany.mockResolvedValueOnce([createMockCar({ id: "car-1" })]);
+
+      await service.searchCars({
+        from: new Date("2024-03-01"),
+        page: 1,
+        limit: 12,
+      });
+
+      expect(databaseServiceMock.car.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                ownerId: { notIn: ["owner-busy", "owner-full"] },
               }),
             ]),
           }),

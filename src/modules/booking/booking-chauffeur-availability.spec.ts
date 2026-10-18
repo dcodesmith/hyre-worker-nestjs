@@ -1,7 +1,44 @@
+import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { BLOCKING_BOOKING_STATUSES } from "./booking.const";
-import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
+import {
+  availableFleetChauffeurWhere,
+  capacityExhaustedFleetOwnersQuery,
+  fleetChauffeurCapacityQuery,
+  readFleetChauffeurCapacity,
+} from "./booking-chauffeur-availability";
+
+function isSql(value: unknown): value is Prisma.Sql {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "strings" in value &&
+    "values" in value &&
+    Array.isArray(value.strings) &&
+    Array.isArray(value.values)
+  );
+}
+
+function flattenSql(query: Prisma.Sql): { text: string; values: unknown[] } {
+  const values: unknown[] = [];
+  const text = query.strings
+    .map((part, index) => {
+      const value = query.values[index];
+      if (isSql(value)) {
+        const nested = flattenSql(value);
+        values.push(...nested.values);
+        return part + nested.text;
+      }
+      if (index < query.values.length) {
+        values.push(value);
+        return part;
+      }
+      return part;
+    })
+    .join("");
+  return { text, values };
+}
 
 describe("availableFleetChauffeurWhere", () => {
   const startDate = new Date("2026-04-01T09:00:00.000Z");
@@ -49,6 +86,42 @@ describe("availableFleetChauffeurWhere", () => {
           id: { not: "booking-1" },
         }),
       },
+    });
+  });
+
+  it("counts approved chauffeurs against overlapping trips, assigned or not", () => {
+    const { bufferedStart, bufferedEnd } = buildBookingConflictQueryInterval({
+      startDate,
+      endDate,
+    });
+    const { text, values } = flattenSql(
+      fleetChauffeurCapacityQuery("owner-1", { startDate, endDate }),
+    );
+
+    expect(text).toContain("chauffeurCount");
+    expect(text).toContain("bookingCount");
+    expect(text).toContain(`'APPROVED'::"ChauffeurApprovalStatus"`);
+    expect(text).toContain(`'PENDING'::"BookingStatus"`);
+    expect(text).toContain(`'CONFIRMED'::"BookingStatus"`);
+    expect(text).toContain(`'ACTIVE'::"BookingStatus"`);
+    expect(text).toContain(`chauffeur."chauffeurDisabledAt" IS NULL`);
+    expect(values).toEqual(expect.arrayContaining(["owner-1", bufferedEnd, bufferedStart]));
+  });
+
+  it("finds non-driving fleets with no chauffeur capacity left", () => {
+    const { text } = flattenSql(capacityExhaustedFleetOwnersQuery({ startDate, endDate }));
+
+    expect(text).toContain(`owner."isOwnerDriver" = false`);
+    expect(text).toContain("<=");
+    expect(text).toContain(`'APPROVED'::"ChauffeurApprovalStatus"`);
+    expect(text).not.toContain("chauffeurCount");
+  });
+
+  it("reads missing capacity counts as zero", () => {
+    expect(readFleetChauffeurCapacity([])).toEqual({ bookingCount: 0, chauffeurCount: 0 });
+    expect(readFleetChauffeurCapacity([{ bookingCount: 2, chauffeurCount: 3 }])).toEqual({
+      bookingCount: 2,
+      chauffeurCount: 3,
     });
   });
 });

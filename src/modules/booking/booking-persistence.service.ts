@@ -130,7 +130,7 @@ export class BookingPersistenceService {
     params: {
       bookingReference: string;
       car: CarWithPricing;
-      chauffeurId: string;
+      chauffeurId: string | null;
       userId: string | null;
       guestUser: {
         email: string;
@@ -154,7 +154,7 @@ export class BookingPersistenceService {
   private buildBookingData(params: {
     bookingReference: string;
     car: CarWithPricing;
-    chauffeurId: string;
+    chauffeurId: string | null;
     userId: string | null;
     guestUser: {
       email: string;
