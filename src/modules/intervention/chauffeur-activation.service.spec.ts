@@ -15,10 +15,23 @@ import { ChauffeurErrorCode } from "../chauffeur/chauffeur.error";
 import { DatabaseService } from "../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
+import { ChauffeurDecisionEmailService } from "./chauffeur-decision-email.service";
 
 const VERIFICATION_ID = "018f47a2-7b3c-7d4e-8f90-1234567894a1";
 const OWNER_ID = "018f47a2-7b3c-7d4e-8f90-1234567894b1";
 const SELFIE_KEY = "fleet/selfie.webp";
+const APPLICANT_EMAIL = "ada@example.com";
+const APPLICANT_NAME = "Ada Lovelace";
+const APPROVED_DECISION = {
+  decision: "APPROVED",
+  email: APPLICANT_EMAIL,
+  recipientName: APPLICANT_NAME,
+};
+const REJECTED_DECISION = {
+  decision: "REJECTED",
+  email: APPLICANT_EMAIL,
+  recipientName: APPLICANT_NAME,
+};
 
 type RawQuery = { strings: readonly string[]; values: readonly unknown[] };
 
@@ -40,7 +53,8 @@ function verification(overrides: Record<string, unknown> = {}) {
   return {
     id: VERIFICATION_ID,
     fleetOwnerId: OWNER_ID,
-    email: "ada@example.com",
+    email: APPLICANT_EMAIL,
+    name: APPLICANT_NAME,
     phoneNumber: "+2348012345678",
     phoneVerifiedAt: new Date("2026-09-01T02:00:00Z"),
     termsAcceptedAt: new Date("2026-09-01T01:00:00Z"),
@@ -72,6 +86,7 @@ describe("ChauffeurActivationService", () => {
     deleteObjectByKey: ReturnType<typeof vi.fn>;
     promotePrivateImage: ReturnType<typeof vi.fn>;
   };
+  let decisionEmailService: { send: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     database = {
@@ -115,12 +130,14 @@ describe("ChauffeurActivationService", () => {
         url: "https://cdn.example/profile.webp",
       }),
     };
+    decisionEmailService = { send: vi.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChauffeurActivationService,
         { provide: DatabaseService, useValue: database },
         { provide: StorageService, useValue: storageService },
+        { provide: ChauffeurDecisionEmailService, useValue: decisionEmailService },
       ],
     })
       .useMocker(mockPinoLoggerToken)
@@ -142,6 +159,7 @@ describe("ChauffeurActivationService", () => {
       expect(database.user.create).not.toHaveBeenCalled();
       expect(database.verificationIntervention.count).not.toHaveBeenCalled();
       expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
+      expect(decisionEmailService.send).not.toHaveBeenCalled();
     },
   );
 
@@ -161,6 +179,7 @@ describe("ChauffeurActivationService", () => {
     expect(database.user.findFirst).not.toHaveBeenCalled();
     expect(database.user.create).not.toHaveBeenCalled();
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("profile-key");
+    expect(decisionEmailService.send).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -216,6 +235,8 @@ describe("ChauffeurActivationService", () => {
         }),
       });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+      expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+      expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, REJECTED_DECISION);
     },
   );
 
@@ -243,7 +264,7 @@ describe("ChauffeurActivationService", () => {
     const created = database.user.create.mock.calls[0][0].data;
     expect(created).toEqual(
       expect.objectContaining({
-        email: "ada@example.com",
+        email: APPLICANT_EMAIL,
         name: "ADA LOVELACE",
         fleetOwnerId: OWNER_ID,
         chauffeurApprovalStatus: ChauffeurApprovalStatus.APPROVED,
@@ -273,6 +294,8 @@ describe("ChauffeurActivationService", () => {
       data: { status: ProviderVerificationStatus.SUCCEEDED, failureReason: null },
     });
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, APPROVED_DECISION);
   });
 
   it("activates an existing eligible user instead of creating another", async () => {
@@ -298,6 +321,8 @@ describe("ChauffeurActivationService", () => {
       }),
       select: { id: true },
     });
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, APPROVED_DECISION);
   });
 
   it("does not create a second chauffeur when activation already succeeded", async () => {
@@ -323,6 +348,8 @@ describe("ChauffeurActivationService", () => {
     await expect(service.activateIfEligible(VERIFICATION_ID)).resolves.toBe(true);
 
     expect(database.user.create).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, APPROVED_DECISION);
   });
 
   it.each([
@@ -378,6 +405,8 @@ describe("ChauffeurActivationService", () => {
       }),
     });
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, REJECTED_DECISION);
   });
 
   it("fails closed when the verified phone belongs to a different account", async () => {
@@ -412,6 +441,8 @@ describe("ChauffeurActivationService", () => {
       }),
     });
     expect(storageService.deleteObjectByKey).toHaveBeenCalledWith(SELFIE_KEY);
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, REJECTED_DECISION);
   });
 
   it("does not treat the chauffeur's own verified phone as a conflict", async () => {
@@ -434,6 +465,7 @@ describe("ChauffeurActivationService", () => {
 
     await expect(service.activateIfEligible(VERIFICATION_ID)).rejects.toBe(uniqueError);
     expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
+    expect(decisionEmailService.send).not.toHaveBeenCalled();
   });
 
   it("ignores an unverified phone when resolving a rolled-back unique conflict", async () => {
@@ -454,6 +486,7 @@ describe("ChauffeurActivationService", () => {
       select: { id: true },
     });
     expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
+    expect(decisionEmailService.send).not.toHaveBeenCalled();
   });
 
   it("logs a selfie purge failure without failing the activation", async () => {
@@ -465,5 +498,7 @@ describe("ChauffeurActivationService", () => {
       { verificationId: VERIFICATION_ID },
       "Failed to purge terminal chauffeur selfie",
     );
+    expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, APPROVED_DECISION);
   });
 });

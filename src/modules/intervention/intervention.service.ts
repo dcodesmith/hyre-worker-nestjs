@@ -21,6 +21,10 @@ import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import { StorageService } from "../storage/storage.service";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
+import {
+  type ChauffeurDecisionEmail,
+  ChauffeurDecisionEmailService,
+} from "./chauffeur-decision-email.service";
 import type { ApproveInterventionDto, ListInterventionsDto } from "./intervention.dto";
 import {
   InterventionAlreadyResolvedException,
@@ -72,6 +76,7 @@ export class InterventionService {
     private readonly emailService: EmailService,
     private readonly storageService: StorageService,
     private readonly chauffeurActivationService: ChauffeurActivationService,
+    private readonly chauffeurDecisionEmailService: ChauffeurDecisionEmailService,
     private readonly logger: PinoLogger,
   ) {
     this.encryptionKey = Buffer.from(
@@ -396,11 +401,15 @@ export class InterventionService {
     verificationId: string,
     reason: string,
     decision: "FACE" | "LICENSE",
-  ): Promise<string | null> {
+  ): Promise<{
+    decisionEmail: ChauffeurDecisionEmail;
+    selfieObjectKey: string | null;
+  }> {
     const verification = await tx.chauffeurVerification.findUnique({
       where: { id: verificationId },
-      select: { selfieObjectKey: true },
+      select: { email: true, name: true, selfieObjectKey: true },
     });
+    if (!verification) throw new InterventionNotFoundException();
     await tx.chauffeurVerification.update({
       where: { id: verificationId },
       data: {
@@ -433,7 +442,14 @@ export class InterventionService {
         resolutionNotes: reason,
       },
     });
-    return verification?.selfieObjectKey ?? null;
+    return {
+      decisionEmail: {
+        decision: "REJECTED",
+        email: verification.email,
+        recipientName: verification.name,
+      },
+      selfieObjectKey: verification.selfieObjectKey,
+    };
   }
 
   private async purgeSelfie(key: string, verificationId: string): Promise<void> {
@@ -771,7 +787,12 @@ export class InterventionService {
               resolutionSource: "ALREADY_APPROVED",
             },
           });
-          return { won: false, selfieObjectKey: null, verificationId: null };
+          return {
+            won: false,
+            decisionEmail: null,
+            selfieObjectKey: null,
+            verificationId: null,
+          };
         }
       }
       const won = await tx.verificationIntervention.updateMany({
@@ -786,23 +807,30 @@ export class InterventionService {
         },
       });
       if (won.count === 0) {
-        return { won: false, selfieObjectKey: null, verificationId: null };
+        return {
+          won: false,
+          decisionEmail: null,
+          selfieObjectKey: null,
+          verificationId: null,
+        };
       }
       if (intervention.chauffeurVerificationId) {
+        const rejected = await this.rejectChauffeurInTransaction(
+          tx,
+          intervention.chauffeurVerificationId,
+          "STAFF_REJECTED",
+          intervention.kind === VerificationInterventionKind.CHAUFFEUR_FACE ? "FACE" : "LICENSE",
+        );
         return {
           won: true,
-          selfieObjectKey: await this.rejectChauffeurInTransaction(
-            tx,
-            intervention.chauffeurVerificationId,
-            "STAFF_REJECTED",
-            intervention.kind === VerificationInterventionKind.CHAUFFEUR_FACE ? "FACE" : "LICENSE",
-          ),
+          ...rejected,
           verificationId: intervention.chauffeurVerificationId,
         };
       }
       if (intervention.accountVerificationId) {
         return {
           won: true,
+          decisionEmail: null,
           selfieObjectKey: await this.rejectOwnerVerification(
             tx,
             intervention.accountVerificationId,
@@ -814,11 +842,19 @@ export class InterventionService {
           verificationId: intervention.accountVerificationId,
         };
       }
-      return { won: true, selfieObjectKey: null, verificationId: null };
+      return {
+        won: true,
+        decisionEmail: null,
+        selfieObjectKey: null,
+        verificationId: null,
+      };
     });
     if (!result.won) throw new InterventionAlreadyResolvedException();
     if (result.selfieObjectKey && result.verificationId) {
       await this.purgeSelfie(result.selfieObjectKey, result.verificationId);
+    }
+    if (result.verificationId && result.decisionEmail) {
+      await this.chauffeurDecisionEmailService.send(result.verificationId, result.decisionEmail);
     }
   }
 

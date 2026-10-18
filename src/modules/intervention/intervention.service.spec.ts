@@ -18,6 +18,7 @@ import { DatabaseService } from "../database/database.service";
 import { EmailService } from "../email/email.service";
 import { StorageService } from "../storage/storage.service";
 import { ChauffeurActivationService } from "./chauffeur-activation.service";
+import { ChauffeurDecisionEmailService } from "./chauffeur-decision-email.service";
 import {
   InterventionAlreadyResolvedException,
   InterventionEvidenceRequiredException,
@@ -79,6 +80,7 @@ describe("InterventionService", () => {
     getObjectStream: ReturnType<typeof vi.fn>;
   };
   let activation: { activateIfEligible: ReturnType<typeof vi.fn> };
+  let decisionEmailService: { send: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     database = {
@@ -148,6 +150,7 @@ describe("InterventionService", () => {
       getObjectStream: vi.fn(),
     };
     activation = { activateIfEligible: vi.fn().mockResolvedValue(true) };
+    decisionEmailService = { send: vi.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -156,6 +159,7 @@ describe("InterventionService", () => {
         { provide: EmailService, useValue: emailService },
         { provide: StorageService, useValue: storageService },
         { provide: ChauffeurActivationService, useValue: activation },
+        { provide: ChauffeurDecisionEmailService, useValue: decisionEmailService },
         {
           provide: ConfigService,
           useValue: {
@@ -666,7 +670,7 @@ describe("InterventionService", () => {
       });
     });
 
-    it("rejects an open task, purges the payload and selfie, and conflicts if already resolved", async () => {
+    it("rejects an open chauffeur task once and emails that decision after commit", async () => {
       database.verificationIntervention.findUnique.mockResolvedValue({
         id: INTERVENTION_ID,
         kind: VerificationInterventionKind.CHAUFFEUR_FACE,
@@ -674,10 +678,25 @@ describe("InterventionService", () => {
         chauffeurVerificationId: VERIFICATION_ID,
       });
       database.chauffeurVerification.findUnique.mockResolvedValue({
+        email: "ada@example.com",
+        name: "Ada Lovelace",
         selfieObjectKey: "selfie-key",
       });
+      let committed = false;
+      database.$transaction.mockImplementationOnce(
+        async (callback: (tx: typeof database) => unknown) => {
+          const result = await callback(database);
+          committed = true;
+          return result;
+        },
+      );
+      decisionEmailService.send.mockImplementation(async () => {
+        expect(committed).toBe(true);
+      });
 
-      await service.reject(INTERVENTION_ID, USER_ID, "Photo does not match");
+      await expect(
+        service.reject(INTERVENTION_ID, USER_ID, "Photo does not match"),
+      ).resolves.toBeUndefined();
 
       expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
         where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
@@ -696,11 +715,48 @@ describe("InterventionService", () => {
         }),
       });
       expect(storageService.deleteObjectByKey).toHaveBeenCalledWith("selfie-key");
+      expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+      expect(decisionEmailService.send).toHaveBeenCalledWith(VERIFICATION_ID, {
+        decision: "REJECTED",
+        email: "ada@example.com",
+        recipientName: "Ada Lovelace",
+      });
+      expect(JSON.stringify(decisionEmailService.send.mock.calls)).not.toContain(
+        "Photo does not match",
+      );
 
       database.verificationIntervention.updateMany.mockResolvedValueOnce({ count: 0 });
       await expect(service.reject(INTERVENTION_ID, USER_ID, "Again")).rejects.toBeInstanceOf(
         InterventionAlreadyResolvedException,
       );
+      expect(decisionEmailService.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not email a chauffeur when staff reject an owner verification", async () => {
+      database.verificationIntervention.findUnique.mockResolvedValue({
+        id: INTERVENTION_ID,
+        kind: VerificationInterventionKind.OWNER_DRIVER_LICENSE,
+        status: VerificationInterventionStatus.OPEN,
+        chauffeurVerificationId: null,
+        accountVerificationId: ACCOUNT_ID,
+      });
+      database.fleetOwnerAccountVerification.update.mockResolvedValue({ userId: USER_ID });
+
+      await expect(
+        service.reject(INTERVENTION_ID, USER_ID, "Licence could not be confirmed"),
+      ).resolves.toBeUndefined();
+
+      expect(database.fleetOwnerAccountVerification.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: ACCOUNT_ID },
+          data: expect.objectContaining({
+            status: AccountVerificationStatus.FAILED,
+            failureReason: "STAFF_REJECTED",
+          }),
+        }),
+      );
+      expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
+      expect(decisionEmailService.send).not.toHaveBeenCalled();
     });
 
     it("requests a retake by clearing the stored selfie so another one can be submitted", async () => {
@@ -765,6 +821,7 @@ describe("InterventionService", () => {
       expect(database.chauffeurVerification.update).not.toHaveBeenCalled();
       expect(storageService.deleteObjectByKey).not.toHaveBeenCalled();
       expect(activation.activateIfEligible).not.toHaveBeenCalled();
+      expect(decisionEmailService.send).not.toHaveBeenCalled();
       expect(database.verificationIntervention.updateMany).toHaveBeenCalledWith({
         where: { id: INTERVENTION_ID, status: VerificationInterventionStatus.OPEN },
         data: expect.objectContaining({

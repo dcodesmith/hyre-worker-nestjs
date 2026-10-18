@@ -603,6 +603,39 @@ export async function renderChauffeurInvitationEmail(props: ChauffeurInvitationE
   return await render(<ChauffeurInvitationEmail {...props} />);
 }
 
+export interface ChauffeurDecisionEmailProps {
+  readonly decision: "APPROVED" | "REJECTED";
+  readonly recipientName: string;
+}
+
+export function ChauffeurDecisionEmail({ decision, recipientName }: ChauffeurDecisionEmailProps) {
+  const approved = decision === "APPROVED";
+  return (
+    <EmailTemplate
+      previewText={
+        approved
+          ? "Your chauffeur verification is approved"
+          : "An update on your chauffeur verification"
+      }
+      pageTitle="Chauffeur Verification Update"
+    >
+      <Heading as="h2" className="text-xl font-semibold mb-4 text-[#0B0B0F]">
+        {approved ? "You are approved" : "We could not approve your application"},{" "}
+        {firstNameFrom(recipientName)}
+      </Heading>
+      <Text className="mb-4 text-[#6A6A71]">
+        {approved
+          ? "Your chauffeur verification is complete. Your account is active, and your fleet owner can now assign you to bookings."
+          : "We could not approve your chauffeur verification. Contact Tripdly support if you believe this decision was made in error."}
+      </Text>
+    </EmailTemplate>
+  );
+}
+
+export async function renderChauffeurDecisionEmail(props: ChauffeurDecisionEmailProps) {
+  return await render(<ChauffeurDecisionEmail {...props} />);
+}
+
 export function FleetOwnerNewBookingEmail({
   booking,
 }: {
