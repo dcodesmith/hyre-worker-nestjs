@@ -74,12 +74,12 @@ describe("VerificationThrottlerGuard", () => {
     );
   });
 
-  it("uses x-forwarded-for when Fly and the edge have not supplied a client IP", async () => {
-    const makeContext = (forwardedFor: string): ExecutionContext =>
+  it("throttles the socket address and ignores a caller-supplied x-forwarded-for", async () => {
+    const makeContext = (forwardedFor: string, ip = "127.0.0.1"): ExecutionContext =>
       ({
         switchToHttp: () => ({
           getRequest: () => ({
-            ip: "127.0.0.1",
+            ip,
             method: "POST",
             route: { path: "/api/fleet-owner/vehicle-verifications" },
             headers: { "x-forwarded-for": forwardedFor },
@@ -89,12 +89,12 @@ describe("VerificationThrottlerGuard", () => {
       }) as ExecutionContext;
 
     for (let count = 0; count < VERIFICATION_THROTTLE_CONFIG.limit; count += 1) {
-      await expect(guard.canActivate(makeContext("203.0.113.50"))).resolves.toBe(true);
+      await expect(guard.canActivate(makeContext(`203.0.113.${count}`))).resolves.toBe(true);
     }
-    await expect(guard.canActivate(makeContext("203.0.113.50"))).rejects.toThrow(
+    await expect(guard.canActivate(makeContext("198.51.100.20"))).rejects.toThrow(
       ThrottlerException,
     );
-    await expect(guard.canActivate(makeContext("203.0.113.51"))).resolves.toBe(true);
+    await expect(guard.canActivate(makeContext("198.51.100.20", "192.0.2.10"))).resolves.toBe(true);
   });
 
   it("throttles the trusted edge or Fly client IP instead of x-forwarded-for", async () => {

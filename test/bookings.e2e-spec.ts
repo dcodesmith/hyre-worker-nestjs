@@ -90,6 +90,14 @@ describe("Bookings E2E Tests", () => {
   beforeEach(async () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
+    phoneVerificationService.sendCode.mockResolvedValue({
+      status: "PENDING",
+      phoneNumber: "**********5678",
+    });
+    phoneVerificationService.checkCode.mockResolvedValue({
+      status: "VERIFIED",
+      phoneNumber: "**********5678",
+    });
     emailService.sendEmail.mockClear();
     phoneVerificationService.sendCode.mockClear();
     phoneVerificationService.checkCode.mockClear();
@@ -196,6 +204,8 @@ describe("Bookings E2E Tests", () => {
         const unverified = await factory.authenticateAndGetUser(
           uniqueEmail("booking-unverified-user"),
           "user",
+          "mobile",
+          { phoneVerified: false },
         );
         const payload = await createValidBookingPayload(testCarId, unverified.cookie);
 

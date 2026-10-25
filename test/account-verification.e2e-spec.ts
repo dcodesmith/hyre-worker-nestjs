@@ -128,11 +128,17 @@ describe("Fleet-owner account verification E2E Tests", () => {
   let ipSequence = 10;
 
   function http(method: "get" | "post" | "put", path: string) {
-    return request(app.getHttpServer())[method](path).set("X-Forwarded-For", clientIp);
+    return request(app.getHttpServer())
+      [method](path)
+      .set("X-Forwarded-For", clientIp)
+      .set("fly-client-ip", clientIp);
   }
 
   function withAuth(req: request.Test, cookie: string) {
-    return req.set("Cookie", cookie).set("X-Forwarded-For", clientIp);
+    return req
+      .set("Cookie", cookie)
+      .set("X-Forwarded-For", clientIp)
+      .set("fly-client-ip", clientIp);
   }
 
   async function readyOwner(

@@ -86,7 +86,7 @@ describe("Vehicle verification E2E Tests", () => {
   });
 
   const withOwner = (req: request.Test, cookie = ownerCookie) =>
-    req.set("Cookie", cookie).set("X-Forwarded-For", clientIp);
+    req.set("Cookie", cookie).set("X-Forwarded-For", clientIp).set("fly-client-ip", clientIp);
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({

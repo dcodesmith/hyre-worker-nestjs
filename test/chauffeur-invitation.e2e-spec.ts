@@ -101,7 +101,10 @@ describe("Chauffeur invitation and verification E2E Tests", () => {
     verifyDriversLicense: vi.fn(),
   };
   function http(method: "get" | "post" | "put" | "patch", path: string) {
-    return request(app.getHttpServer())[method](path).set("X-Forwarded-For", clientIp);
+    return request(app.getHttpServer())
+      [method](path)
+      .set("X-Forwarded-For", clientIp)
+      .set("fly-client-ip", clientIp);
   }
 
   async function readyOwner(
