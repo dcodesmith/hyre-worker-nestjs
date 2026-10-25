@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { callbackUrlSchema } from "../../../common/validation/callback-url";
+import { e164PhoneNumberSchema } from "../../../common/validation/phone-number";
 import { pickupTimeRegex } from "./pickup-time.regex";
 
 const nonNegativeDecimalStringRegex = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -63,7 +64,8 @@ const dropOffSchema = z.object({
 const guestInfoSchema = z.object({
   guestEmail: z.email("Invalid email address"),
   guestName: z.string().min(2, "Name must be at least 2 characters"),
-  guestPhone: z.string().min(10, "Phone number must be at least 10 digits"),
+  guestPhone: e164PhoneNumberSchema,
+  guestPhoneVerificationToken: z.string().min(1).max(128).optional(),
 });
 
 /**

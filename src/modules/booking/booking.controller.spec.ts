@@ -1,13 +1,17 @@
-import { UnauthorizedException } from "@nestjs/common";
+import { RequestMethod, UnauthorizedException } from "@nestjs/common";
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ThrottlerGuard } from "@nestjs/throttler";
 import { BookingStatus } from "@prisma/client";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
+import { PhoneVerificationService } from "../verification/phone-verification.service";
+import { VerificationThrottlerGuard } from "../verification/verification-throttler.guard";
 import { BookingController } from "./booking.controller";
 import {
   BookingRequestInProgressException,
@@ -31,6 +35,7 @@ import {
   createGuestBookingSchema,
 } from "./dto/create-booking.dto";
 import { GuestBookingAccessService } from "./guest-booking-access.service";
+import { matchesGuestPhoneVerificationToken } from "./guest-phone-verification-token.helper";
 
 /**
  * Helper function to validate booking input (simulates the decorator behavior)
@@ -45,9 +50,15 @@ function validateBookingInput(rawBody: unknown, isAuthenticated: boolean): Creat
 
 const CAR_ID = "01994a1d-4263-7000-8000-000000000001";
 
+const GUEST_PHONE_SECRET = "guest-phone-verification-test-secret";
+
 describe("BookingController", () => {
   let controller: BookingController;
   let bookingCreationService: BookingCreationService;
+  let phoneVerificationService: {
+    sendCode: ReturnType<typeof vi.fn>;
+    checkCode: ReturnType<typeof vi.fn>;
+  };
   let bookingExtensionService: BookingExtensionService;
   let bookingReceiptService: BookingReceiptService;
   let bookingCancellationService: BookingCancellationService;
@@ -92,7 +103,7 @@ describe("BookingController", () => {
     ...createValidBookingDto(),
     guestEmail: "guest@example.com",
     guestName: "Guest User",
-    guestPhone: "08098765432",
+    guestPhone: "+2348098765432",
   });
 
   beforeEach(async () => {
@@ -125,6 +136,10 @@ describe("BookingController", () => {
       requestAccess: vi.fn(),
       getBooking: vi.fn(),
     };
+    phoneVerificationService = {
+      sendCode: vi.fn().mockResolvedValue({ status: "PENDING", phoneNumber: "**********5678" }),
+      checkCode: vi.fn().mockResolvedValue({ status: "VERIFIED", phoneNumber: "**********5678" }),
+    };
 
     const mockAuthService = {
       isInitialized: true,
@@ -147,11 +162,18 @@ describe("BookingController", () => {
         { provide: BookingUpdateService, useValue: mockBookingUpdateService },
         { provide: BookingCancellationService, useValue: mockBookingCancellationService },
         { provide: GuestBookingAccessService, useValue: mockGuestBookingAccessService },
+        { provide: PhoneVerificationService, useValue: phoneVerificationService },
+        {
+          provide: ConfigService,
+          useValue: { get: vi.fn().mockReturnValue(GUEST_PHONE_SECRET) },
+        },
         { provide: AuthService, useValue: mockAuthService },
         OptionalSessionGuard,
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: vi.fn().mockReturnValue(true) })
+      .overrideGuard(VerificationThrottlerGuard)
       .useValue({ canActivate: vi.fn().mockReturnValue(true) })
       .overrideGuard(BookingReceiptAccessGuard)
       .useValue({ canActivate: vi.fn().mockReturnValue(true) })
@@ -166,6 +188,60 @@ describe("BookingController", () => {
     bookingReceiptService = module.get<BookingReceiptService>(BookingReceiptService);
     bookingCancellationService = module.get<BookingCancellationService>(BookingCancellationService);
   });
+  describe("guest phone verification", () => {
+    const guestRequest = {
+      ip: "203.0.113.99",
+      headers: {
+        "x-forwarded-for": "203.0.113.99",
+        "fly-client-ip": "198.51.100.20",
+      },
+    } as unknown as Request;
+
+    it("reuses phone verification for guest send and check routes", async () => {
+      const send = BookingController.prototype.sendGuestPhoneVerification;
+      const check = BookingController.prototype.checkGuestPhoneVerification;
+
+      expect(Reflect.getMetadata(PATH_METADATA, send)).toBe("guest-phone-verifications");
+      expect(Reflect.getMetadata(METHOD_METADATA, send)).toBe(RequestMethod.POST);
+      expect(Reflect.getMetadata(GUARDS_METADATA, send)).toContain(VerificationThrottlerGuard);
+      expect(Reflect.getMetadata(PATH_METADATA, check)).toBe("guest-phone-verification-checks");
+      expect(Reflect.getMetadata(METHOD_METADATA, check)).toBe(RequestMethod.POST);
+      expect(Reflect.getMetadata(GUARDS_METADATA, check)).toContain(VerificationThrottlerGuard);
+
+      await expect(
+        controller.sendGuestPhoneVerification(guestRequest, { phoneNumber: "+2348012345678" }),
+      ).resolves.toEqual({ status: "PENDING", phoneNumber: "**********5678" });
+      expect(phoneVerificationService.sendCode).toHaveBeenCalledWith(
+        "guest-booking:198.51.100.20",
+        "+2348012345678",
+      );
+
+      const checked = await controller.checkGuestPhoneVerification(guestRequest, {
+        phoneNumber: "+2348012345678",
+        code: "123456",
+      });
+      expect(phoneVerificationService.checkCode).toHaveBeenCalledWith(
+        "guest-booking:198.51.100.20",
+        "+2348012345678",
+        "123456",
+      );
+      expect(
+        matchesGuestPhoneVerificationToken(
+          checked.verificationToken,
+          "+2348012345678",
+          GUEST_PHONE_SECRET,
+        ),
+      ).toBe(true);
+      expect(
+        matchesGuestPhoneVerificationToken(
+          checked.verificationToken,
+          "+2348099999999",
+          GUEST_PHONE_SECRET,
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("createBooking", () => {
     describe("authenticated user", () => {
       it("should throw BookingValidationException for invalid booking data", async () => {
@@ -212,10 +288,10 @@ describe("BookingController", () => {
         expect(() => validateBookingInput(dto, false)).toThrow(BookingValidationException);
       });
 
-      it("should validate guest phone minimum length", async () => {
+      it("requires guest phones in E.164 format", async () => {
         const dto = {
           ...createValidGuestBookingDto(),
-          guestPhone: "123", // Too short
+          guestPhone: "08098765432",
         };
 
         // Validation should throw before reaching controller

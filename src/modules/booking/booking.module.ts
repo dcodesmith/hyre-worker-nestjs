@@ -10,6 +10,7 @@ import { NotificationModule } from "../notification/notification.module";
 import { PromotionModule } from "../promotion/promotion.module";
 import { RatesModule } from "../rates/rates.module";
 import { ReferralProgramModule } from "../referral/referral-program.module";
+import { VerificationModule } from "../verification/verification.module";
 import { BookingController } from "./booking.controller";
 import { BookingCalculationService } from "./booking-calculation.service";
 import { BookingCancellationService } from "./booking-cancellation.service";
@@ -51,6 +52,7 @@ import { GuestBookingAccessService } from "./guest-booking-access.service";
     MapsModule,
     PromotionModule,
     ReferralProgramModule,
+    VerificationModule,
   ],
   controllers: [BookingController, FleetOwnerBookingController],
   providers: [

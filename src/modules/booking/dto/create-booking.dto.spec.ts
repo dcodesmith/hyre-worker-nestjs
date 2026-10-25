@@ -181,7 +181,7 @@ describe("CreateBookingSchema", () => {
         searchId,
         guestEmail: "guest@example.com",
         guestName: "Guest User",
-        guestPhone: "08012345678",
+        guestPhone: "+2348012345678",
       });
       expect(guest.success).toBe(true);
       if (guest.success) {
@@ -388,8 +388,31 @@ describe("CreateGuestBookingSchema", () => {
     expectedTotalAmount: "10000",
     guestEmail: "guest@example.com",
     guestName: "Guest User",
-    guestPhone: "08012345678",
+    guestPhone: "+2348012345678",
   };
+
+  it("requires guest phone numbers in E.164 format", () => {
+    const result = createGuestBookingSchema.safeParse({
+      ...validGuestBooking,
+      guestPhone: "08012345678",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ["guestPhone"], message: "Use E.164 format" }),
+      );
+    }
+  });
+
+  it("accepts a guest phone verification token", () => {
+    const result = createGuestBookingSchema.parse({
+      ...validGuestBooking,
+      guestPhoneVerificationToken: "verification-proof",
+    });
+
+    expect(result.guestPhoneVerificationToken).toBe("verification-proof");
+  });
 
   describe("AIRPORT_PICKUP validation", () => {
     it("should reject AIRPORT_PICKUP with sameLocation=true for guest users", () => {

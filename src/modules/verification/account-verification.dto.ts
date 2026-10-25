@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { e164PhoneNumberSchema } from "../../common/validation/phone-number";
 import { optionalDriversLicenseNumberSchema } from "../../shared/drivers-license-number";
 
 const multipartBooleanSchema = z
@@ -86,10 +87,7 @@ export const createAccountVerificationSchema = z
   .superRefine(validateDrivingCredentials);
 
 export const sendPhoneVerificationSchema = z.object({
-  phoneNumber: z
-    .string()
-    .trim()
-    .regex(/^\+[1-9]\d{7,14}$/, "Use E.164 format"),
+  phoneNumber: e164PhoneNumberSchema,
 });
 
 export const checkPhoneVerificationSchema = sendPhoneVerificationSchema.extend({

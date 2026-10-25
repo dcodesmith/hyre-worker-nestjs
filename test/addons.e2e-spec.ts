@@ -8,6 +8,7 @@ import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
+import { PhoneVerificationService } from "../src/modules/verification/phone-verification.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 const ONE_DAY_MS = 86400000;
@@ -30,6 +31,10 @@ describe("Add-ons E2E", () => {
   let userCookie: string;
   let fleetOwnerId: string;
   let carId: string;
+  const phoneVerificationService = {
+    sendCode: vi.fn().mockResolvedValue({ status: "PENDING", phoneNumber: "**********5678" }),
+    checkCode: vi.fn().mockResolvedValue({ status: "VERIFIED", phoneNumber: "**********5678" }),
+  };
 
   beforeAll(async () => {
     const emailService = { sendEmail: vi.fn().mockResolvedValue({ id: "email-1" }) };
@@ -40,6 +45,8 @@ describe("Add-ons E2E", () => {
       .useValue({ sendOTPEmail: async () => undefined })
       .overrideProvider(EmailService)
       .useValue(emailService)
+      .overrideProvider(PhoneVerificationService)
+      .useValue(phoneVerificationService)
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
@@ -53,7 +60,15 @@ describe("Add-ons E2E", () => {
     adminCookie = admin.cookie;
     adminUserId = admin.user.id;
     staffCookie = (await factory.createAuthenticatedStaff(uniqueEmail("addons-staff"))).cookie;
-    userCookie = (await factory.authenticateAndGetUser(uniqueEmail("addons-user"), "user")).cookie;
+    const user = await factory.authenticateAndGetUser(uniqueEmail("addons-user"), "user");
+    userCookie = user.cookie;
+    await databaseService.user.update({
+      where: { id: user.user.id },
+      data: {
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
+    });
     fleetOwnerId = (
       await factory.createFleetOwner({
         isOwnerDriver: true,
@@ -432,6 +447,12 @@ describe("Add-ons E2E", () => {
         });
       expect(preview.status).toBe(HttpStatus.OK);
 
+      const guestPhone = "+2348012345678";
+      const verification = await request(app.getHttpServer())
+        .post("/api/bookings/guest-phone-verification-checks")
+        .send({ phoneNumber: guestPhone, code: "123456" });
+      expect(verification.status).toBe(HttpStatus.CREATED);
+
       const created = await request(app.getHttpServer())
         .post("/api/bookings")
         .set("Idempotency-Key", randomUUID())
@@ -447,7 +468,8 @@ describe("Add-ons E2E", () => {
           expectedTotalAmount: String(preview.body.totalAmount),
           guestEmail: uniqueEmail("addons-guest"),
           guestName: "Guest User",
-          guestPhone: "08012345678",
+          guestPhone,
+          guestPhoneVerificationToken: verification.body.verificationToken,
         });
       expect(created.status).toBe(HttpStatus.CREATED);
 

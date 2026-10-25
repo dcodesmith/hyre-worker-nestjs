@@ -60,6 +60,13 @@ describe("Chauffeur capacity and manual assignment", () => {
     const user = await factory.authenticateAndGetUser(uniqueEmail("capacity-hold"), "user");
     customerId = user.user.id;
     cookie = user.cookie;
+    await databaseService.user.update({
+      where: { id: customerId },
+      data: {
+        phoneNumber: "+2348012345678",
+        phoneVerifiedAt: new Date(),
+      },
+    });
 
     vi.spyOn(app.get(FlutterwaveService), "createPaymentIntent").mockResolvedValue({
       paymentIntentId: "flw_pi_capacity",
