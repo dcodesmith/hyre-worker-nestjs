@@ -62,7 +62,10 @@ export class BookingCreationIdempotencyService {
       ...input,
       searchId: undefined,
       expectedTotalAmount: new Decimal(input.expectedTotalAmount).toString(),
-      ...(isGuestBooking(input) && { guestEmail: input.guestEmail.trim().toLowerCase() }),
+      ...(isGuestBooking(input) && {
+        guestEmail: input.guestEmail.trim().toLowerCase(),
+        guestPhoneVerificationToken: undefined,
+      }),
       context: context ?? null,
     };
 

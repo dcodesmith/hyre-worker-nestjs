@@ -12,13 +12,24 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import type { Request, Response } from "express";
+import { readClientRequest } from "../../common/client-request";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
+import type { EnvConfig } from "../../config/env.config";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
+import {
+  type CheckPhoneVerificationDto,
+  checkPhoneVerificationSchema,
+  type SendPhoneVerificationDto,
+  sendPhoneVerificationSchema,
+} from "../verification/account-verification.dto";
+import { PhoneVerificationService } from "../verification/phone-verification.service";
+import { VerificationThrottlerGuard } from "../verification/verification-throttler.guard";
 import {
   BookingRequestInProgressException,
   ExtensionRequestInProgressException,
@@ -60,6 +71,7 @@ import {
 import { type PricingPreviewBodyDto, pricingPreviewBodySchema } from "./dto/pricing-preview.dto";
 import { type UpdateBookingBodyDto, updateBookingBodySchema } from "./dto/update-booking.dto";
 import { GuestBookingAccessService } from "./guest-booking-access.service";
+import { createGuestPhoneVerificationToken } from "./guest-phone-verification-token.helper";
 
 /**
  * Controller for booking-related API endpoints.
@@ -79,7 +91,51 @@ export class BookingController {
     private readonly bookingUpdateService: BookingUpdateService,
     private readonly bookingCancellationService: BookingCancellationService,
     private readonly guestBookingAccessService: GuestBookingAccessService,
+    private readonly phoneVerificationService: PhoneVerificationService,
+    private readonly configService: ConfigService<EnvConfig, true>,
   ) {}
+
+  @Post("guest-phone-verifications")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(VerificationThrottlerGuard)
+  sendGuestPhoneVerification(
+    @Req() request: Request,
+    @ZodBody(sendPhoneVerificationSchema) body: SendPhoneVerificationDto,
+  ) {
+    return this.phoneVerificationService.sendCode(
+      this.guestPhoneSubject(request),
+      body.phoneNumber,
+    );
+  }
+
+  @Post("guest-phone-verification-checks")
+  @Header("Cache-Control", "no-store")
+  @UseGuards(VerificationThrottlerGuard)
+  async checkGuestPhoneVerification(
+    @Req() request: Request,
+    @ZodBody(checkPhoneVerificationSchema) body: CheckPhoneVerificationDto,
+  ) {
+    const result = await this.phoneVerificationService.checkCode(
+      this.guestPhoneSubject(request),
+      body.phoneNumber,
+      body.code,
+    );
+    return {
+      ...result,
+      verificationToken: createGuestPhoneVerificationToken(
+        body.phoneNumber,
+        this.configService.get("HMAC_KEY", { infer: true }),
+      ),
+    };
+  }
+
+  private guestPhoneSubject(request: Request): string {
+    const client = readClientRequest(
+      request.headers,
+      this.configService.get("EDGE_CLIENT_SECRET", { infer: true }),
+    );
+    return `guest-booking:${client.ipAddress ?? request.ip ?? "unknown"}`;
+  }
 
   /**
    * Create a new booking.

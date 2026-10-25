@@ -67,6 +67,7 @@ import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingInput, CreateGuestBookingDto } from "./dto/create-booking.dto";
 import { isGuestBooking } from "./dto/create-booking.dto";
+import { matchesGuestPhoneVerificationToken } from "./guest-phone-verification-token.helper";
 
 /**
  * Service for orchestrating the complete booking creation flow.
@@ -125,7 +126,6 @@ export class BookingCreationService {
     const normalizedBooking = this.normalizeInput(input);
     this.validationService.validateGuestRequirements(normalizedBooking, sessionUser);
     validateCreditsRequireAuthentication(normalizedBooking.useCredits, sessionUser);
-    await this.ensureAuthenticatedPhoneVerified(sessionUser);
     const customerScope = this.idempotencyService.getCustomerScope(normalizedBooking, sessionUser);
     const requestHash = this.idempotencyService.createRequestHash(
       normalizedBooking,
@@ -145,6 +145,8 @@ export class BookingCreationService {
     }
 
     try {
+      await this.ensureAuthenticatedPhoneVerified(sessionUser);
+      this.ensureGuestPhoneVerified(normalizedBooking, sessionUser, context);
       this.logger.info(
         {
           carId: normalizedBooking.carId,
@@ -313,6 +315,27 @@ export class BookingCreationService {
     if (!user?.phoneNumber || !user.phoneVerifiedAt) {
       throw new BookingPhoneVerificationRequiredException();
     }
+  }
+
+  private ensureGuestPhoneVerified(
+    booking: CreateBookingInput,
+    sessionUser: AuthSession["user"] | null,
+    context: BookingCreationContext | undefined,
+  ): void {
+    if (
+      sessionUser ||
+      context?.guestContactSource === "WHATSAPP_AGENT" ||
+      (isGuestBooking(booking) &&
+        matchesGuestPhoneVerificationToken(
+          booking.guestPhoneVerificationToken,
+          booking.guestPhone,
+          this.configService.get("HMAC_KEY", { infer: true }),
+        ))
+    ) {
+      return;
+    }
+
+    throw new BookingPhoneVerificationRequiredException();
   }
 
   private calculateFinancials({

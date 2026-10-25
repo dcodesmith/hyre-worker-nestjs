@@ -6,7 +6,7 @@ import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { BookingRequestInProgressException, IdempotencyKeyReusedException } from "./booking.error";
 import { BookingCreationIdempotencyService } from "./booking-creation-idempotency.service";
-import type { CreateBookingDto } from "./dto/create-booking.dto";
+import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
 
 const reservationExpiresAt = "2026-08-02T20:10:00.000Z";
 
@@ -108,6 +108,24 @@ describe("BookingCreationIdempotencyService", () => {
 
     expect(service.createRequestHash(withAddonA)).not.toBe(service.createRequestHash(withAddonB));
     expect(service.createRequestHash(withAddonA)).not.toBe(service.createRequestHash(input()));
+  });
+
+  it("keeps the same guest booking hash when only the phone proof changes", () => {
+    const guest = (guestPhoneVerificationToken?: string): CreateGuestBookingDto => ({
+      ...input(),
+      guestEmail: "Guest@Example.com",
+      guestName: "Guest User",
+      guestPhone: "+2348012345678",
+      guestPhoneVerificationToken,
+    });
+
+    expect(service.createRequestHash(guest("proof-a"))).toBe(
+      service.createRequestHash(guest("proof-b")),
+    );
+    expect(service.createRequestHash(guest("proof-a"))).toBe(service.createRequestHash(guest()));
+    expect(service.createRequestHash(guest("proof-a"))).not.toBe(
+      service.createRequestHash({ ...guest("proof-a"), guestPhone: "+2348099999999" }),
+    );
   });
 
   it("does not change the request hash when searchId changes", () => {

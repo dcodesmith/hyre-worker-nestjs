@@ -12,7 +12,7 @@ import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../src/modules/flutterwave/flutterwave-webhook.schema";
 import type { ClientTypeOption } from "./helpers";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 const ONE_DAY_MS = 86400000;
 const TWELVE_HOURS_MS = 43200000;
@@ -75,6 +75,16 @@ describe("Booking Flow E2E", () => {
     });
     const car = await factory.createCar(owner.id);
     return { carId: car.id, ownerId: owner.id };
+  }
+
+  async function markPhoneVerified(userId: string): Promise<void> {
+    await databaseService.user.update({
+      where: { id: userId },
+      data: {
+        phoneNumber: uniqueVerifiedPhone(),
+        phoneVerifiedAt: new Date(),
+      },
+    });
   }
 
   beforeEach(async () => {
@@ -389,6 +399,7 @@ describe("Booking Flow E2E", () => {
         { referralCode: userA.referralCode },
       );
       expect(userB.referredByUserId).toBe(userA.id);
+      await markPhoneVerified(userB.id);
 
       // 20% car-specific promotion covering the booking window
       await factory.createPromotion(ownerId, { carId, discountValue: 20 });
@@ -467,7 +478,8 @@ describe("Booking Flow E2E", () => {
       const { carId } = await createStaffedCar();
 
       const email = uniqueEmail(`extension-flow-${clientType}`);
-      const { cookie } = await factory.authenticateAndGetUser(email, "user", clientType);
+      const { cookie, user } = await factory.authenticateAndGetUser(email, "user", clientType);
+      await markPhoneVerified(user.id);
       await runExtensionFlow(cookie, carId);
     });
   });
@@ -488,6 +500,7 @@ describe("Booking Flow E2E", () => {
       { referralCode: referrer.referralCode },
     );
     expect(referee.referredByUserId).toBe(referrer.id);
+    await markPhoneVerified(referee.id);
 
     const REWARD_AMOUNT = 2500;
     await factory.enableReferralProgram({ rewardAmount: REWARD_AMOUNT });

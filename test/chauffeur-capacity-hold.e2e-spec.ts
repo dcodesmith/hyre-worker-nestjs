@@ -9,7 +9,7 @@ import { BookingConfirmationService } from "../src/modules/booking/booking-confi
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 function createBookingWindow(startDate: string, endDate: string) {
   return {
@@ -60,6 +60,13 @@ describe("Chauffeur capacity and manual assignment", () => {
     const user = await factory.authenticateAndGetUser(uniqueEmail("capacity-hold"), "user");
     customerId = user.user.id;
     cookie = user.cookie;
+    await databaseService.user.update({
+      where: { id: customerId },
+      data: {
+        phoneNumber: uniqueVerifiedPhone(),
+        phoneVerifiedAt: new Date(),
+      },
+    });
 
     vi.spyOn(app.get(FlutterwaveService), "createPaymentIntent").mockResolvedValue({
       paymentIntentId: "flw_pi_capacity",

@@ -59,6 +59,7 @@ import { BookingPersistenceService } from "./booking-persistence.service";
 import { BookingReservationService } from "./booking-reservation.service";
 import { BookingValidationService } from "./booking-validation.service";
 import type { CreateBookingDto, CreateGuestBookingDto } from "./dto/create-booking.dto";
+import { createGuestPhoneVerificationToken } from "./guest-phone-verification-token.helper";
 
 // Helper to create valid booking input
 const createBookingInput = (overrides: Partial<CreateBookingDto> = {}): CreateBookingDto => {
@@ -78,15 +79,22 @@ const createBookingInput = (overrides: Partial<CreateBookingDto> = {}): CreateBo
   return { ...base, ...overrides } as CreateBookingDto;
 };
 
+const GUEST_PHONE_VERIFICATION_SECRET = "DNMM";
+
 // Helper to create guest booking input
 const createGuestBookingInput = (
   overrides: Partial<CreateGuestBookingDto> = {},
 ): CreateGuestBookingDto => {
+  const guestPhone = overrides.guestPhone ?? "+2348012345678";
   const base = {
     ...createBookingInput(),
     guestEmail: "guest@example.com",
     guestName: "Guest User",
-    guestPhone: "08012345678",
+    guestPhone,
+    guestPhoneVerificationToken: createGuestPhoneVerificationToken(
+      guestPhone,
+      GUEST_PHONE_VERIFICATION_SECRET,
+    ),
   };
   return { ...base, ...overrides } as CreateGuestBookingDto;
 };
@@ -549,8 +557,11 @@ describe("BookingCreationService", () => {
       expect(idempotencyService.checkpointPaymentResult).not.toHaveBeenCalled();
     });
 
-    it("does not record another BOOKING_REQUESTED when an idempotent request is replayed", async () => {
+    it("replays an authenticated request before rechecking phone verification", async () => {
       setupSuccessfulMocks();
+      vi.mocked(databaseService.user.findUnique).mockResolvedValue(
+        createUser({ phoneNumber: "+2348012345678", phoneVerifiedAt: null }),
+      );
       const replay = {
         bookingId: "booking-existing",
         txRef: "pi-existing",
@@ -571,6 +582,7 @@ describe("BookingCreationService", () => {
         }),
       ).resolves.toEqual(replay);
 
+      expect(databaseService.user.findUnique).not.toHaveBeenCalled();
       expect(analyticsIngestionService.createBookingRequested).not.toHaveBeenCalled();
       expect(mockTransaction).not.toHaveBeenCalled();
     });
@@ -713,6 +725,96 @@ describe("BookingCreationService", () => {
         paymentStatusTokenHash: expect.any(String),
         response: result,
       });
+    });
+
+    it("rejects a guest booking without a valid phone proof", async () => {
+      setupSuccessfulMocks();
+
+      await expect(
+        service.createBooking({
+          input: createGuestBookingInput({ guestPhoneVerificationToken: undefined }),
+          sessionUser: null,
+        }),
+      ).rejects.toBeInstanceOf(BookingPhoneVerificationRequiredException);
+      await expect(
+        service.createBooking({
+          input: createGuestBookingInput({ guestPhoneVerificationToken: "forged-proof" }),
+          sessionUser: null,
+        }),
+      ).rejects.toBeInstanceOf(BookingPhoneVerificationRequiredException);
+      expect(validationService.validateGuestEmail).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it("replays or resumes a claimed guest booking before phone proof validation", async () => {
+      const replay = {
+        bookingId: "booking-existing",
+        txRef: "pi-existing",
+        checkoutUrl: "https://checkout.example/existing",
+        totalAmount: 100,
+        currency: "NGN" as const,
+        bookingStatus: BookingStatus.PENDING,
+        reservationExpiresAt: "2026-08-02T20:10:00.000Z",
+      };
+      const expiredProof = createGuestPhoneVerificationToken(
+        "+2348012345678",
+        GUEST_PHONE_VERIFICATION_SECRET,
+        Date.now() - 31 * 60_000,
+      );
+      vi.mocked(idempotencyService.claim).mockResolvedValue({ kind: "replay", response: replay });
+
+      await expect(
+        service.createBooking({
+          input: createGuestBookingInput({ guestPhoneVerificationToken: undefined }),
+          sessionUser: null,
+        }),
+      ).resolves.toEqual(replay);
+      await expect(
+        service.createBooking({
+          input: createGuestBookingInput({ guestPhoneVerificationToken: expiredProof }),
+          sessionUser: null,
+        }),
+      ).resolves.toEqual(replay);
+
+      vi.mocked(idempotencyService.claim).mockResolvedValueOnce({
+        kind: "resume",
+        id: "idempotency-123",
+        bookingId: "booking-123",
+      });
+      vi.mocked(databaseService.booking.findUnique).mockResolvedValueOnce(
+        createBooking({
+          id: "booking-123",
+          paymentIntent: "booking-123",
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        }),
+      );
+
+      await expect(
+        service.createBooking({
+          input: createGuestBookingInput({ guestPhoneVerificationToken: expiredProof }),
+          sessionUser: null,
+        }),
+      ).rejects.toBeInstanceOf(BookingRequestInProgressException);
+
+      expect(validationService.validateGuestEmail).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(flutterwaveService.createPaymentIntent).not.toHaveBeenCalled();
+      expect(analyticsIngestionService.createBookingRequested).not.toHaveBeenCalled();
+    });
+
+    it("allows a WhatsApp guest booking without a web phone proof", async () => {
+      setupSuccessfulMocks();
+      const booking = createGuestBookingInput({ guestPhoneVerificationToken: undefined });
+
+      const result = await service.createBooking({
+        input: booking,
+        sessionUser: null,
+        context: { guestContactSource: "WHATSAPP_AGENT" },
+      });
+
+      expect(result.bookingId).toBe("booking-123");
+      expect(validationService.validateGuestEmail).toHaveBeenCalledWith(booking);
     });
 
     it("normalizes DAY booking window before validation", async () => {

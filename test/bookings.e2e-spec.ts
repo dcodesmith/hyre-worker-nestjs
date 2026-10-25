@@ -13,12 +13,14 @@ import {
   BOOKING_IDEMPOTENCY_RETRY_AFTER_SECONDS,
   EXTENSION_IDEMPOTENCY_RETRY_AFTER_SECONDS,
 } from "../src/modules/booking/booking.const";
+import { createGuestPhoneVerificationToken } from "../src/modules/booking/guest-phone-verification-token.helper";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { MapsService } from "../src/modules/maps/maps.service";
+import { PhoneVerificationService } from "../src/modules/verification/phone-verification.service";
 import { renderGuestBookingAccessEmail } from "../src/templates/emails";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 describe("Bookings E2E Tests", () => {
   let app: INestApplication;
@@ -27,6 +29,10 @@ describe("Bookings E2E Tests", () => {
   let mapsService: MapsService;
   let factory: TestDataFactory;
   const emailService = { sendEmail: vi.fn().mockResolvedValue({ id: "email-1" }) };
+  const phoneVerificationService = {
+    sendCode: vi.fn().mockResolvedValue({ status: "PENDING", phoneNumber: "**********5678" }),
+    checkCode: vi.fn().mockResolvedValue({ status: "VERIFIED", phoneNumber: "**********5678" }),
+  };
 
   let testUserCookie: string;
   let testUserId: string;
@@ -43,6 +49,8 @@ describe("Bookings E2E Tests", () => {
       .useValue({ sendOTPEmail: mockSendOTPEmail })
       .overrideProvider(EmailService)
       .useValue(emailService)
+      .overrideProvider(PhoneVerificationService)
+      .useValue(phoneVerificationService)
       .compile();
 
     app = moduleFixture.createNestApplication({
@@ -63,6 +71,13 @@ describe("Bookings E2E Tests", () => {
     const testResult = await factory.authenticateAndGetUser(testEmail, "user");
     testUserCookie = testResult.cookie;
     testUserId = testResult.user.id;
+    await databaseService.user.update({
+      where: { id: testUserId },
+      data: {
+        phoneNumber: uniqueVerifiedPhone(),
+        phoneVerifiedAt: new Date(),
+      },
+    });
 
     // Create fleet owner and car
     const fleetOwner = await factory.createFleetOwner({
@@ -75,7 +90,17 @@ describe("Bookings E2E Tests", () => {
   beforeEach(async () => {
     await factory.clearRateLimits();
     vi.restoreAllMocks();
+    phoneVerificationService.sendCode.mockResolvedValue({
+      status: "PENDING",
+      phoneNumber: "**********5678",
+    });
+    phoneVerificationService.checkCode.mockResolvedValue({
+      status: "VERIFIED",
+      phoneNumber: "**********5678",
+    });
     emailService.sendEmail.mockClear();
+    phoneVerificationService.sendCode.mockClear();
+    phoneVerificationService.checkCode.mockClear();
     vi.mocked(renderGuestBookingAccessEmail).mockImplementation(({ accessUrl }) =>
       Promise.resolve(`<a href="${accessUrl}">View booking</a>`),
     );
@@ -133,12 +158,34 @@ describe("Bookings E2E Tests", () => {
       };
     };
 
-    const createGuestBookingPayload = async (carId: string, guestEmail = "guest@example.com") => ({
-      ...(await createValidBookingPayload(carId)),
-      guestEmail,
-      guestName: "Guest User",
-      guestPhone: "08012345678",
-    });
+    const verifyGuestPhone = async (phoneNumber = "+2348012345678") => {
+      const send = await request(app.getHttpServer())
+        .post("/api/bookings/guest-phone-verifications")
+        .send({ phoneNumber });
+      expect(send.status).toBe(HttpStatus.CREATED);
+
+      const check = await request(app.getHttpServer())
+        .post("/api/bookings/guest-phone-verification-checks")
+        .send({ phoneNumber, code: "123456" });
+      expect(check.status).toBe(HttpStatus.CREATED);
+      expect(check.body).toEqual({
+        status: "VERIFIED",
+        phoneNumber: "**********5678",
+        verificationToken: expect.any(String),
+      });
+      return check.body.verificationToken as string;
+    };
+
+    const createGuestBookingPayload = async (carId: string, guestEmail = "guest@example.com") => {
+      const guestPhone = "+2348012345678";
+      return {
+        ...(await createValidBookingPayload(carId)),
+        guestEmail,
+        guestName: "Guest User",
+        guestPhone,
+        guestPhoneVerificationToken: await verifyGuestPhone(guestPhone),
+      };
+    };
 
     describe("Authenticated User Bookings", () => {
       it("requires Idempotency-Key", async () => {
@@ -151,6 +198,25 @@ describe("Bookings E2E Tests", () => {
 
         expect(response.status).toBe(HttpStatus.BAD_REQUEST);
         expect(response.body.errorCode).toBe("VALIDATION_ERROR");
+      });
+
+      it("rejects a booking when the authenticated user has not verified a phone", async () => {
+        const unverified = await factory.authenticateAndGetUser(
+          uniqueEmail("booking-unverified-user"),
+          "user",
+          "mobile",
+          { phoneVerified: false },
+        );
+        const payload = await createValidBookingPayload(testCarId, unverified.cookie);
+
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Cookie", unverified.cookie)
+          .set("Idempotency-Key", randomUUID())
+          .send(payload);
+
+        expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(response.body.errorCode).toBe("BOOKING_PHONE_VERIFICATION_REQUIRED");
       });
 
       it("should create a booking for authenticated user", async () => {
@@ -448,6 +514,88 @@ describe("Bookings E2E Tests", () => {
     });
 
     describe("Guest Bookings", () => {
+      it("sends and checks a guest phone verification code", async () => {
+        const verificationToken = await verifyGuestPhone();
+
+        expect(verificationToken).toEqual(expect.any(String));
+        expect(phoneVerificationService.sendCode).toHaveBeenCalledWith(
+          expect.stringMatching(/^guest-booking:/),
+          "+2348012345678",
+        );
+        expect(phoneVerificationService.checkCode).toHaveBeenCalledWith(
+          expect.stringMatching(/^guest-booking:/),
+          "+2348012345678",
+          "123456",
+        );
+      });
+
+      it("rejects a non-E.164 guest phone before sending a verification code", async () => {
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings/guest-phone-verifications")
+          .send({ phoneNumber: "08012345678" });
+
+        expect(response.status).toBe(HttpStatus.BAD_REQUEST);
+        expect(response.body.errorCode ?? response.body.type).toBe("VALIDATION_ERROR");
+        expect(phoneVerificationService.sendCode).not.toHaveBeenCalled();
+      });
+
+      it("rejects a guest booking without a phone verification proof", async () => {
+        const payload = await createValidBookingPayload(testCarId);
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Idempotency-Key", randomUUID())
+          .send({
+            ...payload,
+            guestEmail: "guest@example.com",
+            guestName: "Guest User",
+            guestPhone: "+2348012345678",
+          });
+
+        expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(response.body.errorCode).toBe("BOOKING_PHONE_VERIFICATION_REQUIRED");
+      });
+
+      it("rejects a guest booking when the proof belongs to another phone", async () => {
+        const payload = await createValidBookingPayload(testCarId);
+        const verificationToken = await verifyGuestPhone("+2348012345678");
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Idempotency-Key", randomUUID())
+          .send({
+            ...payload,
+            guestEmail: "guest@example.com",
+            guestName: "Guest User",
+            guestPhone: "+2348098765432",
+            guestPhoneVerificationToken: verificationToken,
+          });
+
+        expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(response.body.errorCode).toBe("BOOKING_PHONE_VERIFICATION_REQUIRED");
+      });
+
+      it("rejects a guest booking with an expired phone verification proof", async () => {
+        const guestPhone = "+2348012345678";
+        const payload = await createValidBookingPayload(testCarId);
+        const expiredToken = createGuestPhoneVerificationToken(
+          guestPhone,
+          process.env.HMAC_KEY ?? "",
+          Date.now() - 31 * 60_000,
+        );
+        const response = await request(app.getHttpServer())
+          .post("/api/bookings")
+          .set("Idempotency-Key", randomUUID())
+          .send({
+            ...payload,
+            guestEmail: "guest@example.com",
+            guestName: "Guest User",
+            guestPhone,
+            guestPhoneVerificationToken: expiredToken,
+          });
+
+        expect(response.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(response.body.errorCode).toBe("BOOKING_PHONE_VERIFICATION_REQUIRED");
+      });
+
       it("should create a booking for guest user", async () => {
         const payload = await createGuestBookingPayload(testCarId);
 

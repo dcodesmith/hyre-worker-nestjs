@@ -1,5 +1,6 @@
 import { RequestMethod } from "@nestjs/common";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
+import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -115,6 +116,7 @@ describe("AccountVerificationController", () => {
       controllers: [AccountVerificationController],
       providers: [
         VerificationThrottlerGuard,
+        { provide: ConfigService, useValue: { get: vi.fn().mockReturnValue(undefined) } },
         { provide: AccountVerificationService, useValue: accountVerificationService },
         {
           provide: PhoneVerificationService,

@@ -1,4 +1,5 @@
 import type { ExecutionContext } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { ThrottlerException, ThrottlerModule } from "@nestjs/throttler";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,8 +13,10 @@ describe("VerificationThrottlerGuard", () => {
   let guard: VerificationThrottlerGuard;
   let context: ExecutionContext;
   let setHeader: ReturnType<typeof vi.fn>;
+  let configGet: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    configGet = vi.fn().mockReturnValue(undefined);
     const module: TestingModule = await Test.createTestingModule({
       imports: [
         ThrottlerModule.forRoot([
@@ -29,7 +32,10 @@ describe("VerificationThrottlerGuard", () => {
           },
         ]),
       ],
-      providers: [VerificationThrottlerGuard],
+      providers: [
+        VerificationThrottlerGuard,
+        { provide: ConfigService, useValue: { get: configGet } },
+      ],
     }).compile();
 
     guard = module.get(VerificationThrottlerGuard);
@@ -66,5 +72,77 @@ describe("VerificationThrottlerGuard", () => {
       "RateLimit-Policy",
       `${VERIFICATION_THROTTLE_CONFIG.limit};w=${VERIFICATION_THROTTLE_CONFIG.ttlSeconds}`,
     );
+  });
+
+  it("throttles the socket address and ignores a caller-supplied x-forwarded-for", async () => {
+    const makeContext = (forwardedFor: string, ip = "127.0.0.1"): ExecutionContext =>
+      ({
+        switchToHttp: () => ({
+          getRequest: () => ({
+            ip,
+            method: "POST",
+            route: { path: "/api/fleet-owner/vehicle-verifications" },
+            headers: { "x-forwarded-for": forwardedFor },
+          }),
+          getResponse: () => ({ setHeader }),
+        }),
+      }) as ExecutionContext;
+
+    for (let count = 0; count < VERIFICATION_THROTTLE_CONFIG.limit; count += 1) {
+      await expect(guard.canActivate(makeContext(`203.0.113.${count}`))).resolves.toBe(true);
+    }
+    await expect(guard.canActivate(makeContext("198.51.100.20"))).rejects.toThrow(
+      ThrottlerException,
+    );
+    await expect(guard.canActivate(makeContext("198.51.100.20", "192.0.2.10"))).resolves.toBe(true);
+  });
+
+  it("throttles the trusted edge or Fly client IP instead of x-forwarded-for", async () => {
+    const spoofed = "203.0.113.99";
+    const makeContext = (path: string, headers: Record<string, string>): ExecutionContext =>
+      ({
+        switchToHttp: () => ({
+          getRequest: () => ({
+            ip: spoofed,
+            method: "POST",
+            route: { path },
+            headers: { "x-forwarded-for": spoofed, ...headers },
+          }),
+          getResponse: () => ({ setHeader }),
+        }),
+      }) as ExecutionContext;
+
+    const flyPath = "/api/bookings/guest-phone-verifications";
+    for (let count = 0; count < VERIFICATION_THROTTLE_CONFIG.limit; count += 1) {
+      await expect(
+        guard.canActivate(makeContext(flyPath, { "fly-client-ip": "198.51.100.20" })),
+      ).resolves.toBe(true);
+    }
+    await expect(
+      guard.canActivate(makeContext(flyPath, { "fly-client-ip": "198.51.100.20" })),
+    ).rejects.toThrow(ThrottlerException);
+    await expect(
+      guard.canActivate(makeContext(flyPath, { "fly-client-ip": "192.0.2.30" })),
+    ).resolves.toBe(true);
+
+    const secret = "edge-secret";
+    configGet.mockReturnValue(secret);
+    const edgePath = "/api/bookings/guest-phone-verification-checks";
+    const edgeHeaders = {
+      "x-hyre-edge": secret,
+      "cf-connecting-ip": "203.0.113.10",
+      "fly-client-ip": "198.51.100.20",
+    };
+    for (let count = 0; count < VERIFICATION_THROTTLE_CONFIG.limit; count += 1) {
+      await expect(guard.canActivate(makeContext(edgePath, edgeHeaders))).resolves.toBe(true);
+    }
+    await expect(guard.canActivate(makeContext(edgePath, edgeHeaders))).rejects.toThrow(
+      ThrottlerException,
+    );
+    await expect(
+      guard.canActivate(
+        makeContext(edgePath, { ...edgeHeaders, "cf-connecting-ip": "192.0.2.40" }),
+      ),
+    ).resolves.toBe(true);
   });
 });
