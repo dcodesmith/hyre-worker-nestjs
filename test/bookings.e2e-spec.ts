@@ -20,7 +20,7 @@ import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.servi
 import { MapsService } from "../src/modules/maps/maps.service";
 import { PhoneVerificationService } from "../src/modules/verification/phone-verification.service";
 import { renderGuestBookingAccessEmail } from "../src/templates/emails";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 describe("Bookings E2E Tests", () => {
   let app: INestApplication;
@@ -74,7 +74,7 @@ describe("Bookings E2E Tests", () => {
     await databaseService.user.update({
       where: { id: testUserId },
       data: {
-        phoneNumber: "+2348012345678",
+        phoneNumber: uniqueVerifiedPhone(),
         phoneVerifiedAt: new Date(),
       },
     });

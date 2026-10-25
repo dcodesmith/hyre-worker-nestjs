@@ -12,7 +12,7 @@ import { DatabaseService } from "../src/modules/database/database.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import type { FlutterwaveChargeWebhookData } from "../src/modules/flutterwave/flutterwave-webhook.schema";
 import type { ClientTypeOption } from "./helpers";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 const ONE_DAY_MS = 86400000;
 const TWELVE_HOURS_MS = 43200000;
@@ -81,7 +81,7 @@ describe("Booking Flow E2E", () => {
     await databaseService.user.update({
       where: { id: userId },
       data: {
-        phoneNumber: "+2348012345678",
+        phoneNumber: uniqueVerifiedPhone(),
         phoneVerifiedAt: new Date(),
       },
     });

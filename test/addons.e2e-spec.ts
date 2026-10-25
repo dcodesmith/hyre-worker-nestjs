@@ -9,7 +9,7 @@ import { DatabaseService } from "../src/modules/database/database.service";
 import { EmailService } from "../src/modules/email/email.service";
 import { FlutterwaveService } from "../src/modules/flutterwave/flutterwave.service";
 import { PhoneVerificationService } from "../src/modules/verification/phone-verification.service";
-import { TestDataFactory, uniqueEmail } from "./helpers";
+import { TestDataFactory, uniqueEmail, uniqueVerifiedPhone } from "./helpers";
 
 const ONE_DAY_MS = 86400000;
 
@@ -65,7 +65,7 @@ describe("Add-ons E2E", () => {
     await databaseService.user.update({
       where: { id: user.user.id },
       data: {
-        phoneNumber: "+2348012345678",
+        phoneNumber: uniqueVerifiedPhone(),
         phoneVerifiedAt: new Date(),
       },
     });

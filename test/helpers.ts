@@ -887,3 +887,8 @@ export function uniqueEmail(prefix: string): string {
   const randomId = Math.floor(Math.random() * 100000);
   return `${prefix}-${randomId}-${Date.now()}@example.com`;
 }
+
+export function uniqueVerifiedPhone(): string {
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-10);
+  return `+234${suffix}`;
+}

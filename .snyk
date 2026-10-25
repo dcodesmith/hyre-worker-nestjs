@@ -25,5 +25,9 @@ ignore:
     - "*":
         reason: "No patched zod release. $ZodArray stores every issue for an invalid array; revisit when Snyk publishes a fix."
         expires: 2027-01-05T00:00:00.000Z
+  SNYK-JS-PICOMATCH-21248802:
+    - "*":
+        reason: "No patched picomatch release. Transitive through vitest globs; application code does not compile attacker-supplied extglobs."
+        expires: 2027-01-25T00:00:00.000Z
 
 patch: {}
