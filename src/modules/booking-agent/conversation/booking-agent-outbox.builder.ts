@@ -2,7 +2,6 @@ import {
   BOOKING_AGENT_BUTTON_ID,
   BOOKING_AGENT_OUTBOUND_MODE,
   BOOKING_CONFIRMATION_CONTENT_SID,
-  CHECKOUT_LINK_CONTENT_SID,
   VEHICLE_CARD_CONTENT_SID,
 } from "./conversation.const";
 import type {
@@ -20,16 +19,6 @@ type OutboxStateContext = {
   selectedOption: VehicleSearchOption | null;
   availableOptions: VehicleSearchOption[];
 };
-
-function extractCheckoutToken(checkoutUrl: string): string | null {
-  try {
-    const url = new URL(checkoutUrl);
-    const match = /\/pay\/([^/]+)\/?$/.exec(url.pathname);
-    return match?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function formatPriceForTemplate(vehicle: VehicleSearchOption): string {
   const basePrice = vehicle.estimatedSubtotal ?? vehicle.rates.day;
@@ -113,30 +102,17 @@ export function buildOutboxItems(
   }
 
   if (state.stage === "awaiting_payment" && state.paymentLink) {
-    const checkoutToken = extractCheckoutToken(state.paymentLink);
-
-    if (!checkoutToken) {
-      return [
-        {
-          conversationId: state.conversationId,
-          dedupeKey: `booking-agent:${state.inboundMessageId}:payment-link-fallback`,
-          mode: BOOKING_AGENT_OUTBOUND_MODE.FREE_FORM,
-          textBody: `${response.text}\n\n${state.paymentLink}`,
-          interactive: response.interactive,
-        },
-      ];
-    }
+    const textBody = response.text.includes(state.paymentLink)
+      ? response.text
+      : `${response.text}\n\n${state.paymentLink}`;
 
     return [
       {
         conversationId: state.conversationId,
         dedupeKey: `booking-agent:${state.inboundMessageId}:payment-link`,
-        mode: BOOKING_AGENT_OUTBOUND_MODE.TEMPLATE,
-        templateName: CHECKOUT_LINK_CONTENT_SID,
-        templateVariables: {
-          "1": response.text,
-          "2": checkoutToken,
-        },
+        mode: BOOKING_AGENT_OUTBOUND_MODE.FREE_FORM,
+        textBody,
+        interactive: response.interactive,
       },
     ];
   }

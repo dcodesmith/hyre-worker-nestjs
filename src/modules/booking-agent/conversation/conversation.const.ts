@@ -33,10 +33,6 @@ export const VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";
 // Twilio Content Template for confirmation quick replies (no variables)
 export const BOOKING_CONFIRMATION_CONTENT_SID = "HX49f0f60de446a9b6bd2425dffab6303c";
 
-// Twilio Content Template for checkout link
-// Template variables: {{1}}=body text, {{2}}=checkout token segment from /pay/{token}
-export const CHECKOUT_LINK_CONTENT_SID = "HX34269684dbcb609ab817c66c719eaba3";
-
 export const REQUIRED_SEARCH_FIELDS = {
   DEFAULT: [
     "pickupDate",
