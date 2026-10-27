@@ -40,6 +40,10 @@ does not fully document how a new contributor should provision local Postgres, R
 third-party credentials. Obtain the development configuration from the team, then place it
 in a gitignored `.env` file. Do not use production credentials or the production database.
 
+`pnpm test:e2e` loads a separate, untracked `.env.e2e` file. Before running the E2E suite,
+create or obtain `.env.e2e` with the required test configuration, using the validated schema
+in [`src/config/env.config.ts`](src/config/env.config.ts).
+
 ```bash
 nvm use
 corepack enable
@@ -53,7 +57,7 @@ The API listens on `http://localhost:3000` by default.
 ## Useful endpoints
 
 - `GET /` returns the service, environment, and deployment identity.
-- `GET /health` checks database connectivity.
+- `GET /health` checks database and Redis connectivity.
 - `/queues` hosts Bull Board. It uses basic authentication when both
   `BULL_BOARD_USERNAME` and `BULL_BOARD_PASSWORD` are configured.
 - `POST /job/trigger/:jobType` exposes operational job triggers only when
