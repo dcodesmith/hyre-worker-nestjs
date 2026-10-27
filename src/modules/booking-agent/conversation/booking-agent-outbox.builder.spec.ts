@@ -159,39 +159,45 @@ describe("booking-agent-outbox.builder", () => {
     ]);
   });
 
-  it("builds checkout link as template in awaiting_payment stage", () => {
+  it.each([
+    "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
+    "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/2207c37f2a302c03118f",
+    "invalid-url",
+  ])("sends the complete checkout URL for %s", (paymentLink) => {
     const outbox = buildOutboxItems(
       buildState({
         stage: "awaiting_payment",
         selectedOption: buildVehicleOption({ make: "KIA", model: "Sportage LX" }),
-        paymentLink: "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
+        paymentLink,
       }),
       {
         text: "Booking created. I have sent your secure checkout link below.",
       },
     );
 
-    expect(outbox).toHaveLength(1);
-    expect(outbox[0].mode).toBe("TEMPLATE");
-    expect(outbox[0].templateVariables).toEqual({
-      "1": "Booking created. I have sent your secure checkout link below.",
-      "2": "c60612d08d53343872af",
-    });
+    expect(outbox).toEqual([
+      {
+        conversationId: "conv_test",
+        dedupeKey: "booking-agent:msg_1:payment-link",
+        mode: "FREE_FORM",
+        textBody: `Booking created. I have sent your secure checkout link below.\n\n${paymentLink}`,
+      },
+    ]);
   });
 
-  it("falls back to free-form link when checkout token extraction fails", () => {
+  it("does not duplicate a checkout URL already present in the message", () => {
+    const paymentLink =
+      "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/2207c37f2a302c03118f";
     const outbox = buildOutboxItems(
       buildState({
         stage: "awaiting_payment",
-        paymentLink: "invalid-url",
+        paymentLink,
       }),
       {
-        text: "Booking created. I have sent your secure checkout link below.",
+        text: `Complete payment:\n\n${paymentLink}`,
       },
     );
 
-    expect(outbox).toHaveLength(1);
-    expect(outbox[0].mode).toBe("FREE_FORM");
-    expect(outbox[0].textBody).toContain("invalid-url");
+    expect(outbox[0].textBody).toBe(`Complete payment:\n\n${paymentLink}`);
   });
 });
