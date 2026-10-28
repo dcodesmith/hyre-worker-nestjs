@@ -33,7 +33,7 @@ export function buildAirportTripDetailLines(draft: BookingDraft): string[] {
 
   const arrival = new Date(pickup.getTime() - AIRPORT_PICKUP_BUFFER_MINUTES * 60_000);
   const driveMinutes = Math.ceil((dropoff.getTime() - pickup.getTime()) / 60_000);
-  const time = (value: Date) => formatInTimeZone(value, LAGOS_TIMEZONE, "h:mm aaa");
+  const time = (value: Date) => formatInTimeZone(value, LAGOS_TIMEZONE, "do MMM yyyy, h:mm aaa");
   const distance =
     draft.airportDistanceMeters > 0
       ? `${(draft.airportDistanceMeters / 1000).toFixed(1)} km`

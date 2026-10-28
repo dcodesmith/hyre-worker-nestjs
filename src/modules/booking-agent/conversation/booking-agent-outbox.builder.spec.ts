@@ -8,7 +8,7 @@ import {
 import { buildState, buildVehicleOption } from "./conversation.factory";
 
 const payNowTemplate: PayNowTemplateConfig = {
-  contentSid: "HX45313efd782a11095cb73b2ee3d5306f",
+  contentSid: "HX1234567890abcdef1234567890abcdef",
   checkoutHost: "checkout.flutterwave.com",
 };
 

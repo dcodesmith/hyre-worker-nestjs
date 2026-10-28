@@ -23,7 +23,7 @@ describe("RespondAction", () => {
           provide: ConfigService,
           useValue: {
             get: (key: string) =>
-              key === "APP_ENV" ? "development" : "HXb0294ce1288f914fe65ad645245278e1",
+              key === "APP_ENV" ? "development" : "HX1234567890abcdef1234567890abcdef",
           },
         },
       ],

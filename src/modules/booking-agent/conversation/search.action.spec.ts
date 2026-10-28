@@ -332,11 +332,11 @@ describe("SearchAction", () => {
         warning,
         [
           "*✈️ Trip Details — BA74*",
-          "*Flight Arrival:* 3:00 pm",
-          "*Pickup Time:* 3:40 pm",
+          "*Flight Arrival:* 1st Mar 2026, 3:00 pm",
+          "*Pickup Time:* 1st Mar 2026, 3:40 pm",
           "*Estimated Drive:* 1 hour 14 mins",
           "*Distance:* 18.0 km",
-          "*Estimated Drop-off:* 4:54 pm",
+          "*Estimated Drop-off:* 1st Mar 2026, 4:54 pm",
         ].join("\n"),
       ].join("\n\n"),
     );
