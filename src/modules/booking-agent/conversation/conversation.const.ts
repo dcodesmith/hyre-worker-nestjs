@@ -33,6 +33,13 @@ export const VEHICLE_CARD_CONTENT_SID = "HX43448303892f9f4026057adb597e0c22";
 // Twilio Content Template for confirmation quick replies (no variables)
 export const BOOKING_CONFIRMATION_CONTENT_SID = "HX49f0f60de446a9b6bd2425dffab6303c";
 
+// Twilio Content Templates for Flutterwave Pay Now buttons.
+// Template variables: {{1}}=reservation expiry, {{2}}=Flutterwave payment ID.
+export const PAY_NOW_CONTENT_SID_BY_HOST: Readonly<Record<string, string>> = {
+  "checkout.flutterwave.com": "HX45313efd782a11095cb73b2ee3d5306f",
+  "checkout-v2.dev-flutterwave.com": "HXb0294ce1288f914fe65ad645245278e1",
+};
+
 export const REQUIRED_SEARCH_FIELDS = {
   DEFAULT: [
     "pickupDate",

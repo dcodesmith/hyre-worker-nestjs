@@ -44,6 +44,28 @@ describe("booking-agent-router.policy", () => {
     expect(decision.stage).toBe("presenting_options");
   });
 
+  it("clears a stale status message when a vehicle is selected", () => {
+    const vehicle = buildVehicleOption({ id: "veh_1" });
+    const decision = resolveRouteDecision(
+      buildState({
+        stage: "presenting_options",
+        statusMessage: "Schedule shifted by 15 minutes.",
+        availableOptions: [vehicle],
+        extraction: {
+          intent: "select_option",
+          draftPatch: {},
+          selectionHint: "1",
+          confidence: 1,
+        },
+      }),
+    );
+
+    expect(decision.selectedOption).toEqual(vehicle);
+    expect(decision.nextAction).toBe("prepare_quote");
+    expect(decision.stage).toBe("selecting_addons");
+    expect(decision.statusMessage).toBeNull();
+  });
+
   it("keeps collecting when vehicle type is missing", () => {
     const state = buildState({
       draft: {

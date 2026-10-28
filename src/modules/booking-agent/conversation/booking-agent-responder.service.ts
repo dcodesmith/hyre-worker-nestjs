@@ -10,6 +10,7 @@ import {
 } from "../../../shared/booking-time-window.helper";
 import { calculateLegCount } from "../../booking/booking.helper";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
+import { buildAirportTripDetailLines } from "./airport-trip-details";
 import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
 import {
   BOOKING_AGENT_BUTTON_ID,
@@ -436,7 +437,9 @@ export class BookingAgentResponderService {
   private buildBookingSummary(draft: BookingDraft, selectedOption: VehicleSearchOption): string {
     const priceFormatted = this.formatRequiredPrice(selectedOption.estimatedTotalInclVat);
     const durationDays = this.resolveDurationDays(draft);
-    const bookingWindowLines = this.buildBookingWindowLines(draft);
+    const tripDetails = buildAirportTripDetailLines(draft);
+    const bookingWindowLines =
+      tripDetails.length > 0 ? tripDetails : this.buildBookingWindowLines(draft);
     const bookedForUnit = this.resolveBookedForUnit(draft.bookingType);
     const durationLine =
       durationDays === null
@@ -489,6 +492,7 @@ export class BookingAgentResponderService {
         ? [`• Credits applied: -${this.formatMoney(pricing.creditsUsed)}`]
         : []),
     ];
+    const tripDetails = buildAirportTripDetailLines(state.draft);
 
     return [
       "*📋 Final Booking Quote*",
@@ -497,7 +501,7 @@ export class BookingAgentResponderService {
       ...(state.draft.bookingType
         ? [`*📅 Service:* ${this.getBookingTypeLabel(state.draft.bookingType)}`]
         : []),
-      ...this.buildBookingWindowLines(state.draft),
+      ...(tripDetails.length > 0 ? tripDetails : this.buildBookingWindowLines(state.draft)),
       ...(state.draft.pickupLocation ? [`*📍 Pickup:* ${state.draft.pickupLocation}`] : []),
       ...(state.draft.dropoffLocation ? [`*📍 Drop-off:* ${state.draft.dropoffLocation}`] : []),
       "",

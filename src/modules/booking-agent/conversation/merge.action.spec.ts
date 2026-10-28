@@ -105,6 +105,8 @@ describe("MergeAction", () => {
       pickupLocation: "Murtala Muhammed International Airport, Lagos",
       dropoffDate: "2026-03-01",
       durationDays: 1,
+      airportDistanceMeters: 18000,
+      airportDriveIsEstimate: true,
     };
     const patches = [
       { flightNumber: "DL54" as const },
@@ -136,6 +138,8 @@ describe("MergeAction", () => {
       expect(result.draft?.pickupLocation).toBeUndefined();
       expect(result.draft?.dropoffDate).toBeUndefined();
       expect(result.draft?.durationDays).toBeUndefined();
+      expect(result.draft?.airportDistanceMeters).toBeUndefined();
+      expect(result.draft?.airportDriveIsEstimate).toBeUndefined();
     }
   });
 
@@ -154,6 +158,8 @@ describe("MergeAction", () => {
           dropoffDate: "2026-03-01",
           dropoffLocation: "Victoria Island",
           durationDays: 1,
+          airportDistanceMeters: 18000,
+          airportDriveIsEstimate: false,
         },
         extraction: {
           intent: "update_info",
@@ -182,6 +188,8 @@ describe("MergeAction", () => {
     expect(result.draft?.pickupDateTime).toBeUndefined();
     expect(result.draft?.dropoffDateTime).toBeUndefined();
     expect(result.draft?.durationDays).toBeUndefined();
+    expect(result.draft?.airportDistanceMeters).toBeUndefined();
+    expect(result.draft?.airportDriveIsEstimate).toBeUndefined();
   });
 
   it("clears stale duration fields while asking for duration clarification", () => {

@@ -39,6 +39,8 @@ export function clearDerivedAirportFields(draft: BookingDraft): BookingDraft {
   delete cleared.pickupLocation;
   delete cleared.dropoffDate;
   delete cleared.durationDays;
+  delete cleared.airportDistanceMeters;
+  delete cleared.airportDriveIsEstimate;
   return cleared;
 }
 
