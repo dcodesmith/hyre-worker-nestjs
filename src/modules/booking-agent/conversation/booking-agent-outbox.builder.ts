@@ -1,3 +1,4 @@
+import { formatInTimeZone } from "date-fns-tz";
 import {
   BOOKING_AGENT_BUTTON_ID,
   BOOKING_AGENT_OUTBOUND_MODE,
@@ -16,6 +17,7 @@ type OutboxStateContext = {
   inboundMessageId: string;
   stage: BookingStage;
   paymentLink: string | null;
+  holdExpiresAt: string | null;
   selectedOption: VehicleSearchOption | null;
   availableOptions: VehicleSearchOption[];
 };
@@ -35,9 +37,54 @@ function removeConfirmationPrompt(text: string): string {
   return text.replace(/\n\nReady to confirm this booking\?$/, "");
 }
 
+export type PayNowTemplateConfig = {
+  contentSid?: string;
+  checkoutHost: string;
+};
+
+function resolvePayNowTemplate(
+  paymentLink: string,
+  payNow: PayNowTemplateConfig,
+): {
+  contentSid: string;
+  paymentId: string;
+} | null {
+  if (!payNow.contentSid) {
+    return null;
+  }
+
+  try {
+    const url = new URL(paymentLink);
+    const paymentId = url.pathname.match(/^\/v3\/hosted\/pay\/([A-Za-z0-9_-]+)$/)?.[1];
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== payNow.checkoutHost ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !paymentId
+    ) {
+      return null;
+    }
+    return { contentSid: payNow.contentSid, paymentId };
+  } catch {
+    return null;
+  }
+}
+
+function formatReservationExpiry(holdExpiresAt: string): string | null {
+  const expiry = new Date(holdExpiresAt);
+  return Number.isNaN(expiry.getTime())
+    ? null
+    : formatInTimeZone(expiry, "Africa/Lagos", "do MMM yyyy 'at' h:mm aaa '(Lagos time)'");
+}
+
 export function buildOutboxItems(
   state: OutboxStateContext,
   response: AgentResponse,
+  payNow: PayNowTemplateConfig = { checkoutHost: "" },
 ): BookingAgentOutboxItem[] {
   const outboxItems: BookingAgentOutboxItem[] = [];
 
@@ -102,6 +149,23 @@ export function buildOutboxItems(
   }
 
   if (state.stage === "awaiting_payment" && state.paymentLink) {
+    const template = resolvePayNowTemplate(state.paymentLink, payNow);
+    const expiry = state.holdExpiresAt ? formatReservationExpiry(state.holdExpiresAt) : null;
+    if (template && expiry) {
+      return [
+        {
+          conversationId: state.conversationId,
+          dedupeKey: `booking-agent:${state.inboundMessageId}:payment-link`,
+          mode: BOOKING_AGENT_OUTBOUND_MODE.TEMPLATE,
+          templateName: template.contentSid,
+          templateVariables: {
+            "1": expiry,
+            "2": template.paymentId,
+          },
+        },
+      ];
+    }
+
     const textBody = response.text.includes(state.paymentLink)
       ? response.text
       : `${response.text}\n\n${state.paymentLink}`;

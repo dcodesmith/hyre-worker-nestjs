@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { buildOutboxItems } from "./booking-agent-outbox.builder";
-import { BOOKING_AGENT_BUTTON_ID, BOOKING_CONFIRMATION_CONTENT_SID } from "./conversation.const";
+import { buildOutboxItems, type PayNowTemplateConfig } from "./booking-agent-outbox.builder";
+import {
+  BOOKING_AGENT_BUTTON_ID,
+  BOOKING_CONFIRMATION_CONTENT_SID,
+  payNowCheckoutHost,
+} from "./conversation.const";
 import { buildState, buildVehicleOption } from "./conversation.factory";
+
+const payNowTemplate: PayNowTemplateConfig = {
+  contentSid: "HX1234567890abcdef1234567890abcdef",
+  checkoutHost: "checkout.flutterwave.com",
+};
 
 describe("booking-agent-outbox.builder", () => {
   it("builds intro + template cards mapped by vehicleId", () => {
@@ -199,5 +208,115 @@ describe("booking-agent-outbox.builder", () => {
     );
 
     expect(outbox[0].textBody).toBe(`Complete payment:\n\n${paymentLink}`);
+  });
+
+  it("sends the configured Pay Now template when the checkout host matches", () => {
+    const paymentId = "c60612d08d53343872af";
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "awaiting_payment",
+        paymentLink: `https://${payNowTemplate.checkoutHost}/v3/hosted/pay/${paymentId}`,
+        holdExpiresAt: "2026-03-01T15:30:00.000Z",
+      }),
+      {
+        text: "Booking created. I have sent your secure checkout link below.",
+      },
+      payNowTemplate,
+    );
+
+    expect(outbox).toEqual([
+      {
+        conversationId: "conv_test",
+        dedupeKey: "booking-agent:msg_1:payment-link",
+        mode: "TEMPLATE",
+        templateName: payNowTemplate.contentSid,
+        templateVariables: {
+          "1": "1st Mar 2026 at 4:30 pm (Lagos time)",
+          "2": paymentId,
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    "invalid-url",
+    "https://pay.example.com/v3/hosted/pay/c60612d08d53343872af",
+    "https://checkout-v2.dev-flutterwave.com/v3/hosted/pay/2207c37f2a302c03118f",
+    "http://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
+    "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af?ref=1",
+    "https://user:secret@checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af",
+  ])("keeps the complete checkout link for %s", (paymentLink) => {
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "awaiting_payment",
+        paymentLink,
+        holdExpiresAt: "2026-03-01T15:30:00.000Z",
+      }),
+      {
+        text: "Booking created. I have sent your secure checkout link below.",
+      },
+      payNowTemplate,
+    );
+
+    expect(outbox).toEqual([
+      {
+        conversationId: "conv_test",
+        dedupeKey: "booking-agent:msg_1:payment-link",
+        mode: "FREE_FORM",
+        textBody: `Booking created. I have sent your secure checkout link below.\n\n${paymentLink}`,
+      },
+    ]);
+  });
+
+  it("keeps the complete checkout link when the reservation expiry is invalid", () => {
+    const paymentLink = "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af";
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "awaiting_payment",
+        paymentLink,
+        holdExpiresAt: "not-a-date",
+      }),
+      {
+        text: `Complete payment:\n\n${paymentLink}`,
+      },
+      payNowTemplate,
+    );
+
+    expect(outbox).toEqual([
+      {
+        conversationId: "conv_test",
+        dedupeKey: "booking-agent:msg_1:payment-link",
+        mode: "FREE_FORM",
+        textBody: `Complete payment:\n\n${paymentLink}`,
+      },
+    ]);
+  });
+
+  it("keeps the complete checkout link when no Pay Now template is configured", () => {
+    const paymentLink = "https://checkout.flutterwave.com/v3/hosted/pay/c60612d08d53343872af";
+    const outbox = buildOutboxItems(
+      buildState({
+        stage: "awaiting_payment",
+        paymentLink,
+        holdExpiresAt: "2026-03-01T15:30:00.000Z",
+      }),
+      {
+        text: "Booking created. I have sent your secure checkout link below.",
+      },
+      { checkoutHost: payNowTemplate.checkoutHost },
+    );
+
+    expect(outbox[0]).toMatchObject({
+      mode: "FREE_FORM",
+      textBody: `Booking created. I have sent your secure checkout link below.\n\n${paymentLink}`,
+    });
+  });
+});
+
+describe("payNowCheckoutHost", () => {
+  it("uses the production Flutterwave host only in production", () => {
+    expect(payNowCheckoutHost("production")).toBe("checkout.flutterwave.com");
+    expect(payNowCheckoutHost("development")).toBe("checkout-v2.dev-flutterwave.com");
+    expect(payNowCheckoutHost("preview")).toBe("checkout-v2.dev-flutterwave.com");
   });
 });

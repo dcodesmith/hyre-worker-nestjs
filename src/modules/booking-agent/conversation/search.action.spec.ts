@@ -317,6 +317,8 @@ describe("SearchAction", () => {
         pickupLocation: "Murtala Muhammed International Airport, Lagos",
         dropoffDate: "2026-03-01",
         dropoffLocation: normalizedDropoff,
+        airportDistanceMeters: 18000,
+        airportDriveIsEstimate: false,
       }),
     );
     expect(result.draft?.durationDays).toBeUndefined();
@@ -326,7 +328,17 @@ describe("SearchAction", () => {
       normalizedAddress: "Murtala Muhammed International Airport, Lagos",
     });
     expect(result.statusMessage).toBe(
-      `${warning} Flight BA74 arrives in Lagos at 3:00 PM. Pickup will be around 3:40 PM from Murtala Muhammed International Airport, Lagos.`,
+      [
+        warning,
+        [
+          "*✈️ Trip Details — BA74*",
+          "*Flight Arrival:* 1st Mar 2026, 3:00 pm",
+          "*Pickup Time:* 1st Mar 2026, 3:40 pm",
+          "*Estimated Drive:* 1 hour 14 mins",
+          "*Distance:* 18.0 km",
+          "*Estimated Drop-off:* 1st Mar 2026, 4:54 pm",
+        ].join("\n"),
+      ].join("\n\n"),
     );
     expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledWith(
       expect.objectContaining({

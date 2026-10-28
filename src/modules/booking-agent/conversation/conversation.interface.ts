@@ -17,6 +17,8 @@ export interface BookingDraft {
   durationDays?: number;
   pickupLocation?: string;
   dropoffLocation?: string;
+  airportDistanceMeters?: number;
+  airportDriveIsEstimate?: boolean;
   vehicleType?: "SEDAN" | "SUV" | "VAN" | "CROSSOVER" | "ANY";
   serviceTier?: "STANDARD" | "EXECUTIVE" | "LUXURY" | "ULTRA_LUXURY";
   color?: string;

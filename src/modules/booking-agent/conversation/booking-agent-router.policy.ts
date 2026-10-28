@@ -462,6 +462,7 @@ function buildSelectionDecision(
     requiresFullTank: false,
     useCredits: 0,
     pricingPreview: null,
+    statusMessage: null,
   };
 }
 

@@ -1,8 +1,9 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
-import { createDefaultLocationValidationState } from "./conversation.interface";
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
+import { createDefaultLocationValidationState } from "./conversation.interface";
 import { RespondAction } from "./respond.action";
 
 describe("RespondAction", () => {
@@ -18,6 +19,13 @@ describe("RespondAction", () => {
       providers: [
         RespondAction,
         { provide: BookingAgentResponderService, useValue: responderServiceMock },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string) =>
+              key === "APP_ENV" ? "development" : "HX1234567890abcdef1234567890abcdef",
+          },
+        },
       ],
     })
       .useMocker(mockPinoLoggerToken)

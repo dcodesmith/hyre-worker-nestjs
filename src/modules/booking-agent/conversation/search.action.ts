@@ -8,6 +8,7 @@ import { GooglePlacesService } from "../../maps/google-places.service";
 import { MapsService } from "../../maps/maps.service";
 import { getMissingRequiredFields } from "../booking-agent.helper";
 import { BookingAgentSearchService } from "../booking-agent-search.service";
+import { buildAirportTripDetailLines } from "./airport-trip-details";
 import { clearDerivedAirportFields } from "./booking-rules";
 import {
   BOOKING_AGENT_OUTBOUND_MODE,
@@ -205,7 +206,7 @@ export class SearchAction {
         draft: validatedDraft,
       });
       const statusMessage =
-        [airportResult.statusMessage, noResultsMessage].filter(Boolean).join(" ") || null;
+        [airportResult.statusMessage, noResultsMessage].filter(Boolean).join("\n\n") || null;
 
       return {
         draft: validatedDraft,
@@ -282,10 +283,12 @@ export class SearchAction {
       pickupTime: formatInTimeZone(leg.legStartTime, "Africa/Lagos", "HH:mm"),
       pickupLocation,
       dropoffDate: formatInTimeZone(leg.legEndTime, "Africa/Lagos", "yyyy-MM-dd"),
+      airportDistanceMeters: duration.distanceMeters,
+      airportDriveIsEstimate: duration.isEstimate,
     };
     delete draft.durationDays;
 
-    const flightSummary = `Flight ${flight.flightNumber} arrives in Lagos at ${formatInTimeZone(arrivalTime, "Africa/Lagos", "h:mm a")}. Pickup will be around ${formatInTimeZone(leg.legStartTime, "Africa/Lagos", "h:mm a")} from ${pickupLocation}.`;
+    const tripDetails = buildAirportTripDetailLines(draft).join("\n");
     return {
       draft,
       locationValidation: {
@@ -296,7 +299,7 @@ export class SearchAction {
           normalizedAddress: pickupLocation,
         },
       },
-      statusMessage: warning ? `${warning} ${flightSummary}` : flightSummary,
+      statusMessage: warning ? `${warning}\n\n${tripDetails}` : tripDetails,
     };
   }
 
