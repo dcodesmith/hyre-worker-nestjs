@@ -1,14 +1,18 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
-import { normalizeActionError } from "./conversation-log-utils";
+import type { EnvConfig } from "../../../config/env.config";
 import { buildOutboxItems } from "./booking-agent-outbox.builder";
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
+import { payNowCheckoutHost } from "./conversation.const";
 import type { BookingAgentState } from "./conversation.interface";
+import { normalizeActionError } from "./conversation-log-utils";
 
 @Injectable()
 export class RespondAction {
   constructor(
     private readonly responderService: BookingAgentResponderService,
+    private readonly configService: ConfigService<EnvConfig, true>,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(RespondAction.name);
@@ -48,7 +52,10 @@ export class RespondAction {
       );
 
       const response = await this.responderService.generateResponse(state);
-      const outboxItems = buildOutboxItems(state, response);
+      const outboxItems = buildOutboxItems(state, response, {
+        contentSid: this.configService.get("TWILIO_AGENT_PAY_NOW_CONTENT_SID", { infer: true }),
+        checkoutHost: payNowCheckoutHost(this.configService.get("APP_ENV", { infer: true })),
+      });
       return { response, outboxItems };
     } catch (error) {
       const normalizedError = normalizeActionError(error);

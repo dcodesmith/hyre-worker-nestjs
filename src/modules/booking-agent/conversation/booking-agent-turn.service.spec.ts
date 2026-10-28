@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
@@ -208,6 +209,13 @@ describe("BookingAgentTurnService", () => {
         PrepareQuoteAction,
         CreateBookingAction,
         RespondAction,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string) =>
+              key === "APP_ENV" ? "development" : "HXb0294ce1288f914fe65ad645245278e1",
+          },
+        },
         HandoffAction,
       ],
     })

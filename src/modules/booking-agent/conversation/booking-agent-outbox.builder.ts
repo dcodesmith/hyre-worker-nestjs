@@ -3,7 +3,6 @@ import {
   BOOKING_AGENT_BUTTON_ID,
   BOOKING_AGENT_OUTBOUND_MODE,
   BOOKING_CONFIRMATION_CONTENT_SID,
-  PAY_NOW_CONTENT_SID_BY_HOST,
   VEHICLE_CARD_CONTENT_SID,
 } from "./conversation.const";
 import type {
@@ -38,27 +37,38 @@ function removeConfirmationPrompt(text: string): string {
   return text.replace(/\n\nReady to confirm this booking\?$/, "");
 }
 
-function resolvePayNowTemplate(paymentLink: string): {
+export type PayNowTemplateConfig = {
+  contentSid?: string;
+  checkoutHost: string;
+};
+
+function resolvePayNowTemplate(
+  paymentLink: string,
+  payNow: PayNowTemplateConfig,
+): {
   contentSid: string;
   paymentId: string;
 } | null {
+  if (!payNow.contentSid) {
+    return null;
+  }
+
   try {
     const url = new URL(paymentLink);
-    const contentSid = PAY_NOW_CONTENT_SID_BY_HOST[url.hostname];
     const paymentId = url.pathname.match(/^\/v3\/hosted\/pay\/([A-Za-z0-9_-]+)$/)?.[1];
     if (
       url.protocol !== "https:" ||
+      url.hostname !== payNow.checkoutHost ||
       url.port ||
       url.username ||
       url.password ||
       url.search ||
       url.hash ||
-      !contentSid ||
       !paymentId
     ) {
       return null;
     }
-    return { contentSid, paymentId };
+    return { contentSid: payNow.contentSid, paymentId };
   } catch {
     return null;
   }
@@ -74,6 +84,7 @@ function formatReservationExpiry(holdExpiresAt: string): string | null {
 export function buildOutboxItems(
   state: OutboxStateContext,
   response: AgentResponse,
+  payNow: PayNowTemplateConfig = { checkoutHost: "" },
 ): BookingAgentOutboxItem[] {
   const outboxItems: BookingAgentOutboxItem[] = [];
 
@@ -138,7 +149,7 @@ export function buildOutboxItems(
   }
 
   if (state.stage === "awaiting_payment" && state.paymentLink) {
-    const template = resolvePayNowTemplate(state.paymentLink);
+    const template = resolvePayNowTemplate(state.paymentLink, payNow);
     const expiry = state.holdExpiresAt ? formatReservationExpiry(state.holdExpiresAt) : null;
     if (template && expiry) {
       return [
