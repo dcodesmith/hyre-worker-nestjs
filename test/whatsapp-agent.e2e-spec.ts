@@ -248,7 +248,7 @@ describe("Booking Agent", () => {
 
     const text = result.enqueueOutbox[0]?.textBody ?? "";
     expect(result.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s2");
-    expect(text).toContain("missing booking details");
+    expect(text).toContain("booking type");
   });
 
   it("Scenario 3: carries slot context across turns when follow-up provides only dates", async () => {
@@ -395,7 +395,8 @@ describe("Booking Agent", () => {
     });
     expect(afterResetFollowup.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s4_after_reset");
     const afterResetText = afterResetFollowup.enqueueOutbox[0]?.textBody ?? "";
-    expect(afterResetText).toContain("missing booking details");
+    expect(afterResetText).toContain("booking type");
+    expect(afterResetText).toContain("vehicle type");
     expect(
       afterResetFollowup.enqueueOutbox.some((item) =>
         item.dedupeKey.startsWith("booking-agent:msg_s4_after_reset:vehicle:"),
@@ -477,7 +478,7 @@ describe("Booking Agent", () => {
       windowExpiresAt: FUTURE_LATER_WINDOW_EXPIRES_AT,
     });
     expect(firstTurn.enqueueOutbox[0]?.dedupeKey).toBe("booking-agent:msg_s6_first");
-    expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("missing booking details");
+    expect(firstTurn.enqueueOutbox[0]?.textBody ?? "").toContain("booking type");
 
     const secondTurn = await orchestratorService.decide({
       messageId: "msg_s6_second",

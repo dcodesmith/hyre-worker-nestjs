@@ -74,6 +74,14 @@ const VEHICLE_TYPE_REPLIES = {
 
 const AIRPORT_PICKUP_PATTERN =
   /\b(?:airport\s+(?:pickup|pick-up|transfer)|flight\s+(?:arrival|pickup)|pick\s+me\s+up\s+from\s+the\s+airport)\b/i;
+const AIRPORT_FLIGHT_NUMBER_PATTERN =
+  /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*(?!(?:on|in|at|by|to|of)\s)([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i;
+const AIRPORT_PICKUP_TOMORROW_PATTERN =
+  /\b(?:(?:airport\s+(?:pickup|pick-up|transfer)|flight|arrival|pickup)(?:\s+date)?\s*(?:(?:is|on|for)\s*)?tomorrow|tomorrow\s*(?:[,;:-]\s*)?flight)\b/i;
+const AIRPORT_DESTINATION_PATTERN =
+  /\b(?:destination(?:\s+address)?\s*(?:is|:|-)|take\s+me\s+(?:to|at)|drop\s+me(?:\s+off)?\s+(?:to|at))\s+(.+?)(?=\s*(?:[,;:-]\s*)?(?:(?:today|tomorrow|flight)\b|(?:on|for)\s+(?:\d{1,2}(?:st|nd|rd|th)?|\d{4}-\d{2}-\d{2}|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b)|[.!?]|$)/i;
+const AIRPORT_GOING_TO_DESTINATION_PATTERN =
+  /\bgoing\s+to\s+(?!(?:need|pay|book|have|get|want|use|ask|check|call|wait|try|cancel|change)\b)(.+?)(?=\s*(?:[,;:-]\s*)?(?:(?:today|tomorrow|flight)\b|(?:on|for)\s+(?:\d{1,2}(?:st|nd|rd|th)?|\d{4}-\d{2}-\d{2}|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b)|[.!?]|$)/i;
 
 @Injectable()
 export class BookingAgentExtractorService {
@@ -187,16 +195,14 @@ export class BookingAgentExtractorService {
       return { intent, draftPatch: { ...modelPatch } };
     }
 
-    const flightNumber =
-      /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i
-        .exec(inboundMessage)?.[1]
-        ?.replaceAll(/\s/g, "")
-        .toUpperCase();
+    const flightNumber = AIRPORT_FLIGHT_NUMBER_PATTERN.exec(inboundMessage)?.[1]
+      ?.replaceAll(/\s/g, "")
+      .toUpperCase();
     const dropoffMatch =
-      /\bgoing\s+to\s+(.+?)(?:[.!?]|$)/i.exec(inboundMessage) ??
-      /\b(?:take\s+me|drop\s+me(?:\s+off)?)\s+(?:to|at)\s+(.+?)(?:[.!?]|$)/i.exec(inboundMessage);
+      AIRPORT_DESTINATION_PATTERN.exec(inboundMessage) ??
+      AIRPORT_GOING_TO_DESTINATION_PATTERN.exec(inboundMessage);
     const dropoffLocation = dropoffMatch?.[1]?.trim().replace(/[,;:\s]+$/, "") || undefined;
-    const pickupDate = /\btomorrow\b/i.test(inboundMessage)
+    const pickupDate = AIRPORT_PICKUP_TOMORROW_PATTERN.test(inboundMessage)
       ? formatInTimeZone(addDays(new Date(), 1), "Africa/Lagos", "yyyy-MM-dd")
       : undefined;
 

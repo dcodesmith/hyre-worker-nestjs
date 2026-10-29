@@ -216,7 +216,7 @@ export class BookingAgentResponderService {
     stage: BookingStage,
     draft: BookingDraft,
   ): AgentResponse | null {
-    if (stage !== "collecting" && stage !== "greeting") {
+    if (stage !== "collecting") {
       return null;
     }
 

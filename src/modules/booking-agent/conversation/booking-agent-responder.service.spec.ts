@@ -726,7 +726,7 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive).toBeUndefined();
     });
 
-    it("returns no interactive for greeting stage", async () => {
+    it("uses the model welcome response for greeting stage", async () => {
       claudeMock.messages.create.mockResolvedValue({ content: [{ type: "text", text: "Hello!" }] });
 
       const state = buildState({
@@ -735,7 +735,9 @@ describe("BookingAgentResponderService", () => {
 
       const response = await service.generateResponse(state);
 
+      expect(response.text).toBe("Hello!");
       expect(response.interactive).toBeUndefined();
+      expect(claudeMock.messages.create).toHaveBeenCalledOnce();
     });
 
     it("returns no interactive for empty options in presenting_options", async () => {
